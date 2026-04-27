@@ -69,12 +69,13 @@ from openai import OpenAI
 
 # Token tracking import
 try:
-    from utils.openai_usage_tracker import track_response, track_image_cost, get_dalle3_cost_usd
+    from utils.openai_usage_tracker import track_response, track_image_cost, get_dalle3_cost_usd, get_gpt_image_1_cost_usd
     USAGE_TRACKING_AVAILABLE = True
 except ImportError:
     USAGE_TRACKING_AVAILABLE = False
     track_image_cost = None
     get_dalle3_cost_usd = None
+    get_gpt_image_1_cost_usd = None
 
 # Install debug interceptor before importing main
 from utils.redirect_debug_output import install_debug_interceptor, uninstall_debug_interceptor
@@ -1529,9 +1530,9 @@ def create_portrait():
             }), 500
         
         # Get optional generation parameters
-        model = data.get('model', 'dall-e-3')
+        model = data.get('model', 'gpt-image-1')
         size = data.get('size', '1024x1024')
-        quality = data.get('quality', 'standard')
+        quality = data.get('quality', 'auto')
         
         # Call portrait service with updated character data
         result = generate_and_save_portrait(
@@ -3652,11 +3653,12 @@ def handle_generate_image(data):
         
         # Try to generate image
         try:
-            # Generate image using DALL-E 3
+            # Generate image using GPT-Image
             response = client.images.generate(
-                model="dall-e-3",
+                model="gpt-image-1",
                 prompt=prompt,
                 size="1024x1024",
+                quality="auto",
                 n=1,
             )
             # Get the image URL
@@ -3670,9 +3672,10 @@ def handle_generate_image(data):
                 
                 # Retry with sanitized prompt
                 response = client.images.generate(
-                    model="dall-e-3",
+                    model="gpt-image-1",
                     prompt=sanitized_prompt,
                     size="1024x1024",
+                    quality="auto",
                     n=1,
                 )
                 image_url = response.data[0].url
@@ -3745,13 +3748,13 @@ def handle_generate_image(data):
         
         # Track image cost (fail-open, after successful generation)
         try:
-            if track_image_cost and get_dalle3_cost_usd:
-                cost_usd = get_dalle3_cost_usd("1024x1024", "standard")
+            if track_image_cost and (get_dalle3_cost_usd or get_gpt_image_1_cost_usd):
+                cost_usd = get_gpt_image_1_cost_usd("1024x1024", "auto") if get_gpt_image_1_cost_usd else get_dalle3_cost_usd("1024x1024", "standard")
                 track_image_cost(
                     cost_usd=cost_usd,
                     size="1024x1024",
-                    quality="standard",
-                    model="dall-e-3",
+                    quality="auto",
+                    model="gpt-image-1",
                     context={
                         "endpoint": "web_interface",
                         "purpose": "generate_image_socket",
@@ -4723,7 +4726,7 @@ def generate_npc_portraits():
     data = request.json
     module_name = data.get('module_name')
     pack_name = data.get('pack_name')
-    model = data.get('model', 'dall-e-3')
+    model = data.get('model', 'gpt-image-1')
     style = data.get('style', 'photorealistic')
     style_prompt = data.get('style_prompt', '')
     npcs = data.get('npcs', [])
@@ -5741,7 +5744,7 @@ def handle_generate_unified_assets(data):
 
                         # Generate portrait using selected style and model
                         style = options.get('style', 'photorealistic')
-                        model = options.get('model', 'dall-e-3')
+                        model = options.get('model', 'gpt-image-1')
                         result = npc_generator.generate_npc_portrait(
                             npc_id=asset['id'],
                             npc_name=asset['name'],
@@ -5818,7 +5821,7 @@ def handle_generate_unified_assets(data):
                 # Generate monster images
                 if monsters_to_image:
                     style = options.get('style', 'photorealistic')
-                    model = options.get('model', 'dall-e-3')
+                    model = options.get('model', 'gpt-image-1')
                     
                     # Initialize monster generator (it gets API key from config)
                     monster_generator = MonsterGenerator()

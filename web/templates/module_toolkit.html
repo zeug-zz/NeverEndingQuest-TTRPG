@@ -2280,10 +2280,10 @@
                                 </select>
                             </div>
                             <div class="form-group option-box purple-outline">
-                                <label for="genModel">AI Model:<span class="tooltip-trigger" data-tooltip="The underlying AI model for image generation. DALL-E 3 is the default.">?</span></label>
+                                <label for="genModel">AI Model:<span class="tooltip-trigger" data-tooltip="The underlying AI model for image generation. GPT-Image is the default.">?</span></label>
                                 <select id="genModel" onchange="checkModelWarning()">
-                                    <option value="dall-e-3">DALL-E 3 (Default)</option>
-                                    <option value="gpt-image-1">GPT-Image (Best Quality)</option>
+                                    <option value="gpt-image-1">GPT-Image (Default)</option>
+                                    <option value="dall-e-3">DALL-E 3 (Legacy)</option>
                                 </select>
                                 <div class="model-warning" id="modelWarning">
                                     Warning: GPT-Image requires a validated OpenAI account with higher tier access.
@@ -2445,10 +2445,10 @@
                                 </select>
                             </div>
                             <div class="form-group option-box purple-outline">
-                                <label for="npcModelSelect">AI Model:<span class="tooltip-trigger" data-tooltip="The AI model used for generating portraits. DALL-E 3 is the default.">?</span></label>
+                                <label for="npcModelSelect">AI Model:<span class="tooltip-trigger" data-tooltip="The AI model used for generating portraits. GPT-Image is the default.">?</span></label>
                                 <select id="npcModelSelect" onchange="checkNpcModelWarning()">
-                                    <option value="dall-e-3">DALL-E 3 (Default)</option>
-                                    <option value="gpt-image-1">GPT-Image (Best Quality)</option>
+                                    <option value="gpt-image-1">GPT-Image (Default)</option>
+                                    <option value="dall-e-3">DALL-E 3 (Legacy)</option>
                                 </select>
                                 <div class="model-warning" id="npcModelWarning">
                                     Warning: GPT-Image requires a validated OpenAI account with higher tier access.
@@ -2617,7 +2617,7 @@
                             <div class="section" style="margin-top: 15px; margin-bottom: 20px;">
                                 <h2 style="font-size: 1.2em; margin-bottom: 10px;">Homebrew Upload (.md / .pdf)</h2>
                                 <p style="color: #b0b0b0; margin-bottom: 12px;">
-                                    Upload a Homebrewery markdown file or a text-extractable PDF and ingest it directly through the shared strict pipeline.
+                                    Upload your <a href="https://homebrewery.naturalcrit.com/" target="_blank" rel="noopener" style="color: #4caf50; text-decoration: underline;">Homebrewery</a> markdown file or a text-extractable PDF and ingest it directly through the shared strict pipeline.
                                     Build progress appears in one live console below. PDFs are text-extracted only; image-only or OCR-needed PDFs are not supported in this MVP.
                                 </p>
                                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -2767,10 +2767,10 @@
                             </div>
                             
                             <div class="config-item">
-                                <label for="media-gen-model-select">AI Model:<span class="tooltip-trigger" data-tooltip="The AI model for image generation. DALL-E 3 is recommended for most uses.">?</span></label>
+                                <label for="media-gen-model-select">AI Model:<span class="tooltip-trigger" data-tooltip="The AI model for image generation. GPT-Image is the default.">?</span></label>
                                 <select id="media-gen-model-select" class="game-input">
-                                    <option value="dall-e-3">DALL-E 3 (Default)</option>
-                                    <option value="gpt-image-1">GPT-Image (Premium)</option>
+                                    <option value="gpt-image-1">GPT-Image (Default)</option>
+                                    <option value="dall-e-3">DALL-E 3 (Legacy)</option>
                                 </select>
                             </div>
                         </div>

@@ -16,8 +16,9 @@ from utils.llm_usage_tracker import (
     track_response,
     get_usage_stats,
     track_image_cost,
-    get_dalle3_cost_usd
+    get_dalle3_cost_usd,
+    get_gpt_image_1_cost_usd
 )
 
 # Re-export for backward compatibility
-__all__ = ['OpenAIUsageTracker', 'get_global_tracker', 'track_response', 'get_usage_stats', 'track_image_cost', 'get_dalle3_cost_usd']
+__all__ = ['OpenAIUsageTracker', 'get_global_tracker', 'track_response', 'get_usage_stats', 'track_image_cost', 'get_dalle3_cost_usd', 'get_gpt_image_1_cost_usd']

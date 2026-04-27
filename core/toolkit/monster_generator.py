@@ -31,10 +31,11 @@ except ImportError:
     print("Warning: Could not import OPENAI_API_KEY from config.py")
 
 try:
-    from utils.openai_usage_tracker import track_image_cost, get_dalle3_cost_usd
+    from utils.openai_usage_tracker import track_image_cost, get_dalle3_cost_usd, get_gpt_image_1_cost_usd
 except ImportError:
     track_image_cost = None
     get_dalle3_cost_usd = None
+    get_gpt_image_1_cost_usd = None
 
 class MonsterGenerator:
     """Service for generating monster images in various styles"""
@@ -136,7 +137,7 @@ class MonsterGenerator:
         self, 
         monster_id: str, 
         style: str = "photorealistic",
-        model: str = "dall-e-3",
+        model: str = "gpt-image-1",
         pack_name: Optional[str] = None
     ) -> Dict:
         """
@@ -166,7 +167,7 @@ class MonsterGenerator:
         
         # Determine model to use
         if model == "auto":
-            model = style_data.get("model_preference", "dall-e-3")
+            model = style_data.get("model_preference", "gpt-image-1")
         
         # Check account validation for GPT-Image
         if model == "gpt-image-1" and not self.validate_account_for_gpt_image():
@@ -229,10 +230,10 @@ class MonsterGenerator:
             
             # Track image cost (fail-open)
             try:
-                if track_image_cost and get_dalle3_cost_usd:
+                if track_image_cost and (get_dalle3_cost_usd or get_gpt_image_1_cost_usd):
                     size = model_settings.get("size", "1024x1024")
-                    quality = model_settings.get("quality", "standard")
-                    cost_usd = get_dalle3_cost_usd(size, quality)
+                    quality = model_settings.get("quality", "auto")
+                    cost_usd = get_gpt_image_1_cost_usd(size, quality) if model == "gpt-image-1" else get_dalle3_cost_usd(size, quality)
                     track_image_cost(
                         cost_usd=cost_usd,
                         size=size,
@@ -316,7 +317,7 @@ class MonsterGenerator:
         pack_name: str,
         style: str = "photorealistic",
         monsters: Optional[List[str]] = None,
-        model: str = "dall-e-3",
+        model: str = "gpt-image-1",
         progress_callback=None
     ) -> Dict:
         """

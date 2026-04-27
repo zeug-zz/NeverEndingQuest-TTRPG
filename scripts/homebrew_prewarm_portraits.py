@@ -371,16 +371,16 @@ def _generate_and_materialize_portrait(
                 # Generate portrait (goes to static portraits + active module portraits via service)
                 result = generate_and_save_portrait(
                     character_data=character_data,
-                    model="dall-e-3",
+                    model="gpt-image-1",
                     size="1024x1024",
-                    quality="standard"
+                    quality="auto"
                 )
         else:
             result = generate_and_save_portrait(
                 character_data=character_data,
-                model="dall-e-3",
+                model="gpt-image-1",
                 size="1024x1024",
-                quality="standard"
+                quality="auto"
             )
         
         if not result.get("success"):
@@ -567,7 +567,7 @@ def _generate_monster_media(
             result = generator.generate_monster_image(
                 monster_id=normalized,
                 style="photorealistic",
-                model="dall-e-3",
+                model="gpt-image-1",
                 pack_name=temp_pack
             )
         

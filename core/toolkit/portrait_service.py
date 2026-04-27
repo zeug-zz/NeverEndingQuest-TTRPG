@@ -29,7 +29,7 @@ import requests
 
 from utils.ai_client_factory import create_image_client
 from utils.enhanced_logger import info, warning, error
-from utils.openai_usage_tracker import track_image_cost, get_dalle3_cost_usd
+from utils.openai_usage_tracker import track_image_cost, get_dalle3_cost_usd, get_gpt_image_1_cost_usd
 
 
 def _normalize_character_name(name: str) -> str:
@@ -517,17 +517,17 @@ def _ensure_portrait_directories() -> tuple:
 
 def generate_and_save_portrait(
     character_data: Dict[str, Any],
-    model: str = "dall-e-3",
+    model: str = "gpt-image-1",
     size: str = "1024x1024",
-    quality: str = "standard"
+    quality: str = "auto"
 ) -> Dict[str, Any]:
     """Generate portrait for character and save to canonical locations.
     
     Args:
         character_data: Character data dictionary
-        model: Image generation model (default dall-e-3)
+        model: Image generation model (default gpt-image-1)
         size: Image size (default 1024x1024)
-        quality: Image quality (default standard)
+        quality: Image quality (default auto)
         
     Returns:
         Result dictionary with keys:
@@ -577,16 +577,11 @@ def generate_and_save_portrait(
             result["error"] = "client_init_failed"
             return result
         
-        # Generate image with vivid style for hyper-realistic fantasy character portraiture
         try:
-            response = client.images.generate(
-                model=model,
-                prompt=prompt[:4000],  # DALL-E has character limit
-                size=size,
-                quality=quality,
-                style="vivid",
-                n=1
-            )
+            gen_kwargs = dict(model=model, prompt=prompt[:4000], size=size, quality=quality, n=1)
+            if model == "dall-e-3":
+                gen_kwargs["style"] = "vivid"
+            response = client.images.generate(**gen_kwargs)
         except Exception as gen_error:
             error(f"PORTRAIT_SERVICE: Generation failed for {name}: {gen_error}", category="portrait_generation")
             result["message"] = "Portrait generation failed"
@@ -677,7 +672,7 @@ def generate_and_save_portrait(
         
         # Track image cost (fail-open)
         try:
-            cost_usd = get_dalle3_cost_usd(size, quality)
+            cost_usd = get_gpt_image_1_cost_usd(size, quality) if model == "gpt-image-1" else get_dalle3_cost_usd(size, quality)
             track_image_cost(
                 cost_usd=cost_usd,
                 size=size,

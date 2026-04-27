@@ -710,7 +710,7 @@ def get_usage_stats():
         }
 
 
-def track_image_cost(cost_usd: float, size: str = "1024x1024", quality: str = "standard", model: str = "dall-e-3", context=None):
+def track_image_cost(cost_usd: float, size: str = "1024x1024", quality: str = "auto", model: str = "gpt-image-1", context=None):
     """
     Track a cost-only image generation event (no tokens) into session/week rollups.
     Safe fail-open: returns True on success, False on any error without raising.
@@ -719,7 +719,7 @@ def track_image_cost(cost_usd: float, size: str = "1024x1024", quality: str = "s
         cost_usd: USD cost for the image generation (use 0.0 if unavailable)
         size: Image size (e.g., "1024x1024", "1024x1792", "1792x1024")
         quality: Image quality (e.g., "standard", "hd")
-        model: Model identifier (default "dall-e-3")
+        model: Model identifier (default "gpt-image-1")
         context: Optional dict with endpoint/purpose metadata
     
     Returns:
@@ -814,6 +814,39 @@ def get_dalle3_cost_usd(size: str = "1024x1024", quality: str = "standard") -> f
         # Fallback to standard quality if hd not found
         if size_key in DALLE3_PRICING_USD and "standard" in DALLE3_PRICING_USD[size_key]:
             return float(DALLE3_PRICING_USD[size_key]["standard"])
+        
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def get_gpt_image_1_cost_usd(size: str = "1024x1024", quality: str = "medium") -> float:
+    """
+    Get estimated USD cost for a GPT-Image-1 image generation.
+    Returns 0.0 if pricing config is unavailable or invalid.
+    
+    Args:
+        size: Image size (e.g., "1024x1024", "1024x1792", "1792x1024")
+        quality: Image quality ("low", "medium", "high", or "auto" which maps to "medium")
+    
+    Returns:
+        Estimated USD cost, or 0.0 if unavailable
+    """
+    try:
+        from model_config import GPT_IMAGE_1_PRICING_USD
+        
+        size_key = str(size) if size else "1024x1024"
+        quality_key = str(quality) if quality else "medium"
+        if quality_key == "auto":
+            quality_key = "medium"
+        
+        if size_key in GPT_IMAGE_1_PRICING_USD:
+            size_pricing = GPT_IMAGE_1_PRICING_USD[size_key]
+            if quality_key in size_pricing:
+                return float(size_pricing[quality_key])
+        
+        if size_key in GPT_IMAGE_1_PRICING_USD and "medium" in GPT_IMAGE_1_PRICING_USD[size_key]:
+            return float(GPT_IMAGE_1_PRICING_USD[size_key]["medium"])
         
         return 0.0
     except Exception:

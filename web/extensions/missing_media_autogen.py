@@ -156,9 +156,9 @@ def _generate_portrait_callback(task: MissingMediaTask) -> bool:
 
         result = generate_and_save_portrait(
             character_data=character_data,
-            model="dall-e-3",
+            model="gpt-image-1",
             size="1024x1024",
-            quality="standard"
+            quality="auto"
         )
 
         if not result.get("success"):

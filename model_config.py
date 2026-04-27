@@ -287,4 +287,24 @@ DALLE3_PRICING_USD = {
         "hd": 0.120
     }
 }
+
+# GPT-Image-1 per-image pricing (USD) - used when provider cost metadata is unavailable
+# gpt-image-1 uses token-based pricing; these are approximate USD estimates per image
+GPT_IMAGE_1_PRICING_USD = {
+    "1024x1024": {
+        "low": 0.011,
+        "medium": 0.042,
+        "high": 0.167
+    },
+    "1024x1792": {
+        "low": 0.022,
+        "medium": 0.083,
+        "high": 0.333
+    },
+    "1792x1024": {
+        "low": 0.022,
+        "medium": 0.083,
+        "high": 0.333
+    }
+}
 # ============================================================================
