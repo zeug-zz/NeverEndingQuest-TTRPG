@@ -289,6 +289,13 @@
         "relation": "reference",
         "confidence": "high",
         "notes": "Scout Elen handoff thread links Thornwood outcomes to Keep of Doom entry."
+      },
+      {
+        "target_module": "The_Thornwood_Watch",
+        "entity_id": "malarok",
+        "relation": "reference",
+        "confidence": "medium",
+        "notes": "Malarok/old debt threads bridge northern and southern arcs."
       }
     ],
     "standalone_fallback": {
@@ -1796,12 +1803,11 @@
           "AA09"
         ],
         "sources": [
-          "areas/G001.json#locations[AA09].aliases",
-          "module_plot.json#plotPoints[PP003].title"
+          "areas/G001.json#locations[AA09].aliases"
         ],
         "observed": true,
         "player_facing": true,
-        "observation_count": 2
+        "observation_count": 1
       },
       "broken tower": {
         "status": "resolved",
@@ -3861,6 +3867,7 @@
       "duplicate_location_aliases": [],
       "ambiguous_destination_phrases": [],
       "unresolved_destination_phrases": [],
+      "normalized_shortform_destination_phrases": [],
       "missing_npc_authority": [
         {
           "npc": "Brother Jorlan",
@@ -3987,6 +3994,7 @@
       "destination_phrase_count": 82,
       "npc_count": 49,
       "ambiguous_destination_count": 0,
+      "normalized_shortform_destination_count": 0,
       "missing_npc_authority_count": 13
     }
   }
