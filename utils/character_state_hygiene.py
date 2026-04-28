@@ -16,6 +16,26 @@ See LICENSE file for full terms.
 from typing import Any, Dict, List
 
 
+def is_mechanically_dead(character_data: Dict[str, Any]) -> bool:
+    """Check if character is mechanically dead (status='dead' or 3 death save failures).
+
+    This is the authoritative check -- even if HP > 0, a character with
+    explicit status='dead' or deathSaves.failures >= 3 is mechanically dead.
+    Only an explicit resurrection action should clear this state.
+    """
+    if not isinstance(character_data, dict):
+        return False
+    status = str(character_data.get("status") or "").strip().lower()
+    if status == "dead":
+        return True
+    death_saves_raw = character_data.get("deathSaves")
+    if isinstance(death_saves_raw, dict):
+        failures = _coerce_int(death_saves_raw.get("failures", 0), 0)
+    else:
+        failures = _coerce_int(character_data.get("deathSaveFailures", 0), 0)
+    return failures >= 3
+
+
 def _coerce_int(value: Any, default: int = 0) -> int:
     """Convert a value to int with safe fallback."""
     try:
@@ -61,7 +81,17 @@ def normalize_life_state_fields(character_data: Dict[str, Any]) -> Dict[str, Any
         successes = max(0, min(_coerce_int(character_data.get("deathSaveSuccesses", 0), 0), 3))
         failures = max(0, min(_coerce_int(character_data.get("deathSaveFailures", 0), 0), 3))
 
-    if current_hp > 0:
+    # Dead-state authority: explicit death or 3 failed death saves wins
+    # over positive HP. Only an explicit resurrection action should
+    # clear this state.
+    if status == "dead" or failures >= 3:
+        character_data["hitPoints"] = 0
+        status = "dead"
+        condition = "none"
+        conditions = []
+        failures = max(failures, 3)
+        successes = 0
+    elif current_hp > 0:
         status = "alive"
         successes = 0
         failures = 0
@@ -70,10 +100,6 @@ def normalize_life_state_fields(character_data: Dict[str, Any]) -> Dict[str, Any
             condition = conditions[0] if conditions else "none"
         elif condition == "none" and conditions:
             condition = conditions[0]
-    elif failures >= 3:
-        status = "dead"
-        condition = "none"
-        conditions = []
     else:
         status = "unconscious"
         condition = "unconscious"

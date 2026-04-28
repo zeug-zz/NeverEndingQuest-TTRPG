@@ -1686,10 +1686,24 @@ def _to_int(value: Any, field_name: str, op_type: str) -> int:
 
 def _sync_death_save_state(updated_data: Dict[str, Any]) -> None:
     """Keep death saves coherent with HP and status after deterministic ops."""
+    from utils.character_state_hygiene import is_mechanically_dead
+
     death_saves = _ensure_death_saves_object(updated_data)
     current_hp = _to_int(updated_data.get("hitPoints", 0), "hitPoints", "death_saves")
     successes = death_saves["successes"]
     failures = death_saves["failures"]
+
+    # Dead-state authority: explicit death or 3 failed death saves wins
+    # over positive HP. Only an explicit resurrection action should
+    # clear this state.
+    if is_mechanically_dead(updated_data):
+        updated_data["hitPoints"] = 0
+        updated_data["status"] = "dead"
+        updated_data["condition"] = "none"
+        updated_data["condition_affected"] = []
+        death_saves["successes"] = 0
+        death_saves["failures"] = max(failures, 3)
+        return
 
     if current_hp > 0:
         death_saves["successes"] = 0

@@ -122,6 +122,16 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
   request_style: player-facing concentration saves SHOULD use requestRoll with rollType=saving_throw and ability=constitution.
 }
 
+@DEATH_STATE_VALIDATION={
+  prime_directive: "Python enforces reality; you interpret it."
+  shapes: "Four valid shapes: dead PC remains dead, separate entity, resurrected/corrupted PC, or dream/vision/echo."
+  rule: "If response claims durable supernatural state change (dead PC acting alive, corrupted body present, party-following thrall) WITHOUT matching state action, flag INVALID."
+  retry_fix: "Suggest: keep PC dead and frame as dream/vision/echo, create/move separate entity via available action, or use resurrectCharacter action."
+  allowed: "Dreams, visions, omens, echoes, possession narration, corruption themes, bargains, false returns WITHOUT durable state claims are VALID."
+  action_available: "The resurrectCharacter action NOW EXISTS (character, mode, hitPoints, source). Use it when the response implies a dead PC has been revived."
+  principle: "Durable supernatural facts require explicit Python state action."
+}
+
 @LOCATION_NPC_REFS={
   valid: ONLY existing locations/NPCs from module files
   invalid: Invented places/people ("sage by millhouse" when no millhouse)

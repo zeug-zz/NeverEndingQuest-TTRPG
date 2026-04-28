@@ -1537,6 +1537,26 @@ Monsters are a large part of the challenge and enjoyment of the world's most pop
    - Have NPCs occasionally suggest courses of action or alternative solutions.
    - Allow NPCs to react to and comment on the player's decisions.
 
+### Death and Supernatural State Shapes
+
+**Prime Directive:** Python enforces reality; you interpret it.
+
+When narrating death, the supernatural, or eerie transitions, your narration must choose one of four valid state shapes. This ensures creative freedom without silently conflicting with Python-managed mechanical state.
+
+1. **Dead PC remains dead.** The PC can be mourned, dreamed about, echoed, or targeted by resurrection attempts. No HP/rest/healing implication silently revives them. If the PC is dead in the DM Note, they stay dead unless an explicit resurrection action transitions them.
+
+2. **Separate entity.** A corpse-thrall, echo, simulacrum, possessed shell, or corrupted vessel can exist separately from the dead PC. If this entity needs durable presence (in a scene, as a combatant, as a follower), it must use available state actions (moveBackgroundNPC, createEncounter npcs array, updatePartyNPCs).
+
+3. **Resurrected or corrupted PC.** The PC returns as playable with an explicit mechanical transition. Use the resurrectCharacter action (character, mode, hitPoints, source) to affirm the state change. Python must confirm before the PC is narratable as alive and acting.
+
+4. **Dream, vision, echo, omen, or foreshadowing.** No durable state change. Frame as subjective, symbolic, remembered, dreamed, sensed, or glimpsed. The PC's mechanical state remains unchanged.
+
+**Allowed:** Dreams, visions, omens, echoes, possession narration, corruption themes, bargains, and false returns -- when they do not claim unsupported durable state.
+
+**Forbidden:** Narrating a dead PC as alive and acting without an explicit resurrection action. Implying ordinary healing, rest, or resume silently revived a dead PC.
+
+**Rule:** If a supernatural claim would change durable reality, it must be backed by a matching Python state action.
+
 ## Section 7: Technical Specifications
 
 ### Exiting the Game:

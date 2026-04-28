@@ -150,6 +150,7 @@ ACTION_RESTORE_GAME = "restoreGame"
 ACTION_LIST_SAVES = "listSaves"
 ACTION_DELETE_SAVE = "deleteSave"
 ACTION_REST = "rest"
+ACTION_RESURRECT = "resurrectCharacter"
 ACTION_REQUEST_ROLL = "requestRoll"
 
 # Module conversation segmentation has been moved to conversation_utils.py
@@ -3084,10 +3085,165 @@ Please use a valid location that exists in the current area ({current_area_id}) 
 
             traceback.print_exc()
 
+    elif action_type == ACTION_RESURRECT:
+        debug("STATE_CHANGE: Processing resurrectCharacter action", category="character_updates")
+        try:
+            resurrect_result = _process_resurrect_character(parameters, party_tracker_data)
+            if resurrect_result.get("skipped"):
+                debug(
+                    f"RESURRECT: Skipped - {resurrect_result.get('skip_reason', 'unknown')}",
+                    category="character_updates",
+                )
+            elif resurrect_result.get("applied"):
+                conversation_history.append({
+                    "role": "system",
+                    "content": f"[SYSTEM] Resurrection applied: {resurrect_result.get('mode', 'unknown')} on {parameters.get('character', 'unknown')} via {parameters.get('source', 'unknown')}.",
+                })
+                needs_conversation_history_update = True
+                info(
+                    f"RESURRECT: Applied {resurrect_result.get('mode', 'unknown')} to {parameters.get('character', 'unknown')}",
+                    category="character_updates",
+                )
+            else:
+                error_msg = resurrect_result.get("error", "unknown error")
+                warning(
+                    f"RESURRECT: Failed - {error_msg}",
+                    category="character_updates",
+                )
+                conversation_history.append({
+                    "role": "system",
+                    "content": f"[SYSTEM] Resurrection failed: {error_msg}",
+                })
+                needs_conversation_history_update = True
+        except Exception as e:
+            error(
+                f"RESURRECT: Error processing resurrectCharacter: {e}",
+                exception=e,
+                category="character_updates",
+            )
+            print(f"ERROR: Exception while processing resurrectCharacter: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     else:
         print(f"WARNING: Unknown action type: {action_type}")
 
     return create_return(needs_update=needs_conversation_history_update)
+
+
+def _process_resurrect_character(parameters: dict, party_tracker_data: dict) -> dict:
+    """Process a resurrectCharacter action.
+
+    Args:
+        parameters: Action parameters with character, mode, hitPoints, source
+        party_tracker_data: Current party tracker data
+
+    Returns:
+        dict with status information
+    """
+    try:
+        from utils.character_state_hygiene import is_mechanically_dead
+        from utils.file_operations import safe_read_json, safe_write_json
+        from updates.update_character_info import (
+            update_character_info,
+            find_character_file_fuzzy,
+        )
+        from utils.module_path_manager import ModulePathManager
+
+        character = parameters.get("character", "").strip()
+        mode = parameters.get("mode", "").strip()
+        hit_points = parameters.get("hitPoints")
+        source = parameters.get("source", "").strip()
+
+        # Validate required parameters
+        if not character:
+            return {"applied": False, "error": "Missing required parameter: character"}
+        if not mode:
+            return {"applied": False, "error": "Missing required parameter: mode"}
+        if hit_points is None:
+            return {"applied": False, "error": "Missing required parameter: hitPoints"}
+        if not source:
+            return {"applied": False, "error": "Missing required parameter: source"}
+
+        # Load character data to verify eligibility
+        module_name = party_tracker_data.get("module", "").replace(" ", "_")
+        path_manager = ModulePathManager(module_name)
+        matched_name = find_character_file_fuzzy(character)
+        if not matched_name:
+            normalized_name = character.lower().replace(" ", "_").replace("'", "_")
+            char_filepath = path_manager.get_character_path(normalized_name)
+        else:
+            char_filepath = path_manager.get_character_path(matched_name)
+
+        character_data = safe_read_json(char_filepath)
+        if not character_data:
+            return {"applied": False, "error": f"Character not found: {character}"}
+
+        # Eligibility check: character must be mechanically dead
+        if not is_mechanically_dead(character_data):
+            return {
+                "applied": False,
+                "error": f"Character {character} is not dead and cannot be resurrected",
+            }
+
+        # Eligibility check: mode must be recognized
+        valid_modes = {"ordinary_resurrection", "corrupted_resurrection"}
+        if mode not in valid_modes:
+            return {
+                "applied": False,
+                "error": f"Unsupported resurrection mode: {mode}. Valid modes: {', '.join(sorted(valid_modes))}",
+            }
+
+        # Build the update description with explicit HP target
+        consequences = parameters.get("consequences", [])
+        update_parts = [f"Resurrected with {hit_points} hit points via {source}"]
+
+        if mode == "corrupted_resurrection":
+            update_parts.append("Resurrection mode is corrupted -- apply lingering consequences")
+
+        if consequences:
+            update_parts.append(f"Consequences: {', '.join(consequences)}")
+
+        update_text = ". ".join(update_parts)
+
+        # Apply the resurrection via update_character_info
+        success = update_character_info(character, update_text)
+
+        if success:
+            # Persist supernatural metadata for downstream narrative context
+            _supernatural_meta = {
+                "resurrection_mode": mode,
+                "resurrection_source": source,
+                "resurrection_hitPoints": hit_points,
+            }
+            if consequences:
+                _supernatural_meta["resurrection_consequences"] = consequences
+
+            # Re-read character file, patch in metadata, write back (fail-open)
+            try:
+                updated_data = safe_read_json(char_filepath)
+                if updated_data:
+                    updated_data["_supernatural_metadata"] = _supernatural_meta
+                    safe_write_json(char_filepath, updated_data)
+            except Exception as meta_err:
+                warning(
+                    f"RESURRECT: Failed to persist supernatural metadata for {character}: {meta_err}",
+                    category="character_updates",
+                )
+
+            return {
+                "applied": True,
+                "character": character,
+                "mode": mode,
+                "hitPoints": hit_points,
+                "source": source,
+                "consequences": consequences,
+            }
+        else:
+            return {"applied": False, "error": f"Failed to apply resurrection for {character}"}
+
+    except Exception as e:
+        return {"applied": False, "error": f"Resurrection processing error: {str(e)}"}
 
 
 def _process_character_rest(
@@ -3150,6 +3306,25 @@ def _process_character_rest(
                 category="character_updates",
             )
             return None
+
+        # Dead-character guard: dead PCs cannot benefit from rest.
+        # Only an explicit resurrectCharacter action should clear this state.
+        from utils.character_state_hygiene import is_mechanically_dead
+        if is_mechanically_dead(character_data):
+            debug(
+                f"REST: Skipping rest for dead character {character_name}",
+                category="character_updates",
+            )
+            return {
+                "character": character_name,
+                "rest_type": rest_type,
+                "skipped": True,
+                "skip_reason": "dead",
+                "hp_restored": 0,
+                "spell_slots_restored": 0,
+                "features_reset": [],
+                "exhaustion_reduced": False,
+            }
 
         results = {
             "character": character_name,
@@ -3312,6 +3487,11 @@ def _format_rest_summary(rest_results: list, rest_type: str) -> str:
         hp = result.get("hp_restored", 0)
         slots = result.get("spell_slots_restored", 0)
         features = result.get("features_reset", [])
+
+        if result.get("skipped"):
+            skip_reason = result.get("skip_reason", "skipped")
+            lines.append(f"  - {char_name}: (skipped -- {skip_reason})")
+            continue
 
         details = []
         if hp > 0:

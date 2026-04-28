@@ -2234,7 +2234,42 @@ def validate_ai_response(
             from utils.narrator_location_exclusivity_guard import (
                 evaluate_authored_exit_grounding_decision,
                 evaluate_location_exclusivity_decision,
+                normalize_party_member_name,
             )
+            from utils.scene_follower_state import (
+                get_follower_records,
+                load_followers,
+            )
+
+            # Build canonical party member names for location exclusivity collision
+            # resolution. When a bare anchor alias equals a current party member name,
+            # it should be treated as an identity reference, not off-location presence.
+            party_member_names = None
+            if party_tracker_data and isinstance(party_tracker_data, dict):
+                raw_party_members = party_tracker_data.get("partyMembers", [])
+                if raw_party_members and isinstance(raw_party_members, list):
+                    party_member_names = {
+                        normalize_party_member_name(name) for name in raw_party_members
+                    }
+
+            # Build follower_records dict: entity_id -> current_location for
+            # scene-entity followers that travel with the party. These are
+            # authorized present-scene anchor references at their tracked location.
+            follower_records = None
+            follower_store = load_followers()
+            follower_list = get_follower_records(follower_store)
+            if follower_list:
+                follower_records = {}
+                for r in follower_list:
+                    entity_id = str(r.get("entity_id", "") or "").strip()
+                    location_id = str(r.get("current_location", "") or "").strip()
+                    if not entity_id or not location_id:
+                        continue
+                    # Normalize entity_id the same way guard aliases are
+                    # normalized so the `alias in follower_records` lookup
+                    # always matches regardless of hyphens/underscores.
+                    normalized_key = normalize_party_member_name(entity_id)
+                    follower_records[normalized_key] = location_id.upper()
 
             location_exclusivity_decision = evaluate_location_exclusivity_decision(
                 response_json=response_json,
@@ -2244,6 +2279,8 @@ def validate_ai_response(
                 current_location_data=effective_location_data
                 if isinstance(effective_location_data, dict)
                 else None,
+                party_member_names=party_member_names,
+                follower_records=follower_records,
             )
             if not bool(location_exclusivity_decision.get("valid", True)):
                 exclusivity_reason = str(

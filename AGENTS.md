@@ -279,6 +279,17 @@ Major subsystems use dedicated managers:
 - **Why it was wrong**: Modified upstream feature structure instead of accepting it as designed
 - **Correct approach**: Keep host TTS feature exactly as upstream designed it, use same Settings dropdown (works for both single and multi)
 
+#### Git Push Safety Rules
+
+**Upstream (`MoonlightByte/NeverEndingQuest`) is read-only for push operations.** The `upstream` remote push URL is set to `DISABLE` to prevent accidental pushes. NEVER push to upstream.
+
+**Rules:**
+1. **Always push to `origin` explicitly** — Use `git push origin <branch>` rather than bare `git push`. Never push to `upstream`.
+2. **Never create PRs targeting upstream** — All PRs should target your fork (`zeug-zz/NeverEndingQuest-TTRPG`). Do not use `gh pr create --repo MoonlightByte/NeverEndingQuest` unless explicitly requested by the repository owner.
+3. **Branch naming convention** — Use descriptive branch names that make origin vs upstream destination clear (e.g., `feature/`, `fix/`, `chore/` prefixes).
+
+**Why this matters:** An errant PR to upstream was created by an LLM agent pushing to the wrong remote. The `DISABLE` push guard and these rules prevent recurrence.
+
 ### SRD 5.2.1 Compliance
 When implementing game mechanics:
 - Use "5th edition" or "5e" instead of "D&D"
@@ -1033,6 +1044,41 @@ character_data["is_active_pc"] = True
 ---
 
 ## Recent Changes
+
+### Narration-Reality Death/Supernatural State Chain (COMPLETED - 2026-04-28)
+
+**Status:** COMPLETED - All 5 OpenSpec changes from `plans/narration-reality.md` implemented, validated, archived, and audit patches applied.
+
+**Objective:**
+- Implement the Prime Directive ("Python enforces reality; you interpret it.") for death and supernatural state continuity
+- Prevent dead PCs from being silently revived by rest automation (Vitreol incident fix)
+- Prevent party member name collisions in off-location anchor exclusivity checks
+- Teach LLM the 4 valid supernatural state shapes with deterministic action requirements
+- Add `resurrectCharacter` dedicated action as the only path to clear mechanical death
+- Add persistent follower state for scene-entity NPCs that travel with the party
+
+**Changes (all archived to `openspec/changes/archive/2026-04-28-*/`):**
+
+1. **tt-dead-pc-mechanical-stickiness** — `utils/character_state_hygiene.py` (`is_mechanically_dead` predicate, dead-before-positive-HP order), `updates/update_character_info.py` (dead-state death save normalization), `core/ai/action_handler.py` (dead-character rest skip), `utils/multi_pc_dm_note.py` (`[DEAD]` tags in full+condensed DM Note). Tests: 22 (11 hygiene + 8 DM note + 3 contract).
+
+2. **tt-scene-anchor-party-identity-collision** — `utils/narrator_location_exclusivity_guard.py` (`party_member_names` parameter, bare alias skip), `main.py` (party member set building). Tests: 17.
+
+3. **tt-supernatural-state-shape-contract** — 4 prompt files: `system_prompt_compressed.txt`, `system_prompt.txt`, `validation_prompt_compressed.txt`, `validation_prompt.txt` (`@DEATH_AND_SUPERNATURAL_STATE` directive, 4 state shapes, prime directive). Tests: 7.
+
+4. **tt-resurrection-and-corruption-state-action** — `core/ai/action_handler.py` (`resurrectCharacter` constant, dispatch, handler with mode/HP/source validation and `_supernatural_metadata` persistence), prompts (`@ACTIONS`, `@PARAMS`, Shape 3 refs). Tests: 2 contract.
+
+5. **tt-following-scene-entity-state** — `utils/scene_follower_state.py` (new, 9 CRUD helpers for `data/runtime/scene_followers.json`), `narrator_location_exclusivity_guard.py` (`follower_records` param), `main.py` (follower loading and dict building with normalized entity IDs), `system_prompt_compressed.txt` (`@FOLLOWER_STATE` directive). Tests: 18.
+
+**Audit Patches Applied:**
+- `_format_rest_summary` now shows `"(skipped -- dead)"` instead of `"(no changes)"` for dead PCs
+- Follower entity IDs normalized through `normalize_party_member_name` for alias match consistency
+- Short-rest dead-skip test and failures-only dead-skip test added to `scripts/test_rest_action.py`
+- Hyphenated entity ID normalization test added to exclusivity guard tests
+
+**Verification:**
+- 66 total tests across all 5 changes pass
+- All 5 `openspec validate` clean
+- All 5 archived to `openspec/changes/archive/2026-04-28-*/`
 
 ### Portrait Popup Modal Sizing + Video-First Path Unification (COMPLETED - 2026-04-25)
 

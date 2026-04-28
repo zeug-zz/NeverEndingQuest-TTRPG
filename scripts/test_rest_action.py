@@ -323,6 +323,189 @@ def test_exhaustion_removal():
         return True
 
 
+def test_long_rest_skips_dead_character():
+    """Test that dead characters are skipped during rest (Task 2.1-2.3)."""
+    print("\n[Test] Long Rest - Dead Character Skip")
+    print("-" * 50)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        characters_dir = os.path.join(temp_dir, "characters")
+        os.makedirs(characters_dir)
+
+        # Create a dead character with positive HP (stale resurrect bug)
+        dead_pc = create_test_character(
+            "Dead Adventurer",
+            "Fighter",
+            hp=30,  # Positive HP -- should NOT be revived
+            max_hp=40,
+        )
+        dead_pc["status"] = "dead"
+        dead_pc["deathSaves"] = {"successes": 0, "failures": 3}
+
+        char_file = os.path.join(characters_dir, "dead_adventurer.json")
+        safe_write_json(char_file, dead_pc)
+
+        party_tracker = {
+            "module": "Test Module",
+            "partyMembers": ["Dead Adventurer"],
+            "active_character": "Dead Adventurer"
+        }
+
+        result = _process_character_rest("Dead Adventurer", "long", party_tracker)
+
+        if result is None:
+            print("[FAIL] Rest processing returned None instead of skipped result")
+            return False
+
+        if result.get("skipped") and result.get("skip_reason") == "dead":
+            print(f"[PASS] Dead character correctly skipped (skipped=True, reason={result['skip_reason']})")
+        else:
+            print(f"[FAIL] Expected skipped=True with reason=dead, got: skipped={result.get('skipped')}, reason={result.get('skip_reason')}")
+            return False
+
+        # Verify no mutations
+        loaded = safe_read_json(char_file)
+        if loaded.get("status") == "dead":
+            print("[PASS] Character file unchanged (still dead)")
+        else:
+            print(f"[FAIL] Character file was mutated: status={loaded.get('status')}")
+            return False
+
+        return True
+
+
+def test_short_rest_skips_dead_character():
+    """Test that dead characters are skipped during short rest (same guard path)."""
+    print("\n[Test] Short Rest - Dead Character Skip")
+    print("-" * 50)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        characters_dir = os.path.join(temp_dir, "characters")
+        os.makedirs(characters_dir)
+
+        dead_pc = create_test_character(
+            "Dead Adventurer",
+            "Fighter",
+            hp=0,
+            max_hp=40,
+        )
+        dead_pc["status"] = "dead"
+        dead_pc["deathSaves"] = {"successes": 0, "failures": 3}
+
+        char_file = os.path.join(characters_dir, "dead_adventurer.json")
+        safe_write_json(char_file, dead_pc)
+
+        party_tracker = {
+            "module": "Test Module",
+            "partyMembers": ["Dead Adventurer"],
+            "active_character": "Dead Adventurer"
+        }
+
+        result = _process_character_rest("Dead Adventurer", "short", party_tracker)
+
+        if result is None:
+            print("[FAIL] Rest processing returned None instead of skipped result")
+            return False
+
+        if result.get("skipped") and result.get("skip_reason") == "dead":
+            print(f"[PASS] Dead character correctly skipped during short rest (reason={result['skip_reason']})")
+        else:
+            print(f"[FAIL] Expected skipped=True with reason=dead, got: skipped={result.get('skipped')}, reason={result.get('skip_reason')}")
+            return False
+
+        return True
+
+
+def test_long_rest_skips_failures_only_dead_character():
+    """Test that death-save-failures-only dead characters are also skipped.
+
+    A character can be mechanically dead (failures>=3) even if status
+    has not been set to 'dead' yet. is_mechanically_dead must catch this.
+    """
+    print("\n[Test] Long Rest - Failures-Only Dead Character Skip")
+    print("-" * 50)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        characters_dir = os.path.join(temp_dir, "characters")
+        os.makedirs(characters_dir)
+
+        near_dead_pc = create_test_character(
+            "NearDead Adventurer",
+            "Fighter",
+            hp=0,
+            max_hp=40,
+        )
+        near_dead_pc["status"] = "unconscious"
+        near_dead_pc["deathSaves"] = {"successes": 0, "failures": 3}
+
+        char_file = os.path.join(characters_dir, "near_dead_adventurer.json")
+        safe_write_json(char_file, near_dead_pc)
+
+        party_tracker = {
+            "module": "Test Module",
+            "partyMembers": ["NearDead Adventurer"],
+            "active_character": "NearDead Adventurer"
+        }
+
+        result = _process_character_rest("NearDead Adventurer", "long", party_tracker)
+
+        if result is None:
+            print("[FAIL] Rest processing returned None instead of skipped result")
+            return False
+
+        if result.get("skipped") and result.get("skip_reason") == "dead":
+            print(f"[PASS] Failures-only dead character correctly skipped (is_mechanically_dead covers failures>=3)")
+        else:
+            print(f"[FAIL] Expected skipped, got: skipped={result.get('skipped')}, reason={result.get('skip_reason')}")
+            return False
+
+        return True
+
+
+def test_long_rest_heals_alive_character():
+    """Test that alive characters still get normal long rest (non-regression for Task 2.4)."""
+    print("\n[Test] Long Rest - Alive Character Non-Regression")
+    print("-" * 50)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        characters_dir = os.path.join(temp_dir, "characters")
+        os.makedirs(characters_dir)
+
+        alive_pc = create_test_character(
+            "Alive Fighter",
+            "Fighter",
+            hp=15,
+            max_hp=40,
+        )
+
+        char_file = os.path.join(characters_dir, "alive_fighter.json")
+        safe_write_json(char_file, alive_pc)
+
+        party_tracker = {
+            "module": "Test Module",
+            "partyMembers": ["Alive Fighter"],
+            "active_character": "Alive Fighter"
+        }
+
+        result = _process_character_rest("Alive Fighter", "long", party_tracker)
+
+        if result is None:
+            print("[FAIL] Rest processing failed for alive character")
+            return False
+
+        if result.get("skipped"):
+            print(f"[FAIL] Alive character was incorrectly skipped: reason={result.get('skip_reason')}")
+            return False
+
+        if result["hp_restored"] > 0:
+            print(f"[PASS] Alive character restored {result['hp_restored']} HP")
+        else:
+            print("[FAIL] Alive character should have HP restored")
+            return False
+
+        return True
+
+
 def test_fuzzy_name_matching():
     """Test that fuzzy name matching works for characters."""
     print("\n[Test] Fuzzy Character Name Matching")
@@ -371,8 +554,12 @@ def main():
     tests = [
         ("Short Rest - Warlock", test_short_rest_warlock),
         ("Short Rest - Wizard", test_short_rest_wizard),
+        ("Short Rest - Dead Character Skip", test_short_rest_skips_dead_character),
         ("Long Rest - Full Restoration", test_long_rest_full_restoration),
         ("Long Rest - Exhaustion Removal", test_exhaustion_removal),
+        ("Long Rest - Dead Character Skip", test_long_rest_skips_dead_character),
+        ("Long Rest - Failures-Only Dead Character Skip", test_long_rest_skips_failures_only_dead_character),
+        ("Long Rest - Alive Character Non-Regression", test_long_rest_heals_alive_character),
         ("Fuzzy Name Matching", test_fuzzy_name_matching),
     ]
     

@@ -600,6 +600,61 @@ class TestNarratorContractSourceGuards(unittest.TestCase):
         self.assertIn("plot_status_by_id", content)
 
 
+class TestDeathSupernaturalStateContracts(unittest.TestCase):
+    """Source-contract: death and supernatural state shape guidance in prompts."""
+
+    def _prompt_path(self, *parts):
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "prompts", *parts
+        )
+
+    def test_compressed_system_prompt_has_death_supernatural_state_directive(self):
+        with open(self._prompt_path("system_prompt_compressed.txt")) as f:
+            content = f.read()
+        self.assertIn("@DEATH_AND_SUPERNATURAL_STATE={", content)
+        self.assertIn("prime_directive", content)
+        self.assertIn("shape_1", content)
+        self.assertIn("shape_4", content)
+
+    def test_compressed_system_prompt_has_prime_directive(self):
+        with open(self._prompt_path("system_prompt_compressed.txt")) as f:
+            content = f.read()
+        self.assertIn("Python enforces reality; you interpret it.", content)
+
+    def test_compressed_system_prompt_allows_dreams_visions(self):
+        with open(self._prompt_path("system_prompt_compressed.txt")) as f:
+            content = f.read()
+        self.assertIn("Dreams, visions, omens", content)
+        self.assertIn("false returns", content)
+
+    def test_full_system_prompt_has_death_supernatural_section(self):
+        with open(self._prompt_path("system_prompt.txt")) as f:
+            content = f.read()
+        self.assertIn("Death and Supernatural State Shapes", content)
+        self.assertIn("Python enforces reality; you interpret it.", content)
+
+    def test_full_system_prompt_lists_four_shapes(self):
+        with open(self._prompt_path("system_prompt.txt")) as f:
+            content = f.read()
+        self.assertIn("Dead PC remains dead.", content)
+        self.assertIn("Separate entity.", content)
+        self.assertIn("Resurrected or corrupted PC.", content)
+        self.assertIn("Dream, vision, echo, omen", content)
+
+    def test_compressed_validation_prompt_has_death_state_validation(self):
+        with open(self._prompt_path("validation", "validation_prompt_compressed.txt")) as f:
+            content = f.read()
+        self.assertIn("@DEATH_STATE_VALIDATION", content)
+        self.assertIn("action_available", content)
+
+    def test_full_validation_prompt_has_death_state_priority(self):
+        with open(self._prompt_path("validation", "validation_prompt.txt")) as f:
+            content = f.read()
+        self.assertIn("DEATH AND SUPERNATURAL STATE VALIDATION", content)
+        self.assertIn("resurrectCharacter", content)
+
+
 class TestNarratorSceneContextHygieneContracts(unittest.TestCase):
     """Source-contract checks for narrator scene payload hygiene and rejected-turn logging."""
 
@@ -661,6 +716,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestTravelIntentDetectionContracts))
     suite.addTests(loader.loadTestsFromTestCase(TestPromptSingularityContracts))
     suite.addTests(loader.loadTestsFromTestCase(TestNarratorContractSourceGuards))
+    suite.addTests(loader.loadTestsFromTestCase(TestDeathSupernaturalStateContracts))
     suite.addTests(loader.loadTestsFromTestCase(TestNarratorSceneContextHygieneContracts))
     
     runner = unittest.TextTestRunner(verbosity=2)

@@ -111,6 +111,15 @@ def _normalize_alias(value: str) -> str:
     return _normalize_text(value)
 
 
+def normalize_party_member_name(name: str) -> str:
+    """Canonicalize a party member name to match against anchor aliases.
+
+    Uses the same normalization as anchor alias matching so that
+    bare-name collisions are detected reliably.
+    """
+    return _normalize_alias(name)
+
+
 def _contains_any_pattern(normalized_text: str, patterns: List[str]) -> bool:
     """Return True if any regex pattern matches normalized_text."""
     return any(re.search(pattern, normalized_text) for pattern in patterns)
@@ -302,6 +311,8 @@ def _evaluate_metadata_exclusivity_decision(
     current_location_id: str,
     module_locations: Optional[List[Dict[str, Any]]],
     current_location_data: Optional[Dict[str, Any]],
+    party_member_names: Optional[set] = None,
+    follower_records: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Evaluate location-exclusivity using authored sceneAuthority metadata."""
     current_id = str(current_location_id or "").strip().upper()
@@ -340,6 +351,20 @@ def _evaluate_metadata_exclusivity_decision(
         alias_matched = False
         present_scene_claim = False
         for alias in aliases:
+            # Skip bare aliases that exactly match a current party member name.
+            # This prevents off-location anchor aliases from colliding with
+            # party member identities in current-location narration.
+            if party_member_names is not None and alias in party_member_names:
+                continue
+            # Skip aliases that match a scene-entity follower authorized at
+            # the current location. Followers travel with the party and their
+            # present-scene anchor claims are valid at their tracked location.
+            if (
+                follower_records is not None
+                and alias in follower_records
+                and follower_records[alias] == current_id
+            ):
+                continue
             if not _contains_alias(narration, alias):
                 continue
             alias_matched = True
@@ -416,17 +441,25 @@ def evaluate_location_exclusivity_decision(
     current_location_id: str,
     module_locations: Optional[List[Dict[str, Any]]] = None,
     current_location_data: Optional[Dict[str, Any]] = None,
+    party_member_names: Optional[set] = None,
+    follower_records: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Validate location-exclusive present-scene claims.
 
     Runtime prefers authored sceneAuthority metadata when available and preserves
     the legacy Thornwood NC01/NC05 guard as migration-safe fallback.
+
+    When party_member_names is provided, bare aliases that exactly match a current
+    party member name are skipped as identity collisions. Callers without party
+    context should omit the argument to preserve strict behavior.
     """
     metadata_decision = _evaluate_metadata_exclusivity_decision(
         response_json=response_json,
         current_location_id=current_location_id,
         module_locations=module_locations,
         current_location_data=current_location_data,
+        party_member_names=party_member_names,
+        follower_records=follower_records,
     )
     if not bool(metadata_decision.get("valid", True)):
         return metadata_decision

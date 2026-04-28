@@ -193,9 +193,12 @@ def format_pc_full_stats(pc_data: Dict[str, Any], pc_name: str, is_active: bool 
     current_hp = pc_data.get('hitPoints', 0)
     max_hp = pc_data.get('maxHitPoints', current_hp)
     ac = pc_data.get('armorClass', 10)
+    status = str(pc_data.get('status', 'alive') or 'alive').strip().lower()
     
     hp_status = f"HP {current_hp}/{max_hp} [SOURCE: DM Note]"
-    if current_hp <= max_hp * 0.25 and current_hp > 0:
+    if status == "dead":
+        hp_status += " [DEAD]"
+    elif current_hp <= max_hp * 0.25 and current_hp > 0:
         hp_status += " [LOW HEALTH]"
     elif current_hp == 0:
         hp_status += " [UNCONSCIOUS]"
@@ -211,6 +214,14 @@ def format_pc_full_stats(pc_data: Dict[str, Any], pc_name: str, is_active: bool 
             parts.append(f"  Conditions: {', '.join(conditions)}")
     else:
         parts.append("  Conditions: None")
+
+    # Death saves (shown when relevant: unconscious or dead)
+    if status in ("dead", "unconscious") or current_hp == 0:
+        death_saves = pc_data.get('deathSaves', {})
+        if isinstance(death_saves, dict):
+            ds_successes = death_saves.get('successes', 0)
+            ds_failures = death_saves.get('failures', 0)
+            parts.append(f"  Death Saves: {ds_successes}S/{ds_failures}F")
     
     # Ability scores (abbreviated)
     abilities = pc_data.get('abilityScores', {})
@@ -311,9 +322,12 @@ def format_pc_condensed(pc_data: Dict[str, Any], pc_name: str) -> str:
     current_hp = pc_data.get('hitPoints', 0)
     max_hp = pc_data.get('maxHitPoints', current_hp)
     ac = pc_data.get('armorClass', 10)
+    status = str(pc_data.get('status', 'alive') or 'alive').strip().lower()
     
     hp_indicator = ""
-    if current_hp <= max_hp * 0.25 and current_hp > 0:
+    if status == "dead":
+        hp_indicator = " [DEAD]"
+    elif current_hp <= max_hp * 0.25 and current_hp > 0:
         hp_indicator = " [LOW HP]"
     elif current_hp == 0:
         hp_indicator = " [DOWN]"
@@ -326,6 +340,14 @@ def format_pc_condensed(pc_data: Dict[str, Any], pc_name: str) -> str:
         conditions = [c for c in condition_affected if isinstance(c, str)]
         if conditions:
             parts.append(f"  Cond: {', '.join(conditions)}")
+
+    # Death saves (compact, shown when dead or unconscious)
+    if status in ("dead", "unconscious") or current_hp == 0:
+        death_saves = pc_data.get('deathSaves', {})
+        if isinstance(death_saves, dict):
+            ds_successes = death_saves.get('successes', 0)
+            ds_failures = death_saves.get('failures', 0)
+            parts.append(f"  DS: {ds_successes}S/{ds_failures}F")
     
     # Backstory snippet (concise)
     backstory = pc_data.get('backstory', '')
