@@ -2,7 +2,7 @@
 
 ## Status
 
-- Draft for review
+- Complete
 - Scope: tabletop runtime narration-state boundary hardening
 - Motivation: preserve flexible DM narration while preventing silent mechanical contradiction
 - Current live trigger case: Vitreol death, corrupted-thrall narration, location transition drift, and long-rest accidental resurrection

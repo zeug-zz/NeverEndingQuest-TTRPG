@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define rest automation behavior for dead characters, ensuring they are skipped by rest processing and reported without blocking rest for living party members.
+
+## Requirements
 
 ### Requirement: Ordinary rest shall skip dead characters
 

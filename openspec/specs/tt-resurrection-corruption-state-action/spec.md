@@ -1,8 +1,12 @@
-## ADDED Requirements
+## Purpose
+
+Define the `resurrectCharacter` action as the only path to clear mechanical dead state, with corrupted resurrection metadata persistence and prompt/validation contracts preferring explicit transitions.
+
+## Requirements
 
 ### Requirement: Resurrection shall require an explicit state transition
 
-The runtime SHALL provide a dedicated action or structured operation for reviving or corrupting mechanically dead PCs.
+The runtime SHALL provide a dedicated `resurrectCharacter` action for reviving or corrupting mechanically dead PCs.
 
 #### Scenario: Explicit resurrection succeeds
 - GIVEN a PC is mechanically dead

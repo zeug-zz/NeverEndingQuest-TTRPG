@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define persistent follower state for scene entities that travel with the party, with location exclusivity recognition, and explicit non-combat-valid default behavior.
+
+## Requirements
 
 ### Requirement: Durable following scene entities shall require explicit follower state
 

@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define the supernatural state shape contract teaching the LLM the four valid death/supernatural narrative shapes and the boundary between subjective narration and durable mechanical truth.
+
+## Requirements
 
 ### Requirement: Narration shall preserve supernatural freedom within Python state authority
 

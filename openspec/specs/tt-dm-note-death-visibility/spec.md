@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define DM Note death visibility rules ensuring dead PC mechanical truth is exposed in both full and condensed stat blocks.
+
+## Requirements
 
 ### Requirement: DM Note shall expose dead PC mechanical truth
 

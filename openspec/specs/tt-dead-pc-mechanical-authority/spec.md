@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define the mechanical dead-state authority rules ensuring dead PCs stay dead through normalization, preventing accidental revival by generic HP changes.
+
+## Requirements
 
 ### Requirement: Dead PC state shall be mechanically sticky
 

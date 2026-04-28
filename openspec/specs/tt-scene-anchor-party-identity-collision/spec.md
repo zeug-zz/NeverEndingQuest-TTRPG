@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define party member name collision handling in the location exclusivity guard, preventing bare party-name aliases from triggering false off-location scene-anchor failures.
+
+## Requirements
 
 ### Requirement: Location exclusivity guard shall distinguish party names from off-location scene anchors
 
@@ -26,8 +30,6 @@ The narrator location exclusivity guard SHALL accept current party member names 
 #### Scenario: Existing callers preserve strict behavior
 - WHEN `party_member_names` is omitted
 - THEN the guard SHALL preserve current strict off-location anchor behavior
-
-## MODIFIED Requirements
 
 ### Requirement: Runtime validation shall provide party identity context to location exclusivity checks
 
