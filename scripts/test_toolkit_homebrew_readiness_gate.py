@@ -15,11 +15,14 @@ from unittest.mock import patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 from utils.toolkit_homebrew_upload_contract import (
     ensure_workspace_placeholders,
     get_workspace_files,
 )
 from utils.spatial_contract import parse_coordinate
+from core.validation.validate_module_files import ModuleValidator
 from web.extensions import toolkit_homebrew_readiness_gate as readiness_gate
 from scripts.remediate_module_coordinates import remediate_area_map_pair
 
@@ -176,6 +179,87 @@ class TestToolkitHomebrewReadinessGate(unittest.TestCase):
         f03_x, f03_y = parse_coordinate(relaid_coordinate)
         self.assertEqual(abs(f01_x - f03_x) + abs(f01_y - f03_y), 1)
         self.assertEqual(patched_map["rooms"][2]["coordinates"], relaid_coordinate)
+
+    def test_force_relayout_inserts_connector_nodes_for_triangle(self) -> None:
+        module_dir = self.workspace / "modules" / "Toolkit_Readiness_Module"
+        areas_dir = module_dir / "areas"
+        areas_dir.mkdir(parents=True, exist_ok=True)
+
+        area_payload = {
+            "areaId": "GLQ001",
+            "locations": [
+                {
+                    "locationId": "G01",
+                    "name": "Room 1",
+                    "description": "Desc",
+                    "coordinates": "X10Y10",
+                    "connectivity": ["G02", "G03"],
+                },
+                {
+                    "locationId": "G02",
+                    "name": "Room 2",
+                    "description": "Desc",
+                    "coordinates": "X11Y10",
+                    "connectivity": ["G01", "G03"],
+                },
+                {
+                    "locationId": "G03",
+                    "name": "Room 3",
+                    "description": "Desc",
+                    "coordinates": "X10Y11",
+                    "connectivity": ["G01", "G02"],
+                },
+            ],
+            "spatialContractVersion": 1,
+        }
+        map_payload = {
+            "rooms": [
+                {
+                    "id": "G01",
+                    "name": "Room 1",
+                    "connections": ["G02", "G03"],
+                    "coordinates": "X10Y10",
+                },
+                {
+                    "id": "G02",
+                    "name": "Room 2",
+                    "connections": ["G01", "G03"],
+                    "coordinates": "X11Y10",
+                },
+                {
+                    "id": "G03",
+                    "name": "Room 3",
+                    "connections": ["G01", "G02"],
+                    "coordinates": "X10Y11",
+                },
+            ],
+            "spatialContractVersion": 1,
+        }
+
+        (areas_dir / "GLQ001.json").write_text(
+            json.dumps(area_payload, indent=2), encoding="utf-8"
+        )
+        (module_dir / "map_GLQ001.json").write_text(
+            json.dumps(map_payload, indent=2), encoding="utf-8"
+        )
+
+        result = readiness_gate._deterministic_fix_spatial_contract(module_dir)
+        self.assertEqual(result.get("status"), "changed")
+
+        patched_area = json.loads((areas_dir / "GLQ001.json").read_text(encoding="utf-8"))
+        patched_map = json.loads((module_dir / "map_GLQ001.json").read_text(encoding="utf-8"))
+        generated_locations = [
+            location
+            for location in patched_area.get("locations", [])
+            if location.get("spatial_remediation", {}).get("generated")
+        ]
+        self.assertTrue(generated_locations)
+        self.assertTrue(all(location["locationId"].startswith("CN") for location in generated_locations))
+
+        validator = ModuleValidator(str(module_dir), str(REPO_ROOT))
+        validator.load_schemas()
+        validator.validate_spatial_contracts()
+        self.assertEqual(validator.results["spatial_contract"]["failed"], 0)
 
     def test_deterministic_repairs_run_before_semantic_repairs(self) -> None:
         call_order = []

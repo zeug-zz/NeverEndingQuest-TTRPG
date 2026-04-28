@@ -520,6 +520,103 @@ class TestSpatialRemediationContract(unittest.TestCase):
         self.assertEqual(room_by_id["TST02"]["connections"], ["TST01"])
         self.assertEqual(room_by_id["TST03"]["connections"], ["TST01"])
 
+    def test_force_relayout_inserts_connector_nodes_for_triangle(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        module_dir = temp_dir / "Triangle_Module"
+        areas_dir = module_dir / "areas"
+        areas_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            area_data = {
+                "areaId": "TST001",
+                "areaName": "Test",
+                "locations": [
+                    {
+                        "locationId": "TST01",
+                        "name": "Room One",
+                        "description": "Desc",
+                        "coordinates": "X10Y10",
+                        "connectivity": ["TST02", "TST03"],
+                    },
+                    {
+                        "locationId": "TST02",
+                        "name": "Room Two",
+                        "description": "Desc",
+                        "coordinates": "X11Y10",
+                        "connectivity": ["TST01", "TST03"],
+                    },
+                    {
+                        "locationId": "TST03",
+                        "name": "Room Three",
+                        "description": "Desc",
+                        "coordinates": "X10Y11",
+                        "connectivity": ["TST01", "TST02"],
+                    },
+                ],
+                "spatialContractVersion": 1,
+            }
+            map_data = {
+                "mapName": "Test",
+                "mapId": "map_TST001",
+                "totalRooms": 3,
+                "rooms": [
+                    {
+                        "id": "TST01",
+                        "name": "Room One",
+                        "connections": ["TST02", "TST03"],
+                        "coordinates": "X10Y10",
+                    },
+                    {
+                        "id": "TST02",
+                        "name": "Room Two",
+                        "connections": ["TST01", "TST03"],
+                        "coordinates": "X11Y10",
+                    },
+                    {
+                        "id": "TST03",
+                        "name": "Room Three",
+                        "connections": ["TST01", "TST02"],
+                        "coordinates": "X10Y11",
+                    },
+                ],
+                "layout": [["TST01"], ["TST02"], ["TST03"]],
+                "spatialContractVersion": 1,
+            }
+
+            patched_area, patched_map, changes = remediate_area_map_pair(
+                area_data,
+                map_data,
+                force_relayout=True,
+            )
+
+            self.assertGreater(changes, 0)
+            generated_locations = [
+                location
+                for location in patched_area["locations"]
+                if location.get("spatial_remediation", {}).get("generated")
+            ]
+            self.assertTrue(generated_locations)
+            self.assertTrue(
+                all(location["locationId"].startswith("CN") for location in generated_locations)
+            )
+
+            connector_ids = {location["locationId"] for location in generated_locations}
+            for location in patched_area["locations"]:
+                if location["locationId"] == "TST01":
+                    self.assertTrue(any(target in connector_ids for target in location["connectivity"]))
+
+            with open(areas_dir / "TST001.json", "w", encoding="utf-8") as handle:
+                json.dump(patched_area, handle)
+            with open(module_dir / "map_TST001.json", "w", encoding="utf-8") as handle:
+                json.dump(patched_map, handle)
+
+            validator = ModuleValidator(str(module_dir), str(REPO_ROOT))
+            validator.load_schemas()
+            validator.validate_spatial_contracts()
+
+            self.assertEqual(validator.results["spatial_contract"]["failed"], 0)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 class _StubLocationGenerator(LocationGenerator):
     """Location generator with deterministic batch payload for regression checks."""

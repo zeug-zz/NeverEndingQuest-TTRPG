@@ -154,6 +154,71 @@ class TestAnalyzeModuleSpatialParity(unittest.TestCase):
             2,
         )
 
+    def test_reports_risk_when_connector_insertion_would_be_required(self):
+        area_data = {
+            "areaId": "AAA001",
+            "areaName": "Triangle Area",
+            "locations": [
+                {
+                    "locationId": "AAA01",
+                    "name": "Room One",
+                    "description": "Desc",
+                    "connectivity": ["AAA02", "AAA03"],
+                    "coordinates": "X10Y10",
+                },
+                {
+                    "locationId": "AAA02",
+                    "name": "Room Two",
+                    "description": "Desc",
+                    "connectivity": ["AAA01", "AAA03"],
+                    "coordinates": "X11Y10",
+                },
+                {
+                    "locationId": "AAA03",
+                    "name": "Room Three",
+                    "description": "Desc",
+                    "connectivity": ["AAA01", "AAA02"],
+                    "coordinates": "X10Y11",
+                },
+            ],
+        }
+        map_data = {
+            "mapName": "Triangle Area",
+            "mapId": "map_AAA001",
+            "totalRooms": 3,
+            "rooms": [
+                {
+                    "id": "AAA01",
+                    "name": "Room One",
+                    "connections": ["AAA02", "AAA03"],
+                    "coordinates": "X10Y10",
+                },
+                {
+                    "id": "AAA02",
+                    "name": "Room Two",
+                    "connections": ["AAA01", "AAA03"],
+                    "coordinates": "X11Y10",
+                },
+                {
+                    "id": "AAA03",
+                    "name": "Room Three",
+                    "connections": ["AAA01", "AAA02"],
+                    "coordinates": "X10Y11",
+                },
+            ],
+            "layout": [["AAA01"], ["AAA02"], ["AAA03"]],
+        }
+        self._write_module("Triangle_Module", area_data, map_data)
+
+        with patch("scripts.analyze_module_spatial_parity.REPO_ROOT", self.temp_dir):
+            report = analyze_module("Triangle_Module")
+
+        self.assertFalse(report["summary"]["overall_safe_to_apply"])
+        self.assertIn("connector_insertion_required", report["summary"]["risk_flags"])
+        force_report = report["areas"][0]["predicted_remediation"]["force_relayout_report"]
+        self.assertEqual(force_report["status"], "failed")
+        self.assertTrue(force_report["unresolved_edges"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5990,3 +5990,33 @@ Add operator-safe source selection and portability tooling so memory DB workflow
 **OpenSpec:**
 - Created and applied change: `memory-backfill-portability-tools`
 - Archived to: `openspec/changes/archive/2026-02-13-memory-backfill-portability-tools`
+
+### Spatial OpenSpec Archive Sweep (COMPLETED - 2026-04-29)
+
+**Status:** COMPLETED - archived the completed spatial OpenSpec changes and moved the planning doc to the archive folder.
+
+**Objective:**
+Validate and archive the three completed spatial OpenSpec changes, then mark and archive `plans/module-uploader-2.md` while leaving unrelated module and gpt54 changes untouched.
+
+**Implementation Summary:**
+- Validated all three completed spatial changes successfully:
+  - `spatial-constraint-solver-generalization`
+  - `spatial-solver-tier-contract-correction`
+  - `spatial-topology-normalization-failsafe`
+- Archived the changes into:
+  - `openspec/changes/archive/2026-04-28-spatial-constraint-solver-generalization/`
+  - `openspec/changes/archive/2026-04-28-spatial-solver-tier-contract-correction/`
+  - `openspec/changes/archive/2026-04-28-spatial-topology-normalization-failsafe/`
+- Updated `plans/module-uploader-2.md` status from Draft to Complete and moved it to `plans/archive/module-uploader-2.md`.
+
+**Verification:**
+- `openspec validate spatial-constraint-solver-generalization` -> valid
+- `openspec validate spatial-solver-tier-contract-correction` -> valid
+- `openspec validate spatial-topology-normalization-failsafe` -> valid
+
+**Files Modified:**
+- `AGENTS.md`
+- `plans/module-uploader-2.md` -> `plans/archive/module-uploader-2.md`
+- `openspec/changes/archive/2026-04-28-spatial-constraint-solver-generalization/*`
+- `openspec/changes/archive/2026-04-28-spatial-solver-tier-contract-correction/*`
+- `openspec/changes/archive/2026-04-28-spatial-topology-normalization-failsafe/*`
