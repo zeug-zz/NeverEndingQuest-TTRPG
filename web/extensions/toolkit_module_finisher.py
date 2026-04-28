@@ -410,6 +410,126 @@ def _extract_media_debt_details(publishability_stage: Dict[str, Any]) -> Dict[st
     }
 
 
+def _run_llm_classification_stage(
+    module_slug: str, module_dir: Path
+) -> Dict[str, Any]:
+    from web.extensions.toolkit_llm_classification import (
+        is_classification_enabled,
+        run_llm_classification_pass,
+        apply_entity_classifications,
+        apply_destination_classifications,
+        apply_npc_visibility_classifications,
+        persist_classification_metadata,
+    )
+
+    if not is_classification_enabled():
+        return {"status": "skipped", "reason": "classification_disabled"}
+
+    try:
+        class_result = run_llm_classification_pass(
+            str(module_dir), module_slug
+        )
+        if class_result.get("status") != "success":
+            return {
+                "status": "degraded",
+                "reason": "classification_failed",
+                "classification": class_result,
+            }
+
+        classifications = class_result.get("classifications", {})
+        entity_apply = apply_entity_classifications(
+            str(module_dir), classifications.get("entity", {})
+        )
+        dest_apply = apply_destination_classifications(
+            str(module_dir), classifications.get("destination", {})
+        )
+        npc_apply = apply_npc_visibility_classifications(
+            str(module_dir), classifications.get("npc_visibility", {})
+        )
+        persist_classification_metadata(
+            str(module_dir),
+            classifications.get("entity", {}),
+            classifications.get("destination", {}),
+            classifications.get("npc_visibility", {}),
+        )
+
+        return {
+            "status": "success",
+            "classification_summary": class_result.get("summaries", {}),
+            "applied": {
+                "entity": entity_apply,
+                "destination": dest_apply,
+                "npc": npc_apply,
+            },
+        }
+    except Exception as exc:
+        warning(
+            f"LLM classification stage failed for {module_slug}: {exc}",
+            category="llm_classification",
+        )
+        return {"status": "degraded", "reason": f"classification_exception: {exc}"}
+
+
+def _run_llm_remediation_stage(
+    module_slug: str,
+    module_dir: Path,
+    publishability_stage: Dict[str, Any],
+) -> Dict[str, Any]:
+    from web.extensions.toolkit_llm_classification import (
+        is_classification_enabled,
+        build_remediation_proposal_batch,
+        call_llm_remediation_proposals,
+        validate_remediation_proposals,
+    )
+
+    if not is_classification_enabled():
+        return {"status": "skipped", "reason": "classification_disabled"}
+
+    blocker_report = publishability_stage.get("report", {})
+    if not blocker_report:
+        return {"status": "skipped", "reason": "no_publishability_report"}
+
+    blocker_classes = blocker_report.get(
+        "remediation_categories",
+        blocker_report.get("failure_categories", []),
+    )
+    if not blocker_classes:
+        return {"status": "skipped", "reason": "no_blockers"}
+
+    try:
+        batch = build_remediation_proposal_batch(
+            str(module_dir), blocker_report
+        )
+        if not batch:
+            return {"status": "skipped", "reason": "no_affordances"}
+
+        proposals = call_llm_remediation_proposals(batch)
+        if not proposals:
+            return {"status": "skipped", "reason": "api_returned_empty"}
+
+        validated = validate_remediation_proposals(
+            str(module_dir), proposals
+        )
+        valid_count = sum(
+            1
+            for p in validated
+            if p.get("safety", "").startswith(("pass", "warning"))
+        )
+
+        return {
+            "status": "success",
+            "proposal_count": len(proposals),
+            "valid_count": valid_count,
+            "proposals": validated,
+        }
+    except Exception as exc:
+        warning(
+            f"LLM remediation stage failed for {module_slug}: {exc}",
+            category="llm_classification",
+        )
+        return {"status": "degraded", "reason": f"remediation_exception: {exc}"}
+
+
 def _run_publishability_stage(module_slug: str, source: str = "watcher") -> Dict[str, Any]:
     """Run standalone publishability audit stage."""
     from scripts.audit_module_publishability import audit_module_publishability
@@ -503,6 +623,17 @@ def run_toolkit_module_postbuild_finishing(
     ):
         overall_status = "degraded"
 
+    # TABLETOP MODE: LLM-assisted narrative classification (Phase 2)
+    llm_classification_stage = _run_llm_classification_stage(
+        module_slug=module_slug, module_dir=module_dir
+    )
+    stages["llm_classification"] = llm_classification_stage
+    if (
+        llm_classification_stage.get("status") == "degraded"
+        and overall_status != "failed"
+    ):
+        overall_status = "degraded"
+
     report_path = module_dir / "toolkit_build_report.json"
 
     def _build_report(
@@ -578,6 +709,14 @@ def run_toolkit_module_postbuild_finishing(
         source="toolkit",
     )
     stages["publishability"] = publishability_stage
+
+    # TABLETOP MODE: LLM-assisted remediation proposals (Phase 2 DP4)
+    llm_remediation_stage = _run_llm_remediation_stage(
+        module_slug=module_slug,
+        module_dir=module_dir,
+        publishability_stage=publishability_stage,
+    )
+    stages["llm_remediation"] = llm_remediation_stage
 
     ready_status = str(publishability_stage.get("ready_status", "fail") or "fail")
     publishable_status = str(

@@ -2648,6 +2648,26 @@
                                         <div id="homebrew-artifact-checklist" style="color: #ccc; font-size: 0.85em; font-family: monospace;"></div>
                                         <div id="homebrew-artifact-actions" style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;"></div>
                                     </div>
+                                    <div id="homebrew-llm-classification-panel" style="display: none; margin-top: 10px; padding: 8px; background: #1a1a1a; border: 1px solid #444; border-radius: 4px;">
+                                        <div style="color: #aaa; font-size: 0.85em; margin-bottom: 6px;">LLM Classification Review:</div>
+                                        <details id="llm-entity-classification" style="margin-bottom: 4px;">
+                                            <summary style="color: #ccc; cursor: pointer;">Entity Triage Classification</summary>
+                                            <div id="llm-entity-content" style="margin-top: 4px;"></div>
+                                        </details>
+                                        <details id="llm-destination-classification" style="margin-bottom: 4px;">
+                                            <summary style="color: #ccc; cursor: pointer;">Destination Phrase Classification</summary>
+                                            <div id="llm-destination-content" style="margin-top: 4px;"></div>
+                                        </details>
+                                        <details id="llm-npc-visibility-classification" style="margin-bottom: 4px;">
+                                            <summary style="color: #ccc; cursor: pointer;">NPC Visibility Classification</summary>
+                                            <div id="llm-npc-content" style="margin-top: 4px;"></div>
+                                        </details>
+                                        <details id="llm-remediation-proposals" style="margin-bottom: 4px;">
+                                            <summary style="color: #ccc; cursor: pointer;">Remediation Proposals</summary>
+                                            <div id="llm-remediation-content" style="margin-top: 4px;"></div>
+                                        </details>
+                                        <button type="button" id="apply-llm-classification-btn" style="display: none; margin-top: 8px; background-color: #2a5a2a; border: 1px solid #4a8a4a; color: #ddd; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85em;">Apply Accepted Classifications</button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2898,6 +2918,7 @@
             setupSocketHandlers();
             initializeModuleBuilderElements(); // Initialize module builder DOM elements
             setupModuleBuilderEventListeners(); // Set up module builder event listeners
+            initLlmClassificationApplyHandler();
             
             // If builder tab is active on load, request modules
             const activeTab = document.querySelector('.tab.active');
@@ -6654,6 +6675,106 @@
             ].join('\n');
         }
 
+        // LLM Classification Review
+        function _llmLabelColor(label) {
+            const green = '#4caf50', blue = '#2196f3', gray = '#888', orange = '#ff9800';
+            const colors = {
+                combatant: green, scene_illusion: blue, narrator_flavor: gray,
+                canonical_alias: green, quest_objective: orange, evocative_prose: gray,
+                visible: green, hidden_reveal: blue, lore_only: gray,
+            };
+            return colors[label] || gray;
+        }
+
+        function _llmLabelDisplay(label) {
+            return String(label).replace(/_/g, ' ');
+        }
+
+        function renderLlmClassificationReview(classificationData) {
+            var panel = document.getElementById('homebrew-llm-classification-panel');
+            var applyBtn = document.getElementById('apply-llm-classification-btn');
+            if (!panel || !classificationData) { return; }
+
+            var hasData = false;
+            var sections = [
+                { id: 'entity', key: 'entity', title: 'Entity Triage Classification', data: classificationData.entity || {} },
+                { id: 'destination', key: 'destination', title: 'Destination Phrase Classification', data: classificationData.destination || {} },
+                { id: 'npc', key: 'npc_visibility', title: 'NPC Visibility Classification', data: classificationData.npc_visibility || {} },
+            ];
+
+            sections.forEach(function(section) {
+                var contentDiv = document.getElementById('llm-' + section.id + '-classification');
+                var contentEl = document.getElementById('llm-' + section.id + '-content');
+                if (!contentDiv || !contentEl) { return; }
+                var entries = section.data;
+                var keys = Object.keys(entries);
+                if (keys.length === 0) { contentDiv.style.display = 'none'; return; }
+                hasData = true;
+                contentDiv.style.display = 'block';
+
+                var html = '<table style="width:100%; border-collapse: collapse; font-size: 0.82em; color: #ccc;">';
+                html += '<thead><tr style="border-bottom: 1px solid #444;">';
+                html += '<th style="padding: 3px 6px; text-align: left;">Name</th>';
+                html += '<th style="padding: 3px 6px; text-align: left;">Label</th>';
+                html += '<th style="padding: 3px 6px; text-align: center;">Accept</th>';
+                html += '</tr></thead><tbody>';
+
+                keys.forEach(function(key) {
+                    var label = String(entries[key]);
+                    var color = _llmLabelColor(label);
+                    var display = _llmLabelDisplay(label);
+                    var checkboxId = 'llm-accept-' + section.id + '-' + key.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    html += '<tr style="border-bottom: 1px solid #333;">';
+                    html += '<td style="padding: 3px 6px;">' + key + '</td>';
+                    html += '<td style="padding: 3px 6px;"><span style="display:inline-block; padding: 1px 6px; border-radius: 3px; background: ' + color + '; color: #000; font-weight: bold; font-size: 0.9em;">' + display + '</span></td>';
+                    html += '<td style="padding: 3px 6px; text-align: center;"><input type="checkbox" id="' + checkboxId + '" checked data-llm-key="' + key.replace(/"/g, '&quot;') + '" data-llm-label="' + label.replace(/"/g, '&quot;') + '" data-llm-section="' + section.key + '"></td>';
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                contentEl.innerHTML = html;
+            });
+
+            panel.style.display = hasData ? 'block' : 'none';
+            if (applyBtn) { applyBtn.style.display = hasData ? 'inline-block' : 'none'; }
+        }
+
+        function renderLlmRemediationReview(proposalsData) {
+            var contentEl = document.getElementById('llm-remediation-content');
+            var details = document.getElementById('llm-remediation-proposals');
+            if (!contentEl || !details || !Array.isArray(proposalsData) || proposalsData.length === 0) {
+                if (details) { details.style.display = 'none'; }
+                return;
+            }
+            details.style.display = 'block';
+
+            var html = '<table style="width:100%; border-collapse: collapse; font-size: 0.82em; color: #ccc;">';
+            html += '<thead><tr style="border-bottom: 1px solid #444;">';
+            html += '<th style="padding: 3px 6px; text-align: left;">Transform</th>';
+            html += '<th style="padding: 3px 6px; text-align: left;">Target</th>';
+            html += '<th style="padding: 3px 6px; text-align: left;">Rationale</th>';
+            html += '<th style="padding: 3px 6px; text-align: center;">Safety</th>';
+            html += '<th style="padding: 3px 6px; text-align: center;">Accept</th>';
+            html += '</tr></thead><tbody>';
+
+            proposalsData.forEach(function(proposal, idx) {
+                var transform = _llmLabelDisplay(proposal.transform_type || 'unknown');
+                var safety = proposal.safety || 'pass';
+                var safetyColor = safety === 'pass' ? '#4caf50' : '#f44336';
+                var checkboxId = 'llm-accept-proposal-' + idx;
+                html += '<tr style="border-bottom: 1px solid #333;">';
+                html += '<td style="padding: 3px 6px;">' + transform + '</td>';
+                html += '<td style="padding: 3px 6px;">' + (proposal.target || '') + '</td>';
+                html += '<td style="padding: 3px 6px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (proposal.rationale || '') + '</td>';
+                html += '<td style="padding: 3px 6px; text-align: center;"><span style="display:inline-block; padding: 1px 6px; border-radius: 3px; background: ' + safetyColor + '; color: #000; font-size: 0.9em;">' + safety + '</span></td>';
+                html += '<td style="padding: 3px 6px; text-align: center;"><input type="checkbox" id="' + checkboxId + '" checked data-llm-proposal-idx="' + idx + '"></td>';
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            contentEl.innerHTML = html;
+        }
+
         async function loadToolkitHomebrewReview(jobId) {
             if (!HOME_BREW_ADVANCED_MODE) {
                 setHomebrewReviewPanelVisible(false);
@@ -6699,10 +6820,78 @@
                 if (payload.artifact_manifest) {
                     renderArtifactManifest(payload.artifact_manifest, jobId);
                 }
+
+                var jobResult = payload.job && payload.job.result;
+                var llmClassification = jobResult && jobResult.llm_classification;
+                var llmRemediation = jobResult && jobResult.llm_remediation;
+                if (llmClassification) {
+                    renderLlmClassificationReview(llmClassification);
+                }
+                if (llmRemediation) {
+                    renderLlmRemediationReview(llmRemediation);
+                }
+                var homebrewLlmPanel = document.getElementById('homebrew-llm-classification-panel');
+                if (homebrewLlmPanel && (llmClassification || llmRemediation)) {
+                    homebrewLlmPanel.style.display = 'block';
+                }
             } catch (reviewError) {
                 renderHomebrewUploadStatus('error', `Homebrew review load failed: ${reviewError.message}`);
                 setHomebrewReviewPanelVisible(false);
             }
+        }
+
+        function initLlmClassificationApplyHandler() {
+            var applyBtn = document.getElementById('apply-llm-classification-btn');
+            if (!applyBtn) { return; }
+            applyBtn.addEventListener('click', function() {
+                var jobId = homebrewActiveReviewJobId;
+                if (!jobId) { return; }
+
+                var entity = {}, destination = {}, npc_visibility = {};
+                var allCheckboxes = document.querySelectorAll('[data-llm-key]');
+                allCheckboxes.forEach(function(cb) {
+                    if (!cb.checked) { return; }
+                    var section = cb.getAttribute('data-llm-section');
+                    var key = cb.getAttribute('data-llm-key');
+                    var label = cb.getAttribute('data-llm-label');
+                    if (!section || !key || !label) { return; }
+                    if (section === 'entity') { entity[key] = label; }
+                    else if (section === 'destination') { destination[key] = label; }
+                    else if (section === 'npc_visibility') { npc_visibility[key] = label; }
+                });
+
+                var proposals = [];
+                document.querySelectorAll('[data-llm-proposal-idx]').forEach(function(cb) {
+                    if (!cb.checked) { return; }
+                    var idx = parseInt(cb.getAttribute('data-llm-proposal-idx'), 10);
+                    if (!isNaN(idx)) { proposals.push({ accepted: true, idx: idx }); }
+                });
+
+                var payload = {
+                    entity: entity, destination: destination,
+                    npc_visibility: npc_visibility, proposals: proposals,
+                };
+
+                fetch('/api/toolkit/homebrew/jobs/' + jobId + '/apply_classification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'success') {
+                        var counts = data.applied || {};
+                        var msg = 'Classification applied: ' + (counts.entity || 0) + ' entity, ' + (counts.destination || 0) + ' destination, ' + (counts.npc || 0) + ' NPC, ' + (counts.proposals || 0) + ' proposals.';
+                        renderHomebrewUploadStatus('success', msg, JSON.stringify(data, null, 2));
+                        if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Applied'; }
+                    } else {
+                        renderHomebrewUploadStatus('error', 'Classification apply failed: ' + (data.reason || data.message || 'unknown'), JSON.stringify(data, null, 2));
+                    }
+                })
+                .catch(function(err) {
+                    renderHomebrewUploadStatus('error', 'Classification apply request failed: ' + err.message);
+                });
+            });
         }
 
         async function submitToolkitHomebrewOverwriteConfirmation(jobId) {

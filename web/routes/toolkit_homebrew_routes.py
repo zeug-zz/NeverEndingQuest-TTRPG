@@ -48,6 +48,19 @@ from web.extensions.toolkit_homebrew_rebuild_guard import (
     prepare_backup_clean_rebuild,
 )
 
+try:
+    from web.extensions.toolkit_llm_classification import (
+        apply_entity_classifications,
+        apply_destination_classifications,
+        apply_npc_visibility_classifications,
+        apply_accepted_proposals,
+        persist_classification_metadata,
+        is_classification_enabled,
+    )
+    _HAS_LLM_CLASSIFICATION = True
+except ImportError:
+    _HAS_LLM_CLASSIFICATION = False
+
 
 _TERMINAL_JOB_STATES = {
     "completed",
@@ -1669,6 +1682,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "status": "success",
                 "review": review_data,
                 "artifact_manifest": artifact_manifest,
+                "job": job_copy,
             }
         )
 
@@ -2253,6 +2267,73 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "removed_path": removal_path,
             }
         )
+
+    @app.route("/api/toolkit/homebrew/jobs/<job_id>/apply_classification", methods=["POST"])
+    def apply_toolkit_llm_classification(job_id: str) -> Any:
+        """Apply accepted LLM classifications and remediation proposals."""
+        if not _HAS_LLM_CLASSIFICATION or not is_classification_enabled():
+            return jsonify({"status": "error", "reason": "classification_disabled"}), 400
+
+        request_payload = request.get_json(silent=True) or {}
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if not job:
+                return jsonify({"status": "error", "message": "Job not found"}), 404
+            job_copy = dict(job)
+
+        module_slug = request_payload.get("module_slug") or job_copy.get("result", {}).get("module_slug") or ""
+        if not module_slug:
+            return jsonify({"status": "error", "reason": "module_slug_missing"}), 400
+
+        module_dir = f"modules/{module_slug}"
+        if not Path(module_dir).is_dir():
+            return jsonify({"status": "error", "reason": "module_not_found"}), 404
+
+        accepted = {"entity": 0, "destination": 0, "npc": 0, "proposals": 0}
+
+        entity_classifications = {}
+        raw_entity = request_payload.get("entity", {})
+        for name, state in raw_entity.items():
+            if state and isinstance(state, str):
+                entity_classifications[name] = state
+                accepted["entity"] += 1
+
+        destination_classifications = {}
+        raw_dest = request_payload.get("destination", {})
+        for phrase, state in raw_dest.items():
+            if state and isinstance(state, str):
+                destination_classifications[phrase] = state
+                accepted["destination"] += 1
+
+        npc_classifications = {}
+        raw_npc = request_payload.get("npc_visibility", {})
+        for name, state in raw_npc.items():
+            if state and isinstance(state, str):
+                npc_classifications[name] = state
+                accepted["npc"] += 1
+
+        accepted_proposals = [p for p in request_payload.get("proposals", []) if isinstance(p, dict) and p.get("accepted")]
+
+        try:
+            if entity_classifications:
+                apply_entity_classifications(module_dir, entity_classifications)
+            if destination_classifications:
+                apply_destination_classifications(module_dir, destination_classifications)
+            if npc_classifications:
+                apply_npc_visibility_classifications(module_dir, npc_classifications)
+            if accepted_proposals:
+                apply_accepted_proposals(module_dir, accepted_proposals)
+            persist_classification_metadata(
+                module_dir,
+                entity_classifications,
+                destination_classifications,
+                npc_classifications,
+            )
+        except Exception as e:
+            error(f"TOOLKIT_HOMEBREW: LLM classification apply failed for {module_slug}: {e}", exception=e, category="web_interface")
+            return jsonify({"status": "error", "reason": "apply_failed", "message": str(e), "applied": accepted}), 500
+
+        return jsonify({"status": "success", "applied": accepted, "module_slug": module_slug})
 
     @app.route("/api/toolkit/homebrew/jobs/<job_id>", methods=["GET"])
     def get_toolkit_homebrew_job(job_id: str) -> Any:

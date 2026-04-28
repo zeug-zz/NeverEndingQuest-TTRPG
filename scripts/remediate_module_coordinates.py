@@ -17,7 +17,7 @@ import json
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -82,6 +82,65 @@ def _build_plan_from_locations(locations: List[Dict[str, Any]]) -> Dict[str, Any
     )
 
 
+def _count_adjacent_connected_pairs(
+    coordinates: Dict[str, str],
+    graph: Dict[str, List[str]],
+) -> int:
+    """Count connected room pairs that are cardinally adjacent."""
+    count = 0
+    seen: set[Tuple[str, str]] = set()
+    for loc_id, neighbors in graph.items():
+        if loc_id not in coordinates:
+            continue
+        cx, cy = parse_coordinate(coordinates[loc_id])
+        for neighbor_id in neighbors:
+            if neighbor_id not in coordinates:
+                continue
+            pair: Tuple[str, str] = tuple(sorted([loc_id, neighbor_id]))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            nx, ny = parse_coordinate(coordinates[neighbor_id])
+            if abs(cx - nx) + abs(cy - ny) == 1:
+                count += 1
+    return count
+
+
+def _repair_non_adjacent_pairs(
+    coordinates: Dict[str, str],
+    graph: Dict[str, List[str]],
+    max_iterations: int = 50,
+) -> None:
+    """Iteratively swap rooms to maximize cardinal adjacency of connected pairs."""
+    coord_keys = list(coordinates.keys())
+    max_possible = sum(len(v) for v in graph.values()) // 2
+
+    for _ in range(max_iterations):
+        current_score = _count_adjacent_connected_pairs(coordinates, graph)
+        if current_score >= max_possible:
+            return
+
+        best_swap: Optional[Tuple[str, str]] = None
+        best_score = current_score
+
+        for i in range(len(coord_keys)):
+            for j in range(i + 1, len(coord_keys)):
+                id_a, id_b = coord_keys[i], coord_keys[j]
+                ca, cb = coordinates[id_a], coordinates[id_b]
+                coordinates[id_a], coordinates[id_b] = cb, ca
+                score = _count_adjacent_connected_pairs(coordinates, graph)
+                coordinates[id_a], coordinates[id_b] = ca, cb
+                if score > best_score:
+                    best_score = score
+                    best_swap = (id_a, id_b)
+
+        if best_swap is None:
+            return
+
+        id_a, id_b = best_swap
+        coordinates[id_a], coordinates[id_b] = coordinates[id_b], coordinates[id_a]
+
+
 def _build_force_relayout_coordinates(locations: List[Dict[str, Any]]) -> Dict[str, str]:
     """Assign adjacency-safe coordinates from authored connectivity."""
     coordinates: Dict[str, str] = {}
@@ -142,6 +201,8 @@ def _build_force_relayout_coordinates(locations: List[Dict[str, Any]]) -> Dict[s
             fallback = (fallback[0] + 1, fallback[1])
         coordinates[location_id] = f"X{fallback[0]}Y{fallback[1]}"
         occupied.add(fallback)
+
+    _repair_non_adjacent_pairs(coordinates, graph)
 
     return coordinates
 
@@ -314,9 +375,18 @@ def remediate_module(module_path: Path, apply: bool, force_relayout: bool = Fals
             )
 
             processed += 1
+
+            # Detect stale embedded map even when coordinates already agree
+            if has_external_map and pair_changes == 0:
+                original_embedded = area_data.get("map", {})
+                if isinstance(original_embedded, dict) and original_embedded.get("rooms") != patched_map.get("rooms"):
+                    pair_changes = 1
+
             if pair_changes > 0:
                 changed += 1
                 if apply:
+                    if has_external_map:
+                        patched_area["map"] = patched_map
                     safe_write_json(str(area_path), patched_area)
                     if has_external_map:
                         safe_write_json(str(map_path), patched_map)
@@ -342,6 +412,11 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview only (default behavior)"
     )
+    parser.add_argument(
+        "--force-relayout",
+        action="store_true",
+        help="Force full coordinate relayout of area and map files",
+    )
     args = parser.parse_args()
 
     modules_root = Path("modules")
@@ -353,11 +428,12 @@ def main() -> None:
         ]
 
     apply_mode = bool(args.apply)
+    force_relayout = bool(args.force_relayout)
     results = []
     for module_path in module_paths:
         if not module_path.exists():
             continue
-        results.append(remediate_module(module_path, apply=apply_mode))
+        results.append(remediate_module(module_path, apply=apply_mode, force_relayout=force_relayout))
 
     total_processed = sum(item["processed"] for item in results)
     total_changed = sum(item["changed"] for item in results)

@@ -1080,6 +1080,26 @@ character_data["is_active_pc"] = True
 - All 5 `openspec validate` clean
 - All 5 archived to `openspec/changes/archive/2026-04-28-*/`
 
+### Phase 2 LLM Narrative Classification (COMPLETED - 2026-04-28)
+
+**Status:** COMPLETED - All 9 OpenSpec sections implemented, verified, 56/56 regression tests passing.
+
+**Objective:** Add advisory LLM classification for ambiguous authored entities, destination phrases, NPC visibility, and remediation proposals. Contract: LLM proposes -> Python validates -> human approves (GUI review panel).
+
+**Implementation:**
+- 4 classification domains: Entity Triage (combatant/scene_illusion/narrator_flavor), Destination Phrases (canonical_alias/quest_objective/evocative_prose), NPC Visibility (visible/hidden_reveal/lore_only), Remediation Proposals (6 whitelisted transform types)
+- Content-hash caching (sha256) prevents repeated LLM calls on unchanged text
+- All LLM calls are advisory and fail-open; Python validates all labels against strict enums
+- Feature flag: ENABLE_LLM_CLASSIFICATION in model_config.py (default: True)
+
+**Files Created/Modified:**
+- `web/extensions/toolkit_llm_classification.py` (NEW, ~1400 lines, 22 functions)
+- `web/templates/module_toolkit.html` (GUI review panel with classification tables and Apply button)
+- `web/routes/toolkit_homebrew_routes.py` (POST apply_classification route)
+- `web/extensions/toolkit_module_finisher.py` (classification + remediation stages)
+- `model_config.py` (ENABLE_LLM_CLASSIFICATION feature flag)
+- `scripts/test_llm_classification.py` (NEW, 56 regression tests)
+
 ### Portrait Popup Modal Sizing + Video-First Path Unification (COMPLETED - 2026-04-25)
 
 **Status:** COMPLETED - Top menubar NPC/PC portrait click popups now use the same large centered modal style as Module Media Generator popups instead of the old small 350px anchored hover preview.

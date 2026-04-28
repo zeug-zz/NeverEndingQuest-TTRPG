@@ -1025,9 +1025,37 @@ This keeps Phase 2 LLM work anchored to explicit semantic defects rather than mi
 16. Complete `gui-builder-gameplay-readiness-payload-normalization` so readiness/publishability consume gameplay payloads correctly.
 17. Add a deterministic mixed-failure classification slice so media-only handoff is never applied to modules that still have semantic blockers.
 18. Add a builder semantic remediation sequencing slice for unresolved destination-alias and similar authoring defects.
-19. Add Phase 2 LLM entity triage.
-20. Add Phase 2 destination and NPC classification.
-21. Add reviewable remediation proposals.
+19. [COMPLETED] Add Phase 2 LLM entity triage.
+20. [COMPLETED] Add Phase 2 destination and NPC classification.
+21. [COMPLETED] Add reviewable remediation proposals.
+
+---
+
+## Post-Phase-2 Implementation Summary
+
+Phase 2 LLM-assisted narrative classification is complete as of 2026-04-28.
+
+**Contract:** LLM proposes → Python validates → human approves.
+
+**4 Classification Decision Points:**
+- **DP1 Entity Triage:** Ambiguous monsters classified as `combatant`, `scene_illusion`, or `narrator_flavor`. Bestiary-known entities bypass LLM.
+- **DP2 Destination Classification:** Ambiguous travel phrases classified as `canonical_alias`, `quest_objective`, or `evocative_prose`.
+- **DP3 NPC Visibility:** Ambiguous NPC mentions classified as `visible`, `hidden_reveal`, or `lore_only`.
+- **DP4 Remediation Proposals:** Blocker reports feed LLM proposals with 6 whitelisted transform types; Python validates safety; human accepts/rejects per-item.
+
+**Key Files:**
+- `web/extensions/toolkit_llm_classification.py` (~1400 lines, 22 functions) — cache, detection, LLM calls, apply, proposals, orchestrator
+- `web/extensions/toolkit_module_finisher.py` — classification + remediation stages inserted after monster_materialization
+- `web/templates/module_toolkit.html` — GUI review panel with 3 classification tables + remediation panel + Apply Accepted button
+- `web/routes/toolkit_homebrew_routes.py` — `POST /api/toolkit/homebrew/jobs/<job_id>/apply_classification`
+- `model_config.py` — `ENABLE_LLM_CLASSIFICATION = True` (feature flag)
+- `scripts/test_llm_classification.py` — 56 regression tests (all passing)
+
+**Architecture:**
+- All LLM calls are advisory; Python validates all labels against strict enums
+- Content-hash cache (sha256) prevents repeated LLM calls on unchanged text
+- All operations fail-open: build never blocks on LLM failure
+- Missing bestiary entries, unresolved destination phrases, and unreferenced NPCs are detected by deterministic pre-filters before LLM batching
 
 ## Open Questions
 

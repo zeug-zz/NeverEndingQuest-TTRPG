@@ -307,4 +307,13 @@ GPT_IMAGE_1_PRICING_USD = {
         "high": 0.333
     }
 }
+
+# Feature Flags -- Toolkit LLM Classification
+# When True, the module toolkit build path invokes LLM-assisted narrative classification
+# for ambiguous entities, destination phrases, and NPC visibility after deterministic
+# enrichment but before publishability audit. When False, the build path is purely
+# deterministic (backward compatible with pre-Phase-2 behavior). Default: True.
+# Rollback: set to False, no code removal needed. All LLM calls are advisory and
+# fail-open; Python validates all labels against strict enum contracts.
+ENABLE_LLM_CLASSIFICATION = True
 # ============================================================================

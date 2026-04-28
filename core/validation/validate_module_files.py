@@ -275,7 +275,7 @@ class ModuleValidator:
         # Lowercase and strip
         slug = name.lower().strip()
         # Remove apostrophes
-        slug = slug.replace("'", "").replace('"', "")
+        slug = slug.replace("'", "_").replace('"', "")
         # Replace spaces and hyphens with underscores
         slug = slug.replace(" ", "_").replace("-", "_")
         # Remove any remaining non-alphanumeric except underscore
