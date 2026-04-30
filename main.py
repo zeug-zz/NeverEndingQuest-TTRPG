@@ -203,6 +203,7 @@ from utils.ai_client_factory import (
     create_chat_client,
     reset_fallback_status,
     get_chat_model_name,
+    get_chat_completion_params,
     handle_provider_error,
 )
 
@@ -427,9 +428,12 @@ def generate_arrival_narration(
 
     try:
         response = client.chat.completions.create(
-            model=DM_MAIN_MODEL,  # Use the main model for high-quality narration
-            temperature=TEMPERATURE,
             messages=narration_request_messages,
+            **get_chat_completion_params(
+                "dm_main",
+                DM_MAIN_MODEL,  # Use the main model for high-quality narration
+                temperature_override=TEMPERATURE,
+            ),
         )
 
         # Log API call to master log
@@ -530,8 +534,6 @@ Now, provide the rewritten, seamless narration.
 
     try:
         response = client.chat.completions.create(
-            model=DM_MAIN_MODEL,  # Use the main model for high-quality writing
-            temperature=TEMPERATURE,
             messages=[
                 {
                     "role": "system",
@@ -539,6 +541,11 @@ Now, provide the rewritten, seamless narration.
                 },
                 {"role": "user", "content": stitching_prompt},
             ],
+            **get_chat_completion_params(
+                "dm_main",
+                DM_MAIN_MODEL,  # Use the main model for high-quality writing
+                temperature_override=TEMPERATURE,
+            ),
         )
 
         # Log API call to master log
@@ -2922,9 +2929,12 @@ def validate_ai_response(
     max_validation_retries = 3
     for attempt in range(max_validation_retries):
         validation_result = client.chat.completions.create(
-            model=DM_VALIDATION_MODEL,  # Use imported model name
-            temperature=0.1,  # Low temperature for consistent validation
             messages=validation_messages_to_send,
+            **get_chat_completion_params(
+                "dm_validation",
+                DM_VALIDATION_MODEL,  # Use imported model name
+                temperature_override=0.1,  # Low temperature for consistent validation
+            ),
         )
 
         # Log API call to master log
@@ -3633,7 +3643,6 @@ Write a compelling chronicle of these actual events:"""
 
                 try:
                     response = summary_client.chat.completions.create(
-                        model=summary_model,
                         messages=[
                             {
                                 "role": "system",
@@ -3641,7 +3650,11 @@ Write a compelling chronicle of these actual events:"""
                             },
                             {"role": "user", "content": summary_prompt},
                         ],
-                        temperature=0.7,
+                        **get_chat_completion_params(
+                            "summaries",
+                            summary_model,
+                            temperature_override=0.7,
+                        ),
                     )
                 except Exception as api_error:
                     error_result = handle_provider_error(
@@ -3650,7 +3663,6 @@ Write a compelling chronicle of these actual events:"""
                     if error_result["should_fallback"]:
                         fallback_client = create_chat_client(use_fallback=True)
                         response = fallback_client.chat.completions.create(
-                            model=DM_SUMMARIZATION_MODEL,
                             messages=[
                                 {
                                     "role": "system",
@@ -3658,7 +3670,11 @@ Write a compelling chronicle of these actual events:"""
                                 },
                                 {"role": "user", "content": summary_prompt},
                             ],
-                            temperature=0.7,
+                            **get_chat_completion_params(
+                                "summaries",
+                                DM_SUMMARIZATION_MODEL,
+                                temperature_override=0.7,
+                            ),
                         )
                     else:
                         raise
@@ -5239,8 +5255,11 @@ def get_ai_response(
 
         try:
             response = client.chat.completions.create(
-                model=selected_model,
                 messages=messages_to_send,  # Use potentially compressed messages
+                **get_chat_completion_params(
+                    "dm_main",
+                    selected_model,
+                ),
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -5257,7 +5276,11 @@ def get_ai_response(
 
                 # Retry with fallback client using OpenAI model
                 response = fallback_client.chat.completions.create(
-                    model=GPT5_MINI_MODEL, messages=messages_to_send
+                    messages=messages_to_send,
+                    **get_chat_completion_params(
+                        "dm_main",
+                        GPT5_MINI_MODEL,
+                    ),
                 )
 
                 # Check for fallback notification
@@ -5296,9 +5319,12 @@ def get_ai_response(
 
         try:
             response = client.chat.completions.create(
-                model=actual_model,
-                temperature=TEMPERATURE,
                 messages=messages_to_send,  # Use potentially compressed messages
+                **get_chat_completion_params(
+                    "dm_main",
+                    actual_model,
+                    temperature_override=TEMPERATURE,
+                ),
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -5315,9 +5341,12 @@ def get_ai_response(
 
                 # Retry with fallback client using OpenAI model
                 response = fallback_client.chat.completions.create(
-                    model=selected_model,  # Use original selected_model for fallback
-                    temperature=TEMPERATURE,
                     messages=messages_to_send,
+                    **get_chat_completion_params(
+                        "dm_main",
+                        selected_model,  # Use original selected_model for fallback
+                        temperature_override=TEMPERATURE,
+                    ),
                 )
 
                 # Check for fallback notification

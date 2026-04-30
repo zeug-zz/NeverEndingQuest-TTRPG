@@ -315,6 +315,28 @@
           "areas/NCW001.json#locations[NC04].name"
         ]
       },
+      "east tower": {
+        "status": "resolved",
+        "location_id": "RO03",
+        "location_name": "Trader's Rest",
+        "candidate_location_ids": [
+          "RO03"
+        ],
+        "sources": [
+          "areas/RO001.json#locations[RO03].aliases"
+        ]
+      },
+      "explorers camp": {
+        "status": "resolved",
+        "location_id": "NC04",
+        "location_name": "Doomed Explorer's Camp",
+        "candidate_location_ids": [
+          "NC04"
+        ],
+        "sources": [
+          "areas/NCW001.json#locations[NC04].aliases"
+        ]
+      },
       "forgotten waystation": {
         "status": "resolved",
         "location_id": "RO05",
@@ -507,6 +529,17 @@
           "areas/RO001.json#locations[RO06].aliases"
         ]
       },
+      "ruins": {
+        "status": "resolved",
+        "location_id": "RO06",
+        "location_name": "North Tower Overlook",
+        "candidate_location_ids": [
+          "RO06"
+        ],
+        "sources": [
+          "areas/RO001.json#locations[RO06].aliases"
+        ]
+      },
       "scouts watch": {
         "status": "resolved",
         "location_id": "RO04",
@@ -541,6 +574,28 @@
         "sources": [
           "areas/NCW001.json#locations[NC05].aliases",
           "areas/NCW001.json#locations[NC05].name"
+        ]
+      },
+      "the ruins": {
+        "status": "resolved",
+        "location_id": "RO06",
+        "location_name": "North Tower Overlook",
+        "candidate_location_ids": [
+          "RO06"
+        ],
+        "sources": [
+          "areas/RO001.json#locations[RO06].aliases"
+        ]
+      },
+      "this camp": {
+        "status": "resolved",
+        "location_id": "TW03",
+        "location_name": "Abandoned Camp",
+        "candidate_location_ids": [
+          "TW03"
+        ],
+        "sources": [
+          "areas/TW001.json#locations[TW03].aliases"
         ]
       },
       "traders rest": {
@@ -747,8 +802,22 @@
         "player_facing": true,
         "observation_count": 2
       },
+      "east tower": {
+        "status": "resolved",
+        "location_id": "RO03",
+        "candidate_location_ids": [
+          "RO03"
+        ],
+        "sources": [
+          "areas/RO001.json#locations[RO03].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
       "explorers camp": {
         "status": "resolved",
+        "location_id": "NC04",
         "candidate_location_ids": [
           "NC04"
         ],
@@ -758,18 +827,7 @@
         ],
         "observed": true,
         "player_facing": true,
-        "observation_count": 2,
-        "location_id": "NC04",
-        "normalization": {
-          "type": "shortform_alias_collapse",
-          "strategy": "resolved_suffix_anchor_with_source_overlap",
-          "anchor_phrase": "doomed explorers camp",
-          "anchor_location_id": "NC04",
-          "shared_sources": [
-            "areas/NCW001.json#locations[NC04].aliases",
-            "areas/NCW001.json#locations[NC04].name"
-          ]
-        }
+        "observation_count": 3
       },
       "forgotten waystation": {
         "status": "resolved",
@@ -998,6 +1056,21 @@
         "player_facing": false,
         "observation_count": 0
       },
+      "ruins": {
+        "status": "resolved",
+        "location_id": "RO06",
+        "candidate_location_ids": [
+          "RO06"
+        ],
+        "sources": [
+          "areas/NCW001.json#locations[NC05].description",
+          "areas/RO001.json#locations[RO05].accessibility",
+          "areas/RO001.json#locations[RO06].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 2
+      },
       "scouts watch": {
         "status": "resolved",
         "location_id": "RO04",
@@ -1039,6 +1112,32 @@
         "observed": false,
         "player_facing": false,
         "observation_count": 0
+      },
+      "the ruins": {
+        "status": "resolved",
+        "location_id": "RO06",
+        "candidate_location_ids": [
+          "RO06"
+        ],
+        "sources": [
+          "areas/RO001.json#locations[RO06].aliases"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "this camp": {
+        "status": "resolved",
+        "location_id": "TW03",
+        "candidate_location_ids": [
+          "TW03"
+        ],
+        "sources": [
+          "areas/TW001.json#locations[TW03].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
       },
       "traders rest": {
         "status": "resolved",
@@ -1934,27 +2033,26 @@
       "duplicate_location_aliases": [],
       "ambiguous_destination_phrases": [],
       "unresolved_destination_phrases": [],
-      "normalized_shortform_destination_phrases": [
-        {
-          "phrase": "explorers camp",
-          "anchor_phrase": "doomed explorers camp",
-          "location_id": "NC04",
-          "shared_sources": [
-            "areas/NCW001.json#locations[NC04].aliases",
-            "areas/NCW001.json#locations[NC04].name"
-          ]
-        }
-      ],
+      "normalized_shortform_destination_phrases": [],
       "missing_npc_authority": []
     },
     "summary": {
       "location_count": 17,
-      "location_alias_count": 36,
-      "destination_phrase_count": 37,
+      "location_alias_count": 41,
+      "destination_phrase_count": 41,
       "npc_count": 22,
       "ambiguous_destination_count": 0,
-      "normalized_shortform_destination_count": 1,
+      "normalized_shortform_destination_count": 0,
       "missing_npc_authority_count": 0
     }
+  },
+  "classification_metadata": {
+    "classified_by": "gpt-5.4-mini-2026-03-17",
+    "classified_at": "2026-04-30T00:42:59.199658",
+    "entity_count": 2,
+    "destination_count": 3,
+    "npc_count": 18,
+    "provenance": "llm_classification",
+    "feature_flag": "ENABLE_LLM_CLASSIFICATION"
   }
 }

@@ -88,6 +88,13 @@ import main as dm_main
 from core.toolkit.portrait_service import generate_and_save_portrait
 import utils.reset_campaign as reset_campaign
 import utils.pc_manager as pc_manager
+from utils.npc_identity import (
+    build_npc_asset_payload,
+    canonicalize_npc_identity,
+    get_npc_compendium_lookup_keys,
+    merge_npc_identity_metadata,
+)
+from utils.module_media_generator_report import write_module_media_generator_report
 
 from updates.update_character_info import normalize_character_name
 from core.managers.status_manager import set_status_callback, set_compression_callback
@@ -2717,9 +2724,11 @@ def get_module_unified_assets(module_name):
                             if 'npcs' in location and location['npcs']:
                                 for npc in location['npcs']:
                                     if isinstance(npc, dict) and 'name' in npc:
-                                        npc_id = npc['name'].lower().replace(' ', '_').replace("'", "")
-                                        if npc_id not in npcs:
-                                            npcs[npc_id] = {'name': npc['name'], 'type': 'npc'}
+                                        # TABLETOP MODE: Canonicalize NPC identity so appositive
+                                        # descriptions do not become durable asset IDs.
+                                        identity = canonicalize_npc_identity(npc['name'])
+                                        if identity.slug not in npcs:
+                                            npcs[identity.slug] = build_npc_asset_payload(identity)
                             
                             # Extract monsters
                             if 'monsters' in location and location['monsters']:
@@ -3906,7 +3915,15 @@ def handle_generate_image(data):
                                     time.sleep(3)  # Rate limiting for image generation
                             
                             elif asset['type'] == 'npc':
-                                info(f"TOOLKIT: Generating portrait for NPC: {asset['name']}")
+                                # TABLETOP MODE: Canonicalize NPC identity before bestiary/media lookups.
+                                raw_asset_id = asset.get('id')
+                                raw_asset_name = asset.get('name') or raw_asset_id
+                                identity = canonicalize_npc_identity(raw_asset_name, fallback_id=raw_asset_id)
+                                asset_id = identity.slug
+                                asset_name = identity.canonical_name
+                                lookup_ids = get_npc_compendium_lookup_keys(raw_asset_id or asset_id, raw_asset_name)
+
+                                info(f"TOOLKIT: Generating portrait for NPC: {asset_name}")
                                 # generator = NPCImageGenerator(style)  # This is also a placeholder
                                 
                                 # Get description from NPC compendium first
@@ -3915,23 +3932,29 @@ def handle_generate_image(data):
                                 if os.path.exists(npc_compendium_path):
                                     npc_compendium = safe_read_json(npc_compendium_path) or {}
                                     npcs_dict = npc_compendium.get('npcs', {})
-                                    if asset['id'] in npcs_dict:
-                                        description = npcs_dict[asset['id']].get('description', '')
+                                    for lookup_id in lookup_ids:
+                                        if lookup_id in npcs_dict:
+                                            description = npcs_dict[lookup_id].get('description', '')
+                                            if description:
+                                                break
                                 
                                 # Fall back to temp file if not in compendium
                                 if not description:
                                     desc_file = f'temp/npc_descriptions_{module_name}.json'
                                     descriptions = safe_read_json(desc_file) or {}
-                                    desc_data = descriptions.get(asset['id'], {})
-                                    if isinstance(desc_data, dict):
-                                        description = desc_data.get('description', '')
-                                    else:
-                                        description = desc_data
+                                    for lookup_id in lookup_ids:
+                                        desc_data = descriptions.get(lookup_id, {})
+                                        if isinstance(desc_data, dict):
+                                            description = desc_data.get('description', '')
+                                        else:
+                                            description = desc_data
+                                        if description:
+                                            break
                                 
                                 if description:
                                     # Generate portrait
-                                    image_path = f"raw_images/modules/{module_name}/npcs/{asset['id']}.png"
-                                    thumb_path = f"modules/{module_name}/media/npcs/{asset['id']}_thumb.jpg"
+                                    image_path = f"raw_images/modules/{module_name}/npcs/{asset_id}.png"
+                                    thumb_path = f"modules/{module_name}/media/npcs/{asset_id}_thumb.jpg"
                                     
                                     # Copy to module media folder
                                     module_media_dir = os.path.join('modules', module_name, 'media', 'npcs')
@@ -3941,8 +3964,8 @@ def handle_generate_image(data):
                                     percent = 30 + int((completed / total_assets) * 70)
                                     emit('unified_generation_progress', {
                                         'percent': percent,
-                                        'message': f"Generated portrait for {asset['name']}",
-                                        'asset_id': asset['id'],
+                                        'message': f"Generated portrait for {asset_name}",
+                                        'asset_id': asset_id,
                                         'status': 'Portrait Generated'
                                     })
                                     
@@ -4366,15 +4389,13 @@ def get_module_npcs(module_name):
                             if 'npcs' in location and location['npcs']:
                                 for npc in location['npcs']:
                                     if isinstance(npc, dict) and 'name' in npc:
-                                        npc_name = npc['name']
-                                        npc_id = npc_name.lower().replace(' ', '_').replace("'", "").replace("-", "_")
-                                        if npc_id not in npcs_found:
-                                            npcs_found[npc_id] = {'name': npc_name, 'id': npc_id}
+                                        identity = canonicalize_npc_identity(npc['name'])
+                                        if identity.slug not in npcs_found:
+                                            npcs_found[identity.slug] = build_npc_asset_payload(identity)
                                     elif isinstance(npc, str):
-                                        npc_name = npc
-                                        npc_id = npc_name.lower().replace(' ', '_').replace("'", "").replace("-", "_")
-                                        if npc_id not in npcs_found:
-                                            npcs_found[npc_id] = {'name': npc_name, 'id': npc_id}
+                                        identity = canonicalize_npc_identity(npc)
+                                        if identity.slug not in npcs_found:
+                                            npcs_found[identity.slug] = build_npc_asset_payload(identity)
 
         # Check portrait existence based on findings
         npc_list = []
@@ -4389,6 +4410,9 @@ def get_module_npcs(module_name):
                 'is_local': False,
                 'pack_name': pack_name,
             }
+            for metadata_key in ('source_label', 'source_id', 'role_hint'):
+                if npc_info.get(metadata_key):
+                    result[metadata_key] = npc_info[metadata_key]
 
             # Check 1: In the pack's 'npcs' folder
             if os.path.exists(pack_npcs_dir):
@@ -4469,8 +4493,13 @@ def fetch_npc_descriptions():
             
             # Generate description for each NPC
             for i, npc_data in enumerate(npcs):
-                npc_name = npc_data['name']
-                npc_id = npc_data['id']
+                # TABLETOP MODE: Canonicalize NPC identity before durable writes so
+                # descriptive labels do not become compendium keys or media slugs.
+                raw_npc_id = npc_data.get('id')
+                raw_npc_name = npc_data.get('name') or raw_npc_id
+                identity = canonicalize_npc_identity(raw_npc_name, fallback_id=raw_npc_id)
+                npc_name = identity.canonical_name
+                npc_id = identity.slug
                 
                 # In toolkit mode, always regenerate descriptions
                 if npc_id in existing_descriptions:
@@ -4519,19 +4548,19 @@ Example Output Format:
                     description = sanitize_text(description)
                     
                     # Save to NPC compendium
-                    npc_compendium['npcs'][npc_id] = {
+                    npc_compendium['npcs'][npc_id] = merge_npc_identity_metadata({
                         'name': npc_name,
                         'description': description,
                         'module': module_name,
                         'generated_at': datetime.now().isoformat()
-                    }
+                    }, identity)
                     
                     # Also save to temp file for backward compatibility
-                    existing_descriptions[npc_id] = {
+                    existing_descriptions[npc_id] = merge_npc_identity_metadata({
                         'name': npc_name,
                         'description': description,
                         'generated_at': datetime.now().isoformat()
-                    }
+                    }, identity)
                     
                     # Write both files
                     npc_compendium['total_npcs'] = len(npc_compendium.get('npcs', {}))
@@ -4643,15 +4672,18 @@ def handle_npc_description():
             if os.path.exists(npc_compendium_path):
                 npc_compendium = safe_read_json(npc_compendium_path) or {}
                 npcs_dict = npc_compendium.get('npcs', {})
-                if npc_id in npcs_dict:
-                    return jsonify({'description': npcs_dict[npc_id].get('description', '')})
+                for lookup_id in get_npc_compendium_lookup_keys(npc_id):
+                    if lookup_id in npcs_dict:
+                        return jsonify({'description': npcs_dict[lookup_id].get('description', '')})
             
             # Fall back to temp file
             descriptions_file = f'temp/npc_descriptions_{module_name}.json'
             descriptions = safe_read_json(descriptions_file) or {}
             
-            if npc_id in descriptions:
-                desc_data = descriptions[npc_id]
+            for lookup_id in get_npc_compendium_lookup_keys(npc_id):
+                if lookup_id not in descriptions:
+                    continue
+                desc_data = descriptions[lookup_id]
                 if isinstance(desc_data, dict):
                     return jsonify({'description': desc_data.get('description', '')})
                 else:
@@ -4678,6 +4710,11 @@ def handle_npc_description():
             from utils.encoding_utils import sanitize_text
             
             sanitized_description = sanitize_text(description)
+            # TABLETOP MODE: Canonicalize manual description writes as a final
+            # boundary guard against descriptive IDs from older toolkit payloads.
+            identity = canonicalize_npc_identity(npc_name or npc_id, fallback_id=npc_id)
+            npc_name = identity.canonical_name
+            npc_id = identity.slug
             
             # Save to NPC compendium
             npc_compendium_path = 'data/bestiary/npc_compendium.json'
@@ -4686,12 +4723,12 @@ def handle_npc_description():
             if 'npcs' not in npc_compendium:
                 npc_compendium['npcs'] = {}
             
-            npc_compendium['npcs'][npc_id] = {
+            npc_compendium['npcs'][npc_id] = merge_npc_identity_metadata({
                 'name': npc_name,
                 'description': sanitized_description,
                 'module': module_name,
                 'updated_at': datetime.now().isoformat()
-            }
+            }, identity)
             
             npc_compendium['total_npcs'] = len(npc_compendium.get('npcs', {}))
             npc_compendium['last_updated'] = datetime.now().isoformat()
@@ -4702,11 +4739,11 @@ def handle_npc_description():
             os.makedirs('temp', exist_ok=True)
             
             descriptions = safe_read_json(descriptions_file) or {}
-            descriptions[npc_id] = {
+            descriptions[npc_id] = merge_npc_identity_metadata({
                 'name': npc_name,
                 'description': sanitized_description,
                 'updated_at': datetime.now().isoformat()
-            }
+            }, identity)
             
             safe_write_json(descriptions_file, descriptions)
             
@@ -4768,29 +4805,41 @@ def generate_npc_portraits():
             # Prepare NPC data with descriptions
             npcs_with_descriptions = []
             for npc_data in npcs:
-                npc_id = npc_data['id']
-                npc_name = npc_data['name']
+                # TABLETOP MODE: Use canonical identity for generated portrait
+                # filenames while preserving the submitted descriptive label.
+                raw_npc_id = npc_data.get('id')
+                raw_npc_name = npc_data.get('name') or raw_npc_id
+                identity = canonicalize_npc_identity(raw_npc_name, fallback_id=raw_npc_id)
+                npc_id = identity.slug
+                npc_name = identity.canonical_name
+                lookup_ids = get_npc_compendium_lookup_keys(raw_npc_id or npc_id, raw_npc_name)
                 
                 # Get description from compendium first, then temp file
                 description = ''
-                if npc_id in npcs_dict:
-                    description = npcs_dict[npc_id].get('description', '')
+                for lookup_id in lookup_ids:
+                    if lookup_id in npcs_dict:
+                        description = npcs_dict[lookup_id].get('description', '')
+                        break
                 
-                if not description and npc_id in temp_descriptions:
-                    npc_desc_data = temp_descriptions[npc_id]
-                    if isinstance(npc_desc_data, dict):
-                        description = npc_desc_data.get('description', '')
-                    else:
-                        description = npc_desc_data
+                if not description:
+                    for lookup_id in lookup_ids:
+                        if lookup_id not in temp_descriptions:
+                            continue
+                        npc_desc_data = temp_descriptions[lookup_id]
+                        if isinstance(npc_desc_data, dict):
+                            description = npc_desc_data.get('description', '')
+                        else:
+                            description = npc_desc_data
+                        break
                 
                 if not description:
                     description = f'A fantasy NPC named {npc_name}'
                 
-                npcs_with_descriptions.append({
+                npcs_with_descriptions.append(merge_npc_identity_metadata({
                     'id': npc_id,
                     'name': npc_name,
                     'description': description
-                })
+                }, identity))
             
             # Create progress callback
             def progress_callback(progress_data):
@@ -5464,6 +5513,7 @@ def handle_generate_unified_assets(data):
             
             total_assets = len(assets)
             completed = 0
+            generation_failures = []
             
             # Initialize generators
             bestiary_updater = BestiaryUpdater()
@@ -5560,6 +5610,13 @@ def handle_generate_unified_assets(data):
                                     })
                             except Exception as e:
                                 error(f"Failed to generate description for {asset['name']}: {e}")
+                                generation_failures.append({
+                                    'asset_id': asset.get('id'),
+                                    'asset_name': asset.get('name'),
+                                    'asset_type': asset.get('type'),
+                                    'phase': 'description',
+                                    'error': str(e),
+                                })
                                 completed += 1
                     
                     # Run async function
@@ -5571,6 +5628,13 @@ def handle_generate_unified_assets(data):
                         nonlocal completed
                         for asset in npcs_to_describe:
                             try:
+                                # TABLETOP MODE: Canonicalize NPC identity before durable compendium writes.
+                                raw_asset_id = asset.get('id')
+                                raw_asset_name = asset.get('name') or raw_asset_id
+                                identity = canonicalize_npc_identity(raw_asset_name, fallback_id=raw_asset_id)
+                                asset_id = identity.slug
+                                asset_name = identity.canonical_name
+                                lookup_ids = get_npc_compendium_lookup_keys(raw_asset_id or asset_id, raw_asset_name)
                                 description_found = False
                                 description_text = ""
 
@@ -5579,12 +5643,14 @@ def handle_generate_unified_assets(data):
                                 if os.path.exists(npc_compendium_path):
                                     compendium_data = safe_read_json(npc_compendium_path) or {}
                                     npcs_dict = compendium_data.get('npcs', {})
-                                    if asset['id'] in npcs_dict:
-                                        npc_entry = npcs_dict[asset['id']]
-                                        if npc_entry.get('description'):
-                                            description_found = True
-                                            description_text = npc_entry['description']
-                                            info(f"Using existing description from compendium for {asset['name']}")
+                                    for lookup_id in lookup_ids:
+                                        if lookup_id in npcs_dict:
+                                            npc_entry = npcs_dict[lookup_id]
+                                            if npc_entry.get('description'):
+                                                description_found = True
+                                                description_text = npc_entry['description']
+                                                info(f"Using existing description from compendium for {asset_name}")
+                                                break
 
                                 # If not in compendium, check area files
                                 if not description_found:
@@ -5600,12 +5666,12 @@ def handle_generate_unified_assets(data):
                                                         for npc in location['npcs']:
                                                             if isinstance(npc, dict):
                                                                 npc_name = npc.get('name', '')
-                                                                npc_id = npc_name.lower().replace(' ', '_').replace("'", "")
-                                                                if npc_id == asset['id']:
+                                                                npc_identity = canonicalize_npc_identity(npc_name)
+                                                                if npc_identity.slug == asset_id or npc_identity.slug in lookup_ids:
                                                                     description_text = npc.get('description', '')
                                                                     if description_text:
                                                                         description_found = True
-                                                                        info(f"Using existing description from area file for {asset['name']}")
+                                                                        info(f"Using existing description from area file for {asset_name}")
                                                                     break
                                                     if description_found:
                                                         break
@@ -5621,12 +5687,12 @@ def handle_generate_unified_assets(data):
                                     # Generate description based on module context
                                     npc_data = await asyncio.to_thread(
                                         npc_builder.generate_npc_description,
-                                        asset['name'],
+                                        asset_name,
                                         module_context
                                     )
                                     if npc_data:
                                         description_text = npc_data.get('description', '')
-                                        info(f"Generated new AI description for {asset['name']}")
+                                        info(f"Generated new AI description for {asset_name}")
 
                                 # Save to NPC compendium
                                 if description_text:
@@ -5636,27 +5702,32 @@ def handle_generate_unified_assets(data):
                                     if 'npcs' not in compendium_data:
                                         compendium_data['npcs'] = {}
 
-                                    # Add or update the NPC in compendium
-                                    if asset['id'] not in compendium_data['npcs']:
-                                        compendium_data['npcs'][asset['id']] = {}
-
-                                    compendium_data['npcs'][asset['id']]['name'] = asset['name']
-                                    compendium_data['npcs'][asset['id']]['description'] = description_text
+                                    # Add or update the NPC in compendium under canonical ID.
+                                    existing_entry = compendium_data['npcs'].get(asset_id, {})
+                                    existing_entry.update({'description': description_text})
+                                    compendium_data['npcs'][asset_id] = merge_npc_identity_metadata(existing_entry, identity)
 
                                     safe_write_json(npc_compendium_path, compendium_data)
-                                    info(f"Saved {asset['name']} description to NPC compendium")
+                                    info(f"Saved {asset_name} description to NPC compendium")
 
                                     completed += 1
                                     progress = int((completed / total_assets) * 100)
                                     socketio.emit('unified_generation_progress', {
                                         'percent': progress,
-                                        'message': f"Generated description for {asset['name']}...",
-                                        'asset_id': asset.get('id'),
-                                        'asset_name': asset.get('name'),
+                                        'message': f"Generated description for {asset_name}...",
+                                        'asset_id': asset_id,
+                                        'asset_name': asset_name,
                                         'status': 'Description Generated'
                                     })
                             except Exception as e:
-                                error(f"Failed to generate description for {asset['name']}: {e}")
+                                error(f"Failed to generate description for {asset.get('name')}: {e}")
+                                generation_failures.append({
+                                    'asset_id': asset.get('id'),
+                                    'asset_name': asset.get('name'),
+                                    'asset_type': asset.get('type'),
+                                    'phase': 'description',
+                                    'error': str(e),
+                                })
                                 completed += 1
 
                     # Run async function
@@ -5696,6 +5767,14 @@ def handle_generate_unified_assets(data):
                 # Generate NPC portraits
                 for asset in npcs_to_image:
                     try:
+                        # TABLETOP MODE: Canonicalize NPC identity before portrait filenames.
+                        raw_asset_id = asset.get('id')
+                        raw_asset_name = asset.get('name') or raw_asset_id
+                        identity = canonicalize_npc_identity(raw_asset_name, fallback_id=raw_asset_id)
+                        asset_id = identity.slug
+                        asset_name = identity.canonical_name
+                        lookup_ids = get_npc_compendium_lookup_keys(raw_asset_id or asset_id, raw_asset_name)
+
                         # Get NPC description - check multiple sources
                         description = ""
 
@@ -5704,8 +5783,11 @@ def handle_generate_unified_assets(data):
                         if os.path.exists(npc_compendium_path):
                             compendium_data = safe_read_json(npc_compendium_path) or {}
                             npcs_dict = compendium_data.get('npcs', {})
-                            if asset['id'] in npcs_dict:
-                                description = npcs_dict[asset['id']].get('description', '')
+                            for lookup_id in lookup_ids:
+                                if lookup_id in npcs_dict:
+                                    description = npcs_dict[lookup_id].get('description', '')
+                                    if description:
+                                        break
 
                         # If no description in compendium, check area files
                         if not description:
@@ -5721,8 +5803,8 @@ def handle_generate_unified_assets(data):
                                                 for npc in location['npcs']:
                                                     if isinstance(npc, dict):
                                                         npc_name = npc.get('name', '')
-                                                        npc_id = npc_name.lower().replace(' ', '_').replace("'", "")
-                                                        if npc_id == asset['id']:
+                                                        npc_identity = canonicalize_npc_identity(npc_name)
+                                                        if npc_identity.slug == asset_id or npc_identity.slug in lookup_ids:
                                                             description = npc.get('description', '')
                                                             break
                                             if description:
@@ -5732,7 +5814,7 @@ def handle_generate_unified_assets(data):
 
                         # If still no description, check character file
                         if not description:
-                            npc_file = Path(f"modules/{module_name}/characters/{asset['id']}.json")
+                            npc_file = Path(f"modules/{module_name}/characters/{asset_id}.json")
                             if npc_file.exists():
                                 npc_data = safe_read_json(str(npc_file))
                                 if npc_data:
@@ -5740,14 +5822,14 @@ def handle_generate_unified_assets(data):
 
                         # Fallback description
                         if not description:
-                            description = f"A fantasy NPC named {asset['name']}"
+                            description = f"A fantasy NPC named {asset_name}"
 
                         # Generate portrait using selected style and model
                         style = options.get('style', 'photorealistic')
                         model = options.get('model', 'gpt-image-1')
                         result = npc_generator.generate_npc_portrait(
-                            npc_id=asset['id'],
-                            npc_name=asset['name'],
+                            npc_id=asset_id,
+                            npc_name=asset_name,
                             npc_description=description,
                             style=style,
                             model=model,
@@ -5765,18 +5847,18 @@ def handle_generate_unified_assets(data):
                             # Try getting image_object first (returned when pack_name=None)
                             if result.get('image_object'):
                                 img = result['image_object']
-                                info(f"Using image object from NPC generator for {asset['name']}")
+                                info(f"Using image object from NPC generator for {asset_name}")
                             # Otherwise download from URL
                             elif result.get('image_url') and result['image_url'] != 'base64_image':
                                 response = requests.get(result['image_url'])
                                 img = Image.open(BytesIO(response.content))
-                                info(f"Downloaded image from URL for {asset['name']}")
+                                info(f"Downloaded image from URL for {asset_name}")
 
                             if img:
                                 # Save original uncompressed PNG to raw_images folder
                                 raw_dir = Path('raw_images') / 'npcs' / module_name
                                 raw_dir.mkdir(parents=True, exist_ok=True)
-                                raw_path = raw_dir / f"{asset['id']}.png"
+                                raw_path = raw_dir / f"{asset_id}.png"
                                 img.save(raw_path, 'PNG')
 
                                 # Save to module media folder
@@ -5792,30 +5874,44 @@ def handle_generate_unified_assets(data):
                                     img_to_save = img
 
                                 # Save compressed JPEG (matching monster generator quality)
-                                img_to_save.save(media_dir / f"{asset['id']}.jpg", 'JPEG', quality=95)
+                                img_to_save.save(media_dir / f"{asset_id}.jpg", 'JPEG', quality=95)
 
                                 # Create and save thumbnail as JPEG
                                 thumb = img_to_save.copy()
                                 thumb.thumbnail((128, 128), Image.Resampling.LANCZOS)
-                                thumb.save(media_dir / f"{asset['id']}_thumb.jpg", 'JPEG', quality=85)
+                                thumb.save(media_dir / f"{asset_id}_thumb.jpg", 'JPEG', quality=85)
 
-                                info(f"Saved NPC images for {asset['name']} to {media_dir}")
+                                info(f"Saved NPC images for {asset_name} to {media_dir}")
                             else:
-                                error(f"No image data available for {asset['name']}")
+                                error(f"No image data available for {asset_name}")
+                                generation_failures.append({
+                                    'asset_id': asset_id,
+                                    'asset_name': asset_name,
+                                    'asset_type': 'npc',
+                                    'phase': 'image',
+                                    'error': 'No image data available',
+                                })
                         
                         completed += 1
                         progress = int((completed / total_assets) * 100)
                         socketio.emit('unified_generation_progress', {
                             'phase': 'images',
                             'percent': progress,
-                            'message': f"Generated portrait for {asset['name']}..."
+                            'message': f"Generated portrait for {asset_name}..."
                         })
                         
                         # Rate limiting between API calls
                         time.sleep(3)
                         
                     except Exception as e:
-                        error(f"Failed to generate image for NPC {asset['name']}: {e}")
+                        error(f"Failed to generate image for NPC {asset.get('name')}: {e}")
+                        generation_failures.append({
+                            'asset_id': asset.get('id'),
+                            'asset_name': asset.get('name'),
+                            'asset_type': 'npc',
+                            'phase': 'image',
+                            'error': str(e),
+                        })
                         completed += 1
                 
                 # Generate monster images
@@ -5893,6 +5989,13 @@ def handle_generate_unified_assets(data):
                                 })
                             else:
                                 error(f"Failed to generate image for {asset['name']}: {result.get('error')}")
+                                generation_failures.append({
+                                    'asset_id': asset.get('id'),
+                                    'asset_name': asset.get('name'),
+                                    'asset_type': 'monster',
+                                    'phase': 'image',
+                                    'error': str(result.get('error') or 'Unknown monster image generation failure'),
+                                })
                                 socketio.emit('unified_generation_progress', {
                                     'percent': int((completed + 1) / total_assets * 100),
                                     'message': f"Failed to generate image for {asset['name']}: {result.get('error')}",
@@ -5908,6 +6011,13 @@ def handle_generate_unified_assets(data):
                             
                         except Exception as e:
                             error(f"Failed to generate image for monster {asset['name']}: {e}")
+                            generation_failures.append({
+                                'asset_id': asset.get('id'),
+                                'asset_name': asset.get('name'),
+                                'asset_type': 'monster',
+                                'phase': 'image',
+                                'error': str(e),
+                            })
                             completed += 1
                             socketio.emit('unified_generation_progress', {
                                 'percent': int(completed / total_assets * 100),
@@ -5917,7 +6027,31 @@ def handle_generate_unified_assets(data):
                                 'status': 'Error'
                             })
             
+            generated_count = (
+                (len(description_targets) if 'description_targets' in locals() else 0)
+                + (len(image_targets) if 'image_targets' in locals() else 0)
+            )
             info(f"TOOLKIT: Generation completed. Description targets: {len(description_targets) if 'description_targets' in locals() else 0}, Image targets: {len(image_targets) if 'image_targets' in locals() else 0}")
+
+            media_report = None
+            try:
+                media_report = write_module_media_generator_report(
+                    module_name,
+                    assets,
+                    project_root=Path(__file__).resolve().parent.parent,
+                    generation_failures=generation_failures,
+                )
+                info(
+                    f"TOOLKIT: Wrote module media report for {module_name} "
+                    f"status={media_report.get('status', 'unknown')} "
+                    f"missing_count={media_report.get('missing_count', 0)}",
+                    category="module_ingest",
+                )
+            except Exception as media_report_error:
+                warning(
+                    f"TOOLKIT: MMG final media report write degraded for {module_name}: {media_report_error}",
+                    category="module_ingest",
+                )
 
             # TABLETOP MODE: Refresh persisted toolkit build report after successful
             # Module Media Generator completion so sidebar report consumers do not
@@ -5943,7 +6077,12 @@ def handle_generate_unified_assets(data):
             socketio.emit('unified_generation_complete', {
                 'success': True,
                 'message': f"Successfully generated assets for {module_name}",
-                'generated_count': len(description_targets) if 'description_targets' in locals() else 0 + len(image_targets) if 'image_targets' in locals() else 0
+                'generated_count': generated_count,
+                'media_report': {
+                    'status': media_report.get('status'),
+                    'missing_count': media_report.get('missing_count', 0),
+                    'report_path': media_report.get('report_path'),
+                } if media_report else None,
             })
             
         except Exception as e:

@@ -308,6 +308,13 @@ class TestToolkitModuleFinisher(unittest.TestCase):
             refresh_workflow="toolkit_report_refresh",
         )
 
+    def test_mmg_completion_path_writes_final_media_report(self) -> None:
+        source = (
+            Path(__file__).resolve().parent.parent / "web" / "web_interface.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("write_module_media_generator_report", source)
+        self.assertIn("media_report", source)
+
     def test_finisher_media_only_debt_yields_success_with_handoff(self) -> None:
         """Media-only debt: build succeeds with handoff semantics, not failure."""
         finisher._run_continuity_stage = lambda *args, **kwargs: {"status": "success"}

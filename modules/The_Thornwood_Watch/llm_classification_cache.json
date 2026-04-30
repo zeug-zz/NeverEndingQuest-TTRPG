@@ -1,0 +1,35 @@
+{
+  "entity": {
+    "0ff5099f50621fe15eda557e3c6c70c2a0e3564454c829434eb090266d585a3e": "combatant",
+    "229aa31775338e5dce0e4652654b01367df7a647bd7e31454d71d4717e1de142": "combatant"
+  },
+  "destination": {
+    "1548c87d2ee136074b5dda8d7bebd0e76e0fe41b57088843a7502c220fa80dc4": "evocative_prose",
+    "88539a10701e870f0e1dd0ecd756caa7ea7b44e5930921d5020ca99c1cd1dd9c": "quest_objective",
+    "bbd936d80e7275dacb1402e882ed9461eca231be583e90d6ccbc6e5a164b90f1": "canonical_alias",
+    "28437ba0118c7bac260c80a9e1f1a5fe1ddfc07cd9dc9207c44c3eb55ea1f0b7": "evocative_prose",
+    "b3ab8860bae9d9159b8900bf54f5296f0b2806429894ad9a86c6d9ad1d88dfdd": "canonical_alias",
+    "cedc8a1f254e501765f87ca6ace278d6b181c1b6156189fe2558043850a51165": "canonical_alias",
+    "755f37051cc428a1d3766283284d6a90be43c0fcf2dc0753905a864554241f89": "canonical_alias"
+  },
+  "npc_visibility": {
+    "8cdce7412e2b3dda02b5395c8d8c609152076d57ea3a8c3d1423f2373d8a2686": "visible",
+    "edcad9efdc73464d1344bcc0d001dc8d1430115f0a6bb635128d09fab1e5deae": "visible",
+    "c2d92166882bbf59d80d91e5eed7f13abd6d2acf1dd5c05efbc2c907ea85f906": "visible",
+    "c996142dcfee367080105294b8f66ad0670d4a7091f8b8374c91fe3c812c6eff": "visible",
+    "4a2dc0fb40ee376f4c481f3b1efa3e548d02b90c282e95bdfdf2025c020b3f7e": "visible",
+    "fe6696a17e8e11655a26c77d0b2935b99be2cd5352c03445dfe64e6d037c7e89": "visible",
+    "8338d9258748b21bc84401da499aa417b331c9e18aa1baefc3b4a871db4c3d68": "visible",
+    "2c75bd690a9c184543cd7f38786571650840c86c9c1e17ce55a3b0df8cf3526a": "visible",
+    "17266ae2aa96dd01728865252add2d31181fa41014a5fab71035a20022385640": "visible",
+    "28210f14a93a44d3332ae5a904855222c258f1e29c6e7be5896a2a21be9d8a5c": "visible",
+    "dd34cb110d76a237bb99aed88f73155d5453b7cbb79e0954ca78a055a0a62570": "visible",
+    "ecb61256ff46c8bafd44b8d6b471becc22f1df7e2ead524ab5873259e54827e7": "visible",
+    "84b90ddf20cdff2236b5a1b7fdd7fec03557784769d537dcd38feba3ca44693c": "visible",
+    "3c15c5f95207db448ef0c32986cf5ef9654c7f867508a64710c2f6507fac96aa": "visible",
+    "853557906a6a2a6d0f4f1013d4e46539a5c759b5d5f2ea5e6798f5e2d3bdcf93": "visible",
+    "9a7108fca3dff064476473fc7155980eec338b773e3affff3f6de194d4c82368": "visible",
+    "722a697d7eabca9cf1c8a5fc765a85584dd84f206ae3e97d742921adddb40331": "visible",
+    "986b88f281436e0ac754cd87d51e84f43cb58a5b4cf3a68a3f3aa72bab28acaa": "visible"
+  }
+}

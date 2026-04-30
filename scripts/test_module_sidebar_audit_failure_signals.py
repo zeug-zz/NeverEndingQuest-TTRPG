@@ -20,12 +20,29 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.generators.module_stitcher import ModuleStitcher
+from utils.module_media_generator_report import write_module_media_generator_report
 
 
 def _write_json(file_path: Path, payload: Dict[str, Any]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     with file_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
+
+
+def _touch_media_asset(base_dir: Path, module_name: str, asset_type: str, asset_id: str) -> None:
+    media_folder = "monsters" if asset_type == "monster" else "npcs"
+    media_dir = base_dir / "modules" / module_name / "media" / media_folder
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / f"{asset_id}.jpg").write_bytes(b"module-media")
+    (media_dir / f"{asset_id}_thumb.jpg").write_bytes(b"module-media-thumb")
+
+
+def _touch_static_fallback_asset(base_dir: Path, asset_type: str, asset_id: str) -> None:
+    static_folder = "monsters" if asset_type == "monster" else "npcs"
+    static_dir = base_dir / "web" / "static" / "media" / static_folder
+    static_dir.mkdir(parents=True, exist_ok=True)
+    (static_dir / f"{asset_id}.jpg").write_bytes(b"static-media")
+    (static_dir / f"{asset_id}_thumb.jpg").write_bytes(b"static-media-thumb")
 
 
 class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
@@ -128,6 +145,19 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
             }
 
         return report
+
+    def _write_mmg_report(
+        self,
+        module_name: str,
+        assets: Any,
+        generation_failures: Any = None,
+    ) -> Dict[str, Any]:
+        return write_module_media_generator_report(
+            module_name,
+            assets,
+            project_root=self.tmp_path,
+            generation_failures=generation_failures,
+        )
 
     def test_missing_report_fails_open_without_sidebar_fields(self) -> None:
         modules = self.stitcher.get_available_modules()
@@ -289,6 +319,143 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
         entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
         self.assertNotIn("brief_failure", entry)
         self.assertNotIn("media_generator_needed", entry)
+
+    def test_mmg_pass_suppresses_stale_media_only_build_report(self) -> None:
+        report = self._build_report(
+            status="success",
+            ready_status="pass",
+            publishable_status="pass",
+            remediation_categories=["toolkit_manual_media_generation_required"],
+            toolkit_media_policy={"structural_media_debt_count": 5},
+        )
+        _write_json(
+            self.modules_dir / "Murder_at_the_Drowning_Lass" / "toolkit_build_report.json",
+            report,
+        )
+
+        _touch_media_asset(self.tmp_path, "Murder_at_the_Drowning_Lass", "monster", "goblin")
+        _touch_media_asset(self.tmp_path, "Murder_at_the_Drowning_Lass", "npc", "captain")
+        self._write_mmg_report(
+            "Murder_at_the_Drowning_Lass",
+            [
+                {"id": "goblin", "name": "Goblin", "type": "monster"},
+                {"id": "captain", "name": "Captain", "type": "npc"},
+            ],
+        )
+
+        modules = self.stitcher.get_available_modules()
+        entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
+        self.assertNotIn("brief_failure", entry)
+        self.assertNotIn("media_generator_needed", entry)
+
+    def test_mmg_fail_surfaces_handoff_without_build_report(self) -> None:
+        self._write_mmg_report(
+            "No_Report_Module",
+            [{"id": "oathbound_shade", "name": "Oathbound Shade", "type": "monster"}],
+        )
+
+        modules = self.stitcher.get_available_modules()
+        entry = next(m for m in modules if m["moduleName"] == "No_Report_Module")
+        self.assertEqual(entry.get("brief_failure"), "Publication blocked: missing media")
+        self.assertTrue(entry.get("media_generator_needed"))
+
+    def test_mmg_pass_ignores_static_fallback_media(self) -> None:
+        _touch_static_fallback_asset(self.tmp_path, "monster", "static_only")
+
+        report = self._write_mmg_report(
+            "No_Report_Module",
+            [{"id": "static_only", "name": "Static Only", "type": "monster"}],
+        )
+
+        self.assertEqual(report.get("status"), "fail")
+        self.assertEqual(int(report.get("missing_count", 0)), 1)
+        self.assertEqual((report.get("missing_assets") or [{}])[0].get("id"), "static_only")
+
+    def test_mmg_pass_preserves_semantic_failure(self) -> None:
+        report = self._build_report(
+            status="degraded",
+            ready_status="pass",
+            publishable_status="fail",
+            remediation_categories=["semantic_publishability_blocking"],
+            toolkit_media_policy={"structural_media_debt_count": 0},
+            blocking_errors=["Missing semantic_authority payload in module_context.json"],
+        )
+        _write_json(
+            self.modules_dir / "Semantic_Only_Module" / "toolkit_build_report.json",
+            report,
+        )
+
+        _touch_media_asset(self.tmp_path, "Semantic_Only_Module", "monster", "observer")
+        self._write_mmg_report(
+            "Semantic_Only_Module",
+            [{"id": "observer", "name": "Observer", "type": "monster"}],
+        )
+
+        modules = self.stitcher.get_available_modules()
+        entry = next(m for m in modules if m["moduleName"] == "Semantic_Only_Module")
+        self.assertEqual(entry.get("brief_failure"), "Build failed: semantic publishability checks")
+        self.assertFalse(entry.get("media_generator_needed"))
+
+    def test_malformed_mmg_report_falls_back_to_build_report_media_debt(self) -> None:
+        report = self._build_report(
+            status="success",
+            ready_status="pass",
+            publishable_status="pass",
+            remediation_categories=["toolkit_manual_media_generation_required"],
+            toolkit_media_policy={"structural_media_debt_count": 3},
+        )
+        _write_json(
+            self.modules_dir / "Murder_at_the_Drowning_Lass" / "toolkit_build_report.json",
+            report,
+        )
+
+        mmg_report_path = self.modules_dir / "Murder_at_the_Drowning_Lass" / "module_media_generator_report.json"
+        mmg_report_path.parent.mkdir(parents=True, exist_ok=True)
+        mmg_report_path.write_text("{not valid json", encoding="utf-8")
+
+        modules = self.stitcher.get_available_modules()
+        entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
+        self.assertEqual(entry.get("brief_failure"), "Publication blocked: missing media")
+        self.assertTrue(entry.get("media_generator_needed"))
+
+    def test_non_authoritative_mmg_report_falls_back_to_build_report_media_debt(self) -> None:
+        report = self._build_report(
+            status="success",
+            ready_status="pass",
+            publishable_status="pass",
+            remediation_categories=["toolkit_manual_media_generation_required"],
+            toolkit_media_policy={"structural_media_debt_count": 4},
+        )
+        _write_json(
+            self.modules_dir / "Murder_at_the_Drowning_Lass" / "toolkit_build_report.json",
+            report,
+        )
+        _write_json(
+            self.modules_dir / "Murder_at_the_Drowning_Lass" / "module_media_generator_report.json",
+            {
+                "module_slug": "Murder_at_the_Drowning_Lass",
+                "source": "module_media_generator",
+                "contract": "module_media_generator_report.v1",
+                "authoritative": False,
+                "status": "pass",
+                "freshness_state": "stale",
+                "report_freshness": {
+                    "state": "stale",
+                    "authoritative": False,
+                    "phase": "final",
+                    "workflow": "module_media_generator",
+                    "refresh_reason": "test_fixture",
+                    "contract": "module_media_generator_report.v1",
+                },
+                "missing_count": 0,
+                "missing_assets": [],
+            },
+        )
+
+        modules = self.stitcher.get_available_modules()
+        entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
+        self.assertEqual(entry.get("brief_failure"), "Publication blocked: missing media")
+        self.assertTrue(entry.get("media_generator_needed"))
 
     def test_renderer_contracts_present_in_both_templates(self) -> None:
         toolkit_template = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")

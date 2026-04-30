@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-04-23T23:10:15Z",
+  "generated_at": "2026-04-30T00:42:59Z",
   "module_slug": "The_Thornwood_Watch",
-  "status": "degraded",
+  "status": "success",
   "ready_status": "pass",
   "publishable_status": "pass",
-  "freshness_state": "degraded",
+  "freshness_state": "current",
   "report_freshness": {
-    "state": "degraded",
+    "state": "current",
     "authoritative": true,
-    "written_at": "2026-04-23T23:10:15Z",
+    "written_at": "2026-04-30T00:42:59Z",
     "phase": "final",
     "workflow": "toolkit_report_refresh",
-    "refresh_reason": "thornwood_semantic_destination_normalization",
+    "refresh_reason": "module_media_generator",
     "contract": "toolkit_build_report_refresh_contract.v1",
     "stale_reason": null
   },
@@ -24,7 +24,7 @@
     "phase": "final",
     "refresh_contract": "toolkit_build_report_refresh_contract.v1",
     "refresh_workflow": "toolkit_report_refresh",
-    "refresh_reason": "thornwood_semantic_destination_normalization"
+    "refresh_reason": "module_media_generator"
   },
   "stages": {
     "continuity": {
@@ -436,6 +436,17 @@
                 ],
                 "sources": [
                   "areas/NCW001.json#locations[NC05].aliases"
+                ]
+              },
+              "north tower": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
                 ]
               },
               "north tower overlook": {
@@ -900,15 +911,18 @@
                 "observation_count": 0
               },
               "north tower": {
-                "status": "unresolved",
-                "candidate_location_ids": [],
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
                 "sources": [
                   "areas/RO001.json#locations[RO06].aliases",
                   "areas/RO001.json#locations[RO06].name"
                 ],
                 "observed": true,
                 "player_facing": true,
-                "observation_count": 2
+                "observation_count": 3
               },
               "north tower overlook": {
                 "status": "resolved",
@@ -1556,16 +1570,6 @@
                   "areas/TW001.json#locations[TW06].features.description"
                 ]
               },
-              "Merchant Lira": {
-                "name_slug": "merchant lira",
-                "visible_location_ids": [],
-                "reveal_bindings": [],
-                "sources": [
-                  "module_context.json#npcs.merchant_lira"
-                ],
-                "authored_mentions_count": 0,
-                "authored_mention_sources": []
-              },
               "Merchant Vera": {
                 "name_slug": "merchant vera",
                 "visible_location_ids": [
@@ -1961,16 +1965,7 @@
             "diagnostics": {
               "duplicate_location_aliases": [],
               "ambiguous_destination_phrases": [],
-              "unresolved_destination_phrases": [
-                {
-                  "phrase": "north tower",
-                  "sources": [
-                    "areas/RO001.json#locations[RO06].aliases",
-                    "areas/RO001.json#locations[RO06].name"
-                  ],
-                  "player_facing": true
-                }
-              ],
+              "unresolved_destination_phrases": [],
               "normalized_shortform_destination_phrases": [
                 {
                   "phrase": "explorers camp",
@@ -1982,27 +1977,26 @@
                   ]
                 }
               ],
-              "missing_npc_authority": [
-                {
-                  "npc": "Merchant Lira",
-                  "name_slug": "merchant lira",
-                  "sources": [
-                    "module_context.json#npcs.merchant_lira"
-                  ],
-                  "authored_mentions_count": 0,
-                  "authored_mention_sources": []
-                }
-              ]
+              "missing_npc_authority": []
             },
             "summary": {
               "location_count": 17,
-              "location_alias_count": 35,
+              "location_alias_count": 36,
               "destination_phrase_count": 37,
-              "npc_count": 23,
+              "npc_count": 22,
               "ambiguous_destination_count": 0,
               "normalized_shortform_destination_count": 1,
-              "missing_npc_authority_count": 1
+              "missing_npc_authority_count": 0
             }
+          },
+          "classification_metadata": {
+            "classified_by": "gpt-5.4-mini-2026-03-17",
+            "classified_at": "2026-04-30T00:41:24.679016",
+            "entity_count": 2,
+            "destination_count": 7,
+            "npc_count": 18,
+            "provenance": "llm_classification",
+            "feature_flag": "ENABLE_LLM_CLASSIFICATION"
           }
         },
         "changed": false,
@@ -2418,6 +2412,17 @@
                   "areas/NCW001.json#locations[NC05].aliases"
                 ]
               },
+              "north tower": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ]
+              },
               "north tower overlook": {
                 "status": "resolved",
                 "location_id": "RO06",
@@ -2880,15 +2885,18 @@
                 "observation_count": 0
               },
               "north tower": {
-                "status": "unresolved",
-                "candidate_location_ids": [],
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
                 "sources": [
                   "areas/RO001.json#locations[RO06].aliases",
                   "areas/RO001.json#locations[RO06].name"
                 ],
                 "observed": true,
                 "player_facing": true,
-                "observation_count": 2
+                "observation_count": 3
               },
               "north tower overlook": {
                 "status": "resolved",
@@ -3536,16 +3544,6 @@
                   "areas/TW001.json#locations[TW06].features.description"
                 ]
               },
-              "Merchant Lira": {
-                "name_slug": "merchant lira",
-                "visible_location_ids": [],
-                "reveal_bindings": [],
-                "sources": [
-                  "module_context.json#npcs.merchant_lira"
-                ],
-                "authored_mentions_count": 0,
-                "authored_mention_sources": []
-              },
               "Merchant Vera": {
                 "name_slug": "merchant vera",
                 "visible_location_ids": [
@@ -3941,16 +3939,7 @@
             "diagnostics": {
               "duplicate_location_aliases": [],
               "ambiguous_destination_phrases": [],
-              "unresolved_destination_phrases": [
-                {
-                  "phrase": "north tower",
-                  "sources": [
-                    "areas/RO001.json#locations[RO06].aliases",
-                    "areas/RO001.json#locations[RO06].name"
-                  ],
-                  "player_facing": true
-                }
-              ],
+              "unresolved_destination_phrases": [],
               "normalized_shortform_destination_phrases": [
                 {
                   "phrase": "explorers camp",
@@ -3962,27 +3951,26 @@
                   ]
                 }
               ],
-              "missing_npc_authority": [
-                {
-                  "npc": "Merchant Lira",
-                  "name_slug": "merchant lira",
-                  "sources": [
-                    "module_context.json#npcs.merchant_lira"
-                  ],
-                  "authored_mentions_count": 0,
-                  "authored_mention_sources": []
-                }
-              ]
+              "missing_npc_authority": []
             },
             "summary": {
               "location_count": 17,
-              "location_alias_count": 35,
+              "location_alias_count": 36,
               "destination_phrase_count": 37,
-              "npc_count": 23,
+              "npc_count": 22,
               "ambiguous_destination_count": 0,
               "normalized_shortform_destination_count": 1,
-              "missing_npc_authority_count": 1
+              "missing_npc_authority_count": 0
             }
+          },
+          "classification_metadata": {
+            "classified_by": "gpt-5.4-mini-2026-03-17",
+            "classified_at": "2026-04-30T00:41:24.679016",
+            "entity_count": 2,
+            "destination_count": 7,
+            "npc_count": 18,
+            "provenance": "llm_classification",
+            "feature_flag": "ENABLE_LLM_CLASSIFICATION"
           }
         },
         "changed": false,
@@ -4012,7 +4000,7 @@
       "context_path": "modules/The_Thornwood_Watch/module_context.json"
     },
     "semantic_authority": {
-      "status": "degraded",
+      "status": "success",
       "semantic_authority": {
         "version": "v1",
         "module_slug": "The_Thornwood_Watch",
@@ -4111,6 +4099,28 @@
             "sources": [
               "areas/NCW001.json#locations[NC04].aliases",
               "areas/NCW001.json#locations[NC04].name"
+            ]
+          },
+          "east tower": {
+            "status": "resolved",
+            "location_id": "RO03",
+            "location_name": "Trader's Rest",
+            "candidate_location_ids": [
+              "RO03"
+            ],
+            "sources": [
+              "areas/RO001.json#locations[RO03].aliases"
+            ]
+          },
+          "explorers camp": {
+            "status": "resolved",
+            "location_id": "NC04",
+            "location_name": "Doomed Explorer's Camp",
+            "candidate_location_ids": [
+              "NC04"
+            ],
+            "sources": [
+              "areas/NCW001.json#locations[NC04].aliases"
             ]
           },
           "forgotten waystation": {
@@ -4305,6 +4315,17 @@
               "areas/RO001.json#locations[RO06].aliases"
             ]
           },
+          "ruins": {
+            "status": "resolved",
+            "location_id": "RO06",
+            "location_name": "North Tower Overlook",
+            "candidate_location_ids": [
+              "RO06"
+            ],
+            "sources": [
+              "areas/RO001.json#locations[RO06].aliases"
+            ]
+          },
           "scouts watch": {
             "status": "resolved",
             "location_id": "RO04",
@@ -4339,6 +4360,28 @@
             "sources": [
               "areas/NCW001.json#locations[NC05].aliases",
               "areas/NCW001.json#locations[NC05].name"
+            ]
+          },
+          "the ruins": {
+            "status": "resolved",
+            "location_id": "RO06",
+            "location_name": "North Tower Overlook",
+            "candidate_location_ids": [
+              "RO06"
+            ],
+            "sources": [
+              "areas/RO001.json#locations[RO06].aliases"
+            ]
+          },
+          "this camp": {
+            "status": "resolved",
+            "location_id": "TW03",
+            "location_name": "Abandoned Camp",
+            "candidate_location_ids": [
+              "TW03"
+            ],
+            "sources": [
+              "areas/TW001.json#locations[TW03].aliases"
             ]
           },
           "traders rest": {
@@ -4545,8 +4588,22 @@
             "player_facing": true,
             "observation_count": 2
           },
+          "east tower": {
+            "status": "resolved",
+            "location_id": "RO03",
+            "candidate_location_ids": [
+              "RO03"
+            ],
+            "sources": [
+              "areas/RO001.json#locations[RO03].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
           "explorers camp": {
             "status": "resolved",
+            "location_id": "NC04",
             "candidate_location_ids": [
               "NC04"
             ],
@@ -4556,18 +4613,7 @@
             ],
             "observed": true,
             "player_facing": true,
-            "observation_count": 2,
-            "location_id": "NC04",
-            "normalization": {
-              "type": "shortform_alias_collapse",
-              "strategy": "resolved_suffix_anchor_with_source_overlap",
-              "anchor_phrase": "doomed explorers camp",
-              "anchor_location_id": "NC04",
-              "shared_sources": [
-                "areas/NCW001.json#locations[NC04].aliases",
-                "areas/NCW001.json#locations[NC04].name"
-              ]
-            }
+            "observation_count": 3
           },
           "forgotten waystation": {
             "status": "resolved",
@@ -4796,6 +4842,21 @@
             "player_facing": false,
             "observation_count": 0
           },
+          "ruins": {
+            "status": "resolved",
+            "location_id": "RO06",
+            "candidate_location_ids": [
+              "RO06"
+            ],
+            "sources": [
+              "areas/NCW001.json#locations[NC05].description",
+              "areas/RO001.json#locations[RO05].accessibility",
+              "areas/RO001.json#locations[RO06].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 2
+          },
           "scouts watch": {
             "status": "resolved",
             "location_id": "RO04",
@@ -4837,6 +4898,32 @@
             "observed": false,
             "player_facing": false,
             "observation_count": 0
+          },
+          "the ruins": {
+            "status": "resolved",
+            "location_id": "RO06",
+            "candidate_location_ids": [
+              "RO06"
+            ],
+            "sources": [
+              "areas/RO001.json#locations[RO06].aliases"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "this camp": {
+            "status": "resolved",
+            "location_id": "TW03",
+            "candidate_location_ids": [
+              "TW03"
+            ],
+            "sources": [
+              "areas/TW001.json#locations[TW03].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
           },
           "traders rest": {
             "status": "resolved",
@@ -5732,32 +5819,20 @@
           "duplicate_location_aliases": [],
           "ambiguous_destination_phrases": [],
           "unresolved_destination_phrases": [],
-          "normalized_shortform_destination_phrases": [
-            {
-              "phrase": "explorers camp",
-              "anchor_phrase": "doomed explorers camp",
-              "location_id": "NC04",
-              "shared_sources": [
-                "areas/NCW001.json#locations[NC04].aliases",
-                "areas/NCW001.json#locations[NC04].name"
-              ]
-            }
-          ],
+          "normalized_shortform_destination_phrases": [],
           "missing_npc_authority": []
         },
         "summary": {
           "location_count": 17,
-          "location_alias_count": 36,
-          "destination_phrase_count": 37,
+          "location_alias_count": 41,
+          "destination_phrase_count": 41,
           "npc_count": 22,
           "ambiguous_destination_count": 0,
-          "normalized_shortform_destination_count": 1,
+          "normalized_shortform_destination_count": 0,
           "missing_npc_authority_count": 0
         }
       },
-      "warnings": [
-        "semantic_authority_normalized_shortform_destination_phrases=1"
-      ],
+      "warnings": [],
       "errors": []
     },
     "registry": {
@@ -5784,14 +5859,14 @@
       "parsed_output": {
         "status": "success",
         "created_count": 0,
-        "skipped_existing_count": 25,
+        "skipped_existing_count": 26,
         "missing_in_bestiary_count": 0,
         "missing_names": [],
         "path_conflicts_detected": 0,
         "path_conflicts_repaired": 0,
         "conflict_paths": [],
         "hydration_modes": {
-          "existing": 25,
+          "existing": 26,
           "reuse": 0,
           "bestiary": 0,
           "generated": 0
@@ -6052,6 +6127,18 @@
             "bestiary_missing": false
           },
           {
+            "requested_name": "Vitreol (Corrupted Thrall)",
+            "requested_slug": "vitreol_corrupted_thrall",
+            "canonical_slug": "vitreol_corrupted_thrall",
+            "canonical_name": "Vitreol (Corrupted Thrall)",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
             "requested_name": "Whispering Ashling",
             "requested_slug": "whispering_ashling",
             "canonical_slug": "whispering_ashling",
@@ -6102,11 +6189,77 @@
         ],
         "candidate_sources": {
           "seed_count": 0,
-          "authored_count": 25,
+          "authored_count": 26,
           "seed_missing_fallback_used": true
         },
         "module_path": "modules/The_Thornwood_Watch",
         "error": null
+      }
+    },
+    "llm_classification": {
+      "status": "success",
+      "classification_summary": {
+        "entity": {
+          "candidates": 2,
+          "cache_hits": 0,
+          "llm_classified": 2,
+          "labels": {
+            "Vitreol (Corrupted Thrall)": "combatant",
+            "Writhing Grubs": "combatant"
+          }
+        },
+        "destination": {
+          "candidates": 3,
+          "cache_hits": 0,
+          "llm_classified": 3,
+          "labels": {
+            "limestone cavern": "evocative_prose",
+            "the camp": "quest_objective",
+            "crumbling ruins": "evocative_prose"
+          }
+        },
+        "npc_visibility": {
+          "candidates": 18,
+          "cache_hits": 0,
+          "llm_classified": 18,
+          "labels": {
+            "Thorn-Touched Dryad Sylara": "visible",
+            "The Withered Hart": "visible",
+            "Ranger Elen": "visible",
+            "Ranger Marcus": "visible",
+            "Scout Kira": "visible",
+            "Messenger Tom": "visible",
+            "Pella Vireen": "visible",
+            "Merchant Kael": "visible",
+            "Merchant Vera": "visible",
+            "Quartermaster Brann": "visible",
+            "Dock Worker Finn": "visible",
+            "Apprentice Jeb": "visible",
+            "Trader Sila": "visible",
+            "Merchant Gareth": "visible",
+            "Trader Mila": "visible",
+            "Captured Bandit": "visible",
+            "Spirit-Touched Hermit Maelo": "visible",
+            "Captain Gorvek": "visible"
+          }
+        }
+      },
+      "applied": {
+        "entity": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        },
+        "destination": {
+          "status": "success",
+          "applied": "0",
+          "aliases_added": "[]"
+        },
+        "npc": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        }
       }
     },
     "toolkit_provenance": {
@@ -6131,22 +6284,26 @@
           "gates": {
             "gameplay": {
               "status": "pass",
-              "reason": "pass",
-              "exit_code": 0,
-              "blocking_error_count": 0,
-              "warning_count": 4,
+              "reason": "toolkit_structural_media_handoff_only",
+              "exit_code": 1,
+              "blocking_error_count": 1,
+              "warning_count": 6,
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/audit_module_gameplay.py --module The_Thornwood_Watch --json --strict-instructions",
-                "exit_code": 0,
-                "stdout": "{\n  \"target\": {\n    \"blocking_errors\": [],\n    \"warnings\": [\n      \"Missing video for: bandit_warrior\",\n      \"Missing video for: corrupted_owlbear\",\n      \"Missing video for: shadow_corrupted_wolf\",\n      \"Missing video for: writhing_grubs\"\n    ],\n    \"coverage_stats\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"referenced_monsters\": 17,\n      \"structural_refs\": 17,\n      \"heuristic_refs\": 0,\n      \"json_valid\": 17,\n      \"json_invalid\": 0,\n      \"json_missing\": 0,\n      \"json_coverage_pct\": 100.0,\n      \"media_base_coverage\": 17,\n      \"media_thumb_coverage\": 17,\n      \"media_video_coverage\": 13,\n      \"media_base_coverage_pct\": 100.0,\n      \"media_policy\": {\n        \"provider_generation_mode\": \"opt_in_manual_only\",\n        \"manual_toolkit_workflow\": [\n          \"Monster Management & Generator -> Generate Monster Images\",\n          \"Module Media Generator -> one-click monster media generation\"\n        ],\n        \"outcome_vocabulary\": [\n          \"reused_or_generated\",\n          \"provider_disabled_missing\",\n          \"attempted_but_unresolved\"\n        ]\n      }\n    },\n    \"fix_list\": [],\n    \"monster_media_findings\": [\n      {\n        \"slug\": \"ashbound_bandit\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"awakened_shrub\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[1].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RO001.json\",\n        \"source_path\": \"locations[5].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit_sentry\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit_warrior\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"corrupted_cave_fisher\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"corrupted_owlbear\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"corrupted_ranger_thane\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[3].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"corrupted_wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[5].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"elite_bandit_bodyguard\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[4].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"malarok_the_corruptor\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"shadow_corrupted_wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"tainted_stirge\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[0].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"twig_blight\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"whispering_ashling\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RO001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"writhing_grubs\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[2]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      }\n    ],\n    \"references\": [\n      {\n        \"slug\": \"whispering_ashling\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Whispering Ashling\"\n      },\n      {\n        \"slug\": \"ashbound_bandit\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Ashbound Bandit\"\n      },\n      {\n        \"slug\": \"bandit_sentry\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit Sentry\"\n      },\n      {\n        \"slug\": \"bandit_warrior\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit Warrior\"\n      },\n      {\n        \"slug\": \"writhing_grubs\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[2]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Writhing Grubs\"\n      },\n      {\n        \"slug\": \"corrupted_wolf\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[5].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Wolf\"\n      },\n      {\n        \"slug\": \"corrupted_cave_fisher\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Cave Fisher\"\n      },\n      {\n        \"slug\": \"tainted_stirge\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[0].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Tainted Stirge\"\n      },\n      {\n        \"slug\": \"twig_blight\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Twig Blight\"\n      },\n      {\n        \"slug\": \"awakened_shrub\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[1].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Awakened Shrub\"\n      },\n      {\n        \"slug\": \"shadow_corrupted_wolf\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Shadow Corrupted Wolf\"\n      },\n      {\n        \"slug\": \"corrupted_owlbear\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Owlbear\"\n      },\n      {\n        \"slug\": \"corrupted_ranger_thane\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[3].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Ranger Thane\"\n      },\n      {\n        \"slug\": \"malarok_the_corruptor\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Malarok the Corruptor\"\n      },\n      {\n        \"slug\": \"elite_bandit_bodyguard\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[4].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Elite Bandit Bodyguard\"\n      },\n      {\n        \"slug\": \"wolf\",\n        \"file\": \"RO001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Wolf\"\n      },\n      {\n        \"slug\": \"bandit\",\n        \"file\": \"RO001.json\",\n        \"path\": \"locations[5].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit\"\n      }\n    ],\n    \"strict_mode\": true\n  },\n  \"baseline\": null\n}",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/scripts/audit_module_gameplay.py --module The_Thornwood_Watch --json --strict-instructions",
+                "exit_code": 1,
+                "stdout": "{\n  \"target\": {\n    \"blocking_errors\": [\n      \"Missing base media for: vitreol_corrupted_thrall (from NCW001.json:locations[1].monsters[3])\"\n    ],\n    \"warnings\": [\n      \"Missing video for: bandit_warrior\",\n      \"Missing video for: corrupted_owlbear\",\n      \"Missing video for: shadow_corrupted_wolf\",\n      \"Missing thumb for: vitreol_corrupted_thrall\",\n      \"Missing video for: vitreol_corrupted_thrall\",\n      \"Missing video for: writhing_grubs\"\n    ],\n    \"coverage_stats\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"referenced_monsters\": 17,\n      \"structural_refs\": 17,\n      \"heuristic_refs\": 0,\n      \"json_valid\": 17,\n      \"json_invalid\": 0,\n      \"json_missing\": 0,\n      \"json_coverage_pct\": 100.0,\n      \"media_base_coverage\": 16,\n      \"media_thumb_coverage\": 16,\n      \"media_video_coverage\": 12,\n      \"media_base_coverage_pct\": 94.1,\n      \"media_policy\": {\n        \"provider_generation_mode\": \"opt_in_manual_only\",\n        \"manual_toolkit_workflow\": [\n          \"Monster Management & Generator -> Generate Monster Images\",\n          \"Module Media Generator -> one-click monster media generation\"\n        ],\n        \"outcome_vocabulary\": [\n          \"reused_or_generated\",\n          \"provider_disabled_missing\",\n          \"attempted_but_unresolved\"\n        ]\n      }\n    },\n    \"fix_list\": [\n      \"Add media: modules/The_Thornwood_Watch/media/monsters/vitreol_corrupted_thrall.jpg\"\n    ],\n    \"monster_media_findings\": [\n      {\n        \"slug\": \"ashbound_bandit\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"awakened_shrub\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[1].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RO001.json\",\n        \"source_path\": \"locations[5].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit_sentry\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"bandit_warrior\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"corrupted_cave_fisher\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"corrupted_owlbear\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"corrupted_wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[5].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"elite_bandit_bodyguard\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[4].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"malarok_the_corruptor\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"shadow_corrupted_wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"tainted_stirge\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[0].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"twig_blight\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"vitreol_corrupted_thrall\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"NCW001.json\",\n        \"source_path\": \"locations[1].monsters[3]\",\n        \"outcome\": \"provider_disabled_missing\",\n        \"base\": false,\n        \"thumb\": false,\n        \"video\": false\n      },\n      {\n        \"slug\": \"whispering_ashling\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"wolf\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RO001.json\",\n        \"source_path\": \"locations[4].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": true\n      },\n      {\n        \"slug\": \"writhing_grubs\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"TW001.json\",\n        \"source_path\": \"locations[4].monsters[2]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      }\n    ],\n    \"references\": [\n      {\n        \"slug\": \"whispering_ashling\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Whispering Ashling\"\n      },\n      {\n        \"slug\": \"ashbound_bandit\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Ashbound Bandit\"\n      },\n      {\n        \"slug\": \"bandit_sentry\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit Sentry\"\n      },\n      {\n        \"slug\": \"bandit_warrior\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit Warrior\"\n      },\n      {\n        \"slug\": \"writhing_grubs\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[4].monsters[2]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Writhing Grubs\"\n      },\n      {\n        \"slug\": \"corrupted_wolf\",\n        \"file\": \"TW001.json\",\n        \"path\": \"locations[5].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Wolf\"\n      },\n      {\n        \"slug\": \"corrupted_cave_fisher\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Cave Fisher\"\n      },\n      {\n        \"slug\": \"tainted_stirge\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[0].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Tainted Stirge\"\n      },\n      {\n        \"slug\": \"twig_blight\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Twig Blight\"\n      },\n      {\n        \"slug\": \"awakened_shrub\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[1].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Awakened Shrub\"\n      },\n      {\n        \"slug\": \"vitreol_corrupted_thrall\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[1].monsters[3]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Vitreol (Corrupted Thrall)\"\n      },\n      {\n        \"slug\": \"shadow_corrupted_wolf\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Shadow Corrupted Wolf\"\n      },\n      {\n        \"slug\": \"corrupted_owlbear\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Corrupted Owlbear\"\n      },\n      {\n        \"slug\": \"malarok_the_corruptor\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Malarok the Corruptor\"\n      },\n      {\n        \"slug\": \"elite_bandit_bodyguard\",\n        \"file\": \"NCW001.json\",\n        \"path\": \"locations[4].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Elite Bandit Bodyguard\"\n      },\n      {\n        \"slug\": \"wolf\",\n        \"file\": \"RO001.json\",\n        \"path\": \"locations[4].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Wolf\"\n      },\n      {\n        \"slug\": \"bandit\",\n        \"file\": \"RO001.json\",\n        \"path\": \"locations[5].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Bandit\"\n      }\n    ],\n    \"strict_mode\": true\n  },\n  \"baseline\": null\n}",
                 "stderr": "",
                 "json": {
                   "target": {
-                    "blocking_errors": [],
+                    "blocking_errors": [
+                      "Missing base media for: vitreol_corrupted_thrall (from NCW001.json:locations[1].monsters[3])"
+                    ],
                     "warnings": [
                       "Missing video for: bandit_warrior",
                       "Missing video for: corrupted_owlbear",
                       "Missing video for: shadow_corrupted_wolf",
+                      "Missing thumb for: vitreol_corrupted_thrall",
+                      "Missing video for: vitreol_corrupted_thrall",
                       "Missing video for: writhing_grubs"
                     ],
                     "coverage_stats": {
@@ -6158,10 +6315,10 @@
                       "json_invalid": 0,
                       "json_missing": 0,
                       "json_coverage_pct": 100.0,
-                      "media_base_coverage": 17,
-                      "media_thumb_coverage": 17,
-                      "media_video_coverage": 13,
-                      "media_base_coverage_pct": 100.0,
+                      "media_base_coverage": 16,
+                      "media_thumb_coverage": 16,
+                      "media_video_coverage": 12,
+                      "media_base_coverage_pct": 94.1,
                       "media_policy": {
                         "provider_generation_mode": "opt_in_manual_only",
                         "manual_toolkit_workflow": [
@@ -6175,7 +6332,9 @@
                         ]
                       }
                     },
-                    "fix_list": [],
+                    "fix_list": [
+                      "Add media: modules/The_Thornwood_Watch/media/monsters/vitreol_corrupted_thrall.jpg"
+                    ],
                     "monster_media_findings": [
                       {
                         "slug": "ashbound_bandit",
@@ -6248,16 +6407,6 @@
                         "video": false
                       },
                       {
-                        "slug": "corrupted_ranger_thane",
-                        "confidence": "structural",
-                        "source_file": "NCW001.json",
-                        "source_path": "locations[3].monsters[0]",
-                        "outcome": "reused_or_generated",
-                        "base": true,
-                        "thumb": true,
-                        "video": true
-                      },
-                      {
                         "slug": "corrupted_wolf",
                         "confidence": "structural",
                         "source_file": "TW001.json",
@@ -6316,6 +6465,16 @@
                         "base": true,
                         "thumb": true,
                         "video": true
+                      },
+                      {
+                        "slug": "vitreol_corrupted_thrall",
+                        "confidence": "structural",
+                        "source_file": "NCW001.json",
+                        "source_path": "locations[1].monsters[3]",
+                        "outcome": "provider_disabled_missing",
+                        "base": false,
+                        "thumb": false,
+                        "video": false
                       },
                       {
                         "slug": "whispering_ashling",
@@ -6420,6 +6579,13 @@
                         "original": "Awakened Shrub"
                       },
                       {
+                        "slug": "vitreol_corrupted_thrall",
+                        "file": "NCW001.json",
+                        "path": "locations[1].monsters[3]",
+                        "confidence": "structural",
+                        "original": "Vitreol (Corrupted Thrall)"
+                      },
+                      {
                         "slug": "shadow_corrupted_wolf",
                         "file": "NCW001.json",
                         "path": "locations[2].monsters[0]",
@@ -6432,13 +6598,6 @@
                         "path": "locations[2].monsters[1]",
                         "confidence": "structural",
                         "original": "Corrupted Owlbear"
-                      },
-                      {
-                        "slug": "corrupted_ranger_thane",
-                        "file": "NCW001.json",
-                        "path": "locations[3].monsters[0]",
-                        "confidence": "structural",
-                        "original": "Corrupted Ranger Thane"
                       },
                       {
                         "slug": "malarok_the_corruptor",
@@ -6473,7 +6632,12 @@
                   },
                   "baseline": null
                 }
-              }
+              },
+              "manual_handoff_only": true,
+              "structural_media_debt_count": 1,
+              "structural_media_debt_slugs": [
+                "vitreol_corrupted_thrall"
+              ]
             },
             "sidecar": {
               "status": "pass",
@@ -6495,15 +6659,15 @@
               "any_failed": false,
               "missing_jsonschema": false,
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module The_Thornwood_Watch --json",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module The_Thornwood_Watch --json",
                 "exit_code": 0,
-                "stdout": "{\n  \"modules\": {\n    \"The_Thornwood_Watch\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"total_passed\": 48,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"TW001_BU.json (areas/)\",\n            \"TW001.json (areas/)\",\n            \"RO001_BU.json (areas/)\",\n            \"NCW001.json (areas/)\",\n            \"NCW001_BU.json (areas/)\",\n            \"RO001.json (areas/)\"\n          ],\n          \"passed\": 6,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"twig_blight.json\",\n            \"bandit_captain.json\",\n            \"guard.json\",\n            \"wolf.json\",\n            \"lookout.json\",\n            \"malarok_the_corruptor.json\",\n            \"tainted_stirge.json\",\n            \"bandit_sentry.json\",\n            \"tree_blight.json\",\n            \"tainted_naiad.json\",\n            \"corrupted_wolf.json\",\n            \"corrupted_cave_fisher.json\",\n            \"awakened_shrub.json\",\n            \"bandit_captain_gorvek.json\",\n            \"shadow_corrupted_wolf.json\",\n            \"elite_bandit_bodyguard.json\",\n            \"sentry.json\",\n            \"bandit.json\",\n            \"bandit_warrior.json\",\n            \"corrupted_ranger_thane.json\",\n            \"ashbound_bandit.json\",\n            \"wounded_bandit.json\",\n            \"whispering_ashling.json\",\n            \"corrupted_owlbear.json\",\n            \"writhing_grubs.json\"\n          ],\n          \"passed\": 25,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_NCW001.json\",\n            \"map_RO001.json\",\n            \"map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/NCW001.json\",\n            \"areas/RO001.json\",\n            \"areas/TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
+                "stdout": "{\n  \"modules\": {\n    \"The_Thornwood_Watch\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"total_passed\": 49,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"TW001_BU.json (areas/)\",\n            \"TW001.json (areas/)\",\n            \"RO001_BU.json (areas/)\",\n            \"NCW001.json (areas/)\",\n            \"NCW001_BU.json (areas/)\",\n            \"RO001.json (areas/)\"\n          ],\n          \"passed\": 6,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"twig_blight.json\",\n            \"bandit_captain.json\",\n            \"guard.json\",\n            \"wolf.json\",\n            \"lookout.json\",\n            \"malarok_the_corruptor.json\",\n            \"vitreol_corrupted_thrall.json\",\n            \"tainted_stirge.json\",\n            \"bandit_sentry.json\",\n            \"tree_blight.json\",\n            \"tainted_naiad.json\",\n            \"corrupted_wolf.json\",\n            \"corrupted_cave_fisher.json\",\n            \"awakened_shrub.json\",\n            \"bandit_captain_gorvek.json\",\n            \"shadow_corrupted_wolf.json\",\n            \"elite_bandit_bodyguard.json\",\n            \"sentry.json\",\n            \"bandit.json\",\n            \"bandit_warrior.json\",\n            \"corrupted_ranger_thane.json\",\n            \"ashbound_bandit.json\",\n            \"wounded_bandit.json\",\n            \"whispering_ashling.json\",\n            \"corrupted_owlbear.json\",\n            \"writhing_grubs.json\"\n          ],\n          \"passed\": 26,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_NCW001.json\",\n            \"map_RO001.json\",\n            \"map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/NCW001.json\",\n            \"areas/RO001.json\",\n            \"areas/TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
                 "stderr": "",
                 "json": {
                   "modules": {
                     "The_Thornwood_Watch": {
                       "module": "The_Thornwood_Watch",
-                      "total_passed": 48,
+                      "total_passed": 49,
                       "total_failed": 0,
                       "files": {
                         "area": {
@@ -6533,6 +6697,7 @@
                             "wolf.json",
                             "lookout.json",
                             "malarok_the_corruptor.json",
+                            "vitreol_corrupted_thrall.json",
                             "tainted_stirge.json",
                             "bandit_sentry.json",
                             "tree_blight.json",
@@ -6553,7 +6718,7 @@
                             "corrupted_owlbear.json",
                             "writhing_grubs.json"
                           ],
-                          "passed": 25,
+                          "passed": 26,
                           "failed": 0,
                           "errors": []
                         },
@@ -6657,7 +6822,7 @@
               ],
               "continuity_version": "v1",
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/module_continuity_audit.py --module The_Thornwood_Watch --json --strict",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/scripts/module_continuity_audit.py --module The_Thornwood_Watch --json --strict",
                 "exit_code": 0,
                 "stdout": "{\n  \"status\": \"pass\",\n  \"module\": \"The_Thornwood_Watch\",\n  \"module_path\": \"modules/The_Thornwood_Watch\",\n  \"continuity_version\": \"v1\",\n  \"required_keys_present\": [\n    \"continuity_version\",\n    \"entry_state_variants\",\n    \"cross_module_refs\",\n    \"standalone_fallback\"\n  ],\n  \"missing_required_keys\": [],\n  \"normalized_refs_count\": 2,\n  \"blocking_errors\": [],\n  \"warnings\": [],\n  \"strict\": true,\n  \"exit_code\": 0\n}",
                 "stderr": "",
@@ -6700,8 +6865,10 @@
               "Monster Management & Generator -> Generate Monster Images",
               "Module Media Generator -> one-click monster media generation"
             ],
-            "structural_media_debt_count": 0,
-            "structural_media_debt_slugs": []
+            "structural_media_debt_count": 1,
+            "structural_media_debt_slugs": [
+              "vitreol_corrupted_thrall"
+            ]
           },
           "exit_code": 0
         },
@@ -6712,27 +6879,17 @@
             "module_path": "modules/The_Thornwood_Watch",
             "version": "v1",
             "summary": {
-              "location_alias_count": 36,
-              "destination_phrase_count": 37,
+              "location_alias_count": 41,
+              "destination_phrase_count": 41,
               "npc_scene_authority_count": 22,
               "ambiguous_destination_count": 0,
               "unresolved_destination_count": 0,
               "missing_npc_authority_count": 0,
-              "normalized_shortform_destination_count": 1,
+              "normalized_shortform_destination_count": 0,
               "blocking_finding_count": 0,
               "warning_count": 0
             },
-            "normalized_shortform_destination_phrases": [
-              {
-                "phrase": "explorers camp",
-                "anchor_phrase": "doomed explorers camp",
-                "location_id": "NC04",
-                "shared_sources": [
-                  "areas/NCW001.json#locations[NC04].aliases",
-                  "areas/NCW001.json#locations[NC04].name"
-                ]
-              }
-            ],
+            "normalized_shortform_destination_phrases": [],
             "blocker_classes": [],
             "blocking_findings": [],
             "blocking_errors": [],
@@ -6742,13 +6899,13 @@
           "semantic_probes": {
             "module": "The_Thornwood_Watch",
             "module_path": "modules/The_Thornwood_Watch",
-            "status": "pass",
+            "status": "degraded",
             "summary": {
-              "probe_count": 18,
-              "pass_count": 18,
+              "probe_count": 21,
+              "pass_count": 20,
               "fail_count": 0,
-              "degraded_count": 0,
-              "travel_probe_count": 5,
+              "degraded_count": 1,
+              "travel_probe_count": 8,
               "handoff_probe_count": 1,
               "hidden_npc_probe_count": 12
             },
@@ -6790,6 +6947,25 @@
                   "areas/NCW001.json#locations[NC04].name"
                 ],
                 "expected_location_id": "NC04",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.east-tower",
+                "type": "travel",
+                "phrase": "east tower",
+                "status": "pass",
+                "resolved_location_id": "RO03",
+                "candidate_location_ids": [
+                  "RO03"
+                ],
+                "expected_location_ids": [
+                  "RO03"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO03].aliases"
+                ],
+                "expected_location_id": "RO03",
                 "status_detail": "Resolved location matches expected destination",
                 "failure_class": ""
               },
@@ -6850,6 +7026,48 @@
                   "areas/RO001.json#locations[RO06].name"
                 ],
                 "expected_location_id": "RO06",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.ruins",
+                "type": "travel",
+                "phrase": "ruins",
+                "status": "degraded",
+                "resolved_location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "expected_location_ids": [
+                  "NC05",
+                  "RO05",
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/NCW001.json#locations[NC05].description",
+                  "areas/RO001.json#locations[RO05].accessibility",
+                  "areas/RO001.json#locations[RO06].aliases"
+                ],
+                "expected_location_id": "",
+                "status_detail": "Fixture resolves to multiple expected location ids",
+                "failure_class": "travel_fixture_ambiguous_expected_target"
+              },
+              {
+                "id": "travel.this-camp",
+                "type": "travel",
+                "phrase": "this camp",
+                "status": "pass",
+                "resolved_location_id": "TW03",
+                "candidate_location_ids": [
+                  "TW03"
+                ],
+                "expected_location_ids": [
+                  "TW03"
+                ],
+                "sources": [
+                  "areas/TW001.json#locations[TW03].aliases"
+                ],
+                "expected_location_id": "TW03",
                 "status_detail": "Resolved location matches expected destination",
                 "failure_class": ""
               },
@@ -7227,25 +7445,44 @@
               }
             ],
             "blocking_errors": [],
-            "warnings": [],
+            "warnings": [
+              "travel_fixture_ambiguous_expected_target: travel.ruins - Fixture resolves to multiple expected location ids"
+            ],
             "exit_code": 0
           }
         },
         "blocking_errors": [],
-        "warnings": [],
-        "remediation_categories": [],
+        "warnings": [
+          "travel_fixture_ambiguous_expected_target: travel.ruins - Fixture resolves to multiple expected location ids"
+        ],
+        "remediation_categories": [
+          "structured_monster_media_missing",
+          "toolkit_manual_media_generation_required",
+          "semantic_warning_only",
+          "scene_entity_modeling_candidate"
+        ],
         "toolkit_media_policy": {
           "provider_generation_mode": "opt_in_manual_only",
           "manual_remediation_workflow": [
             "Monster Management & Generator -> Generate Monster Images",
             "Module Media Generator -> one-click monster media generation"
           ],
-          "structural_media_debt_count": 0,
-          "structural_media_debt_slugs": []
+          "structural_media_debt_count": 1,
+          "structural_media_debt_slugs": [
+            "vitreol_corrupted_thrall"
+          ]
         },
-        "fix_list": [],
+        "fix_list": [
+          "Review semantic probe warnings/tooling debt and remediate if needed",
+          "Manual toolkit remediation required: Monster Management & Generator -> Generate Monster Images",
+          "Optional batch remediation: Module Media Generator -> one-click monster media generation"
+        ],
         "exit_code": 0
       }
+    },
+    "llm_remediation": {
+      "status": "skipped",
+      "reason": "no_affordances"
     }
   },
   "publication_parity_note": "Post-build parity now reports both structural readiness and semantic publishability.",

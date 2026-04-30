@@ -1,0 +1,1352 @@
+{
+  "mode": "apply",
+  "path": "data/bestiary/npc_compendium.json",
+  "scanned": 170,
+  "canonical_npcs": 160,
+  "merged_groups": 7,
+  "kept_entries": 138,
+  "skipped_entries": [],
+  "mappings": [
+    {
+      "canonical_key": "abbess_miralda",
+      "canonical_name": "Abbess Miralda",
+      "base_source_key": "abbess_miralda",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "acolyte_therin",
+      "canonical_name": "Acolyte Therin",
+      "base_source_key": "acolyte_therin",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "altar_keepers_shade",
+      "canonical_name": "Altar Keeper's Shade",
+      "base_source_key": "altar_keepers_shade",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "amanita_gorse",
+      "canonical_name": "Amanita Gorse",
+      "base_source_key": "amanita_gorse",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "any_surviving_faction_leaders",
+      "canonical_name": "Any surviving faction leaders",
+      "base_source_key": "any_surviving_faction_leaders",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "apprentice_jeb",
+      "canonical_name": "Apprentice Jeb",
+      "base_source_key": "apprentice_jeb",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "arannis",
+      "canonical_name": "Arannis",
+      "base_source_key": "arannis,_vault_scholar_and_alarmed_archivist",
+      "source_count": 1,
+      "legacy_ids": [
+        "arannis,_vault_scholar_and_alarmed_archivist"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "archivist_automaton",
+      "canonical_name": "Archivist Automaton",
+      "base_source_key": "archivist_automaton",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "azarel_moros",
+      "canonical_name": "Azarel Moros",
+      "base_source_key": "azarel_moros",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "baker_marta",
+      "canonical_name": "Baker Marta",
+      "base_source_key": "baker_marta",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "bandit_captain_gorvek",
+      "canonical_name": "Bandit Captain Gorvek",
+      "base_source_key": "bandit_captain_gorvek",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "blacksmith_goric",
+      "canonical_name": "Blacksmith Goric",
+      "base_source_key": "blacksmith_goric",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "blarg",
+      "canonical_name": "Blarg",
+      "base_source_key": "blarg",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "bound_spirit",
+      "canonical_name": "Bound Spirit",
+      "base_source_key": "bound_spirit",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "bound_spirit_of_abbess_miralda",
+      "canonical_name": "Bound Spirit of Abbess Miralda",
+      "base_source_key": "bound_spirit_of_abbess_miralda",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "brother_lintar",
+      "canonical_name": "Brother Lintar",
+      "base_source_key": "brother_lintar",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "captain_lyra_voss",
+      "canonical_name": "Captain Lyra Voss",
+      "base_source_key": "captain_lyra_voss",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "captain_merek",
+      "canonical_name": "Captain Merek",
+      "base_source_key": "captain_merek",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "caravan_guard_bex",
+      "canonical_name": "Caravan Guard Bex",
+      "base_source_key": "caravan_guard_bex",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "cira_the_innkeeper",
+      "canonical_name": "Cira the Innkeeper",
+      "base_source_key": "cira_the_innkeeper",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "constable_farrel_dun",
+      "canonical_name": "Constable Farrel Dun",
+      "base_source_key": "constable_farrel_dun",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "corsa_threadneedle_drenn",
+      "canonical_name": "Corsa 'Threadneedle' Drenn",
+      "base_source_key": "corsa_threadneedle_drenn",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "damaged_security_overseer",
+      "canonical_name": "Damaged Security Overseer",
+      "base_source_key": "damaged_security_overseer",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "deputy_silas_cragg",
+      "canonical_name": "Deputy Silas Cragg",
+      "base_source_key": "deputy_silas_cragg",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "desperate_townsfolk",
+      "canonical_name": "Desperate Townsfolk",
+      "base_source_key": "desperate_townsfolk",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "dock_worker_finn",
+      "canonical_name": "Dock Worker Finn",
+      "base_source_key": "dock_worker_finn",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "echo_of_scout_elen",
+      "canonical_name": "Echo of Scout Elen",
+      "base_source_key": "echo_of_scout_elen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "echo_of_the_lost_farmer",
+      "canonical_name": "Echo of the Lost Farmer",
+      "base_source_key": "echo_of_the_lost_farmer",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "edda_ravenscroft",
+      "canonical_name": "Edda Ravenscroft",
+      "base_source_key": "edda_ravenscroft",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "edrin_voss",
+      "canonical_name": "Edrin Voss",
+      "base_source_key": "edrin_voss,_eccentric_proprietor",
+      "source_count": 1,
+      "legacy_ids": [
+        "edrin_voss,_eccentric_proprietor"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elaris",
+      "canonical_name": "Elaris",
+      "base_source_key": "elaris,_a_diplomat_of_the_secrecy_council",
+      "source_count": 1,
+      "legacy_ids": [
+        "elaris,_a_diplomat_of_the_secrecy_council"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elder_dorun",
+      "canonical_name": "Elder Dorun",
+      "base_source_key": "elder_dorun",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elder_maelis",
+      "canonical_name": "Elder Maelis",
+      "base_source_key": "elder_maelis",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elder_mirna_harrow",
+      "canonical_name": "Elder Mirna Harrow",
+      "base_source_key": "elder_mirna_harrow",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elderly_scholar_fenwick",
+      "canonical_name": "Elderly Scholar Fenwick",
+      "base_source_key": "elderly_scholar_fenwick",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "eliad",
+      "canonical_name": "Eliad",
+      "base_source_key": "eliad",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "elric_dawlish",
+      "canonical_name": "Elric Dawlish",
+      "base_source_key": "elric_dawlish",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ezra_pike",
+      "canonical_name": "Ezra Pike",
+      "base_source_key": "ezra_pike",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "farmer_willem",
+      "canonical_name": "Farmer Willem",
+      "base_source_key": "farmer_willem",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "farmhand_jo",
+      "canonical_name": "Farmhand Jo",
+      "base_source_key": "farmhand_jo",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "father_aldren",
+      "canonical_name": "Father Aldren",
+      "base_source_key": "father_aldren",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "father_aldric",
+      "canonical_name": "Father Aldric",
+      "base_source_key": "father_aldric",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "father_milgrom",
+      "canonical_name": "Father Milgrom",
+      "base_source_key": "father_milgrom",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "finn_caster",
+      "canonical_name": "Finn Caster",
+      "base_source_key": "finn_caster",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "fragmented_preceptor",
+      "canonical_name": "Fragmented Preceptor",
+      "base_source_key": "fragmented_preceptor",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "freed_spirits",
+      "canonical_name": "Freed Spirits",
+      "base_source_key": "freed_spirits",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "gatewarden_silas_ember",
+      "canonical_name": "Gatewarden Silas Ember",
+      "base_source_key": "gatewarden_silas_ember",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ghost_of_the_last_judge",
+      "canonical_name": "Ghost of the Last Judge",
+      "base_source_key": "ghost_of_the_last_judge",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ghostly_royal_messenger",
+      "canonical_name": "Ghostly Royal Messenger",
+      "base_source_key": "ghostly_royal_messenger",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "glim",
+      "canonical_name": "Glim",
+      "base_source_key": "glim",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "gravenbark_guardians",
+      "canonical_name": "Gravenbark Guardians",
+      "base_source_key": "gravenbark_guardians",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "grimjaw_the_enterprising",
+      "canonical_name": "Grimjaw the Enterprising",
+      "base_source_key": "grimjaw_the_enterprising",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "gritch_the_one_eared",
+      "canonical_name": "Gritch the One-Eared",
+      "base_source_key": "gritch_the_one-eared,_nervous_patron",
+      "source_count": 1,
+      "legacy_ids": [
+        "gritch_the_one-eared,_nervous_patron"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "groundskeeper_hedwick",
+      "canonical_name": "Groundskeeper Hedwick",
+      "base_source_key": "groundskeeper_hedwick",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "guildmaster_fenric_clay",
+      "canonical_name": "Guildmaster Fenric Clay",
+      "base_source_key": "guildmaster_fenric_clay",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "harrows_hollow_east_gate_guards",
+      "canonical_name": "Harrow's Hollow East Gate Guards",
+      "base_source_key": "harrows_hollow_east_gate_guards",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "hay_bound_spirit",
+      "canonical_name": "Hay-Bound Spirit",
+      "base_source_key": "hay_bound_spirit",
+      "source_count": 2,
+      "legacy_ids": [
+        "hay-bound_spirit"
+      ],
+      "alternate_count": 1
+    },
+    {
+      "canonical_key": "ilyra",
+      "canonical_name": "Ilyra",
+      "base_source_key": "ilyra,_wardkeeper_adjudicator",
+      "source_count": 1,
+      "legacy_ids": [
+        "ilyra,_wardkeeper_adjudicator"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "irren_the_ragged",
+      "canonical_name": "Irren the Ragged",
+      "base_source_key": "irren_the_ragged",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "keeper_morvath",
+      "canonical_name": "Keeper Morvath",
+      "base_source_key": "keeper_morvath",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "keeper_veyron",
+      "canonical_name": "Keeper Veyron",
+      "base_source_key": "keeper_veyron",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "kobe",
+      "canonical_name": "Kobe",
+      "base_source_key": "kobe,_a_guarded_resident_tied_to_the_vault",
+      "source_count": 4,
+      "legacy_ids": [
+        "kobe,_a_guarded_resident_tied_to_the_vault",
+        "kobe,_endangered_key_witness",
+        "kobe,_guarded_resident_tied_to_the_vault",
+        "kobe,_the_life_at_the_center_of_the_crisis"
+      ],
+      "alternate_count": 3
+    },
+    {
+      "canonical_key": "letharel",
+      "canonical_name": "Letharel",
+      "base_source_key": "letharel,_divided_border_warden",
+      "source_count": 2,
+      "legacy_ids": [
+        "letharel,_divided_border_warden",
+        "letharel,_the_silent_border_warden"
+      ],
+      "alternate_count": 1
+    },
+    {
+      "canonical_key": "little_meg_ghost_child",
+      "canonical_name": "Little Meg (Ghost Child)",
+      "base_source_key": "little_meg_(ghost_child)",
+      "source_count": 1,
+      "legacy_ids": [
+        "little_meg_(ghost_child)"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "local_hunter_jorik",
+      "canonical_name": "Local Hunter Jorik",
+      "base_source_key": "local_hunter_jorik",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "lost_ranger_serik",
+      "canonical_name": "Lost Ranger Serik",
+      "base_source_key": "lost_ranger_serik",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "lucian_blackthorn",
+      "canonical_name": "Lucian Blackthorn",
+      "base_source_key": "lucian_blackthorn",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ma_margaret_thornfield",
+      "canonical_name": "Ma (Margaret Thornfield)",
+      "base_source_key": "ma_(margaret_thornfield)",
+      "source_count": 1,
+      "legacy_ids": [
+        "ma_(margaret_thornfield)"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "maela_kett",
+      "canonical_name": "Maela Kett",
+      "base_source_key": "maela_kett,_the_wary_tavernkeeper",
+      "source_count": 1,
+      "legacy_ids": [
+        "maela_kett,_the_wary_tavernkeeper"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "magister_valen",
+      "canonical_name": "Magister Valen",
+      "base_source_key": "magister_valen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "malarok_the_corruptor",
+      "canonical_name": "Malarok the Corruptor",
+      "base_source_key": "malarok_the_corruptor",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "malk_the_whisper",
+      "canonical_name": "Malk the Whisper",
+      "base_source_key": "malk_the_whisper",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "manifestation_of_the_forest_s_spirit",
+      "canonical_name": "Manifestation of the Forest’s Spirit",
+      "base_source_key": "manifestation_of_the_forest’s_spirit",
+      "source_count": 1,
+      "legacy_ids": [
+        "manifestation_of_the_forest’s_spirit"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "martha_finch",
+      "canonical_name": "Martha Finch",
+      "base_source_key": "martha_finch",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "masked_duelist",
+      "canonical_name": "Masked Duelist",
+      "base_source_key": "masked_duelist",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "masked_reveler",
+      "canonical_name": "Masked Reveler",
+      "base_source_key": "masked_reveler",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "masquerade_steward",
+      "canonical_name": "Masquerade Steward",
+      "base_source_key": "masquerade_steward",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mayor_tilda_bramble",
+      "canonical_name": "Mayor Tilda Bramble",
+      "base_source_key": "mayor_tilda_bramble",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "merchant_aldric",
+      "canonical_name": "Merchant Aldric",
+      "base_source_key": "merchant_aldric",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "merchant_gareth",
+      "canonical_name": "Merchant Gareth",
+      "base_source_key": "merchant_gareth",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "merchant_kael",
+      "canonical_name": "Merchant Kael",
+      "base_source_key": "merchant_kael",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "merchant_vera",
+      "canonical_name": "Merchant Vera",
+      "base_source_key": "merchant_vera",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "messenger_tom",
+      "canonical_name": "Messenger Tom",
+      "base_source_key": "messenger_tom",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "miller_boren",
+      "canonical_name": "Miller Boren",
+      "base_source_key": "miller_boren",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mind_flayer_archivist",
+      "canonical_name": "Mind Flayer Archivist",
+      "base_source_key": "mind_flayer_archivist",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mira_the_shardseer",
+      "canonical_name": "Mira the Shardseer",
+      "base_source_key": "mira_the_shardseer",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mira_tidewise",
+      "canonical_name": "Mira Tidewise",
+      "base_source_key": "mira_tidewise",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mirael",
+      "canonical_name": "Mirael",
+      "base_source_key": "mirael,_a_surface-contact_scout",
+      "source_count": 1,
+      "legacy_ids": [
+        "mirael,_a_surface-contact_scout"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mistress_hedra_lanternwise",
+      "canonical_name": "Mistress Hedra Lanternwise",
+      "base_source_key": "mistress_hedra_lanternwise",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "morwenna_hollowell",
+      "canonical_name": "Morwenna Hollowell",
+      "base_source_key": "morwenna_hollowell",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mournful_ghost",
+      "canonical_name": "Mournful Ghost",
+      "base_source_key": "mournful_ghost",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "mrs_rindleby",
+      "canonical_name": "Mrs. Rindleby",
+      "base_source_key": "mrs._rindleby",
+      "source_count": 1,
+      "legacy_ids": [
+        "mrs._rindleby"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "nimblethorn",
+      "canonical_name": "Nimblethorn",
+      "base_source_key": "nimblethorn",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "off_duty_militiaman_gareth",
+      "canonical_name": "Off-Duty Militiaman Gareth",
+      "base_source_key": "off_duty_militiaman_gareth",
+      "source_count": 2,
+      "legacy_ids": [
+        "off-duty_militiaman_gareth"
+      ],
+      "alternate_count": 1
+    },
+    {
+      "canonical_key": "old_crone_willa",
+      "canonical_name": "Old Crone Willa",
+      "base_source_key": "old_crone_willa",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "old_ellyn",
+      "canonical_name": "Old Ellyn",
+      "base_source_key": "old_ellyn,_the_folklore_spinner",
+      "source_count": 1,
+      "legacy_ids": [
+        "old_ellyn,_the_folklore_spinner"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "old_grem_the_cartographer",
+      "canonical_name": "Old Grem the Cartographer",
+      "base_source_key": "old_grem_the_cartographer",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "old_nan_berryman",
+      "canonical_name": "Old Nan Berryman",
+      "base_source_key": "old_nan_berryman",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "old_tommen",
+      "canonical_name": "Old Tommen",
+      "base_source_key": "old_tommen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "oswin_peverell",
+      "canonical_name": "Oswin Peverell",
+      "base_source_key": "oswin_peverell",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "petitioning_shade",
+      "canonical_name": "Petitioning Shade",
+      "base_source_key": "petitioning_shade",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "priest_ansel",
+      "canonical_name": "Priest Ansel",
+      "base_source_key": "priest_ansel",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "prisoner_echo",
+      "canonical_name": "Prisoner Echo",
+      "base_source_key": "prisoner_echo",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "quartermaster_brann",
+      "canonical_name": "Quartermaster Brann",
+      "base_source_key": "quartermaster_brann",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "rambling_dwarven_survivor",
+      "canonical_name": "Rambling Dwarven Survivor",
+      "base_source_key": "rambling_dwarven_survivor",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ranger_branik",
+      "canonical_name": "Ranger Branik",
+      "base_source_key": "ranger_branik",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ranger_elen",
+      "canonical_name": "Ranger Elen",
+      "base_source_key": "ranger_elen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "ranger_marcus",
+      "canonical_name": "Ranger Marcus",
+      "base_source_key": "ranger_marcus",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "raxil_the_doubter",
+      "canonical_name": "Raxil the Doubter",
+      "base_source_key": "raxil_the_doubter",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "red_maw_scouts",
+      "canonical_name": "Red Maw scouts",
+      "base_source_key": "red_maw_scouts",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "red_the_crimson_binder",
+      "canonical_name": "Red (The Crimson Binder)",
+      "base_source_key": "red_(the_crimson_binder)",
+      "source_count": 1,
+      "legacy_ids": [
+        "red_(the_crimson_binder)"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "rusk",
+      "canonical_name": "Rusk",
+      "base_source_key": "rusk",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sable",
+      "canonical_name": "Sable",
+      "base_source_key": "sable,_reluctant_scribe’s_shade",
+      "source_count": 1,
+      "legacy_ids": [
+        "sable,_reluctant_scribe’s_shade"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "scout_elen",
+      "canonical_name": "Scout Elen",
+      "base_source_key": "scout_elen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "scout_kira",
+      "canonical_name": "Scout Kira",
+      "base_source_key": "scout_kira",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "seraphine_of_the_silver_veil",
+      "canonical_name": "Seraphine of the Silver Veil",
+      "base_source_key": "seraphine_of_the_silver_veil",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sergeant_halwin_reed",
+      "canonical_name": "Sergeant Halwin Reed",
+      "base_source_key": "sergeant_halwin_reed",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sergeant_mara_feld",
+      "canonical_name": "Sergeant Mara Feld",
+      "base_source_key": "sergeant_mara_feld",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "seryn_vale",
+      "canonical_name": "Seryn Vale",
+      "base_source_key": "seryn_vale,_keeper_of_the_first_trial",
+      "source_count": 1,
+      "legacy_ids": [
+        "seryn_vale,_keeper_of_the_first_trial"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "shade_of_alenwen",
+      "canonical_name": "Shade of Alenwen",
+      "base_source_key": "shade_of_alenwen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "shuluth",
+      "canonical_name": "Shuluth",
+      "base_source_key": "shuluth,_ancient_mind-warder_of_numillian",
+      "source_count": 3,
+      "legacy_ids": [
+        "shuluth,_ancient_mind-warder_of_numillian",
+        "shuluth,_the_hidden_manipulator",
+        "shuluth,_unseen_voice_behind_the_wards"
+      ],
+      "alternate_count": 2
+    },
+    {
+      "canonical_key": "sir_garran_vael",
+      "canonical_name": "Sir Garran Vael",
+      "base_source_key": "sir_garran_vael",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sister_hela",
+      "canonical_name": "Sister Hela",
+      "base_source_key": "sister_hela,_the_abbeys_last_remaining_priestess",
+      "source_count": 1,
+      "legacy_ids": [
+        "sister_hela,_the_abbeys_last_remaining_priestess"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sister_miriam_bramble",
+      "canonical_name": "Sister Miriam Bramble",
+      "base_source_key": "sister_miriam_bramble",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "specter_of_jonny_harrow",
+      "canonical_name": "Specter of Jonny Harrow",
+      "base_source_key": "specter_of_jonny_harrow",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "spectral_child",
+      "canonical_name": "Spectral Child",
+      "base_source_key": "spectral_child",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "spirit_of_supplication",
+      "canonical_name": "Spirit of Supplication",
+      "base_source_key": "spirit_of_supplication",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "spirit_of_the_moor",
+      "canonical_name": "Spirit of the Moor",
+      "base_source_key": "spirit_of_the_moor",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "spirit_touched_hermit_maelo",
+      "canonical_name": "Spirit-Touched Hermit Maelo",
+      "base_source_key": "spirit_touched_hermit_maelo",
+      "source_count": 2,
+      "legacy_ids": [
+        "spirit-touched_hermit_maelo"
+      ],
+      "alternate_count": 1
+    },
+    {
+      "canonical_key": "surviving_druids",
+      "canonical_name": "Surviving Druids",
+      "base_source_key": "surviving_druids",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "sybil_nettlemire",
+      "canonical_name": "Sybil Nettlemire",
+      "base_source_key": "sybil_nettlemire",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "tamsin_quill",
+      "canonical_name": "Tamsin Quill",
+      "base_source_key": "tamsin_quill",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "thalanis",
+      "canonical_name": "Thalanis",
+      "base_source_key": "thalanis,_secrecy_council_examiner",
+      "source_count": 1,
+      "legacy_ids": [
+        "thalanis,_secrecy_council_examiner"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "thalia_underbough",
+      "canonical_name": "Thalia Underbough",
+      "base_source_key": "thalia_underbough",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_bone_speaker",
+      "canonical_name": "The Bone Speaker",
+      "base_source_key": "the_bone_speaker",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_drowned_king",
+      "canonical_name": "The Drowned King",
+      "base_source_key": "the_drowned_king",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_harvest_witnesses",
+      "canonical_name": "The Harvest Witnesses",
+      "base_source_key": "the_harvest_witnesses",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_keeper",
+      "canonical_name": "The Keeper",
+      "base_source_key": "the_keeper",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_lingering_spirit",
+      "canonical_name": "The Lingering Spirit",
+      "base_source_key": "the_lingering_spirit",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_paradoxical_twins",
+      "canonical_name": "The Paradoxical Twins",
+      "base_source_key": "the_paradoxical_twins",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_spectral_scribe",
+      "canonical_name": "The Spectral Scribe",
+      "base_source_key": "the_spectral_scribe",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "the_withered_hart",
+      "canonical_name": "The Withered Hart",
+      "base_source_key": "the_withered_hart",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "thorn_touched_dryad_sylara",
+      "canonical_name": "Thorn-Touched Dryad Sylara",
+      "base_source_key": "thorn_touched_dryad_sylara",
+      "source_count": 2,
+      "legacy_ids": [
+        "thorn-touched_dryad_sylara"
+      ],
+      "alternate_count": 1
+    },
+    {
+      "canonical_key": "thornkin_rella",
+      "canonical_name": "Thornkin Rella",
+      "base_source_key": "thornkin_rella",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "thornwraith_myrlaen",
+      "canonical_name": "Thornwraith Myrlaen",
+      "base_source_key": "thornwraith_myrlaen",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "threshers_ghost",
+      "canonical_name": "Thresher's Ghost",
+      "base_source_key": "threshers_ghost",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "trader_mila",
+      "canonical_name": "Trader Mila",
+      "base_source_key": "trader_mila",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "trader_sila",
+      "canonical_name": "Trader Sila",
+      "base_source_key": "trader_sila",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "trapped_miner_derval",
+      "canonical_name": "Trapped Miner Derval",
+      "base_source_key": "trapped_miner_derval",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "traveling_merchant_rosa",
+      "canonical_name": "Traveling Merchant Rosa",
+      "base_source_key": "traveling_merchant_rosa",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "various_masked_dignitaries",
+      "canonical_name": "Various masked dignitaries",
+      "base_source_key": "various_masked_dignitaries",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "veyrun",
+      "canonical_name": "Veyrun",
+      "base_source_key": "veyrun,_a_wardkeeper_captain",
+      "source_count": 1,
+      "legacy_ids": [
+        "veyrun,_a_wardkeeper_captain"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "wandering_supplicant",
+      "canonical_name": "Wandering Supplicant",
+      "base_source_key": "wandering_supplicant",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "watcher_morven",
+      "canonical_name": "Watcher Morven",
+      "base_source_key": "watcher_morven",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "whisperroot",
+      "canonical_name": "Whisperroot",
+      "base_source_key": "whisperroot",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "widow_elsie_tallow",
+      "canonical_name": "Widow Elsie Tallow",
+      "base_source_key": "widow_elsie_tallow",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "widow_grella_grandson_tom",
+      "canonical_name": "Widow Grella & Grandson Tom",
+      "base_source_key": "widow_grella_&_grandson_tom",
+      "source_count": 1,
+      "legacy_ids": [
+        "widow_grella_&_grandson_tom"
+      ],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "worried_mother_eliza",
+      "canonical_name": "Worried Mother Eliza",
+      "base_source_key": "worried_mother_eliza",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "xhalruun_the_unraveled",
+      "canonical_name": "Xhalruun the Unraveled",
+      "base_source_key": "xhalruun_the_unraveled",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    },
+    {
+      "canonical_key": "young_apprentice_tam",
+      "canonical_name": "Young Apprentice Tam",
+      "base_source_key": "young_apprentice_tam",
+      "source_count": 1,
+      "legacy_ids": [],
+      "alternate_count": 0
+    }
+  ],
+  "generated_at": "2026-04-29T20:31:31.367646+00:00",
+  "backup_path": "data/bestiary/npc_compendium.json.bak",
+  "report_path": "data/bestiary/npc_compendium.remediation_report.json"
+}

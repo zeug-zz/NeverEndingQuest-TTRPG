@@ -132,7 +132,7 @@ from model_config import (
 )
 from datetime import datetime
 from utils.xp import main as calculate_xp
-from utils.ai_client_factory import create_chat_client
+from utils.ai_client_factory import create_chat_client, get_chat_completion_params
 
 # Import OpenAI usage tracking (safe - won't break if fails)
 try:
@@ -1369,10 +1369,13 @@ def validate_combat_response(response, encounter_data, user_input, conversation_
     for attempt in range(max_validation_retries):
         try:
             validation_result = client.chat.completions.create(
-                model=DM_VALIDATION_MODEL,
-                temperature=0.3,  # Lower temperature for more consistent validation
                 messages=validation_conversation,
-                timeout=COMBAT_API_TIMEOUT_SECONDS  # TABLETOP MODE: Prevent indefinite hang
+                timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
+                **get_chat_completion_params(
+                    "combat_validation",
+                    DM_VALIDATION_MODEL,
+                    temperature_override=0.3,  # Lower temperature for more consistent validation
+                ),
             )
 
             # Log API call to master log
@@ -1799,9 +1802,12 @@ def summarize_dialogue(conversation_history_param, location_data, party_tracker_
 
     # Generate dialogue summary
     response = client.chat.completions.create(
-        model=COMBAT_DIALOGUE_SUMMARY_MODEL, # Use imported model
-        temperature=TEMPERATURE,
-        messages=dialogue_summary_prompt
+        messages=dialogue_summary_prompt,
+        **get_chat_completion_params(
+            "combat_summary",
+            COMBAT_DIALOGUE_SUMMARY_MODEL,
+            temperature_override=TEMPERATURE,
+        ),
     )
 
     # Log API call to master log
@@ -2721,12 +2727,15 @@ Focus on mechanical accuracy for the actions. For narrative_highlights, extract 
 
         # Use the mini model for efficiency
         response = client.chat.completions.create(
-            model=DM_MINI_MODEL,
             messages=[
                 {"role": "system", "content": "You are a combat log analyzer. Extract mechanical game information and key narrative moments. Always return valid JSON."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1
+            **get_chat_completion_params(
+                "compression",
+                DM_MINI_MODEL,
+                temperature_override=0.1,
+            ),
             # Note: response_format removed for LM Studio compatibility
             # The prompt already instructs the model to return JSON
         )
@@ -3358,10 +3367,13 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
                with open("debug/api_captures/combat_messages_to_api.json", "w", encoding="utf-8") as f:
                    json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
                print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
-               
+
                response = client.chat.completions.create(
-                   model=GPT5_MINI_MODEL,
-                   messages=messages_to_send
+                   messages=messages_to_send,
+                   **get_chat_completion_params(
+                       "combat_main",
+                       GPT5_MINI_MODEL,
+                   ),
                )
 
                # Log API call to master log
@@ -3374,20 +3386,23 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
            else:
                # GPT-4.1: Use temperature
                temperature_used = get_combat_temperature(encounter_data, validation_attempt=0)
-               
+
                print(f"DEBUG: [COMBAT RE-ENGAGE] Using GPT-4.1 model: {COMBAT_MAIN_MODEL} (temp: {temperature_used})")
                # Compress conversation history before sending to AI
                messages_to_send = combat_message_compressor.process_combat_conversation(conversation_history)
-               
+
                # Export compressed conversation for review
                with open("debug/api_captures/combat_messages_to_api.json", "w", encoding="utf-8") as f:
                    json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
                print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
-               
+
                response = client.chat.completions.create(
-                   model=COMBAT_MAIN_MODEL,
-                   temperature=temperature_used,
-                   messages=messages_to_send
+                   messages=messages_to_send,
+                   **get_chat_completion_params(
+                       "combat_main",
+                       COMBAT_MAIN_MODEL,
+                       temperature_override=temperature_used,
+                   ),
                )
 
                # Log API call to master log
@@ -3533,10 +3548,13 @@ Player: {initial_prompt_text}"""
                     print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
                     
                     response = client.chat.completions.create(
-                        model=COMBAT_MAIN_MODEL, 
-                        temperature=temperature_used, 
-                             messages=messages_to_send,
-                             timeout=COMBAT_API_TIMEOUT_SECONDS  # TABLETOP MODE: Prevent indefinite hang
+                        messages=messages_to_send,
+                        timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
+                        **get_chat_completion_params(
+                            "combat_main",
+                            COMBAT_MAIN_MODEL,
+                            temperature_override=temperature_used,
+                        ),
                     )
                     
                     # Track usage
@@ -4694,9 +4712,12 @@ Rules:
                        print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
                        response = client.chat.completions.create(
-                           model=combat_model,
                            messages=messages_to_send,
-                           reasoning={"effort": "high"}
+                           **get_chat_completion_params(
+                               "combat_main",
+                               combat_model,
+                               retry_tier="high",
+                           ),
                        )
                    else:
                        # Default is medium reasoning (no need to specify)
@@ -4709,8 +4730,11 @@ Rules:
                        print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
                        response = client.chat.completions.create(
-                           model=combat_model,
-                           messages=messages_to_send
+                           messages=messages_to_send,
+                           **get_chat_completion_params(
+                               "combat_main",
+                               combat_model,
+                           ),
                        )
                else:
                    # GPT-4.1: Keep existing temperature escalation
@@ -4725,10 +4749,13 @@ Rules:
                    print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
                    response = client.chat.completions.create(
-                       model=COMBAT_MAIN_MODEL,
-                       temperature=temperature_used,
                        messages=messages_to_send,
-                       timeout=COMBAT_API_TIMEOUT_SECONDS  # TABLETOP MODE: Prevent indefinite hang
+                       timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
+                       **get_chat_completion_params(
+                           "combat_main",
+                           COMBAT_MAIN_MODEL,
+                           temperature_override=temperature_used,
+                       ),
                    )
 
                # Track usage

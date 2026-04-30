@@ -1,694 +1,604 @@
 {
-  "plotTitle": "Numillian Unveiled: Threads of Illusion and Fate",
-  "mainObjective": "To stabilize the Hidden City of Numillian and thwart the schemes of an undead mind flayer, the adventurers must unravel conspiracies, heal fractured realities, and recover the city's shattered memory core by traveling through districts where every choice reshapes the fate of both Numillian and themselves.",
+  "plotTitle": "The Hidden City of Numillian: Wards of Secrecy and Salvation",
+  "mainObjective": "Guide the party through Numillian’s layered defenses—from the Veilwood border to the city’s deepest wards—while uncovering the truth behind the failing ward network, exposing the manipulator behind the crisis, and forcing a final choice between preserving Numillian’s secrecy or saving its people and secrets from collapse.",
   "plotPoints": [
     {
       "id": "PP001",
-      "title": "Arrival at The Paradoxical Crossroads",
-      "description": "The adventurers arrive at The Paradoxical Crossroads (TPG001), a town on the threshold of Numillian, renowned for uncanny synchronicities and crossroads of fate. Keeper Veyron greets them with cryptic warnings: the fabric of luck and reality is unraveling, causing looping streets, lost memories, and disappearances. Solving these mysteries is the only way forward, and the party soon hears whispers of a hidden city just beyond the Paradoxical Gates.",
-      "location": "TPG001",
+      "title": "The Mistline Omen at the Veilwood Fringe",
+      "description": "At the edge of the Veilwood Fringe, the party is drawn to a pale standing-stone circle half-swallowed by mist and fern. Travelers speak of repeating whispers that name Numillian’s lost routes, and of animals found standing motionless as if listening. The characters must investigate the strange boundary-signs, determine whether the phenomenon is natural or warded, and decide if they will trust the warning marks left by a silent border watcher or press deeper toward the hidden city’s approach. Clues here point onward to the resin roads and the first signs that Numillian’s outer defenses are failing from within.",
+      "location": "VA001",
       "nextPoints": [
         "PP002"
       ],
       "status": "not started",
-      "plotImpact": "Establishes the core mystery, introduces the instability affecting Numillian, and provides hooks for deeper investigation into the city's hidden nature.",
+      "plotImpact": "Establishes the Veilwood Fringe as the gateway to Numillian’s concealed defenses and reveals that the forest is actively screening intruders, allies, and forgotten relics alike.",
       "sideQuests": [
         {
           "id": "SQ001",
-          "title": "The Missing Cartographer",
-          "description": "Old Grem the Cartographer has vanished while mapping a new alley that appeared overnight. The party can search for clues in his cluttered workshop, guided by the Paradoxical Twins.",
+          "title": "Track the Watcher’s Footprints",
+          "description": "Follow faint bootprints, snapped fern fronds, and deliberately placed resin markers through the mist to identify who has been patrolling the fringe. Success reveals a contact who can guide the party or warn them off; failure may lead the group into a misleading loop of warded paths.",
           "involvedLocations": [
-            "TPG001"
+            "VA001"
           ],
           "status": "not started",
-          "plotImpact": "Grants a magical map revealing hidden aspects of the city and introduces the concept of shifting realities."
+          "plotImpact": "Can secure a safer route and earn a cautious ally for later negotiations."
         },
         {
           "id": "SQ002",
-          "title": "Coincidences Gone Awry",
-          "description": "Locals are plagued by bad luck and bizarre mishaps: a baker\u2019s bread turns to stone, a merchant\u2019s wares vanish. The party can mediate disputes or investigate magical interference.",
+          "title": "Calm the Listening Grove",
+          "description": "A cluster of pale trees reacts to sound with ghostly echoes that trigger hidden alarm wards. The party can solve the grove’s pattern puzzle, spend resources to silence it, or risk combat with summoned ward-spirits awakened by disturbance.",
           "involvedLocations": [
-            "TPG001"
+            "VA001"
           ],
           "status": "not started",
-          "plotImpact": "Earns the party trust and exposes them to reality-warping energies."
+          "plotImpact": "Disables an alarm network that would otherwise strengthen later defenses in the approach."
         }
       ]
     },
     {
       "id": "PP002",
-      "title": "Mapping the Unstable Streets",
-      "description": "Using clues from Old Grem\u2019s map and local guidance, the party investigates the fluctuating town layout and discovers that the crossroads are geomantic anchors for Numillian\u2019s reality. One anchor has been sabotaged, and a masked figure has been seen meddling in forbidden places. Pursuing the figure, the party uncovers hints that the sabotage is connected to the barrier protecting the Hidden City beyond the Paradoxical Gates.",
-      "location": "TPG001",
+      "title": "The Resin Roads of the Hidden Approach",
+      "description": "Beyond the fringe lies a network of old resin paths, half-overgrown causeways, and concealed markers that lead toward Numillian’s outer threshold. The party must navigate shifting mist, choose whether to preserve or erase the trail, and confront a patrol of warded guardians that tests intruders for intent. Along the way, clues suggest the city is not merely hidden, but selectively opening and closing itself in response to an unseen conflict. Signs recovered here can help open the Whisper Gate ahead or expose sabotage already underway in the city’s wards.",
+      "location": "VA001",
       "nextPoints": [
-        "PP003"
+        "PP003",
+        "PP004"
       ],
       "status": "not started",
-      "plotImpact": "Reveals the geomantic nature of the town and sets up the pursuit of the saboteur, linking the instability with deeper citywide dangers.",
+      "plotImpact": "Moves the adventure from wilderness mystery into active infiltration, giving the party two major routes: negotiate entry through lawful channels or force a path through the defensive web.",
       "sideQuests": [
         {
           "id": "SQ003",
-          "title": "The Paradoxical Chase",
-          "description": "The party pursues a masked figure through looping alleys, testing their wits and perception. Success earns a cryptic artifact needed to access the city\u2019s hidden heart.",
+          "title": "Recover the Broken Boundary Sigil",
+          "description": "A shattered sigil plate lies in a flooded ditch along the resin road. Restoring it may reveal a lawful passphrase or prove that someone sabotaged the approach wards from within.",
           "involvedLocations": [
-            "TPG001"
+            "VA001"
           ],
           "status": "not started",
-          "plotImpact": "Provides a key and information about the sabotage relevant to later challenges."
+          "plotImpact": "Can unlock a peaceful audience with Numillian’s wardkeepers and expose an internal traitor."
+        },
+        {
+          "id": "SQ004",
+          "title": "Free the Snare-Caught Messenger",
+          "description": "A messenger animal or bound courier has been trapped by invisible cords and warding thorns. Releasing it may earn a message, a token, or a grateful guide, but the area is watched by hostile hunters.",
+          "involvedLocations": [
+            "VA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Provides a clue about the city’s current crisis and may alter the response of later NPCs."
         }
       ]
     },
     {
       "id": "PP003",
-      "title": "The Serendipity Conspiracy",
-      "description": "The party uncovers a secret society of masked dignitaries\u2014the Luckbinder\u2019s cabal\u2014who seek to harness the crossroads\u2019 power. Preparing for a midnight ritual to seize control of fate, the cabal\u2019s plans threaten to further destabilize the gateway into Numillian. The party must infiltrate their gathering, navigate intrigue, and choose whether to aid, expose, or oppose the society, as their decision will influence who controls the passage through the Paradoxical Gates.",
-      "location": "TPG001",
+      "title": "The Whisper Gate at the Fern Clearing",
+      "description": "In a fern-choked clearing at the edge of the plains, a disguised gate of pale stone and living roots stands nearly invisible under the mist. To enter, the party must either satisfy the gate’s social challenge with correct rites and testimony, or overcome its guardians while the forest attempts to conceal the breach. Inside the threshold, the hidden city’s first defense line begins to awaken, and the party learns that Numillian is already bracing for an internal collapse of trust. Answers learned from the Veilwood Fringe can be used here to speak the old entry rite or to identify saboteurs attempting to force entry behind them.",
+      "location": "HF002",
       "nextPoints": [
         "PP004"
       ],
       "status": "not started",
-      "plotImpact": "Tests the party\u2019s social and moral choices, shaping alliances that will matter when the city\u2019s deeper secrets are revealed.",
+      "plotImpact": "Creates the first direct contact with Numillian’s defense structure and determines whether the party enters as petitioners, infiltrators, or trespassers.",
       "sideQuests": [
         {
-          "id": "SQ004",
-          "title": "Unmasking Allies",
-          "description": "The Paradoxical Twins offer to help the party identify friend from foe\u2014if the adventurers retrieve a mirrored mask stolen by the conspirators.",
+          "id": "SQ005",
+          "title": "Speak the Old Entry Rite",
+          "description": "The gate recognizes only a fragment of the original Numillian welcome phrase. The party can search local carvings, bargain with a wary gate-keeper, or piece together the rite from inscriptions recovered earlier.",
           "involvedLocations": [
-            "TPG001"
+            "HF002",
+            "VA001"
           ],
           "status": "not started",
-          "plotImpact": "Grants an NPC ally within the secret society for the ritual confrontation."
+          "plotImpact": "A successful rite opens a nonviolent route and reduces resistance in the next stage."
         },
         {
-          "id": "SQ005",
-          "title": "Tea with Keeper Veyron",
-          "description": "Keeper Veyron invites the party to a private tea ceremony, offering wisdom about the crossroads and the city\u2019s hidden heart\u2014if players can answer his riddles.",
+          "id": "SQ006",
+          "title": "Hold the Gate Against Saboteurs",
+          "description": "While the party is at the threshold, a rival group attempts to exploit the confusion and breach the ward-line. The characters can defend the gate, let the saboteurs pass to gather evidence, or strike a bargain with them.",
           "involvedLocations": [
-            "TPG001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "Imparts insight into the ritual\u2019s weaknesses and offers a magical boon."
+          "plotImpact": "Altering this encounter changes who controls the narrative inside Numillian and who becomes an enemy later."
         }
       ]
     },
     {
       "id": "PP004",
-      "title": "Midnight at the Shifting Crossroads",
-      "description": "As midnight strikes, reality bends and the Luckbinder enacts the ritual at the crossroads. The party must disrupt the ceremony\u2014fighting fate-spirits and masked conspirators\u2014while the city\u2019s shifting energies threaten chaos. Their success or failure determines if the Paradoxical Gates stabilize, allowing passage deeper into Numillian, or if uncontrolled chaos spreads, complicating all future journeys.",
-      "location": "TPG001",
+      "title": "Arrival at the First Trials Ruins",
+      "description": "The party travels into the newly unearthed First Trials Ruins, a broken dungeon of stone corridors, half-buried courtyards, and faded sigils that still hum with dormant ward-magic. At the entrance, a cracked trial-plinth presents three ancient inscriptions that react to intent rather than force, forcing the characters to choose how they will be judged: by honesty, discipline, or sacrifice. Their first steps reveal that the ruin is not empty; shifting passages and old mechanisms still respond to intruders, and a hidden observer seems to be testing them from within the walls. This ruin is the first place where the party can prove Kobe’s role in stabilizing the hidden wards—and where the city’s deeper crisis becomes impossible to ignore.",
+      "location": "HF002",
       "nextPoints": [
         "PP005"
       ],
       "status": "not started",
-      "plotImpact": "A climactic encounter that determines the stability of the gateway into Numillian and sets the tone for the city\u2019s reality-warping dangers.",
+      "plotImpact": "Introduces the dungeon’s trial-based magic, establishes the ruin as a living test, and gives the party an initial choice that will influence later chambers.",
       "sideQuests": [
         {
-          "id": "SQ006",
-          "title": "The Coin of Infinite Sides",
-          "description": "A legendary coin appears amidst the chaos, said to determine the outcome of any contest. The party can seek it out to turn the tide, but using it risks unpredictable consequences.",
+          "id": "SQ007",
+          "title": "Read the Faded Trial Sigils",
+          "description": "Careful investigation of the entrance carvings can reveal the original purpose of the ruin and hint at how the mechanisms recognize worthy intruders. Deciphering the symbols may also expose a safe path through the first shifting corridor.",
           "involvedLocations": [
-            "TPG001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "Can shift the final encounter in surprising ways, with effects that may echo in later events."
+          "plotImpact": "Provides clues that reduce the danger of the first puzzle sequence and foreshadows the ruin’s deeper secret."
+        },
+        {
+          "id": "SQ008",
+          "title": "Recover the Broken Trial Token",
+          "description": "A shattered bronze token lies wedged in a floor seam near the entrance. Retrieving it requires navigating a trapped threshold and may earn the party a useful key item for bypassing one of the ruin’s warded doors.",
+          "involvedLocations": [
+            "HF002"
+          ],
+          "status": "not started",
+          "plotImpact": "Offers an optional tool for later exploration and rewards cautious dungeon-crawling."
         }
       ]
     },
     {
       "id": "PP005",
-      "title": "Shadows Over the Veiled Districts",
-      "description": "With the Paradoxical Gates stabilized or thrown into flux, the party enters the Veiled Districts (TMQ001), a maze of masked denizens and shifting alliances. Disappearances plague the district, and local authorities and masked factions quietly request the adventurers\u2019 subtle assistance. The party learns the district\u2019s instability is connected to the citywide unraveling and must tread carefully to avoid open conflict.",
-      "location": "TMQ001",
+      "title": "The Shifting Corridors and the Second Chamber",
+      "description": "Deeper inside, the dungeon rearranges itself in response to the party’s actions, separating the group unless they solve a sequence of linked stone mechanisms. The corridors open into a half-collapsed courtyard where a trial engine still cycles through hazards: rotating walls, pressure plates, and a sealed archive niche containing records of the First Trials. Here the party may encounter a hostile guardian construct, negotiate with a frightened survivor trapped in the ruins, or use the environment to bypass confrontation altogether. The records tie the ruin to Numillian’s wider ward network and hint that the same hidden influence now destabilizing the city has touched the Curated Quarter below.",
+      "location": "HF002",
       "nextPoints": [
         "PP006"
       ],
       "status": "not started",
-      "plotImpact": "Introduces the web of intrigue and the masked societies whose actions affect Numillian\u2019s fragile fabric.",
+      "plotImpact": "Raises the stakes through exploration under pressure, introduces a social element with a trapped witness, and reveals that someone or something is using the ruins to control access to a deeper sanctum.",
       "sideQuests": [
         {
-          "id": "SQ007",
-          "title": "Masks for Every Face",
-          "description": "The party must acquire custom masks from a renowned artisan to blend in. The artisan won\u2019t work for strangers: a favor or secret must be offered.",
+          "id": "SQ009",
+          "title": "Free the Trapped Survivor",
+          "description": "A living prisoner or stranded explorer is pinned behind a shifting wall and can be reached only by manipulating the corridor sequence from the correct side. Saving them may provide valuable information about who last activated the ruins and why the trial mechanisms are becoming more aggressive.",
           "involvedLocations": [
-            "TMQ001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "Improves social standing and stealth throughout the district."
+          "plotImpact": "Creates a rescue objective that can earn an ally, clue, or later assistance."
         },
         {
-          "id": "SQ008",
-          "title": "The Lost Courier",
-          "description": "A masked courier has vanished with a vital message. Find them\u2014or their mask\u2014before a rival faction does.",
+          "id": "SQ010",
+          "title": "Override the Trial Engine",
+          "description": "The courtyard’s ancient mechanism can be disrupted by aligning three cracked stone pylons in the correct order. Doing so weakens the shifting walls and may disable one of the dungeon’s deadliest hazard loops.",
           "involvedLocations": [
-            "TMQ001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "May reveal clues about the disappearances and influence future alliances."
+          "plotImpact": "Makes the next descent safer and rewards problem-solving over brute force."
         }
       ]
     },
     {
       "id": "PP006",
-      "title": "Labyrinth of Lies",
-      "description": "The party\u2019s investigation leads deeper into the Veiled Districts, where coded messages, secret meetings, and masked societies abound. They must determine which cabal holds the key to the disappearances, all while learning that these events are linked to an entity attempting to anchor itself within Numillian. The party\u2019s alliances here will affect their ability to stop the city\u2019s unravelling.",
-      "location": "TMQ001",
+      "title": "The Heart of the Ruin",
+      "description": "At the ruin’s deepest chamber, the party discovers the true purpose of the First Trials Ruins: a sealed judgment hall where initiates were once tested against fear, loyalty, and memory. The hidden manipulator behind the activated wards finally reveals itself through the chamber’s command glyphs, using the ruin’s ancient defenses to trap the party in a final sequence of trials. The characters must decide whether to destroy the control core, claim it for themselves, or restore the wards to their original function, each choice altering the dungeon’s future and the city’s ability to remain hidden. What they learn here points directly toward the Curated Quarter, where civic records and access permissions are being altered to feed the same conspiracy.",
+      "location": "HF002",
       "nextPoints": [
         "PP007"
       ],
       "status": "not started",
-      "plotImpact": "Reveals a core conspiracy tied to the greater destabilization of Numillian.",
+      "plotImpact": "Reveals the dungeon’s central truth and forces a major decision that shapes the outcome of the adventure.",
       "sideQuests": [
         {
-          "id": "SQ009",
-          "title": "The Incense Merchant\u2019s Secret",
-          "description": "A perfumer with connections offers information if the party retrieves a stolen shipment from a rival alley.",
+          "id": "SQ011",
+          "title": "Recover the Trial Chronicle",
+          "description": "A sealed stone archive within the heart chamber contains the original chronicle of the First Trials. Extracting it without triggering the ward backlash requires either finesse, magical protection, or a risky bargain with the chamber’s intelligence.",
           "involvedLocations": [
-            "TMQ001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "Gains intelligence on key NPCs and secret routes."
+          "plotImpact": "Provides lore, identifies the ruin’s original purpose, and may reveal the hidden manipulator’s weakness."
         },
         {
-          "id": "SQ010",
-          "title": "The Whispering Shadow",
-          "description": "A mysterious figure communicates only through whispers in the mist. If the party wins their trust, they may gain a potent ally or a cunning adversary.",
+          "id": "SQ012",
+          "title": "Bargain with the Ward Voice",
+          "description": "The chamber’s lingering intelligence offers assistance if the party proves they understand the trials’ meaning. A successful negotiation could redirect the final defenses against the true villain or open a safer path to the core.",
           "involvedLocations": [
-            "TMQ001"
+            "HF002"
           ],
           "status": "not started",
-          "plotImpact": "Potential for stealthy assistance or betrayal in climactic moments."
+          "plotImpact": "Adds a social resolution path and lets the party gain leverage before the climax."
         }
       ]
     },
     {
       "id": "PP007",
-      "title": "Revelation Beneath the Lanterns",
-      "description": "The party infiltrates a masked ball beneath the Veiled Districts, where the cabal\u2019s leaders gather to conduct a ritual. They learn the disappearances are part of a larger scheme to anchor a shadow entity\u2014a threat tied to the unraveling of Numillian itself. The party can expose, join, or sabotage the cabal\u2019s plans, and their choice will ripple into the city\u2019s fate.",
-      "location": "TMQ001",
+      "title": "The Curated Quarter Ledger Theft",
+      "description": "The party is summoned to the Curated Quarter, a tightly managed town district of Numillian where every shopfront is painted, every account is audited, and every alley seems to have its own watcher. A respected ledger-house claims that a ciphered shipment manifest has vanished overnight, and with it a list of names tied to hidden vault access. The owners want discreet help before the district’s Wardkeepers lock down the quarter and blame an innocent scribe. Investigation reveals the theft was staged to draw attention away from a covert exchange happening beneath the polished streets, and the trail from the First Trials points here as the next place where Numillian’s secrets are being rerouted.",
+      "location": "CD003",
       "nextPoints": [
-        "PP008"
+        "PP008",
+        "PP009"
       ],
       "status": "not started",
-      "plotImpact": "The party\u2019s actions at the ball determine the power structure and security of the Veiled Districts.",
+      "plotImpact": "Introduces the central mystery and gives the party a choice between pursuing the stolen ledger trail or protecting a witness before the Wardkeepers intervene.",
       "sideQuests": [
         {
-          "id": "SQ011",
-          "title": "Dance of Blades",
-          "description": "A masked duelist challenges the party\u2019s best fighter to a ceremonial duel; winning earns respect and access to restricted areas.",
+          "id": "SQ013",
+          "title": "The Missing Seal Press",
+          "description": "A seal press used to authenticate district records has been stolen from a nearby accounting atelier. Recovering it requires tracing forged receipts through market stalls, then confronting a pickpocket ring that sells access tokens to locked doors.",
           "involvedLocations": [
-            "TMQ001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Victory opens secret doors at the ball; defeat brands the party as unworthy."
+          "plotImpact": "Provides evidence that the theft is part of a larger forgery network and may reveal who can open restricted Curated Quarter doors."
         },
         {
-          "id": "SQ012",
-          "title": "The Unmasking",
-          "description": "Steal or win a rival\u2019s mask to learn their true identity and motives.",
+          "id": "SQ014",
+          "title": "Quiet the Ledgersmiths",
+          "description": "Several ledgersmiths refuse to speak openly, fearing retaliation from a hidden patron. The party can earn their trust through social pressure, favors, or a public defense against intimidation from hired bruisers.",
           "involvedLocations": [
-            "TMQ001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Knowledge of a key NPC\u2019s identity can turn negotiations."
+          "plotImpact": "Unlocks testimony that points toward a secret meeting site and reduces resistance from local artisans later in the plot."
         }
       ]
     },
     {
       "id": "PP008",
-      "title": "Masks Fall, Shadows Rise",
-      "description": "As the cabal\u2019s ritual begins, the party must act: disrupt the rite, confront the shadow entity\u2019s emissary, or forge a new order. The climax blends combat and social maneuvering, with desperate NPCs vying for power. The outcome determines whether the Veiled Districts stabilize, descend into chaos, or become a bastion of secrecy.",
-      "location": "TMQ001",
+      "title": "Watched Alleys and Locked Doors",
+      "description": "Following the stolen ledger trail leads into the Curated Quarter’s narrow service lanes, storage courtyards, and hidden stairwells. The party must navigate a maze of keyed entrances, silent sentries, and concealed signal marks while avoiding a district sweep by Wardkeepers. Along the way they discover that the ledger pages were copied, not stolen for profit, and the copies were passed to a clandestine broker operating out of an unmarked counting room. The route can be uncovered through stealth, negotiation with a nervous courier, or direct confrontation with the watchers. Evidence gathered in the First Trials can help decode the copied names and reveal how the city’s access routes are being manipulated.",
+      "location": "CD003",
       "nextPoints": [
-        "PP009"
+        "PP009",
+        "PP010"
       ],
       "status": "not started",
-      "plotImpact": "Resolution shapes the district\u2019s fate and the party\u2019s standing for future encounters deeper in Numillian.",
+      "plotImpact": "Reveals the hidden broker network and places the party in conflict with district security, forcing them to decide whether to cooperate with or evade the Wardkeepers.",
       "sideQuests": [
         {
-          "id": "SQ013",
-          "title": "The Lantern Pact",
-          "description": "Secure the aid of the Lantern Wardens, a clandestine order of peacekeepers, by resolving a feud among their ranks.",
+          "id": "SQ015",
+          "title": "Courier Under Pressure",
+          "description": "A frightened courier who handled the copied pages is hiding in a dye shop. The party can escort them safely, interrogate them, or protect them from assassins sent to silence them.",
           "involvedLocations": [
-            "TMQ001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Their help may tip the battle or restore order."
+          "plotImpact": "Can produce a direct lead to the broker’s counting room and a name tied to the hidden manipulator."
         },
         {
-          "id": "SQ014",
-          "title": "Seal the Shadows",
-          "description": "Find and repair shattered warding sigils before the ritual completes.",
+          "id": "SQ016",
+          "title": "The Wardkeeper Audit",
+          "description": "A Wardkeeper inspection threatens to shut down half the quarter. The party may help sort false records from real ones, expose a forged permit, or exploit the chaos to slip into a sealed archive.",
           "involvedLocations": [
-            "TMQ001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Sealing the wards weakens the shadow entity and prevents future incursions."
+          "plotImpact": "Determines whether the Wardkeepers become allies, obstacles, or a looming threat in the final act."
         }
       ]
     },
     {
       "id": "PP009",
-      "title": "Shattered Threshold: Entering the Unraveling Wards",
-      "description": "With the Veiled Districts\u2019 fate determined, the party is summoned to the Unraveling Wards (TUD001)\u2014a quarter warped by reality-defying forces spreading from the heart of Numillian. Their objective: locate Mira the Shardseer, who may hold the key to the city\u2019s unraveling. The party immediately faces the dangers of spatial chaos and fractured magic.",
-      "location": "TUD001",
+      "title": "The Counting House Below",
+      "description": "The trail leads to a hidden counting house built beneath an elegant merchant hall, where illicit ledgers are compared against older records tied to Numillian’s sealed vaults. Inside, the party finds evidence that someone in the Curated Quarter has been altering identity records to route chosen people toward a deeper descent. The chamber is defended by hired enforcers, coded locks, and a warded archive that can be opened only by piecing together the forged accounts. If the party succeeds, they learn that the current crisis is not merely theft but a test of who can be manipulated into opening the path below. The broker’s trail also connects to the Lower Vaults, where the same records are being used to control access and suppress witnesses.",
+      "location": "CD003",
       "nextPoints": [
         "PP010"
       ],
       "status": "not started",
-      "plotImpact": "Sets the tone and stakes for the magical instability threatening Numillian\u2019s core.",
+      "plotImpact": "Confirms that the Curated Quarter is a staging ground for access to deeper Numillian secrets and reveals the route to the climactic confrontation.",
       "sideQuests": [
         {
-          "id": "SQ015",
-          "title": "Fragments of Memory",
-          "description": "Raxil the Doubter begs the party to recover shards of his fractured memories scattered across the district.",
+          "id": "SQ017",
+          "title": "Recover the True Register",
+          "description": "A hidden register containing the original names and access marks is locked inside a warded cabinet. Recovering it may require puzzle-solving, social deception, or breaking the cabinet before the archive self-destructs.",
           "involvedLocations": [
-            "TUD001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Grants the party cryptic visions and a clue to bypass spatial traps."
+          "plotImpact": "Restores the truth behind the forged records and can clear an innocent suspect or expose a traitor."
         },
         {
-          "id": "SQ016",
-          "title": "Whispers Beneath the Hum",
-          "description": "Rumors speak of a hidden enclave where survivors shelter from the magical chaos. Gaining their favor may provide a safe haven and counteract the warping effects.",
+          "id": "SQ018",
+          "title": "The Broker’s Escape Route",
+          "description": "The broker is likely to flee through a tunnel leading into the lower districts. The party can set an ambush, pursue through maintenance passages, or bargain for the broker’s cooperation.",
           "involvedLocations": [
-            "TUD001"
+            "CD003",
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Provides resources and safety for deeper exploration."
+          "plotImpact": "Offers an alternate route to the finale and may provide leverage against the hidden manipulator."
         }
       ]
     },
     {
       "id": "PP010",
-      "title": "The Spiral Heart: Investigating the Rupture",
-      "description": "Tracing Mira\u2019s trail, the party navigates labyrinthine streets to the Spiral Heart\u2014the disruption\u2019s epicenter. They confront frayed magic and hostile entities, meeting Azarel Moros, a scholar with his own agenda. The party learns that the unraveling is no accident, and must decide whether to trust Azarel or strike out on their own toward the source.",
-      "location": "TUD001",
+      "title": "Audience of the Hidden Manipulator",
+      "description": "The investigation culminates in a sealed civic vault beneath the Curated Quarter, where the hidden manipulator has been using forged records, coerced witnesses, and crafted civic order to select who may descend into Numillian’s deeper sanctums. Here the party confronts the architect of the scheme amid warded doors, collapsing file stacks, and a ritual of administrative control that can bind minds as surely as chains. The final encounter can be resolved through combat, by exposing the manipulator’s lies to their own allies, or by turning the district’s systems against them. Success determines whether the Curated Quarter remains a prison of perfect order or becomes the key to opening the city’s deeper secrets, and it sends the party toward the Lower Vaults where the most dangerous ward engine waits.",
+      "location": "CD003",
       "nextPoints": [
         "PP011"
       ],
       "status": "not started",
-      "plotImpact": "Reveals that the unraveling is orchestrated, not random, and that powerful factions compete for Numillian\u2019s fate.",
+      "plotImpact": "Resolves the Curated Quarter crisis, secures or severs access to the deeper Numillian vaults, and sets the tone for future exploration of the hidden city.",
       "sideQuests": [
         {
-          "id": "SQ017",
-          "title": "Lost in the Loop",
-          "description": "A group of city guards is trapped in a looping alley. The party can attempt to break the loop, earning gratitude and a helpful map fragment.",
+          "id": "SQ019",
+          "title": "Free the Bound Witness",
+          "description": "One witness has been magically compelled to recite the official version of events. The party can break the compulsion, protect the witness during the confrontation, or use their testimony to unravel the manipulator’s authority.",
           "involvedLocations": [
-            "TUD001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "Provides a safe route through the worst distortions."
+          "plotImpact": "Weakens the antagonist’s control and can transform a hostile encounter into a public exposure."
         },
         {
-          "id": "SQ018",
-          "title": "The Shadow Collector",
-          "description": "A flickering shadow entity offers information about Mira in exchange for a magically significant item.",
+          "id": "SQ020",
+          "title": "Seal or Shatter the Civic Ward",
+          "description": "The vault’s protective ward can be stabilized, repurposed, or destroyed. Choosing how to handle it affects the Curated Quarter’s future safety and whether the party gains controlled access to deeper Numillian routes.",
           "involvedLocations": [
-            "TUD001"
+            "CD003"
           ],
           "status": "not started",
-          "plotImpact": "May yield advantageous intelligence or attract further unwanted attention."
+          "plotImpact": "Creates a lasting consequence for the district and determines the party’s advantage in later adventures."
         }
       ]
     },
     {
       "id": "PP011",
-      "title": "Fractured Alliances: The Choice of Restoration",
-      "description": "At the heart of the Wards, the party finds Mira ensnared in an arcane lattice. Azarel and a cabal of reality-meddlers offer a dangerous solution: destroy the wards and remake reality, or attempt an ancient ritual to restore the district. Their choice will determine who holds power as Numillian\u2019s core grows more unstable.",
-      "location": "TUD001",
+      "title": "Whispers Beneath the Lower Vaults",
+      "description": "In the damp passages beneath the oldest streets, the party is drawn to the Lower Vaults of Numillian, where merchants, smugglers, and wardens all speak of missing people, vanished coin, and echoes that repeat words no one said aloud. A nervous contact can reveal that someone is using the sunken cisterns as a listening post to intercept secrets moving through the town above. The party must navigate crowded stairways, flooded underways, and wary locals to identify who is watching the Vaults and why. The Curated Quarter’s records and the First Trials’ lore suggest this district is not merely a criminal den, but the control point for a larger magical scheme affecting Numillian's hidden wards.",
+      "location": "LD004",
       "nextPoints": [
         "PP012"
       ],
       "status": "not started",
-      "plotImpact": "Determines the fate of the Wards and who controls the next stage of the city\u2019s destiny.",
+      "plotImpact": "Establishes the Lower Vaults as a dangerous hidden district and reveals that the disappearances are tied to a deliberate surveillance network rather than simple theft.",
       "sideQuests": [
         {
-          "id": "SQ019",
-          "title": "Shattered Oaths",
-          "description": "One of Mira\u2019s former allies, half-consumed by the unraveling, begs for release or restoration.",
+          "id": "SQ021",
+          "title": "Find the Missing Ledger",
+          "description": "A vault-broker begs the party to recover a stolen accounting ledger before it is used to blackmail half the district. The trail leads through flooded storage rooms and a cramped stairwell where thieves have set traps to delay pursuit.",
           "involvedLocations": [
-            "TUD001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Influences the success and morality of the party\u2019s chosen method."
+          "plotImpact": "Provides evidence that the Lower Vaults are being used to launder information as well as goods."
         },
         {
-          "id": "SQ020",
-          "title": "Anchors in the Maelstrom",
-          "description": "Ancient runestones must be reactivated or destroyed as part of either potential solution.",
+          "id": "SQ022",
+          "title": "Quiet the Echo Chamber",
+          "description": "Residents claim a collapsed chamber is 'speaking back' with voices from other rooms. Investigating reveals a hidden listening device and a concealed relay tunnel that can be destroyed or repurposed by the party.",
           "involvedLocations": [
-            "TUD001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Directly affects the climactic ritual\u2019s outcome."
+          "plotImpact": "Lets the party weaken the enemy's surveillance and learn a secret route deeper into the Vaults."
         }
       ]
     },
     {
       "id": "PP012",
-      "title": "Echoes of Reality: The Climax and Aftermath",
-      "description": "The party enacts their plan as the unraveling peaks\u2014reality bends, time fractures, and hostile entities surge forth. Their battle and ritual efforts determine whether the Wards are restored, transformed, or lost forever. The aftermath changes the arcane and political landscape, as Numillian\u2019s core grows even more unstable.",
-      "location": "TUD001",
+      "title": "The Sunken Cistern Conspiracy",
+      "description": "Clues point to an abandoned cistern complex beneath the Lower Vaults, where masked agents are moving sealed crates and prisoners through waterlogged chambers. The party can infiltrate quietly, negotiate with a frightened middleman, or force their way through guards and warded doors. Inside, they discover the operation is not merely criminal: it is feeding stolen memories and names into an ancient warding mechanism buried in the town foundations. This is the same mechanism hinted at in the First Trials and mirrored by the Curated Quarter’s forged access records.",
+      "location": "LD004",
       "nextPoints": [
         "PP013"
       ],
       "status": "not started",
-      "plotImpact": "Resolution determines the fate of this district and grants boons or enmities for the party as they press deeper into Numillian.",
+      "plotImpact": "Reveals that the Lower Vaults are a control point for a larger magical scheme affecting Numillian's hidden wards, and exposes the first direct path to the final ward engine.",
       "sideQuests": [
         {
-          "id": "SQ021",
-          "title": "The Last Echo",
-          "description": "A fragment of the district\u2019s original guardian spirit lingers. If aided, it may grant a unique boon or secret knowledge.",
+          "id": "SQ023",
+          "title": "Rescue the Waterbound Prisoners",
+          "description": "Several captives are being held in a flooded holding cell while the smugglers decide whether to move them or erase their identities. Freeing them may trigger alarms, but the prisoners know where the next transfer point lies.",
           "involvedLocations": [
-            "TUD001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Provides lasting rewards and clues to the city\u2019s deepest mysteries."
+          "plotImpact": "Creates allies and supplies a direct lead toward the final hidden chamber."
+        },
+        {
+          "id": "SQ024",
+          "title": "Crack the Ward Stone",
+          "description": "A cracked stone plinth in the cistern still pulses with old protective magic. The party can study it, disable it, or attune it to uncover what kind of force is powering the conspiracy.",
+          "involvedLocations": [
+            "LD004"
+          ],
+          "status": "not started",
+          "plotImpact": "Provides crucial lore and can reduce the danger of the climax if successfully handled."
         }
       ]
     },
     {
       "id": "PP013",
-      "title": "Whispers Beneath the Stones: The Descent into the Netherwoven Warrens",
-      "description": "Summoned to Illune\u2019s End, the party investigates citizens vanishing and eldritch fissures pulsing with energy. All signs point to the Netherwoven Warrens (TSU001), an ancient labyrinth below the city, serving as a fractured anchor for a burgeoning dimensional rift. The party must find the hidden entrance, as the instability threatens to spill forth into Numillian.",
-      "location": "TSU001",
+      "title": "Council of Shadows in the Lower Vault Market",
+      "description": "With the conspiracy exposed, the party is forced into a tense social struggle in the hidden market halls where wardens, smugglers, and secret-keepers all claim authority. Letharel, Mirael, Thalanis, or Veyrun may appear as competing voices, each pushing a different solution: cover-up, arrest, evacuation, or controlled collapse. The party must choose whom to trust, gather proof, and decide whether to rally support openly or remain unseen while the Lower Vaults turn against one another. The outcome determines whether the Lower Vaults become a battlefield, a siege, or a covert operation as the party moves toward the ward engine below.",
+      "location": "LD004",
       "nextPoints": [
         "PP014"
       ],
       "status": "not started",
-      "plotImpact": "Discovery of the Warrens\u2019 entrance influences preparedness and sets the stage for their dungeon descent.",
+      "plotImpact": "Determines which factions will aid or hinder the party in the finale, and whether the Lower Vaults become a battlefield, a siege, or a covert operation.",
       "sideQuests": [
         {
-          "id": "SQ022",
-          "title": "The Marked Survivor",
-          "description": "A traumatized vagrant with arcane sigils burned into their skin wanders the district. Calming and aiding them may reveal critical details about traps or safe passage.",
+          "id": "SQ025",
+          "title": "Win the Dockside Informants",
+          "description": "A ring of porters and tunnel-runners can provide access to the final site, but only if the party settles a dispute over stolen pay and broken promises.",
           "involvedLocations": [
-            "TSU001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Gains useful information or a charm of protection for the Warrens."
+          "plotImpact": "Secures a network of informants that can reveal enemy movements before the climax."
         },
         {
-          "id": "SQ023",
-          "title": "The Fading Architect",
-          "description": "A reclusive architect claims to have designed the original undercity. Convincing her to share her blueprints could reveal hidden routes within the labyrinth.",
+          "id": "SQ026",
+          "title": "Expose the False Accusation",
+          "description": "One faction plans to pin the disappearances on an innocent resident to protect the real conspirators. The party can investigate witnesses and present proof, gaining public trust or making powerful enemies.",
           "involvedLocations": [
-            "TSU001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Provides shortcuts or secret passages during exploration."
+          "plotImpact": "Shifts political support in the party's favor and changes how the final encounter unfolds."
         }
+      ],
+      "prerequisites": [
+        "PP012"
       ]
     },
     {
       "id": "PP014",
-      "title": "Frayed Realities: Navigating the Shifting Labyrinth",
-      "description": "Within the Netherwoven Warrens, the party faces twisted corridors, gravity-defying chambers, and bizarre monsters. They discover the Warrens are a fractured anchor for a dimensional rift, their progress complicated by reality-bending traps and ghostly echoes. Stabilizing the Warrens is critical to preventing Numillian\u2019s total collapse.",
-      "location": "TSU001",
+      "title": "The Ward Engine Below the Lower Vaults",
+      "description": "At the heart of the Lower Vaults lies a half-buried ward engine, an ancient Numillian device fed by stolen secrets, names, and memories to keep something sealed below the town. The hidden manipulator behind the crisis attempts to complete a ritual that will either awaken the buried power or rewrite the ward to serve a new master. The party must fight through guardians, disrupt the engine, and decide whether to destroy the system, seize control of it, or preserve it at a terrible cost. What they learned in the Veilwood, First Trials, and Curated Quarter can now be used to stabilize the seals—or bring the entire city’s secrecy crashing down.",
+      "location": "LD004",
       "nextPoints": [
         "PP015"
       ],
       "status": "not started",
-      "plotImpact": "Success in navigating hazards determines the party\u2019s ability to prevent the rift from widening.",
+      "plotImpact": "Climactic encounter that resolves the Lower Vaults crisis and determines whether Numillian's hidden protections are saved, corrupted, or shattered.",
       "sideQuests": [
         {
-          "id": "SQ024",
-          "title": "Echoes of the Lost",
-          "description": "Collect spectral echoes of vanished townsfolk and return them to specific spots to calm the Warrens\u2019 instability.",
+          "id": "SQ027",
+          "title": "Free the Bound Memories",
+          "description": "The ward engine contains trapped recollections taken from the missing. The party can attempt a dangerous arcane release that weakens the final boss but may unleash psychic backlash or reveal painful truths.",
           "involvedLocations": [
-            "TSU001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Reduces hazards or unlocks ghostly aid in the final confrontation."
+          "plotImpact": "Reduces the enemy's power and restores lost identities to the victims."
         },
         {
-          "id": "SQ025",
-          "title": "The Hunger in the Stone",
-          "description": "A sentient patch of living stone feeds on consciousness. Appeasing it may open a safe path through the deadliest chamber.",
+          "id": "SQ028",
+          "title": "Choose the Seal",
+          "description": "The final chamber includes three possible stabilizing seals, each with a different consequence: preserve secrecy, expose Numillian, or collapse the vault network entirely. The party must decide which seal to activate under pressure.",
           "involvedLocations": [
-            "TSU001"
+            "LD004"
           ],
           "status": "not started",
-          "plotImpact": "Avoids a major combat or deadly hazard later."
+          "plotImpact": "Creates a decisive end-state for the Lower Vaults and shapes future access to the hidden city."
         }
       ]
     },
     {
       "id": "PP015",
-      "title": "The Weaver in the Shadows: Confronting the Rift\u2019s Guardian",
-      "description": "At the heart of the Warrens, the party faces the Arcane Weaver, a being half-bound to reality. It offers a bargain: help it manifest in exchange for closing the rift, or fight to prevent catastrophe. This confrontation\u2019s outcome will echo across Numillian, influencing the final unraveling at the city\u2019s core.",
-      "location": "TSU001",
+      "title": "Ashlight Arrival in the Shuluth Expanse",
+      "description": "The party reaches a new district of the Shuluth Expanse: a black-stone township called Ashlight Cross, where half-buried shrines and soot-choked avenues conceal a recent pattern of disappearances. Local wardens, frightened residents, and whispering cult cells all point to the same omen: something beneath the town has started answering prayers again. The characters must gather clues through tense social exchanges, investigate shrine sites, and survive a first ambush by ash-masked zealots or grave-things rising from sealed doorways. By this point, the party’s earlier choices in Numillian may have determined whether Ashlight Cross sees them as saviors, spies, or another sign of the city’s unraveling.",
+      "location": "SS005",
       "nextPoints": [
         "PP016"
       ],
       "status": "not started",
-      "plotImpact": "The party\u2019s decision shapes the stability of the city above and sets the stage for the final act.",
+      "plotImpact": "Establishes Ashlight Cross as the party’s new base of operations and reveals that the Expanse’s unrest is tied to an awakening buried force beneath the town.",
       "sideQuests": [
         {
-          "id": "SQ026",
-          "title": "The Tethered Relic",
-          "description": "A relic belonging to the city\u2019s founders is embedded in the Weaver\u2019s chamber. Retrieving or destroying it could tip the balance of power.",
+          "id": "SQ029",
+          "title": "The Missing Lanterns",
+          "description": "Several shrine-lanterns that kept the streets safe have vanished. Tracking them through alleys and rooftops reveals a cult supply route and a hidden cache of incense used to mask undead spoor.",
           "involvedLocations": [
-            "TSU001"
+            "SS005"
           ],
           "status": "not started",
-          "plotImpact": "Provides leverage or a last-minute advantage in negotiation or combat."
+          "plotImpact": "Restores a key protective resource and exposes the first active cult cell in Ashlight Cross."
+        },
+        {
+          "id": "SQ030",
+          "title": "Whispers at the Doorway Shrines",
+          "description": "Residents report hearing voices from sealed shrine doors after sunset. Investigating the shrines can uncover trapped spirits, a social plea from a frightened acolyte, or a combat encounter with something that has learned to mimic prayer.",
+          "involvedLocations": [
+            "SS005"
+          ],
+          "status": "not started",
+          "plotImpact": "Provides lore about the buried power beneath the Expanse and hints that the shrines are part of a larger warding network."
         }
       ]
     },
     {
       "id": "PP016",
-      "title": "Threads Unbound: Sealing or Shattering the Netherwoven Warrens",
-      "description": "With the rift\u2019s fate decided, the party must stabilize the labyrinth or escape its collapse as reality warps chaotically. Success may seal the Warrens and restore peace; failure could unleash horrors upon Numillian, hastening the city\u2019s unraveling.",
-      "location": "TSU001",
+      "title": "The Incense Ledger and the Hidden Tunnels",
+      "description": "Clues from the first investigation lead to an abandoned incense-house and its subterranean service tunnels, where smugglers, cultists, and desperate townsfolk have all been moving through the same black-market routes. The party must choose whether to negotiate with the smugglers, infiltrate the tunnels quietly, or force their way through guardians and traps. At the tunnel’s heart lies a ledger naming the next ritual site and the officials who have been quietly allowing the disappearances. The trail now points toward the council chapel and the buried choir-vault beneath Ashlight Cross.",
+      "location": "SS005",
       "nextPoints": [
         "PP017"
       ],
       "status": "not started",
-      "plotImpact": "The future of Illune\u2019s End and Numillian depends on the party\u2019s actions here.",
+      "plotImpact": "Reveals the conspiracy’s logistics, identifies a protected ritual location, and gives the party leverage over local power brokers.",
       "sideQuests": [
         {
-          "id": "SQ027",
-          "title": "The Anchor\u2019s Choice",
-          "description": "A sentient echo of a former guardian offers to sacrifice itself to seal the rift. The party may choose to let it, find another way, or spare it at great risk.",
+          "id": "SQ031",
+          "title": "A Smuggler’s Bargain",
+          "description": "A tunnel guide offers passage in exchange for protection from cult reprisals. The party can accept, expose, or double-cross the guide, changing how much of the underground network becomes available later.",
           "involvedLocations": [
-            "TSU001"
+            "SS005"
           ],
           "status": "not started",
-          "plotImpact": "Alters the ending\u2014echo\u2019s sacrifice brings stability, but compassion may offer redemption."
+          "plotImpact": "Creates a meaningful alliance-or-enmity decision that alters access to hidden routes beneath the Expanse."
+        },
+        {
+          "id": "SQ032",
+          "title": "Sealed in Salt",
+          "description": "A side chamber contains salt-sealed coffins and a warding script that may be reactivated to block the approaching darkness. Recovering the script requires navigating a trapped archive and possibly fighting the dead that still guard it.",
+          "involvedLocations": [
+            "SS005"
+          ],
+          "status": "not started",
+          "plotImpact": "Provides a defensive ward that can weaken later undead threats and offers proof that the town once knew how to contain the buried evil."
         }
       ]
     },
     {
       "id": "PP017",
-      "title": "Arrival at the Shrouded Psiumbra",
-      "description": "With the underground threat contained or unleashed, the party travels to the Shrouded Psiumbra (TMFMH001), a district shimmering with illusions and psychic energies. Here, the Umbral Chorus\u2014an undead mind flayer cabal\u2014seeks to complete a ritual merging dream and reality. The party must discover the mind flayer plot and recover the fractured memory core, a key element needed to stabilize Numillian itself.",
-      "location": "TMFMH001",
+      "title": "Council of Broken Saints",
+      "description": "The trail leads to a ruined civic chapel where the town’s surviving elders, wardens, and secretive cult intermediaries gather under a fragile truce. Here the party must navigate a dangerous social confrontation: expose the conspiracy, broker an alliance, or fracture the council to force open the truth. The hidden manipulator behind the unrest reveals that the buried entity beneath the Expanse is not merely waking, but being deliberately fed memories, names, and sacrifices to reopen an ancient gate. The chapel’s surviving rites may also offer a way to protect Numillian’s wider ward network from the damage spreading south from the hidden city.",
+      "location": "SS005",
       "nextPoints": [
         "PP018"
       ],
       "status": "not started",
-      "plotImpact": "Introduces the mind flayer threat and the city\u2019s memory core as the final piece to restoring Numillian.",
+      "plotImpact": "Turns the investigation into a public crisis, reshaping local loyalties and confirming that the final threat is an engineered awakening, not an accident.",
       "sideQuests": [
         {
-          "id": "SQ028",
-          "title": "Echoes of Laughter",
-          "description": "Track down the source of ghostly laughter\u2014a clue left by a rebel masquerader resisting mind flayer domination.",
+          "id": "SQ033",
+          "title": "The Witness Behind the Screen",
+          "description": "A terrified witness knows who ordered the disappearances but will only speak if escorted safely through the chapel’s hostile factions. The party can protect the witness, interrogate them, or use them as bait to reveal an assassin.",
           "involvedLocations": [
-            "TMFMH001"
+            "SS005"
           ],
           "status": "not started",
-          "plotImpact": "Can provide the party with an ally and secret routes."
+          "plotImpact": "Supplies the last clear testimony needed to identify the ritual’s architect."
         },
         {
-          "id": "SQ029",
-          "title": "Masks of Memory",
-          "description": "A desperate reveler offers a psychic-touched mask said to grant visions but warps the mind. Decide whether to accept the boon and its price.",
+          "id": "SQ034",
+          "title": "Wardkeeper’s Rite",
+          "description": "A surviving wardkeeper asks the party to help perform a partial cleansing rite in the chapel’s nave. Success can calm local spirits and weaken the force gathering below, while failure may unleash a hostile manifestation mid-rite.",
           "involvedLocations": [
-            "TMFMH001"
+            "SS005"
           ],
           "status": "not started",
-          "plotImpact": "May reveal secrets or hinder a player with hallucinations."
+          "plotImpact": "Influences the difficulty of the climactic encounter by strengthening or breaking the town’s remaining protections."
         }
       ]
     },
     {
       "id": "PP018",
-      "title": "Through the Maze of Illusions",
-      "description": "To reach the Psiumbra\u2019s heart, the party navigates a labyrinth of shifting corridors and psychic traps. Enchanted masqueraders and enthralled guards block their way, and they learn of the impending \u2018Midnight Convergence\u2019\u2014the Umbral Chorus\u2019s ritual to merge realities. Securing the memory core before the ritual is critical to restoring Numillian\u2019s stability.",
-      "location": "TMFMH001",
-      "nextPoints": [
-        "PP019"
-      ],
-      "status": "not started",
-      "plotImpact": "Pushes the party toward a confrontation with the mind flayer cabal and the recovery of the memory core.",
-      "sideQuests": [
-        {
-          "id": "SQ030",
-          "title": "The Lost Chord",
-          "description": "A bard trapped in a looping psychic melody begs for release. Breaking the enchantment could grant the party a magical song or a grateful guide.",
-          "involvedLocations": [
-            "TMFMH001"
-          ],
-          "status": "not started",
-          "plotImpact": "Rescue provides an anti-illusion resource or an NPC ally."
-        }
-      ]
-    },
-    {
-      "id": "PP019",
-      "title": "Masquerade of Madness",
-      "description": "At the grand masquerade, the party must blend in with masked dignitaries, mind-controlled commoners, and lurking mind flayers. Social intrigue, sabotage, and stealth are key as they attempt to gather the ritual\u2019s details, identify key cultists, and decide whom to trust. Their actions here will determine their ability to disrupt the ritual and recover the memory core.",
-      "location": "TMFMH001",
-      "nextPoints": [
-        "PP020"
-      ],
-      "status": "not started",
-      "plotImpact": "Crucial for gathering information and positioning for the final confrontation.",
-      "sideQuests": [
-        {
-          "id": "SQ031",
-          "title": "A Dancer\u2019s Defiance",
-          "description": "An elegant dancer covertly seeks to break free from mind flayer enthrallment. Helping her could earn a powerful spy or expose the party.",
-          "involvedLocations": [
-            "TMFMH001"
-          ],
-          "status": "not started",
-          "plotImpact": "Could tip the balance of the masquerade or lead to exposure."
-        },
-        {
-          "id": "SQ032",
-          "title": "The Maskmaker\u2019s Secret",
-          "description": "A reclusive artisan offers to craft a perfect false mask if the party recovers a stolen fragment of his soul from a psychic vault.",
-          "involvedLocations": [
-            "TMFMH001"
-          ],
-          "status": "not started",
-          "plotImpact": "Allows for easier infiltration and eavesdropping during the ritual."
-        }
-      ]
-    },
-    {
-      "id": "PP020",
-      "title": "The Midnight Convergence",
-      "description": "The party confronts the Umbral Chorus as the Midnight Convergence begins. Reality buckles under psychic energies; illusions become dangerously real. The party must overcome both physical and mental trials, defeat the mind flayer masterminds, and secure the memory core. Their choices determine if the district is freed, warped, or transformed into something stranger still.",
-      "location": "TMFMH001",
-      "nextPoints": [
-        "PP021"
-      ],
-      "status": "not started",
-      "plotImpact": "A climactic resolution that determines the fate of the Shrouded Psiumbra and the party\u2019s ability to restore Numillian.",
-      "sideQuests": [
-        {
-          "id": "SQ033",
-          "title": "Shadow\u2019s Requiem",
-          "description": "A mysterious entity offers to collapse parts of the maze to aid the party if they promise a favor yet unnamed.",
-          "involvedLocations": [
-            "TMFMH001"
-          ],
-          "status": "not started",
-          "plotImpact": "Bargain may provide a significant advantage or future complications."
-        }
-      ]
-    },
-    {
-      "id": "PP021",
-      "title": "Arrival at The Shifting Confluence",
-      "description": "With the memory core in hand, the party\u2019s journey takes them to The Shifting Confluence (TNU001), where reality is thin and alternate timelines flicker at the edge of perception. Here, a fragment of Numillian\u2019s core needed to complete the city\u2019s restoration has surfaced, but is being hunted by forces loyal to the mind flayer and by a reality-warped thief.",
-      "location": "TNU001",
-      "nextPoints": [
-        "PP022"
-      ],
-      "status": "not started",
-      "plotImpact": "Introduces the final artifact needed to heal Numillian and sets up the last major confrontation.",
-      "sideQuests": [
-        {
-          "id": "SQ034",
-          "title": "Echoes of the Forgotten",
-          "description": "Help a local baker anchor his shop by solving a puzzle or bargaining with a planar spirit.",
-          "involvedLocations": [
-            "TNU001"
-          ],
-          "status": "not started",
-          "plotImpact": "Earns trust and access to secret information."
-        },
-        {
-          "id": "SQ035",
-          "title": "The Shattered Message",
-          "description": "A messenger seeks help delivering a letter that keeps reforming as reality shifts. Interpreting the true meaning provides a clue about the fragment\u2019s location.",
-          "involvedLocations": [
-            "TNU001"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals the Numillian fragment\u2019s last known location."
-        }
-      ]
-    },
-    {
-      "id": "PP022",
-      "title": "The Fractal Chase",
-      "description": "Clues lead the party to the heart of The Shifting Confluence, where Syllik the Mirrorfoot, a reality-warped thief, has stolen the Numillian fragment. The party must navigate ever-morphing streets, pursue Syllik through alternate versions of the town, and avoid rival agents sent by the mind flayer to recover the fragment.",
-      "location": "TNU001",
-      "nextPoints": [
-        "PP023"
-      ],
-      "status": "not started",
-      "plotImpact": "Intense exploration and chase sequence, deepening the party\u2019s exposure to shifting realities.",
-      "sideQuests": [
-        {
-          "id": "SQ036",
-          "title": "The Lost Double",
-          "description": "A noble\u2019s alternate self is stranded in the wrong reality, causing chaos. The party can reunite them or convince one to leave, earning a powerful ally or unique magical aid.",
-          "involvedLocations": [
-            "TNU001"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides aid in the confrontation with Syllik."
-        }
-      ]
-    },
-    {
-      "id": "PP023",
-      "title": "Crossroads of Unreality",
-      "description": "The chase culminates at the Confluence\u2019s epicenter, where Syllik attempts to open a permanent rift with the Numillian fragment. The party must confront Syllik and rival agents in a battlefield of shifting terrain. Their approach\u2014combat, bargain, or cunning\u2014will shape the fate of the fragment and the Confluence.",
-      "location": "TNU001",
-      "nextPoints": [
-        "PP024"
-      ],
-      "status": "not started",
-      "plotImpact": "Climactic encounter with lasting impact on the city and the party\u2019s final objective.",
-      "sideQuests": [
-        {
-          "id": "SQ037",
-          "title": "Shards of Memory",
-          "description": "Fragments of the party\u2019s own pasts intrude, offering glimpses of alternate lives. Interacting with these echoes may grant unique boons or risks.",
-          "involvedLocations": [
-            "TNU001"
-          ],
-          "status": "not started",
-          "plotImpact": "Character-specific rewards, risks, or roleplay development."
-        }
-      ]
-    },
-    {
-      "id": "PP024",
-      "title": "Restoration or Ruin",
-      "description": "With Syllik defeated or bargained with, the party must decide how to use the Numillian fragment. Their choices can stabilize the Confluence and heal Numillian, or harness its power at great risk. The consequences will echo throughout the city, shaping Numillian\u2019s destiny and setting the stage for future adventures.",
-      "location": "TNU001",
+      "title": "The Buried Choir Beneath Ashlight Cross",
+      "description": "The final clues point to a sinkhole beneath the oldest shrine district, where a buried choir-vault has cracked open into a chamber of chanting cultists, awakened dead, and a mind-warding presence bound in failing stone. The party descends into the hidden sanctum to confront the entity being awakened and the cult leaders feeding it. The climax should mix combat with a ritual race: disrupt the chant, rescue any surviving captives, and decide whether to destroy the vault, rebind the power, or claim its secrets at great risk. The ending of this confrontation can echo back through Numillian, confirming whether the hidden city’s secrecy endures or whether its wards begin to fail everywhere at once.",
+      "location": "SS005",
       "nextPoints": [],
       "status": "not started",
-      "plotImpact": "Resolution of the module, with moral and practical choices affecting the fate of Numillian and the campaign.",
+      "plotImpact": "Culminates the Shuluth Expanse arc with the fate of Ashlight Cross and the buried warding power decided by the party’s choices.",
       "sideQuests": [
         {
-          "id": "SQ038",
-          "title": "A Fractured Farewell",
-          "description": "A grateful citizen offers a strange relic that might be a blessing or a curse, depending on the stability of reality. Deciding how to use it provides a final personal challenge.",
+          "id": "SQ035",
+          "title": "The Last Bell of Ashlight",
+          "description": "A cracked shrine bell can be rung to disrupt the vault’s chant, but reaching it requires crossing collapsing streets and hostile dead. If restored, it becomes a powerful tool during the final confrontation.",
           "involvedLocations": [
-            "TNU001"
+            "SS005"
           ],
           "status": "not started",
-          "plotImpact": "May provide campaign-long benefits or complications."
+          "plotImpact": "Provides a battlefield advantage in the climax by interrupting the ritual once per encounter or phase."
+        },
+        {
+          "id": "SQ036",
+          "title": "The Names Below",
+          "description": "The vault contains a wall of carved names belonging to the missing townsfolk. Recovering or defacing the names changes whether the dead rise as enemies, spirits, or freed witnesses during the finale.",
+          "involvedLocations": [
+            "SS005"
+          ],
+          "status": "not started",
+          "plotImpact": "Determines the emotional tone of the ending and whether some victims can be saved or must be laid to rest."
         }
       ]
     }
@@ -697,5 +607,11 @@
   "completedQuests": [],
   "failedQuests": [],
   "worldEvents": [],
-  "dmNotes": []
+  "dmNotes": [
+    "The module is best run as a four-act escalation: border mystery, trial dungeon, civic conspiracy, and undercity crisis, ending in the Shuluth Expanse as the broadest and most dangerous reveal.",
+    "Kobe can be positioned as the key ward-stabilizer whose actions tie the First Trials Ruins to Numillian’s larger ward system.",
+    "Keep the same hidden manipulator concept threaded through all areas, but let each district reveal a different layer: border sabotage, trial control, forged access records, and memory-fed ward engines.",
+    "If you want a tighter campaign spine, treat the Curated Quarter as the political middle act and the Lower Vaults as the mechanical middle act before the Shuluth Expanse finale.",
+    "The final choice should meaningfully affect Numillian’s secrecy, the safety of its people, and whether the city remains an ally, a mystery, or a broken power center in future adventures."
+  ]
 }

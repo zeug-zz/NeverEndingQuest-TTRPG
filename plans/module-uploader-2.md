@@ -2,7 +2,7 @@
 
 ## Status
 
-- Draft for review
+- Complete
 - Scope approved for structural fixes first, LLM integration second
 - Apply to future ingests and re-run against existing modules
 - Re-ingest `The_Hidden_City_of_Numillian` after the new flow lands
@@ -1086,3 +1086,170 @@ Then add Phase 2 LLM classification specifically for ambiguity boundaries:
 - visible NPC vs hidden/reveal NPC
 
 That is the cleanest way to preserve the current Python realism contract while giving the uploader a smarter interpretation layer for narrative-heavy modules.
+
+---
+
+## Addendum: Final Spatial Solver Failsafe Proposal
+
+### Problem
+
+The completed `spatial-constraint-solver-generalization` change fixed the Numillian canary narrowly but does not provide a generally valid deterministic spatial solution.
+
+The issue is not Tier 1. The Tier 1 exhaustive grid embedding solver is the only mathematically honest part of the current chain. The failures are in the claimed fallback tiers:
+
+- Tier 2 currently behaves like a weak scatter/relax pass and can produce zero cardinal adjacencies for graphs that Tier 1 cannot place.
+- Tier 3 linear layout is mathematically false as a general guarantee. A single row only guarantees adjacency for chain/tree edges that happen to align with the row order. It cannot satisfy arbitrary cross-edges, cycles, high-degree rooms, or bread-loaf style graphs.
+- Any plan that claims arbitrary connected graphs can always be embedded on one 2D cardinal grid without changing topology is incorrect.
+
+### Final Deterministic Build Recommendation
+
+Replace the current three-tier story with a stricter deterministic contract:
+
+1. Keep Tier 1 as the real spatial solver.
+2. Strengthen Tier 1 rather than relying on fake fallback tiers.
+3. Demote Tier 2 and Tier 3 to diagnostics only, or delete them as success paths.
+4. Add a deterministic topology-normalization fallback that changes module topology when coordinates alone cannot satisfy adjacency.
+5. Re-run spatial validation after topology normalization.
+6. If normalization still cannot produce a valid module, emit `author_structural_debt` with exact blocking edges and stop claiming success.
+
+The key shift is this: if a graph cannot be embedded as authored, Python should stop pretending layout can solve it. Python should instead transform the module into a valid playable topology using explicit generated connector spaces.
+
+### Tier 1 Strengthening
+
+Tier 1 should become the authoritative solver and should be made more capable before any fallback mutates topology:
+
+- Raise `_MAX_ROOMS_TIER1` if runtime remains acceptable for module-scale areas.
+- Keep deterministic ordering for rooms and candidate coordinates.
+- Search around the most constrained rooms first, such as high-degree nodes or rooms involved in many required transitions.
+- Preserve exact validation after placement: every declared transition edge must have Manhattan distance 1.
+- Return structured diagnostics on failure: room count, edge count, unsatisfied edges, degree distribution, and whether failure appears to be coordinate-space pressure or non-embeddable topology.
+
+Tier 1 success should mean all required edges are satisfied. Partial success should not pass publication.
+
+### Replacement for Tiers 2 and 3
+
+Tier 2 and Tier 3 should no longer be treated as guaranteed placement strategies.
+
+Recommended replacement:
+
+- `tier_2_diagnostics`: optional best-effort relayout used only to produce better failure insight, never to mark the module valid unless full validation passes.
+- `tier_3_topology_normalization`: deterministic connector insertion that makes the graph physically playable.
+
+This keeps the system honest. A fallback only succeeds when the resulting module actually passes the same adjacency contract as any other module.
+
+### Deterministic Connector Insertion
+
+When a required edge `A <-> B` cannot be represented by cardinal adjacency in the current 2D grid, Python can replace the direct spatial requirement with explicit connector topology.
+
+Examples:
+
+- `A <-> Mirror Portal <-> B`
+- `A <-> Trapdoor Crawlspace <-> B`
+- `A <-> Dimensional Threshold <-> B`
+- `A <-> Hidden Passage <-> B`
+- `A <-> Narrow Service Tunnel <-> B`
+
+These connector spaces should be real emitted locations or real transition nodes, not hidden validator exceptions.
+
+Each generated connector should carry provenance, for example:
+
+```json
+"spatial_remediation": {
+  "generated": true,
+  "reason": "non_embed_edge",
+  "source_edge": ["A", "B"],
+  "method": "deterministic_connector_insertion"
+}
+```
+
+The direct problematic edge should be replaced with routed edges through the connector. After that, the normal coordinate solver can place the connector adjacent to one endpoint and route as needed through additional connector steps if one connector is not enough.
+
+### Portal and Trapdoor Failsafe
+
+The portal/trapdoor idea is valid and should be the final deterministic failsafe.
+
+It does not require the LLM builder to make the module valid. Python can deterministically choose a connector type from a small template list using stable inputs such as module tone, area type, or edge labels.
+
+Practical examples:
+
+- A magical mindscape module can use a `Mirror Portal` or `Dimensional Threshold`.
+- A dungeon/catacomb module can use a `Trapdoor Crawlspace`, `Narrow Service Tunnel`, or `Collapsed Crawlway`.
+- A city module can use an `Alley Cutthrough`, `Service Passage`, or `Hidden Stair`.
+
+This gives a practical structural guarantee for adjacency failures because any impossible direct edge can be transformed into a sequence of valid cardinal edges via generated connector nodes.
+
+### Why Not Same Coordinates in Different Dimensions Yet
+
+Two rooms occupying the same X/Y coordinate in different dimensions is conceptually useful, but it should not be the immediate fix unless the schema and validators gain explicit dimensional coordinates.
+
+Safe future model:
+
+```json
+"coordinates": {"x": 2, "y": 1, "plane": "mirror_world"}
+```
+
+or:
+
+```json
+"spatial_layer": "ethereal"
+```
+
+Without a first-class `plane`, `layer`, or `dimension` field, overlapping coordinates will likely be interpreted as invalid, ambiguous, or a collision by existing map/area parity checks. The safer immediate build is no coordinate overlap: add real connector locations and keep all emitted coordinates unique within the current 2D layer.
+
+### LLM Role
+
+The failsafe should not require LLM builder intervention to pass.
+
+The LLM may be useful after Python has already identified the exact structural problem, but only as an advisory flavor source:
+
+- Python detects impossible or unsatisfied edge.
+- Python proposes deterministic connector insertion.
+- Optional LLM suggests flavor such as `Mirror Portal` versus `Trapdoor Crawlspace`.
+- Python validates the proposed connector type against a whitelist.
+- Human may approve/reject if the UI exposes the remediation.
+- Python performs the canonical mutation and re-validates.
+
+The LLM should not directly mutate canonical topology. This preserves the project rule: Python enforces reality; the LLM interprets it.
+
+### Guarantee Boundaries
+
+Connector insertion can provide a practical 100% guarantee for spatial adjacency failures if the allowed operation is: preserve authored rooms, replace impossible direct edges with explicit generated connector paths, and allow as many generated connector spaces as needed.
+
+It does not guarantee success for unrelated blocker classes, such as:
+
+- missing required module fields,
+- unresolved monster references,
+- invalid schema shape,
+- broken NPC authority,
+- semantic destination contradictions,
+- media handoff blockers,
+- human-rejected generated connector proposals.
+
+It also should not be described as preserving the exact authored topology. It preserves reachability and gameplay intent while normalizing impossible geometry into explicit playable spaces.
+
+### Suggested OpenSpec Scope
+
+Create a replacement change rather than extending the failed one in place.
+
+Suggested change name:
+
+`spatial-topology-normalization-failsafe`
+
+Core requirements:
+
+- Tier 1 solver is the only coordinate-only success path.
+- Tier 2/3 legacy fallbacks cannot report success unless full adjacency validation passes.
+- Non-embeddable or failed-placement edges produce structured diagnostics.
+- Deterministic connector insertion can transform unsatisfied edges into valid routed topology.
+- Generated connector locations include provenance and are visible in authored module files.
+- All output must pass the same spatial audit and map/area parity audit as hand-authored modules.
+- Optional LLM flavor suggestions are advisory only and never authoritative.
+
+Acceptance criteria:
+
+- Bread-loaf/cross-edge fixture cannot pass via false linear layout.
+- Any failed Tier 1 fixture either becomes valid through generated connectors or returns explicit `author_structural_debt`.
+- Numillian remains valid after the new flow.
+- Existing modules with already valid coordinates are unchanged.
+- No overlapping coordinates are emitted unless a future explicit spatial-layer schema is added.
+- Publication status is based on post-normalization validation, not on fallback tier claims.

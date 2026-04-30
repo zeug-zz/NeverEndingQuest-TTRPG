@@ -717,6 +717,7 @@ def _ai_analyze_starting_location(module_data: dict) -> tuple:
         # Use factory for multi-provider support
         from utils.ai_client_factory import (
             create_chat_client,
+            get_chat_completion_params,
             get_chat_model_name,
             handle_provider_error,
         )
@@ -760,12 +761,15 @@ Determine the most logical starting location based on adventure flow, area types
 
         try:
             response = client.chat.completions.create(
-                model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
+                **get_chat_completion_params(
+                    "dm_validation",
+                    model_name,
+                    temperature_override=0.1,
+                ),
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -776,12 +780,15 @@ Determine the most logical starting location based on adventure flow, area types
                 warning(f"Falling back to OpenAI: {api_error}", category="ai_provider")
                 fallback_client = create_chat_client(use_fallback=True)
                 response = fallback_client.chat.completions.create(
-                    model=config.DM_MINI_MODEL,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.1,
+                    **get_chat_completion_params(
+                        "dm_validation",
+                        config.DM_MINI_MODEL,
+                        temperature_override=0.1,
+                    ),
                 )
             else:
                 raise
@@ -1828,6 +1835,7 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                 # Use factory for multi-provider support
                 from utils.ai_client_factory import (
                     create_chat_client,
+                    get_chat_completion_params,
                     get_chat_model_name,
                     handle_provider_error,
                 )
@@ -1852,7 +1860,12 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
 
                 try:
                     transition_response = client.chat.completions.create(
-                        model=model_name, messages=transition_messages, temperature=0.7
+                        messages=transition_messages,
+                        **get_chat_completion_params(
+                            "dm_main",
+                            model_name,
+                            temperature_override=0.7,
+                        ),
                     )
                 except Exception as api_error:
                     # Check if we should fallback to OpenAI
@@ -1866,9 +1879,12 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                         )
                         fallback_client = create_chat_client(use_fallback=True)
                         transition_response = fallback_client.chat.completions.create(
-                            model=config.DM_MAIN_MODEL,
                             messages=transition_messages,
-                            temperature=0.7,
+                            **get_chat_completion_params(
+                                "dm_main",
+                                config.DM_MAIN_MODEL,
+                                temperature_override=0.7,
+                            ),
                         )
                     else:
                         raise
@@ -4022,6 +4038,7 @@ def get_ai_npc_movement_decision(
         # Use factory for multi-provider support
         from utils.ai_client_factory import (
             create_chat_client,
+            get_chat_completion_params,
             get_chat_model_name,
             handle_provider_error,
         )
@@ -4152,12 +4169,15 @@ Remember: This is a background NPC management action, not party NPC management."
 
         try:
             response = client.chat.completions.create(
-                model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7,
+                **get_chat_completion_params(
+                    "updates",
+                    model_name,
+                    temperature_override=0.7,
+                ),
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -4168,12 +4188,15 @@ Remember: This is a background NPC management action, not party NPC management."
                 warning(f"Falling back to OpenAI: {api_error}", category="ai_provider")
                 fallback_client = create_chat_client(use_fallback=True)
                 response = fallback_client.chat.completions.create(
-                    model=config.NPC_INFO_UPDATE_MODEL,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.7,
+                    **get_chat_completion_params(
+                        "updates",
+                        config.NPC_INFO_UPDATE_MODEL,
+                        temperature_override=0.7,
+                    ),
                 )
             else:
                 raise

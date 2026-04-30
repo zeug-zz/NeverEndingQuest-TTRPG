@@ -1,0 +1,52 @@
+{
+  "module_slug": "The_Thornwood_Watch",
+  "source": "module_media_generator",
+  "contract": "module_media_generator_report.v1",
+  "authoritative": true,
+  "status": "degraded",
+  "freshness_state": "current",
+  "generated_at": "2026-04-30T00:42:59.092434Z",
+  "report_freshness": {
+    "state": "current",
+    "authoritative": true,
+    "written_at": "2026-04-30T00:42:59.092445Z",
+    "phase": "final",
+    "workflow": "module_media_generator",
+    "refresh_reason": "module_media_generator",
+    "contract": "module_media_generator_report.v1",
+    "stale_reason": null
+  },
+  "total_assets": 1,
+  "complete_assets": 1,
+  "missing_count": 0,
+  "missing_assets": [],
+  "asset_audits": [
+    {
+      "id": "wounded_ranger_gareth",
+      "name": "Wounded Ranger Gareth",
+      "type": "npc",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/npcs/wounded_ranger_gareth.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/npcs/wounded_ranger_gareth_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    }
+  ],
+  "generation_failures": [
+    {
+      "asset_id": "wounded_ranger_gareth",
+      "asset_name": "Wounded Ranger Gareth",
+      "asset_type": "npc",
+      "phase": "description",
+      "error": "cannot import name 'NPCBuilder' from 'core.generators.npc_builder' (/Users/zeug/Projects/NeverEndingQuest/core/generators/npc_builder.py)"
+    }
+  ],
+  "module_media_policy": {
+    "module_local_only": true,
+    "static_fallback_counts": false,
+    "completion_rule": "image_and_thumbnail"
+  },
+  "report_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/module_media_generator_report.json"
+}

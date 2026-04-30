@@ -108,6 +108,11 @@ from utils.enhanced_logger import debug, info, warning, error, set_script_name
 set_script_name("module_stitcher")
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.module_path_manager import ModulePathManager
+from utils.module_media_generator_report import (
+    is_module_media_generator_report_authoritative,
+    load_module_media_generator_report,
+    summarize_module_media_generator_report,
+)
 
 class ModuleStitcher:
     """Manages automatic module integration and organic world building"""
@@ -1341,7 +1346,11 @@ Respond with JSON:
             and contract == "toolkit_build_report_refresh_contract.v1"
         )
 
-    def _derive_sidebar_audit_signals(self, report_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _derive_sidebar_audit_signals(
+        self,
+        report_data: Dict[str, Any],
+        media_report_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Derive compact sidebar failure and media handoff signals from persisted reports."""
         try:
             if not isinstance(report_data, dict):
@@ -1349,8 +1358,12 @@ Respond with JSON:
 
             source_report = self._get_sidebar_source_report(report_data)
 
-            ready_status = str(report_data.get("ready_status", source_report.get("ready_status", ""))).lower()
-            publishable_status = str(report_data.get("publishable_status", source_report.get("publishable_status", ""))).lower()
+            ready_status = str(
+                report_data.get("ready_status", source_report.get("ready_status", ""))
+            ).lower()
+            publishable_status = str(
+                report_data.get("publishable_status", source_report.get("publishable_status", ""))
+            ).lower()
             report_status = str(report_data.get("status", source_report.get("status", ""))).lower()
 
             remediation_categories = [
@@ -1384,6 +1397,45 @@ Respond with JSON:
                 "semantic_publishability_blocking" in remediation_categories
                 or "missing semantic_authority payload" in canonical_text
             )
+            readiness_report = source_report.get("readiness")
+            if not isinstance(readiness_report, dict):
+                readiness_report = {}
+            readiness_gates = readiness_report.get("gates")
+            if not isinstance(readiness_gates, dict):
+                readiness_gates = {}
+            readiness_failed_gates = []
+            for gate_name, gate_data in readiness_gates.items():
+                if not isinstance(gate_data, dict):
+                    continue
+                gate_status = str(gate_data.get("status") or gate_data.get("state") or "").strip().lower()
+                if gate_status == "fail":
+                    readiness_failed_gates.append(str(gate_name).strip().lower())
+            readiness_is_media_only = (
+                ready_status == "fail"
+                and media_generator_needed
+                and not has_missing_monster_json
+                and not has_unresolved_destinations
+                and not has_semantic_blocking
+                and (
+                    not readiness_failed_gates
+                    or set(readiness_failed_gates).issubset({"gameplay"})
+                )
+            )
+            has_non_media_ready_failure = ready_status == "fail" and not readiness_is_media_only
+            has_generic_report_failure = (
+                report_status in {"failed", "fail"}
+                and not media_generator_needed
+                and not has_missing_monster_json
+                and not has_unresolved_destinations
+                and not has_semantic_blocking
+            )
+            has_non_media_blocker = (
+                has_missing_monster_json
+                or has_unresolved_destinations
+                or has_semantic_blocking
+                or has_non_media_ready_failure
+                or has_generic_report_failure
+            )
             has_build_failure = (
                 ready_status == "fail"
                 or report_status in {"failed", "fail"}
@@ -1394,18 +1446,66 @@ Respond with JSON:
             has_publication_blocker = media_generator_needed or publishable_status.startswith("fail")
 
             if not (has_build_failure or has_publication_blocker):
+                media_report_summary = summarize_module_media_generator_report(media_report_data)
+                if media_report_summary and media_report_summary.get("media_generator_needed"):
+                    return {
+                        "brief_failure": media_report_summary.get(
+                            "brief_failure", "Publication blocked: missing media"
+                        ),
+                        "media_generator_needed": True,
+                        "media_handoff": media_report_summary.get("media_handoff"),
+                    }
                 return {}
 
-            media_only_publication_handoff = (
-                media_generator_needed
-                and not has_build_failure
-                and not publishable_status.startswith("fail")
-            )
-            if media_only_publication_handoff:
-                if not self._is_sidebar_media_handoff_authoritative(report_data):
+            build_authoritative = self._is_sidebar_report_authoritative(report_data)
+            media_report_summary = summarize_module_media_generator_report(media_report_data)
+            media_report_authoritative = bool(media_report_summary)
+            media_report_needed = bool(media_report_summary.get("media_generator_needed"))
+
+            if media_report_authoritative:
+                if not media_report_needed:
+                    if not build_authoritative or not has_non_media_blocker:
+                        return {}
+                    media_generator_needed = False
+                else:
+                    if not has_non_media_blocker:
+                        brief_failure = media_report_summary.get(
+                            "brief_failure", "Publication blocked: missing media"
+                        )
+                        if len(brief_failure) > self._SIDEBAR_BRIEF_FAILURE_MAX_LEN:
+                            brief_failure = (
+                                brief_failure[: self._SIDEBAR_BRIEF_FAILURE_MAX_LEN - 3] + "..."
+                            )
+                        return {
+                            "brief_failure": brief_failure,
+                            "media_generator_needed": True,
+                            "media_handoff": media_report_summary.get("media_handoff"),
+                        }
+                    if not build_authoritative:
+                        brief_failure = media_report_summary.get(
+                            "brief_failure", "Publication blocked: missing media"
+                        )
+                        if len(brief_failure) > self._SIDEBAR_BRIEF_FAILURE_MAX_LEN:
+                            brief_failure = (
+                                brief_failure[: self._SIDEBAR_BRIEF_FAILURE_MAX_LEN - 3] + "..."
+                            )
+                        return {
+                            "brief_failure": brief_failure,
+                            "media_generator_needed": True,
+                            "media_handoff": media_report_summary.get("media_handoff"),
+                        }
+                    media_generator_needed = True
+            else:
+                media_only_publication_handoff = (
+                    media_generator_needed
+                    and not has_build_failure
+                    and not publishable_status.startswith("fail")
+                )
+                if media_only_publication_handoff:
+                    if not self._is_sidebar_media_handoff_authoritative(report_data):
+                        return {}
+                elif not build_authoritative:
                     return {}
-            elif not self._is_sidebar_report_authoritative(report_data):
-                return {}
 
             if has_missing_monster_json and media_generator_needed:
                 brief_failure = "Build failed: missing monsters/media"
@@ -1427,14 +1527,17 @@ Respond with JSON:
             if len(brief_failure) > self._SIDEBAR_BRIEF_FAILURE_MAX_LEN:
                 brief_failure = brief_failure[: self._SIDEBAR_BRIEF_FAILURE_MAX_LEN - 3] + "..."
 
-            return {
+            result = {
                 "brief_failure": brief_failure,
                 "media_generator_needed": media_generator_needed,
             }
+            if media_report_authoritative and media_report_needed:
+                result["media_handoff"] = media_report_summary.get("media_handoff")
+            return result
         except Exception as e:
             warning(
                 f"Failed to derive sidebar audit signals: {e}",
-                category="module_loading"
+                category="module_loading",
             )
             return {}
     
@@ -1468,7 +1571,8 @@ Respond with JSON:
                 
                 module_list.append({
                     **self._derive_sidebar_audit_signals(
-                        self._load_toolkit_build_report(module_name) or {}
+                        self._load_toolkit_build_report(module_name) or {},
+                        load_module_media_generator_report(module_name, project_root=self.root_dir),
                     ),
                     "moduleName": module_name,
                     "plotObjective": module_data.get('plotObjective', ''),

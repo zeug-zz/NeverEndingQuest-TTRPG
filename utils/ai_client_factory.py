@@ -21,6 +21,53 @@ _fallback_status = {
     'fallback_count': 0
 }
 
+# TABLETOP MODE: GPT-5 chat parameter shim defaults.
+GPT5_INCLUDE_LEGACY_TEMPERATURE = False
+
+
+def _is_gpt5_model(model_name: Optional[str]) -> bool:
+    """Return True when the resolved model is a GPT-5 family model."""
+    return bool(model_name) and str(model_name).lower().startswith("gpt-5")
+
+
+def _resolve_gpt5_chat_profile(
+    task_id: str,
+    retry_tier: Optional[str] = None,
+) -> Dict[str, str]:
+    """Resolve GPT-5 reasoning and verbosity settings for a task family."""
+    normalized_task_id = (task_id or "default").lower()
+
+    if "validation" in normalized_task_id or normalized_task_id in {"action_prediction", "updates"}:
+        reasoning_effort = "low"
+        verbosity = "low"
+    elif "compression" in normalized_task_id:
+        reasoning_effort = "low"
+        verbosity = "low"
+    elif (
+        "summary" in normalized_task_id
+        or "chronicle" in normalized_task_id
+        or "diary" in normalized_task_id
+    ):
+        reasoning_effort = "low"
+        verbosity = "medium"
+    else:
+        reasoning_effort = "medium"
+        verbosity = "medium"
+
+    if retry_tier in {"high", "retry"}:
+        try:
+            from model_config import GPT5_USE_HIGH_REASONING_ON_RETRY
+
+            if retry_tier == "high" or GPT5_USE_HIGH_REASONING_ON_RETRY:
+                reasoning_effort = "high"
+        except ImportError:
+            reasoning_effort = "high"
+
+    return {
+        "reasoning_effort": reasoning_effort,
+        "verbosity": verbosity,
+    }
+
 
 def _get_actual_provider(use_fallback: bool = False) -> tuple[str, bool]:
     """
@@ -157,7 +204,9 @@ def get_model_display_name() -> str:
         "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
         "openai/gpt-4.1-2025-04-14": "GPT-4.1",
         "gpt-4.1-2025-04-14": "GPT-4.1",
-        "gpt-4.1-mini-2025-04-14": "GPT-4.1 Mini"
+        "gpt-4.1-mini-2025-04-14": "GPT-4.1 Mini",
+        "gpt-5.4-mini-2026-03-17": "GPT-5.4 Mini",
+        "openai/gpt-5.4-mini-2026-03-17": "GPT-5.4 Mini",
     }
     
     return display_names.get(model, model)
@@ -476,6 +525,49 @@ def get_model_config(task_id: str, original_openai_model: Optional[str] = None) 
             "use_openrouter": True,
             "fallback_strategy": "openai",
         }
+
+
+def get_chat_completion_params(
+    task_id: str,
+    original_openai_model: Optional[str] = None,
+    *,
+    temperature_override: Optional[float] = None,
+    retry_tier: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return flat Chat Completions kwargs for the resolved model family."""
+    model_config = get_model_config(task_id, original_openai_model)
+    model = model_config.get("model", original_openai_model or "gpt-4.1-2025-04-14")
+    params: Dict[str, Any] = {"model": model}
+
+    if model_config.get("use_openrouter"):
+        temperature = temperature_override
+        if temperature is None:
+            temperature = model_config.get("temperature")
+        if temperature is not None:
+            params["temperature"] = temperature
+        extra_body = model_config.get("extra_body") or {}
+        params.update(extra_body)
+        return params
+
+    if _is_gpt5_model(model):
+        params.update(_resolve_gpt5_chat_profile(task_id, retry_tier=retry_tier))
+        if GPT5_INCLUDE_LEGACY_TEMPERATURE:
+            temperature = temperature_override
+            if temperature is None:
+                temperature = model_config.get("temperature")
+            if temperature is not None:
+                params["temperature"] = temperature
+        return params
+
+    temperature = temperature_override
+    if temperature is None:
+        temperature = model_config.get("temperature")
+    if temperature is not None:
+        params["temperature"] = temperature
+
+    extra_body = model_config.get("extra_body") or {}
+    params.update(extra_body)
+    return params
 
 
 def is_thinking_enabled(task_id: str) -> bool:
