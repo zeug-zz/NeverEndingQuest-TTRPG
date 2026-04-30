@@ -882,6 +882,7 @@ When NPCs volunteer, are recruited, or are asked to join the party, the AI shoul
 2. **ACCEPTANCE/DECLINE**: NPC should respond in character (agreeable/hesitant/unable)
 3. **PARTY COMPOSITION UPDATE**: If NPC agrees to join, use updatePartyNPCs to add them to the party roster (this will create their character file)
 4. **CHARACTER UPDATES**: Only use updateCharacterInfo for modifying existing characters (inventory, stats, conditions)
+5. **RECRUITMENT IDENTITY**: If the recruit comes from module NPC authority, preserve the module canonical display name and attach source metadata (`source_module`, `source_npc_name`, `source_entity_slug`, `recruited_from_location_id`, `character_file_ref` when safely linked). Do not rename the recruited actor to a fuzzy character-file name.
 
 ### NPC Decision Factors:
 - **Personality**: Eager scouts vs cautious veterans vs duty-bound guards
@@ -916,9 +917,9 @@ NPC immediately agrees without considering their critical leadership role.
 - No consideration of NPC personality or circumstances
 - Missing character development for recruitment interactions
 - Party composition changes without proper documentation
+- Module recruits lose their canonical authored display name due to fuzzy file matching instead of source metadata.
 
 The AI should make NPCs feel like real people with their own motivations, responsibilities, and decision-making processes when it comes to joining the party.
-
 
 ## PARLAY LOOP PREVENTION VALIDATION RULES
 
@@ -1057,6 +1058,21 @@ An NPC is considered "off-location" if they are NOT currently in the party roste
 - **VALID**: Off-location NPC mentioned WITHOUT explicit arrival verbs + no action required (incidental mention; travel or non-travel)
 - **VALID**: NPC already present at location or in party requires NO additional action
 - **INVALID**: Narration claims off-location NPC arrived/joined but NO matching state action present
+
+## Scene Follower State Synchronization Validation Rules
+
+When the AI DM uses updateSceneFollower, the update MUST ground a durable scene follower from deterministic Python-authoritative sources: module NPC authority, module monster authority, existing follower records, or active party NPC identity. External world entity introduction (traders, ambassadors, dragons, etc.) belongs to the v2 Titan background pipeline — the Narrator does not self-authorize followers outside deterministic sources.
+
+### Required Conditions:
+1. The entity must be grounded by module monster authority, module NPC authority, existing scene follower state, or active party NPC identity.
+2. The currentLocation, if provided, must match the party's current location.
+3. The update MAY mark the follower visible in the strip only when the follower is currently present and not in a hidden/released/escaped/dead/joined_party/combat_started cleanup state.
+
+### Validation Rules:
+- **VALID**: Grounded follower update with matching current location and allowed state/visibility
+- **INVALID**: Ungrounded follower invented from narration without deterministic authority
+- **INVALID**: Scene follower update that tries to make the follower combat-valid by thumbnail visibility alone
+- **VALID**: Existing follower record updated or moved within grounded runtime state
 
 ### Validation Examples:
 

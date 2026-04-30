@@ -1445,6 +1445,13 @@ Respond with JSON:
             )
             has_publication_blocker = media_generator_needed or publishable_status.startswith("fail")
 
+            # When publishability passes, media_generator_needed from stale
+            # remediation_categories is advisory/historical only. The
+            # publishable_status is the authoritative gate.
+            if media_generator_needed and publishable_status == "pass":
+                media_generator_needed = False
+                has_publication_blocker = False
+
             if not (has_build_failure or has_publication_blocker):
                 media_report_summary = summarize_module_media_generator_report(media_report_data)
                 if media_report_summary and media_report_summary.get("media_generator_needed"):

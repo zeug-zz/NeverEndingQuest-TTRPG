@@ -9,6 +9,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,10 +22,13 @@ from utils.narrator_location_exclusivity_guard import (  # noqa: E402
 from utils.scene_follower_state import (  # noqa: E402
     create_follower_record,
     find_follower,
+    follower_identity_keys,
     follower_at_location,
+    follower_visible_in_strip,
     get_follower_records,
     move_follower_to_location,
     remove_follower_record,
+    normalize_scene_follower_record,
     validate_follower_schema,
 )
 
@@ -600,6 +604,244 @@ class TestSceneFollowerStateModule(unittest.TestCase):
 
     def test_validate_follower_schema_wrong_type(self):
         self.assertFalse(validate_follower_schema("not_a_dict"))
+
+    def test_normalize_scene_follower_record_preserves_source_identity(self):
+        record = normalize_scene_follower_record(
+            {
+                "entity_id": "thorn_touched_dryad_sylara",
+                "current_location": "RO01",
+                "since_turn": 4,
+                "display_name": "Thorn-Touched Dryad Sylara",
+                "source_module": "The_Thornwood_Watch",
+                "source_npc_name": "Thorn-Touched Dryad Sylara",
+                "source_entity_slug": "thorn_touched_dryad_sylara",
+                "character_file_ref": "thorn_touched_dryad_sylara",
+                "recruited_from_location_id": "RO01",
+                "visible_in_strip": True,
+            }
+        )
+
+        self.assertEqual(record["display_name"], "Thorn-Touched Dryad Sylara")
+        self.assertEqual(record["source_module"], "The_Thornwood_Watch")
+        self.assertEqual(record["source_npc_name"], "Thorn-Touched Dryad Sylara")
+        self.assertEqual(record["source_entity_slug"], "thorn_touched_dryad_sylara")
+        self.assertEqual(record["character_file_ref"], "thorn_touched_dryad_sylara")
+        self.assertEqual(record["recruited_from_location_id"], "RO01")
+        self.assertTrue(follower_visible_in_strip(record))
+
+    def test_follower_identity_keys_include_source_metadata(self):
+        recruited = normalize_scene_follower_record(
+            {
+                "entity_id": "thorn_touched_dryad_sylara",
+                "current_location": "RO01",
+                "since_turn": 4,
+                "display_name": "Thorn-Touched Dryad Sylara",
+                "source_module": "The_Thornwood_Watch",
+                "source_npc_name": "Thorn-Touched Dryad Sylara",
+                "source_entity_slug": "thorn_touched_dryad_sylara",
+                "character_file_ref": "thorn_touched_dryad_sylara",
+                "recruited_from_location_id": "RO01",
+                "visible_in_strip": True,
+            }
+        )
+        current_scene = {
+            "name": "Thorn-Touched Dryad Sylara",
+            "source_npc_name": "Thorn-Touched Dryad Sylara",
+            "source_entity_slug": "thorn_touched_dryad_sylara",
+            "character_file_ref": "thorn_touched_dryad_sylara",
+        }
+
+        self.assertTrue(
+            set(follower_identity_keys(recruited)).intersection(set(follower_identity_keys(current_scene))),
+            "Source metadata should align recruited followers with matching scene actors",
+        )
+
+    def test_narrator_cannot_self_authorize_scene_follower(self):
+        from core.ai.action_handler import _resolve_scene_follower_grounding
+
+        party_tracker_data = {
+            "module": "",
+            "worldConditions": {"currentLocationId": "RO01"},
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [],
+        }
+        location_data = {"locationId": "RO01"}
+        parameters = {
+            "validatedState": {
+                "sourceNpcName": "Invented Captive",
+                "sourceEntitySlug": "invented_captive",
+                "currentLocation": "RO01",
+                "entityType": "monster",
+            }
+        }
+
+        result = _resolve_scene_follower_grounding(
+            "Invented Captive",
+            party_tracker_data,
+            location_data,
+            parameters,
+        )
+
+        self.assertFalse(result["ok"], "Narrator must not self-authorize scene followers")
+        self.assertEqual(result["reason"], "unresolved_entity")
+
+    def test_module_authored_entity_still_grounds_follower(self):
+        from core.ai.action_handler import _resolve_scene_follower_grounding
+        from unittest.mock import patch
+
+        party_tracker_data = {
+            "module": "The_Thornwood_Watch",
+            "worldConditions": {"currentLocationId": "RO01"},
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [],
+        }
+        location_data = {"locationId": "RO01"}
+        parameters = {}
+
+        with patch("utils.npc_arrival_validator.load_module_npc_names", return_value={"Thorn-Touched Dryad Sylara"}):
+            with patch("utils.npc_arrival_validator.resolve_npc_identity") as mock_resolve:
+                mock_resolve.return_value = type("R", (), {"status": "matched", "canonical_name": "Thorn-Touched Dryad Sylara"})()
+                result = _resolve_scene_follower_grounding(
+                    "Thorn-Touched Dryad Sylara",
+                    party_tracker_data,
+                    location_data,
+                    parameters,
+                )
+
+        self.assertTrue(result["ok"], "Module-authored NPC must still ground a scene follower")
+        self.assertIn(result["source"], ("module_npc", "module_monster"))
+
+
+class TestUpdateSceneFollowerRuntime(unittest.TestCase):
+    """Integration tests for core.ai.action_handler.update_scene_follower."""
+
+    def setUp(self):
+        self._temp_store = {"followers": []}
+
+    def _get_store(self):
+        return self._temp_store
+
+    def test_valid_follower_create_from_grounded_entity(self):
+        from core.ai.action_handler import update_scene_follower
+
+        party_tracker = {"worldConditions": {"currentLocationId": "RO01"}, "module": "", "partyMembers": ["Acheron"], "partyNPCs": []}
+        location_data = {"locationId": "RO01"}
+        parameters = {"entity": "Thorn-Touched Dryad Sylara", "state": "present", "visibleInStrip": True}
+
+        with (
+            patch("utils.scene_follower_state.load_followers", side_effect=self._get_store),
+            patch("utils.scene_follower_state.save_followers", return_value=True),
+            patch("core.ai.action_handler._resolve_scene_follower_grounding", side_effect=lambda n, pt, ld, p: {
+                "ok": True, "source": "module_npc", "entity_name": n,
+                "entity_id": n.strip().lower().replace(" ", "_"),
+                "entity_type": "npc", "character_file_ref": "",
+                "source_module": "", "source_npc_name": n,
+                "source_entity_slug": n.strip().lower().replace(" ", "_"),
+                "recruited_from_location_id": "RO01",
+                "module_npc_authored": True, "module_monster_authored": False,
+            }),
+        ):
+            result = update_scene_follower(party_tracker, location_data, parameters)
+
+        self.assertIn(result.get("status"), ("continue", None))
+        self.assertEqual(len(self._temp_store["followers"]), 1)
+        rec = self._temp_store["followers"][0]
+        self.assertEqual(rec["entity_id"], "thorn_touched_dryad_sylara")
+        self.assertTrue(rec.get("visible_in_strip"))
+
+    def test_follower_hide_behavior(self):
+        from core.ai.action_handler import update_scene_follower
+
+        self._temp_store = {"followers": [{
+            "entity_id": "thorn_touched_dryad_sylara", "current_location": "RO01",
+            "since_turn": 1, "display_name": "Thorn-Touched Dryad Sylara",
+            "visible_in_strip": True, "lifecycle_state": "present", "disposition": "present",
+        }]}
+
+        party_tracker = {"worldConditions": {"currentLocationId": "RO01"}, "module": "", "partyMembers": ["Acheron"], "partyNPCs": []}
+        location_data = {"locationId": "RO01"}
+        parameters = {"entity": "Thorn-Touched Dryad Sylara", "state": "hidden"}
+
+        with (
+            patch("utils.scene_follower_state.load_followers", side_effect=self._get_store),
+            patch("utils.scene_follower_state.save_followers", return_value=True),
+            patch("core.ai.action_handler._resolve_scene_follower_grounding", return_value={
+                "ok": True, "source": "module_npc", "entity_name": "Thorn-Touched Dryad Sylara",
+                "entity_id": "thorn_touched_dryad_sylara",
+                "entity_type": "npc", "character_file_ref": "",
+                "source_module": "", "source_npc_name": "Thorn-Touched Dryad Sylara",
+                "source_entity_slug": "thorn_touched_dryad_sylara",
+                "recruited_from_location_id": "RO01",
+                "module_npc_authored": True, "module_monster_authored": False,
+            }),
+        ):
+            result = update_scene_follower(party_tracker, location_data, parameters)
+
+        self.assertIn(result.get("status"), ("continue", None))
+        rec = self._temp_store["followers"][0]
+        self.assertEqual(rec["lifecycle_state"], "hidden")
+        self.assertEqual(rec["disposition"], "hidden")
+        self.assertFalse(rec.get("visible_in_strip"))
+
+    def test_follower_remove_cleanup(self):
+        from core.ai.action_handler import update_scene_follower
+
+        self._temp_store = {"followers": [{
+            "entity_id": "thorn_touched_dryad_sylara", "current_location": "RO01",
+            "since_turn": 1, "display_name": "Thorn-Touched Dryad Sylara",
+            "visible_in_strip": True, "lifecycle_state": "present", "disposition": "present",
+        }]}
+
+        party_tracker = {"worldConditions": {"currentLocationId": "RO01"}, "module": "", "partyMembers": ["Acheron"], "partyNPCs": []}
+        location_data = {"locationId": "RO01"}
+        parameters = {"entity": "Thorn-Touched Dryad Sylara", "state": "released"}
+
+        with (
+            patch("utils.scene_follower_state.load_followers", side_effect=self._get_store),
+            patch("utils.scene_follower_state.save_followers", return_value=True),
+            patch("core.ai.action_handler._resolve_scene_follower_grounding", return_value={
+                "ok": True, "source": "module_npc", "entity_name": "Thorn-Touched Dryad Sylara",
+                "entity_id": "thorn_touched_dryad_sylara",
+                "entity_type": "npc", "character_file_ref": "",
+                "source_module": "", "source_npc_name": "Thorn-Touched Dryad Sylara",
+                "source_entity_slug": "thorn_touched_dryad_sylara",
+                "recruited_from_location_id": "RO01",
+                "module_npc_authored": True, "module_monster_authored": False,
+            }),
+        ):
+            result = update_scene_follower(party_tracker, location_data, parameters)
+
+        self.assertIn(result.get("status"), ("continue", None))
+        self.assertEqual(len(self._temp_store["followers"]), 0)
+
+    def test_invented_follower_without_authority_fails(self):
+        from core.ai.action_handler import update_scene_follower
+
+        self._temp_store = {"followers": []}
+
+        party_tracker = {"worldConditions": {"currentLocationId": "RO01"}, "module": "", "partyMembers": ["Acheron"], "partyNPCs": []}
+        location_data = {"locationId": "RO01"}
+        parameters = {"entity": "Invented Captive", "state": "present", "visibleInStrip": True}
+
+        with (
+            patch("utils.scene_follower_state.load_followers", side_effect=self._get_store),
+            patch("utils.scene_follower_state.save_followers", return_value=True),
+            patch("core.ai.action_handler._resolve_scene_follower_grounding", return_value={"ok": False, "reason": "unresolved_entity"}),
+        ):
+            result = update_scene_follower(party_tracker, location_data, parameters)
+
+        self.assertEqual(result.get("status"), "error")
+        self.assertIn("unresolved_entity", str(result.get("error_message") or ""))
+        self.assertEqual(len(self._temp_store["followers"]), 0)
+
+    def test_invented_follower_without_authority_fails(self):
+        from core.ai.action_handler import update_scene_follower
+
+        self._temp_store = {"followers": []}
+        saved_called = []
+
+        def tracking_save(store):
+            saved_called.append(True)
 
 
 if __name__ == "__main__":

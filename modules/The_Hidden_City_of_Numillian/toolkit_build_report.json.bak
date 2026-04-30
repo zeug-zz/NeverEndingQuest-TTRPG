@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-28T23:08:45Z",
+  "generated_at": "2026-04-30T06:21:20Z",
   "module_slug": "The_Hidden_City_of_Numillian",
   "status": "degraded",
   "ready_status": "pending",
@@ -8,10 +8,10 @@
   "report_freshness": {
     "state": "stale",
     "authoritative": false,
-    "written_at": "2026-04-28T23:08:45Z",
+    "written_at": "2026-04-30T06:21:20Z",
     "phase": "pre_publishability",
     "workflow": "toolkit_report_refresh",
-    "refresh_reason": "module_media_generator",
+    "refresh_reason": "sidebar_unstale_media",
     "contract": "toolkit_build_report_refresh_contract.v1",
     "stale_reason": "publishability_pending"
   },
@@ -24,7 +24,7 @@
     "phase": "pre_publishability",
     "refresh_contract": "toolkit_build_report_refresh_contract.v1",
     "refresh_workflow": "toolkit_report_refresh",
-    "refresh_reason": "module_media_generator"
+    "refresh_reason": "sidebar_unstale_media"
   },
   "stages": {
     "continuity": {
@@ -553,6 +553,17 @@
             "version": "v1",
             "module_slug": "The_Hidden_City_of_Numillian",
             "location_aliases": {
+              "ancient shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G04",
+                "location_name": "Sunken Market",
+                "candidate_location_ids": [
+                  "SS005-G04"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G04].aliases"
+                ]
+              },
               "astral experiment hall": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -563,6 +574,39 @@
                 "sources": [
                   "areas/HF002.json#locations[G04].aliases",
                   "areas/HF002.json#locations[G04].name"
+                ]
+              },
+              "chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ]
+              },
+              "collapsed shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G02",
+                "location_name": "Echo Vault",
+                "candidate_location_ids": [
+                  "SS005-G02"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G02].aliases"
+                ]
+              },
+              "common hall": {
+                "status": "resolved",
+                "location_id": "G04",
+                "location_name": "Whisperdeep Cave",
+                "candidate_location_ids": [
+                  "G04"
+                ],
+                "sources": [
+                  "areas/CD003.json#locations[G04].aliases"
                 ]
               },
               "curators reliquary": {
@@ -669,6 +713,28 @@
                   "areas/VA001.json#locations[G04].aliases"
                 ]
               },
+              "guild chamber": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/LD004.json#locations[G01].aliases"
+                ]
+              },
+              "hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
+                ]
+              },
               "inner seal gate": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -681,6 +747,17 @@
                   "areas/LD004.json#locations[G04].name"
                 ]
               },
+              "numillian ruins": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/VA001.json#locations[G01].aliases"
+                ]
+              },
               "riddle gate": {
                 "status": "resolved",
                 "location_id": "SS005-G03",
@@ -691,6 +768,17 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G03].aliases",
                   "areas/SS005.json#locations[SS005-G03].name"
+                ]
+              },
+              "round chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
                 ]
               },
               "sealed memory vault": {
@@ -763,6 +851,28 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G04].aliases",
                   "areas/SS005.json#locations[SS005-G04].name"
+                ]
+              },
+              "the chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ]
+              },
+              "the hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
                 ]
               },
               "veiled bazaar": {
@@ -851,6 +961,19 @@
               }
             },
             "destination_phrases": {
+              "ancient shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G04",
+                "candidate_location_ids": [
+                  "SS005-G04"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G04].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "astral experiment hall": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -864,6 +987,46 @@
                 "observed": true,
                 "player_facing": true,
                 "observation_count": 2
+              },
+              "chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases",
+                  "areas/HF002.json#locations[G02].description"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
+              "collapsed shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G02",
+                "candidate_location_ids": [
+                  "SS005-G02"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G02].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
+              "common hall": {
+                "status": "resolved",
+                "location_id": "G04",
+                "candidate_location_ids": [
+                  "G04"
+                ],
+                "sources": [
+                  "areas/CD003.json#locations[G04].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
               },
               "curators reliquary": {
                 "status": "resolved",
@@ -1013,6 +1176,19 @@
                 "player_facing": false,
                 "observation_count": 0
               },
+              "guild chamber": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/LD004.json#locations[G01].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "guild hall": {
                 "status": "resolved",
                 "candidate_location_ids": [
@@ -1037,6 +1213,19 @@
                   ]
                 }
               },
+              "hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
               "inner seal gate": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -1046,6 +1235,19 @@
                 "sources": [
                   "areas/LD004.json#locations[G04].aliases",
                   "areas/LD004.json#locations[G04].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "numillian ruins": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/VA001.json#locations[G01].aliases"
                 ],
                 "observed": false,
                 "player_facing": false,
@@ -1064,6 +1266,20 @@
                 "observed": false,
                 "player_facing": false,
                 "observation_count": 0
+              },
+              "round chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases",
+                  "areas/HF002.json#locations[G02].description"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
               },
               "sealed memory vault": {
                 "status": "resolved",
@@ -1144,6 +1360,32 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G04].aliases",
                   "areas/SS005.json#locations[SS005-G04].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "the chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "the hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
                 ],
                 "observed": false,
                 "player_facing": false,
@@ -2052,7 +2294,7 @@
               "_llm_metadata": {
                 "provenance": "llm_classification",
                 "classified_by": "gpt-5.4-mini-2026-03-17",
-                "classified_at": "2026-04-28T22:28:28.242678"
+                "classified_at": "2026-04-28T23:08:45.182765"
               }
             },
             "diagnostics": {
@@ -2201,8 +2443,8 @@
             },
             "summary": {
               "location_count": 20,
-              "location_alias_count": 24,
-              "destination_phrase_count": 26,
+              "location_alias_count": 34,
+              "destination_phrase_count": 36,
               "npc_count": 16,
               "ambiguous_destination_count": 4,
               "normalized_shortform_destination_count": 2,
@@ -2211,9 +2453,9 @@
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-28T22:28:28.247156",
-            "entity_count": 30,
-            "destination_count": 22,
+            "classified_at": "2026-04-28T23:08:45.185992",
+            "entity_count": 10,
+            "destination_count": 14,
             "npc_count": 16,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
@@ -2747,6 +2989,17 @@
             "version": "v1",
             "module_slug": "The_Hidden_City_of_Numillian",
             "location_aliases": {
+              "ancient shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G04",
+                "location_name": "Sunken Market",
+                "candidate_location_ids": [
+                  "SS005-G04"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G04].aliases"
+                ]
+              },
               "astral experiment hall": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -2757,6 +3010,39 @@
                 "sources": [
                   "areas/HF002.json#locations[G04].aliases",
                   "areas/HF002.json#locations[G04].name"
+                ]
+              },
+              "chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ]
+              },
+              "collapsed shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G02",
+                "location_name": "Echo Vault",
+                "candidate_location_ids": [
+                  "SS005-G02"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G02].aliases"
+                ]
+              },
+              "common hall": {
+                "status": "resolved",
+                "location_id": "G04",
+                "location_name": "Whisperdeep Cave",
+                "candidate_location_ids": [
+                  "G04"
+                ],
+                "sources": [
+                  "areas/CD003.json#locations[G04].aliases"
                 ]
               },
               "curators reliquary": {
@@ -2863,6 +3149,28 @@
                   "areas/VA001.json#locations[G04].aliases"
                 ]
               },
+              "guild chamber": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/LD004.json#locations[G01].aliases"
+                ]
+              },
+              "hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
+                ]
+              },
               "inner seal gate": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -2875,6 +3183,17 @@
                   "areas/LD004.json#locations[G04].name"
                 ]
               },
+              "numillian ruins": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/VA001.json#locations[G01].aliases"
+                ]
+              },
               "riddle gate": {
                 "status": "resolved",
                 "location_id": "SS005-G03",
@@ -2885,6 +3204,17 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G03].aliases",
                   "areas/SS005.json#locations[SS005-G03].name"
+                ]
+              },
+              "round chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
                 ]
               },
               "sealed memory vault": {
@@ -2957,6 +3287,28 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G04].aliases",
                   "areas/SS005.json#locations[SS005-G04].name"
+                ]
+              },
+              "the chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "location_name": "Echoing Rift Ravine",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ]
+              },
+              "the hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "location_name": "Shattered Numillian Ruins",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
                 ]
               },
               "veiled bazaar": {
@@ -3045,6 +3397,19 @@
               }
             },
             "destination_phrases": {
+              "ancient shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G04",
+                "candidate_location_ids": [
+                  "SS005-G04"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G04].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "astral experiment hall": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -3058,6 +3423,46 @@
                 "observed": true,
                 "player_facing": true,
                 "observation_count": 2
+              },
+              "chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases",
+                  "areas/HF002.json#locations[G02].description"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
+              "collapsed shrine": {
+                "status": "resolved",
+                "location_id": "SS005-G02",
+                "candidate_location_ids": [
+                  "SS005-G02"
+                ],
+                "sources": [
+                  "areas/SS005.json#locations[SS005-G02].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
+              "common hall": {
+                "status": "resolved",
+                "location_id": "G04",
+                "candidate_location_ids": [
+                  "G04"
+                ],
+                "sources": [
+                  "areas/CD003.json#locations[G04].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
               },
               "curators reliquary": {
                 "status": "resolved",
@@ -3207,6 +3612,19 @@
                 "player_facing": false,
                 "observation_count": 0
               },
+              "guild chamber": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/LD004.json#locations[G01].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "guild hall": {
                 "status": "resolved",
                 "candidate_location_ids": [
@@ -3231,6 +3649,19 @@
                   ]
                 }
               },
+              "hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
               "inner seal gate": {
                 "status": "resolved",
                 "location_id": "G04",
@@ -3240,6 +3671,19 @@
                 "sources": [
                   "areas/LD004.json#locations[G04].aliases",
                   "areas/LD004.json#locations[G04].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "numillian ruins": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/VA001.json#locations[G01].aliases"
                 ],
                 "observed": false,
                 "player_facing": false,
@@ -3258,6 +3702,20 @@
                 "observed": false,
                 "player_facing": false,
                 "observation_count": 0
+              },
+              "round chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases",
+                  "areas/HF002.json#locations[G02].description"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
               },
               "sealed memory vault": {
                 "status": "resolved",
@@ -3338,6 +3796,32 @@
                 "sources": [
                   "areas/SS005.json#locations[SS005-G04].aliases",
                   "areas/SS005.json#locations[SS005-G04].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "the chamber": {
+                "status": "resolved",
+                "location_id": "G02",
+                "candidate_location_ids": [
+                  "G02"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G02].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "the hall": {
+                "status": "resolved",
+                "location_id": "G01",
+                "candidate_location_ids": [
+                  "G01"
+                ],
+                "sources": [
+                  "areas/HF002.json#locations[G01].aliases"
                 ],
                 "observed": false,
                 "player_facing": false,
@@ -4246,7 +4730,7 @@
               "_llm_metadata": {
                 "provenance": "llm_classification",
                 "classified_by": "gpt-5.4-mini-2026-03-17",
-                "classified_at": "2026-04-28T22:28:28.242678"
+                "classified_at": "2026-04-28T23:08:45.182765"
               }
             },
             "diagnostics": {
@@ -4395,8 +4879,8 @@
             },
             "summary": {
               "location_count": 20,
-              "location_alias_count": 24,
-              "destination_phrase_count": 26,
+              "location_alias_count": 34,
+              "destination_phrase_count": 36,
               "npc_count": 16,
               "ambiguous_destination_count": 4,
               "normalized_shortform_destination_count": 2,
@@ -4405,9 +4889,9 @@
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-28T22:28:28.247156",
-            "entity_count": 30,
-            "destination_count": 22,
+            "classified_at": "2026-04-28T23:08:45.185992",
+            "entity_count": 10,
+            "destination_count": 14,
             "npc_count": 16,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
@@ -6335,10 +6819,9 @@
         "present": true,
         "module_key": "The_Hidden_City_of_Numillian",
         "folder_exists": true,
-        "areas_count": 5,
+        "areas_count": 4,
         "area_ids": [
           "TMG001",
-          "TUD001",
           "TVA001",
           "TLH001",
           "CMM001"

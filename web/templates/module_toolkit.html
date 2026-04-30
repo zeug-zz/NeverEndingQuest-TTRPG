@@ -7775,9 +7775,18 @@
         }
 
         // Display assets in table
+        function getAssetThumbElementId(assetId) {
+            const normalized = String(assetId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+            return `asset-thumb-${normalized}`;
+        }
+
         function displayAssets(assets) {
             const tbody = document.getElementById('asset-table-body');
             tbody.innerHTML = '';
+
+            const serializeForInlineArg = function(value) {
+                return JSON.stringify(String(value ?? ''));
+            };
             
             if (assets.length === 0) {
                 document.getElementById('no-assets-message').style.display = 'block';
@@ -7792,12 +7801,15 @@
                 const row = document.createElement('tr');
                 row.dataset.assetId = asset.id;
                 row.dataset.assetType = asset.type;
+                const assetIdArg = serializeForInlineArg(asset.id);
+                const assetTypeArg = serializeForInlineArg(asset.type);
+                const assetNameArg = serializeForInlineArg(asset.name);
                 
                 const getStatusIcon = (hasItem, clickable = false, mediaType = '') => {
                     const icon = hasItem ? '[PASS]' : '[FAIL]';
                     const statusClass = hasItem ? 'success' : 'missing';
                     const clickHandler = clickable && hasItem ? 
-                        `onclick="viewAssetMedia('${asset.id}', '${asset.type}', '${asset.name}', '${mediaType}')" style="cursor: pointer;"` : '';
+                        `onclick="viewAssetMedia(${assetIdArg}, ${assetTypeArg}, ${assetNameArg}, ${serializeForInlineArg(mediaType)})" style="cursor: pointer;"` : '';
                     return `<span class="status-icon ${statusClass}" ${clickHandler}>${icon}</span>`;
                 };
 
@@ -7806,7 +7818,7 @@
                         return getStatusIcon(true, true, mediaType);
                     }
                     if (hasStatic) {
-                        return `<span class="status-icon partial" onclick="viewAssetMedia('${asset.id}', '${asset.type}', '${asset.name}', '${mediaType}')" style="cursor: pointer;" title="Missing module media; static fallback exists">[FB]</span>`;
+                        return `<span class="status-icon partial" onclick="viewAssetMedia(${assetIdArg}, ${assetTypeArg}, ${assetNameArg}, ${serializeForInlineArg(mediaType)})" style="cursor: pointer;" title="Missing module media; static fallback exists">[FB]</span>`;
                     }
                     return getStatusIcon(false, false, mediaType);
                 };
@@ -7828,10 +7840,10 @@
                 };
                 
                 row.innerHTML = `
-                    <td><input type="checkbox" class="asset-checkbox" data-id="${asset.id}" onchange="toggleAssetSelection('${asset.id}')"></td>
+                    <td><input type="checkbox" class="asset-checkbox" data-id="${asset.id}" onchange="toggleAssetSelection(${assetIdArg})"></td>
                     <td><span class="asset-type-${asset.type}">${asset.type.toUpperCase()}</span></td>
                     <td>${asset.name}</td>
-                    <td><div class="asset-thumbnail-preview" id="asset-thumb-${asset.id}" data-asset-type="${asset.type}" data-asset-name="${asset.name}"></div></td>
+                    <td><div class="asset-thumbnail-preview" id="${getAssetThumbElementId(asset.id)}" data-asset-type="${asset.type}" data-asset-name="${asset.name}"></div></td>
                     <td class="status-icon">${getStatusIcon(asset.has_description, false)}</td>
                     <td class="status-icon">${getMediaStatusIcon(asset.has_image, asset.has_static_image, 'image')}</td>
                     <td class="status-icon">${getMediaStatusIcon(asset.has_thumbnail, asset.has_static_thumbnail, 'thumb')}</td>
@@ -7845,7 +7857,7 @@
         }
 
         function loadAssetThumbnail(assetId, assetType) {
-            const thumbContainer = document.getElementById('asset-thumb-' + assetId);
+            const thumbContainer = document.getElementById(getAssetThumbElementId(assetId));
             if (!thumbContainer) return;
 
             const moduleSelect = document.getElementById('media-gen-module-select');

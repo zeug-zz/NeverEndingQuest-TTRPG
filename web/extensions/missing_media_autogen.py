@@ -536,6 +536,23 @@ def _normalize_party_name(name: str) -> str:
     return normalized.strip("_")
 
 
+def _party_npc_identity_candidates(npc_info: Dict[str, Any]) -> Set[str]:
+    candidates: Set[str] = set()
+    if not isinstance(npc_info, dict):
+        return candidates
+
+    for value in (
+        npc_info.get("name"),
+        npc_info.get("source_npc_name"),
+        npc_info.get("source_entity_slug"),
+        npc_info.get("character_file_ref"),
+    ):
+        normalized = _normalize_party_name(value)
+        if normalized:
+            candidates.add(normalized)
+    return candidates
+
+
 def _hydrate_allied_npc_context(
     task: MissingMediaTask,
     party_tracker_data: Optional[Dict[str, Any]] = None
@@ -560,11 +577,36 @@ def _hydrate_allied_npc_context(
     """
     # Extract canonical NPC identity from filename
     npc_identity = _extract_npc_identity(task.filename)
+
+    resolved_party_npc: Optional[Dict[str, Any]] = None
+    if party_tracker_data and isinstance(party_tracker_data, dict):
+        for npc_info in party_tracker_data.get("partyNPCs", []):
+            if not isinstance(npc_info, dict):
+                continue
+            if npc_identity in _party_npc_identity_candidates(npc_info):
+                resolved_party_npc = npc_info
+                break
     
     # Attempt 1: Canonical character lookup
     try:
         from utils.pc_manager import get_character_state
-        char_data = get_character_state(npc_identity)
+        char_data = None
+        if resolved_party_npc:
+            for identity_value in (
+                resolved_party_npc.get("character_file_ref"),
+                resolved_party_npc.get("source_entity_slug"),
+                resolved_party_npc.get("source_npc_name"),
+                resolved_party_npc.get("name"),
+            ):
+                candidate_identity = str(identity_value or "").strip()
+                if not candidate_identity:
+                    continue
+                char_data = get_character_state(candidate_identity)
+                if char_data:
+                    break
+
+        if not char_data:
+            char_data = get_character_state(npc_identity)
         
         if char_data:
             # Found canonical character record
@@ -615,8 +657,12 @@ def _hydrate_allied_npc_context(
         # Try to find role hint in partyNPCs
         if party_tracker_data:
             for npc_info in party_tracker_data.get("partyNPCs", []):
-                npc_name = npc_info.get("name", "")
-                if _normalize_party_name(npc_name) == npc_identity:
+                if not isinstance(npc_info, dict):
+                    continue
+                if npc_identity not in _party_npc_identity_candidates(npc_info):
+                    continue
+                npc_name = npc_info.get("source_npc_name") or npc_info.get("name", "")
+                if npc_name:
                     # Found matching party NPC entry
                     role_hint = npc_info.get("role", "")
                     if role_hint:
@@ -687,9 +733,9 @@ def is_allied_companion_check(
         # Get list of allied companion names from partyNPCs using shared normalization
         allied_names: Set[str] = set()
         for npc_info in party_tracker_data.get("partyNPCs", []):
-            npc_name = npc_info.get("name", "")
-            if npc_name:
-                allied_names.add(_normalize_party_name(npc_name))
+            if not isinstance(npc_info, dict):
+                continue
+            allied_names.update(_party_npc_identity_candidates(npc_info))
         
         # Also include active character
         active_character = party_tracker_data.get("active_character")

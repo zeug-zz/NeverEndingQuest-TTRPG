@@ -201,7 +201,7 @@
       "locationId": "H02",
       "name": "Vault of the Drowned Oath",
       "type": "vault",
-      "description": "This chamber is a sunken, circular crypt half-flooded with icy, ankle-deep water. Its domed ceiling is encrusted with blue-green luminescent fungi and flickering runes. Iron shelves, supported by barnacle-crusted pillars, hold waterlogged scrolls and jars sealed with wax. The air hums with a low, resonant frequency, and a central dais bears a weathered stone coffer\u2014its lid sealed by an intricate, sound-based magical lock. The magic here preserves certain items, but also reacts violently to misused passwords or loud intrusions.",
+      "description": "This chamber is a sunken, circular crypt half-flooded with icy, ankle-deep water. Its domed ceiling is encrusted with blue-green luminescent fungi and flickering runes. Iron shelves, supported by barnacle-crusted pillars, hold waterlogged scrolls and jars sealed with wax. The air hums with a low, resonant frequency, and a central dais bears a weathered stone coffer—its lid sealed by an intricate, sound-based magical lock. The magic here preserves certain items, but also reacts violently to misused passwords or loud intrusions.",
       "coordinates": "X11Y10",
       "connectivity": [
         "H01"
@@ -226,7 +226,7 @@
         "Sealed flask of Abyssal Brine (grants advantage on saves against drowning for 24 hours)"
       ],
       "plotHooks": [
-        "The stone coffer bears a sigil matching the coded message from H01; deciphering it grants safe access to the vault\u2019s central treasure.",
+        "The stone coffer bears a sigil matching the coded message from H01; deciphering it grants safe access to the vault’s central treasure.",
         "A fragment of a map, matching the stolen treasure map, is pressed between two preserved scrolls."
       ],
       "dmInstructions": "The magical seal on the coffer can only be opened by whispering the correct phrase ('The drowned oath lies silent'). Speaking loudly triggers the Choker's attack and a magical backlash (see traps).",
@@ -302,7 +302,7 @@
       "name": "Reliquary of Sorrowful Depths",
       "type": "shrine",
       "description": "This secluded reliquary lies at the end of a narrow stone causeway, perched above a bottomless chasm. A single stone altar stands in the center, surrounded by broken urns and skeletal remains. The walls are carved with sorrowful faces and scenes of drowning, and the constant, soft sound of weeping seems to emanate from the rock itself. The air is colder here, pierced by occasional, unnatural whispers that seem to come from the abyss below.",
-      "coordinates": "X12Y10",
+      "coordinates": "X10Y11",
       "connectivity": [
         "H01"
       ],

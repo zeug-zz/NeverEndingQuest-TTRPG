@@ -616,6 +616,39 @@
           "areas/OKR001.json#locations[H02].name"
         ]
       },
+      "brindlehearth village": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/BV001.json#locations[H01].aliases"
+        ]
+      },
+      "circular crypt": {
+        "status": "resolved",
+        "location_id": "H02",
+        "location_name": "Crooked Cairn Hill",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H02].aliases"
+        ]
+      },
+      "cobbled road": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/OKR001.json#locations[H01].aliases"
+        ]
+      },
       "crimson echo nook": {
         "status": "resolved",
         "location_id": "H02",
@@ -712,6 +745,17 @@
           "areas/BV001.json#locations[H02].name"
         ]
       },
+      "from village": {
+        "status": "resolved",
+        "location_id": "H02",
+        "location_name": "Crooked Cairn Hill",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/BV001.json#locations[H02].aliases"
+        ]
+      },
       "gallows shadow cell": {
         "status": "resolved",
         "location_id": "H03",
@@ -790,6 +834,17 @@
           "areas/WM001.json#locations[H03].aliases"
         ]
       },
+      "half collapsed shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/SR001.json#locations[H01].aliases"
+        ]
+      },
       "ironbark watchhouse": {
         "status": "resolved",
         "location_id": "H01",
@@ -812,6 +867,17 @@
         "sources": [
           "areas/HG001.json#locations[H02].aliases",
           "areas/HG001.json#locations[H02].name"
+        ]
+      },
+      "main road": {
+        "status": "resolved",
+        "location_id": "H03",
+        "location_name": "Witchlight Standing Stone",
+        "candidate_location_ids": [
+          "H03"
+        ],
+        "sources": [
+          "areas/OKR001.json#locations[H03].aliases"
         ]
       },
       "mireshadow storage": {
@@ -838,6 +904,17 @@
           "areas/EDC001.json#locations[H03].name"
         ]
       },
+      "riverside tavern": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/THB001.json#locations[H01].aliases"
+        ]
+      },
       "sanctum of echoed warnings": {
         "status": "resolved",
         "location_id": "H01",
@@ -848,6 +925,18 @@
         "sources": [
           "areas/EDC001.json#locations[H01].aliases",
           "areas/EDC001.json#locations[H01].name"
+        ]
+      },
+      "shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases",
+          "areas/SR001.json#locations[H01].aliases"
         ]
       },
       "shrouded lantern encampment": {
@@ -862,6 +951,17 @@
           "areas/WM001.json#locations[H01].name"
         ]
       },
+      "somber shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases"
+        ]
+      },
       "the drowning lass taproom": {
         "status": "resolved",
         "location_id": "H01",
@@ -874,6 +974,18 @@
           "areas/THB001.json#locations[H01].name"
         ]
       },
+      "the shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "location_name": "Shrouded Lantern Encampment",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases",
+          "areas/SR001.json#locations[H01].aliases"
+        ]
+      },
       "thieves threadwalk": {
         "status": "resolved",
         "location_id": "H02",
@@ -884,6 +996,17 @@
         "sources": [
           "areas/SR001.json#locations[H02].aliases",
           "areas/SR001.json#locations[H02].name"
+        ]
+      },
+      "this chamber": {
+        "status": "resolved",
+        "location_id": "H02",
+        "location_name": "Crooked Cairn Hill",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H02].aliases"
         ]
       },
       "vault of the drowned oath": {
@@ -980,6 +1103,68 @@
         "observed": false,
         "player_facing": false,
         "observation_count": 0
+      },
+      "brindlehearth village": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/BV001.json#locations[H01].aliases",
+          "areas/BV001.json#locations[H02].description"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "circular crypt": {
+        "status": "resolved",
+        "location_id": "H02",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H02].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "cobbled road": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/OKR001.json#locations[H01].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "collapsed shrine": {
+        "status": "resolved",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/SR001.json#locations[H01].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1,
+        "location_id": "H01",
+        "normalization": {
+          "type": "shortform_alias_collapse",
+          "strategy": "resolved_suffix_anchor_with_source_overlap",
+          "anchor_phrase": "half collapsed shrine",
+          "anchor_location_id": "H01",
+          "shared_sources": [
+            "areas/SR001.json#locations[H01].aliases"
+          ]
+        }
       },
       "crimson echo nook": {
         "status": "resolved",
@@ -1117,6 +1302,20 @@
         "player_facing": false,
         "observation_count": 0
       },
+      "from village": {
+        "status": "resolved",
+        "location_id": "H02",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/BV001.json#locations[H02].aliases",
+          "areas/BV001.json#locations[H02].description"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
       "gallows shadow cell": {
         "status": "resolved",
         "location_id": "H03",
@@ -1205,6 +1404,19 @@
         "player_facing": false,
         "observation_count": 0
       },
+      "half collapsed shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/SR001.json#locations[H01].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
       "ironbark watchhouse": {
         "status": "resolved",
         "location_id": "H01",
@@ -1232,6 +1444,19 @@
         "observed": false,
         "player_facing": false,
         "observation_count": 0
+      },
+      "main road": {
+        "status": "resolved",
+        "location_id": "H03",
+        "candidate_location_ids": [
+          "H03"
+        ],
+        "sources": [
+          "areas/OKR001.json#locations[H03].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
       },
       "mireshadow storage": {
         "status": "resolved",
@@ -1261,6 +1486,19 @@
         "player_facing": false,
         "observation_count": 0
       },
+      "riverside tavern": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/THB001.json#locations[H01].aliases"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
       "sanctum of echoed warnings": {
         "status": "resolved",
         "location_id": "H01",
@@ -1274,6 +1512,20 @@
         "observed": false,
         "player_facing": false,
         "observation_count": 0
+      },
+      "shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases",
+          "areas/SR001.json#locations[H01].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 2
       },
       "shrouded lantern encampment": {
         "status": "resolved",
@@ -1289,6 +1541,19 @@
         "player_facing": false,
         "observation_count": 0
       },
+      "somber shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
       "the drowning lass taproom": {
         "status": "resolved",
         "location_id": "H01",
@@ -1298,6 +1563,20 @@
         "sources": [
           "areas/THB001.json#locations[H01].aliases",
           "areas/THB001.json#locations[H01].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "the shrine": {
+        "status": "resolved",
+        "location_id": "H01",
+        "candidate_location_ids": [
+          "H01"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H01].aliases",
+          "areas/SR001.json#locations[H01].aliases"
         ],
         "observed": false,
         "player_facing": false,
@@ -1316,6 +1595,19 @@
         "observed": false,
         "player_facing": false,
         "observation_count": 0
+      },
+      "this chamber": {
+        "status": "resolved",
+        "location_id": "H02",
+        "candidate_location_ids": [
+          "H02"
+        ],
+        "sources": [
+          "areas/EDC001.json#locations[H02].aliases"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
       },
       "vault of the drowned oath": {
         "status": "resolved",
@@ -1863,6 +2155,14 @@
       "unresolved_destination_phrases": [],
       "normalized_shortform_destination_phrases": [
         {
+          "phrase": "collapsed shrine",
+          "anchor_phrase": "half collapsed shrine",
+          "location_id": "H01",
+          "shared_sources": [
+            "areas/SR001.json#locations[H01].aliases"
+          ]
+        },
+        {
           "phrase": "echoes shrine",
           "anchor_phrase": "veiled echoes shrine",
           "location_id": "H01",
@@ -1904,12 +2204,21 @@
     },
     "summary": {
       "location_count": 24,
-      "location_alias_count": 28,
-      "destination_phrase_count": 29,
+      "location_alias_count": 39,
+      "destination_phrase_count": 41,
       "npc_count": 23,
       "ambiguous_destination_count": 0,
-      "normalized_shortform_destination_count": 1,
+      "normalized_shortform_destination_count": 2,
       "missing_npc_authority_count": 3
     }
+  },
+  "classification_metadata": {
+    "classified_by": "gpt-5.4-mini-2026-03-17",
+    "classified_at": "2026-04-30T07:33:05.266202",
+    "entity_count": 0,
+    "destination_count": 5,
+    "npc_count": 14,
+    "provenance": "llm_classification",
+    "feature_flag": "ENABLE_LLM_CLASSIFICATION"
   }
 }

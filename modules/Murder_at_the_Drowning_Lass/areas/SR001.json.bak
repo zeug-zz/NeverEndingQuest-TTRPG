@@ -81,7 +81,7 @@
       "locationId": "H01",
       "name": "Veiled Echoes Shrine",
       "type": "shrine",
-      "description": "An ancient, half-collapsed shrine carved into the ravine\u2019s sheer rock face. Veils of mist drift between crumbling pillars and tattered prayer flags, and the air hums faintly with the resonance of whispered supplications lost to time. Faded glyphs line the altar, and the stonework is slick with condensation. Offerings and prayer mats are scattered about, some newly placed, others centuries old. The shrine has become a crossroads for desperate travelers, furtive thieves, and things that dwell in the dark.",
+      "description": "An ancient, half-collapsed shrine carved into the ravine’s sheer rock face. Veils of mist drift between crumbling pillars and tattered prayer flags, and the air hums faintly with the resonance of whispered supplications lost to time. Faded glyphs line the altar, and the stonework is slick with condensation. Offerings and prayer mats are scattered about, some newly placed, others centuries old. The shrine has become a crossroads for desperate travelers, furtive thieves, and things that dwell in the dark.",
       "coordinates": "X10Y10",
       "connectivity": [
         "H02",
@@ -108,7 +108,7 @@
       ],
       "plotHooks": [
         "Cryptic messages are carved into the altar, pointing to a hidden cache deeper in the chasms.",
-        "Strange footprints suggest someone recently made an offering, but they vanish at the shrine\u2019s edge."
+        "Strange footprints suggest someone recently made an offering, but they vanish at the shrine’s edge."
       ],
       "dmInstructions": "This shrine is both a spiritual landmark and a tactical challenge. Use the mist and pillars for cover and concealment. The spider prefers to ambush lone PCs. Adjust the encounter if the party is weakened. The cryptic altar may contain a clue to the next stage of the quest or a riddle guarding the deeper tunnels.",
       "doors": [
@@ -178,7 +178,7 @@
           "description": "Deciphering cryptic glyphs or tracking the mysterious recent visitor."
         }
       ],
-      "adventureSummary": "The party arrives at the Veiled Echoes Shrine, discovering evidence of recent passage, unsettling whispers in the fog, and a lurking threat above. Clues here point deeper into the chasm\u2019s mysteries.",
+      "adventureSummary": "The party arrives at the Veiled Echoes Shrine, discovering evidence of recent passage, unsettling whispers in the fog, and a lurking threat above. Clues here point deeper into the chasm’s mysteries.",
       "aliases": [
         "Veiled Echoes Shrine",
         "H01"
@@ -221,15 +221,15 @@
         }
       ],
       "lootTable": [
-        "Thief\u2019s Chalk (5 uses, advantage on Sleight of Hand checks for marking paths)",
+        "Thief’s Chalk (5 uses, advantage on Sleight of Hand checks for marking paths)",
         "Loop of Spider-Silk Rope (50 ft, near-weightless, cannot be cut by mundane means)",
         "Coin Purse with 13 gp, 2 bloodstone chips"
       ],
       "plotHooks": [
-        "Corsa offers information about a rival gang\u2019s hidden stash deeper in the chasm in exchange for safe passage.",
+        "Corsa offers information about a rival gang’s hidden stash deeper in the chasm in exchange for safe passage.",
         "A discarded mask bears the sigil glimpsed in the murder investigation, linking the thieves here to the wider plot."
       ],
-      "dmInstructions": "This corridor is ideal for tension and negotiation. Use environmental hazards (loose rocks, sudden bat swarms) to keep the party on edge. Corsa may try to broker a deal or flee if she senses overwhelming force. The corridor is a key transition\u2014time spent here should heighten paranoia and set the tone for the dangers ahead.",
+      "dmInstructions": "This corridor is ideal for tension and negotiation. Use environmental hazards (loose rocks, sudden bat swarms) to keep the party on edge. Corsa may try to broker a deal or flee if she senses overwhelming force. The corridor is a key transition—time spent here should heighten paranoia and set the tone for the dangers ahead.",
       "doors": [
         {
           "name": "Ledge Entrance",
@@ -265,7 +265,7 @@
         },
         {
           "name": "Tattered Banner",
-          "description": "A remnant of a thieves\u2019 warning: red cloth knotted around a spike, signaling danger ahead."
+          "description": "A remnant of a thieves’ warning: red cloth knotted around a spike, signaling danger ahead."
         },
         {
           "name": "Loose Plank",
@@ -282,7 +282,7 @@
           "description": "Bat swarm and dangerous footing threaten to knock PCs off the ledge."
         }
       ],
-      "adventureSummary": "Crossing the Threadwalk, the party must balance, talk their way past Corsa, and avoid dangerous falls. Crucial clues and alliances can be forged\u2014or lost\u2014here.",
+      "adventureSummary": "Crossing the Threadwalk, the party must balance, talk their way past Corsa, and avoid dangerous falls. Crucial clues and alliances can be forged—or lost—here.",
       "aliases": [
         "Thieves' Threadwalk",
         "H02"
@@ -303,8 +303,8 @@
       "locationId": "H03",
       "name": "Gallows Shadow Cell",
       "type": "prison",
-      "description": "Deep within the ravine, old iron bars are anchored in the stone, forming a cramped cell. The air is cold and heavy with despair; faded scratch marks and chains suggest the cell\u2019s grim history. An old guard post sits in a niche, its wooden desk covered with moldy logs and rusted keys. A single torch flickers, barely illuminating the darkness beyond. Shadows often move where no one stands.",
-      "coordinates": "X12Y10",
+      "description": "Deep within the ravine, old iron bars are anchored in the stone, forming a cramped cell. The air is cold and heavy with despair; faded scratch marks and chains suggest the cell’s grim history. An old guard post sits in a niche, its wooden desk covered with moldy logs and rusted keys. A single torch flickers, barely illuminating the darkness beyond. Shadows often move where no one stands.",
+      "coordinates": "X10Y11",
       "connectivity": [
         "H01"
       ],
@@ -330,14 +330,14 @@
       ],
       "lootTable": [
         "Iron Keyring (opens cell and guard post drawers)",
-        "Prisoner\u2019s Ledger (lists old names, one circled in blood matching the murder case)",
+        "Prisoner’s Ledger (lists old names, one circled in blood matching the murder case)",
         "Potion of Second Wind (restores 1d6+2 HP, single use)"
       ],
       "plotHooks": [
         "Irren claims to know the fate of a vanished map-bearer, but demands something in return.",
         "The ledger reveals the cell held a notorious thief whose ghost now lingers, and offers a clue to a hidden stash."
       ],
-      "dmInstructions": "This cell combines social and supernatural challenges. Irren can be a valuable informant\u2014or a dangerous liability if freed. The specter attacks when the cell is breached or if the remains are disturbed, but may be laid to rest by a proper offering at the Veiled Echoes Shrine.",
+      "dmInstructions": "This cell combines social and supernatural challenges. Irren can be a valuable informant—or a dangerous liability if freed. The specter attacks when the cell is breached or if the remains are disturbed, but may be laid to rest by a proper offering at the Veiled Echoes Shrine.",
       "doors": [
         {
           "name": "Barred Gate",
@@ -356,11 +356,11 @@
           "detectDC": 15,
           "disableDC": 15,
           "triggerDC": 10,
-          "damage": "3d6 necrotic (the specter\u2019s wail is triggered if the cell is opened forcefully, forcing a DC 13 Wisdom save or be frightened for 1 minute)"
+          "damage": "3d6 necrotic (the specter’s wail is triggered if the cell is opened forcefully, forcing a DC 13 Wisdom save or be frightened for 1 minute)"
         }
       ],
       "dcChecks": [
-        "Insight DC 12: Sense Irren\u2019s true motivations and state of mind.",
+        "Insight DC 12: Sense Irren’s true motivations and state of mind.",
         "Perception DC 13: Spot the hidden bones in the cell corner.",
         "Arcana DC 14: Recognize the signs of a haunting and the possibility of laying the spirit to rest."
       ],

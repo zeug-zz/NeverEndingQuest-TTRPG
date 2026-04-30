@@ -2262,7 +2262,7 @@
       "_llm_metadata": {
         "provenance": "llm_classification",
         "classified_by": "gpt-5.4-mini-2026-03-17",
-        "classified_at": "2026-04-28T23:08:45.182765"
+        "classified_at": "2026-04-30T06:21:20.326890"
       }
     },
     "diagnostics": {
@@ -2421,9 +2421,9 @@
   },
   "classification_metadata": {
     "classified_by": "gpt-5.4-mini-2026-03-17",
-    "classified_at": "2026-04-28T22:28:28.247156",
-    "entity_count": 30,
-    "destination_count": 22,
+    "classified_at": "2026-04-28T23:08:45.185992",
+    "entity_count": 10,
+    "destination_count": 14,
     "npc_count": 16,
     "provenance": "llm_classification",
     "feature_flag": "ENABLE_LLM_CLASSIFICATION"

@@ -1064,6 +1064,16 @@ Examples of when to use moveBackgroundNPC:
 - "Guard Captain Thorne relocated to the watchtower"
 - "The wounded scout recovered from his injuries"
 
+### Scene Follower Management:
+- Use "updateSceneFollower" for durable scene followers that travel with the party without becoming party NPCs.
+- Ground followers from deterministic Python-authoritative sources: module NPCs, module monsters, existing follower records, or active party NPCs.
+- The Narrator does not self-authorize followers from thin air. External world entity introduction belongs to the v2 Titan pipeline.
+- Scene followers are tracked in `data/runtime/scene_followers.json` and may remain visible in the non-combat strip when they are currently present and marked visible.
+- When known, preserve source metadata fields on follower records: `source_module`, `source_npc_name`, `source_entity_slug`, `character_file_ref`, and `recruited_from_location_id`.
+- Strip visibility does NOT make a follower combat-valid; visible followers are presentation state only.
+- Hidden, released, escaped, dead, joined_party, and combat_started follower states should remove or hide the follower from the strip.
+- Do not use updatePartyNPCs for followers that remain outside the party roster.
+
 ### NPC Arrival State Sync (Explicit Arrival Claims)
 
 - If narration EXPLICITLY claims an off-location known NPC has arrived/joined/entered/appeared/emerged from elsewhere, the SAME response MUST include matching state action.
@@ -1103,6 +1113,7 @@ When players ask for help or NPCs volunteer to join the party, handle recruitmen
 1. **Character Response**: NPCs respond in character based on their personality and situation
 2. **Party Update**: When an NPC agrees to join the party, use updatePartyNPCs action to add them to the party roster
 3. **Character Updates**: Use updateCharacterInfo only for modifying existing characters (inventory, stats, conditions)
+4. **Recruitment Identity**: Preserve the module canonical display name for module recruits. Do not rename the recruited actor to a fuzzy character-file name. If a character file is safely linked, store source metadata alongside the party NPC entry instead of replacing its name.
 
 ### Key Action Distinction:
 - **updatePartyNPCs**: For party composition changes (adding/removing traveling companions)

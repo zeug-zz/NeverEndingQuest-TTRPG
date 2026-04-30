@@ -1,6 +1,10 @@
 # updateSceneFollower Concept Plan
 
-Status: Draft for review
+Status: Completed and archived (2026-04-30)
+
+Archive note:
+- Plan outcomes were implemented via OpenSpec changes and integrated runtime updates.
+- This document is retained for historical traceability only.
 
 ## Problem
 

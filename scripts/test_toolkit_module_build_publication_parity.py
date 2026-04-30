@@ -597,6 +597,12 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("'has_static_video': False", source)
         self.assertIn("MMG completion must align with module-side structural", source)
 
+    def test_unified_assets_monster_slug_uses_runtime_normalization(self) -> None:
+        source = Path("web/web_interface.py").read_text(encoding="utf-8")
+
+        self.assertIn("normalize_character_name(monster['name'])", source)
+        self.assertIn("normalize_character_name(monster_name)", source)
+
     def test_toolkit_module_scoped_media_route_exists(self) -> None:
         source = Path("web/web_interface.py").read_text(encoding="utf-8")
 
@@ -663,6 +669,24 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("/api/toolkit/modules/${encodedModuleName}/media/${mediaFolder}/${encodedAssetId}", source)
         self.assertIn("const moduleSelect = document.getElementById('media-gen-module-select');", source)
         self.assertIn("source.src = `${basePath}_video.mp4${cacheBuster}`;", source)
+
+    def test_toolkit_template_serializes_inline_media_handler_args(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("const serializeForInlineArg = function(value)", source)
+        self.assertIn(
+            "viewAssetMedia(${assetIdArg}, ${assetTypeArg}, ${assetNameArg}, ${serializeForInlineArg(mediaType)})",
+            source,
+        )
+        self.assertIn("toggleAssetSelection(${assetIdArg})", source)
+
+    def test_toolkit_template_uses_safe_thumbnail_dom_id_helper(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("function getAssetThumbElementId(assetId)", source)
+        self.assertIn("replace(/[^a-zA-Z0-9_-]/g, '_')", source)
+        self.assertIn("id=\"${getAssetThumbElementId(asset.id)}\"", source)
+        self.assertIn("document.getElementById(getAssetThumbElementId(assetId))", source)
 
 
 if __name__ == "__main__":

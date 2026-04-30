@@ -148,7 +148,8 @@ class TestValidatorSlugNormalization(unittest.TestCase):
             ("Malarok the Corruptor", "malarok_the_corruptor"),
             ("Whispering Ashling", "whispering_ashling"),
             ("Elite Bandit Bodyguard", "elite_bandit_bodyguard"),
-            ("Bob's Monster", "bobs_monster"),  # Apostrophe removed
+            ("Bob's Monster", "bob_s_monster"),  # Apostrophe normalized to underscore
+            ("Will-o'-Wisp", "will_o_wisp"),  # Apostrophe/hyphen collapse parity with runtime
             ("Hyphenated-Monster", "hyphenated_monster"),  # Hyphen to underscore
         ]
         
@@ -181,6 +182,29 @@ class TestValidatorSlugNormalization(unittest.TestCase):
         validator.validate_monster_references()
         
         # Should resolve (case insensitive match)
+        self.assertEqual(validator.results["reference_integrity"].get("failed", 0), 0)
+
+    def test_will_o_wisp_reference_resolves_with_runtime_slug(self):
+        """Will-o'-Wisp should resolve to monsters/will_o_wisp.json."""
+        with open(self.monsters_dir / "will_o_wisp.json", "w") as f:
+            json.dump({"name": "Will-o'-Wisp", "type": "undead", "hit_points": 22}, f)
+
+        area_data = {
+            "areaId": "WM001",
+            "areaName": "Widdershins Moors",
+            "locations": [{
+                "locationId": "H03",
+                "locationName": "Witchlight Standing Stone",
+                "monsters": [{"name": "Will-o'-Wisp"}],
+            }],
+        }
+        with open(self.areas_dir / "WM001.json", "w") as f:
+            json.dump(area_data, f)
+
+        schema_dir = Path(__file__).parent.parent
+        validator = ModuleValidator(self.temp_dir, schema_dir)
+        validator.validate_monster_references()
+
         self.assertEqual(validator.results["reference_integrity"].get("failed", 0), 0)
 
 

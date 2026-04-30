@@ -190,8 +190,8 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
 
         modules = self.stitcher.get_available_modules()
         entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
-        self.assertEqual(entry.get("brief_failure"), "Publication blocked: missing media")
-        self.assertTrue(entry.get("media_generator_needed"))
+        self.assertNotIn("brief_failure", entry)
+        self.assertNotIn("media_generator_needed", entry)
 
     def test_degraded_authoritative_final_media_only_report_surfaces_handoff(self) -> None:
         report = self._build_report(
@@ -213,8 +213,8 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
 
         modules = self.stitcher.get_available_modules()
         entry = next(m for m in modules if m["moduleName"] == "Murder_at_the_Drowning_Lass")
-        self.assertEqual(entry.get("brief_failure"), "Publication blocked: missing media")
-        self.assertTrue(entry.get("media_generator_needed"))
+        self.assertNotIn("brief_failure", entry)
+        self.assertNotIn("media_generator_needed", entry)
 
     def test_degraded_authoritative_final_semantic_failure_still_fails_open(self) -> None:
         report = self._build_report(
@@ -400,7 +400,7 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
         report = self._build_report(
             status="success",
             ready_status="pass",
-            publishable_status="pass",
+            publishable_status="fail",
             remediation_categories=["toolkit_manual_media_generation_required"],
             toolkit_media_policy={"structural_media_debt_count": 3},
         )
@@ -422,7 +422,7 @@ class ModuleSidebarAuditFailureSignalsTests(unittest.TestCase):
         report = self._build_report(
             status="success",
             ready_status="pass",
-            publishable_status="pass",
+            publishable_status="fail",
             remediation_categories=["toolkit_manual_media_generation_required"],
             toolkit_media_policy={"structural_media_debt_count": 4},
         )

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-30T00:42:59Z",
+  "generated_at": "2026-04-30T07:35:59Z",
   "module_slug": "The_Thornwood_Watch",
   "status": "success",
   "ready_status": "pass",
@@ -8,7 +8,7 @@
   "report_freshness": {
     "state": "current",
     "authoritative": true,
-    "written_at": "2026-04-30T00:42:59Z",
+    "written_at": "2026-04-30T07:35:59Z",
     "phase": "final",
     "workflow": "toolkit_report_refresh",
     "refresh_reason": "module_media_generator",
@@ -347,6 +347,28 @@
                   "areas/NCW001.json#locations[NC04].name"
                 ]
               },
+              "east tower": {
+                "status": "resolved",
+                "location_id": "RO03",
+                "location_name": "Trader's Rest",
+                "candidate_location_ids": [
+                  "RO03"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO03].aliases"
+                ]
+              },
+              "explorers camp": {
+                "status": "resolved",
+                "location_id": "NC04",
+                "location_name": "Doomed Explorer's Camp",
+                "candidate_location_ids": [
+                  "NC04"
+                ],
+                "sources": [
+                  "areas/NCW001.json#locations[NC04].aliases"
+                ]
+              },
               "forgotten waystation": {
                 "status": "resolved",
                 "location_id": "RO05",
@@ -539,6 +561,17 @@
                   "areas/RO001.json#locations[RO06].aliases"
                 ]
               },
+              "ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ]
+              },
               "scouts watch": {
                 "status": "resolved",
                 "location_id": "RO04",
@@ -573,6 +606,28 @@
                 "sources": [
                   "areas/NCW001.json#locations[NC05].aliases",
                   "areas/NCW001.json#locations[NC05].name"
+                ]
+              },
+              "the ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ]
+              },
+              "this camp": {
+                "status": "resolved",
+                "location_id": "TW03",
+                "location_name": "Abandoned Camp",
+                "candidate_location_ids": [
+                  "TW03"
+                ],
+                "sources": [
+                  "areas/TW001.json#locations[TW03].aliases"
                 ]
               },
               "traders rest": {
@@ -779,8 +834,22 @@
                 "player_facing": true,
                 "observation_count": 2
               },
+              "east tower": {
+                "status": "resolved",
+                "location_id": "RO03",
+                "candidate_location_ids": [
+                  "RO03"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO03].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "explorers camp": {
                 "status": "resolved",
+                "location_id": "NC04",
                 "candidate_location_ids": [
                   "NC04"
                 ],
@@ -790,18 +859,7 @@
                 ],
                 "observed": true,
                 "player_facing": true,
-                "observation_count": 2,
-                "location_id": "NC04",
-                "normalization": {
-                  "type": "shortform_alias_collapse",
-                  "strategy": "resolved_suffix_anchor_with_source_overlap",
-                  "anchor_phrase": "doomed explorers camp",
-                  "anchor_location_id": "NC04",
-                  "shared_sources": [
-                    "areas/NCW001.json#locations[NC04].aliases",
-                    "areas/NCW001.json#locations[NC04].name"
-                  ]
-                }
+                "observation_count": 3
               },
               "forgotten waystation": {
                 "status": "resolved",
@@ -1030,6 +1088,21 @@
                 "player_facing": false,
                 "observation_count": 0
               },
+              "ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/NCW001.json#locations[NC05].description",
+                  "areas/RO001.json#locations[RO05].accessibility",
+                  "areas/RO001.json#locations[RO06].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
               "scouts watch": {
                 "status": "resolved",
                 "location_id": "RO04",
@@ -1071,6 +1144,32 @@
                 "observed": false,
                 "player_facing": false,
                 "observation_count": 0
+              },
+              "the ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "this camp": {
+                "status": "resolved",
+                "location_id": "TW03",
+                "candidate_location_ids": [
+                  "TW03"
+                ],
+                "sources": [
+                  "areas/TW001.json#locations[TW03].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
               },
               "traders rest": {
                 "status": "resolved",
@@ -1966,34 +2065,24 @@
               "duplicate_location_aliases": [],
               "ambiguous_destination_phrases": [],
               "unresolved_destination_phrases": [],
-              "normalized_shortform_destination_phrases": [
-                {
-                  "phrase": "explorers camp",
-                  "anchor_phrase": "doomed explorers camp",
-                  "location_id": "NC04",
-                  "shared_sources": [
-                    "areas/NCW001.json#locations[NC04].aliases",
-                    "areas/NCW001.json#locations[NC04].name"
-                  ]
-                }
-              ],
+              "normalized_shortform_destination_phrases": [],
               "missing_npc_authority": []
             },
             "summary": {
               "location_count": 17,
-              "location_alias_count": 36,
-              "destination_phrase_count": 37,
+              "location_alias_count": 41,
+              "destination_phrase_count": 41,
               "npc_count": 22,
               "ambiguous_destination_count": 0,
-              "normalized_shortform_destination_count": 1,
+              "normalized_shortform_destination_count": 0,
               "missing_npc_authority_count": 0
             }
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-30T00:41:24.679016",
+            "classified_at": "2026-04-30T00:42:59.199658",
             "entity_count": 2,
-            "destination_count": 7,
+            "destination_count": 3,
             "npc_count": 18,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
@@ -2321,6 +2410,28 @@
                   "areas/NCW001.json#locations[NC04].name"
                 ]
               },
+              "east tower": {
+                "status": "resolved",
+                "location_id": "RO03",
+                "location_name": "Trader's Rest",
+                "candidate_location_ids": [
+                  "RO03"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO03].aliases"
+                ]
+              },
+              "explorers camp": {
+                "status": "resolved",
+                "location_id": "NC04",
+                "location_name": "Doomed Explorer's Camp",
+                "candidate_location_ids": [
+                  "NC04"
+                ],
+                "sources": [
+                  "areas/NCW001.json#locations[NC04].aliases"
+                ]
+              },
               "forgotten waystation": {
                 "status": "resolved",
                 "location_id": "RO05",
@@ -2513,6 +2624,17 @@
                   "areas/RO001.json#locations[RO06].aliases"
                 ]
               },
+              "ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ]
+              },
               "scouts watch": {
                 "status": "resolved",
                 "location_id": "RO04",
@@ -2547,6 +2669,28 @@
                 "sources": [
                   "areas/NCW001.json#locations[NC05].aliases",
                   "areas/NCW001.json#locations[NC05].name"
+                ]
+              },
+              "the ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "location_name": "North Tower Overlook",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ]
+              },
+              "this camp": {
+                "status": "resolved",
+                "location_id": "TW03",
+                "location_name": "Abandoned Camp",
+                "candidate_location_ids": [
+                  "TW03"
+                ],
+                "sources": [
+                  "areas/TW001.json#locations[TW03].aliases"
                 ]
               },
               "traders rest": {
@@ -2753,8 +2897,22 @@
                 "player_facing": true,
                 "observation_count": 2
               },
+              "east tower": {
+                "status": "resolved",
+                "location_id": "RO03",
+                "candidate_location_ids": [
+                  "RO03"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO03].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
+              },
               "explorers camp": {
                 "status": "resolved",
+                "location_id": "NC04",
                 "candidate_location_ids": [
                   "NC04"
                 ],
@@ -2764,18 +2922,7 @@
                 ],
                 "observed": true,
                 "player_facing": true,
-                "observation_count": 2,
-                "location_id": "NC04",
-                "normalization": {
-                  "type": "shortform_alias_collapse",
-                  "strategy": "resolved_suffix_anchor_with_source_overlap",
-                  "anchor_phrase": "doomed explorers camp",
-                  "anchor_location_id": "NC04",
-                  "shared_sources": [
-                    "areas/NCW001.json#locations[NC04].aliases",
-                    "areas/NCW001.json#locations[NC04].name"
-                  ]
-                }
+                "observation_count": 3
               },
               "forgotten waystation": {
                 "status": "resolved",
@@ -3004,6 +3151,21 @@
                 "player_facing": false,
                 "observation_count": 0
               },
+              "ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/NCW001.json#locations[NC05].description",
+                  "areas/RO001.json#locations[RO05].accessibility",
+                  "areas/RO001.json#locations[RO06].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
               "scouts watch": {
                 "status": "resolved",
                 "location_id": "RO04",
@@ -3045,6 +3207,32 @@
                 "observed": false,
                 "player_facing": false,
                 "observation_count": 0
+              },
+              "the ruins": {
+                "status": "resolved",
+                "location_id": "RO06",
+                "candidate_location_ids": [
+                  "RO06"
+                ],
+                "sources": [
+                  "areas/RO001.json#locations[RO06].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "this camp": {
+                "status": "resolved",
+                "location_id": "TW03",
+                "candidate_location_ids": [
+                  "TW03"
+                ],
+                "sources": [
+                  "areas/TW001.json#locations[TW03].aliases"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 1
               },
               "traders rest": {
                 "status": "resolved",
@@ -3940,34 +4128,24 @@
               "duplicate_location_aliases": [],
               "ambiguous_destination_phrases": [],
               "unresolved_destination_phrases": [],
-              "normalized_shortform_destination_phrases": [
-                {
-                  "phrase": "explorers camp",
-                  "anchor_phrase": "doomed explorers camp",
-                  "location_id": "NC04",
-                  "shared_sources": [
-                    "areas/NCW001.json#locations[NC04].aliases",
-                    "areas/NCW001.json#locations[NC04].name"
-                  ]
-                }
-              ],
+              "normalized_shortform_destination_phrases": [],
               "missing_npc_authority": []
             },
             "summary": {
               "location_count": 17,
-              "location_alias_count": 36,
-              "destination_phrase_count": 37,
+              "location_alias_count": 41,
+              "destination_phrase_count": 41,
               "npc_count": 22,
               "ambiguous_destination_count": 0,
-              "normalized_shortform_destination_count": 1,
+              "normalized_shortform_destination_count": 0,
               "missing_npc_authority_count": 0
             }
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-30T00:41:24.679016",
+            "classified_at": "2026-04-30T00:42:59.199658",
             "entity_count": 2,
-            "destination_count": 7,
+            "destination_count": 3,
             "npc_count": 18,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
@@ -6661,8 +6839,8 @@
               "raw": {
                 "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module The_Thornwood_Watch --json",
                 "exit_code": 0,
-                "stdout": "{\n  \"modules\": {\n    \"The_Thornwood_Watch\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"total_passed\": 49,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"TW001_BU.json (areas/)\",\n            \"TW001.json (areas/)\",\n            \"RO001_BU.json (areas/)\",\n            \"NCW001.json (areas/)\",\n            \"NCW001_BU.json (areas/)\",\n            \"RO001.json (areas/)\"\n          ],\n          \"passed\": 6,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"twig_blight.json\",\n            \"bandit_captain.json\",\n            \"guard.json\",\n            \"wolf.json\",\n            \"lookout.json\",\n            \"malarok_the_corruptor.json\",\n            \"vitreol_corrupted_thrall.json\",\n            \"tainted_stirge.json\",\n            \"bandit_sentry.json\",\n            \"tree_blight.json\",\n            \"tainted_naiad.json\",\n            \"corrupted_wolf.json\",\n            \"corrupted_cave_fisher.json\",\n            \"awakened_shrub.json\",\n            \"bandit_captain_gorvek.json\",\n            \"shadow_corrupted_wolf.json\",\n            \"elite_bandit_bodyguard.json\",\n            \"sentry.json\",\n            \"bandit.json\",\n            \"bandit_warrior.json\",\n            \"corrupted_ranger_thane.json\",\n            \"ashbound_bandit.json\",\n            \"wounded_bandit.json\",\n            \"whispering_ashling.json\",\n            \"corrupted_owlbear.json\",\n            \"writhing_grubs.json\"\n          ],\n          \"passed\": 26,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_NCW001.json\",\n            \"map_RO001.json\",\n            \"map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/NCW001.json\",\n            \"areas/RO001.json\",\n            \"areas/TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
-                "stderr": "",
+                "stdout": "[UpdateCharacterInfo] Creating OpenAI client for chat\n{\n  \"modules\": {\n    \"The_Thornwood_Watch\": {\n      \"module\": \"The_Thornwood_Watch\",\n      \"total_passed\": 49,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"TW001_BU.json (areas/)\",\n            \"TW001.json (areas/)\",\n            \"RO001_BU.json (areas/)\",\n            \"NCW001.json (areas/)\",\n            \"NCW001_BU.json (areas/)\",\n            \"RO001.json (areas/)\"\n          ],\n          \"passed\": 6,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"twig_blight.json\",\n            \"bandit_captain.json\",\n            \"guard.json\",\n            \"wolf.json\",\n            \"lookout.json\",\n            \"malarok_the_corruptor.json\",\n            \"vitreol_corrupted_thrall.json\",\n            \"tainted_stirge.json\",\n            \"bandit_sentry.json\",\n            \"tree_blight.json\",\n            \"tainted_naiad.json\",\n            \"corrupted_wolf.json\",\n            \"corrupted_cave_fisher.json\",\n            \"awakened_shrub.json\",\n            \"bandit_captain_gorvek.json\",\n            \"shadow_corrupted_wolf.json\",\n            \"elite_bandit_bodyguard.json\",\n            \"sentry.json\",\n            \"bandit.json\",\n            \"bandit_warrior.json\",\n            \"corrupted_ranger_thane.json\",\n            \"ashbound_bandit.json\",\n            \"wounded_bandit.json\",\n            \"whispering_ashling.json\",\n            \"corrupted_owlbear.json\",\n            \"writhing_grubs.json\"\n          ],\n          \"passed\": 26,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_NCW001.json\",\n            \"map_RO001.json\",\n            \"map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/NCW001.json\",\n            \"areas/RO001.json\",\n            \"areas/TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"NCW001.json <-> map_NCW001.json\",\n            \"RO001.json <-> map_RO001.json\",\n            \"TW001.json <-> map_TW001.json\"\n          ],\n          \"passed\": 3,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
+                "stderr": "DEBUG:NeverEndingQuest:[UpdateCharacterInfo] Creating OpenAI client for chat",
                 "json": {
                   "modules": {
                     "The_Thornwood_Watch": {

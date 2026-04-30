@@ -181,7 +181,9 @@
       "adventureSummary": "The party arrives at the Veiled Echoes Shrine, discovering evidence of recent passage, unsettling whispers in the fog, and a lurking threat above. Clues here point deeper into the chasm’s mysteries.",
       "aliases": [
         "Veiled Echoes Shrine",
-        "H01"
+        "H01",
+        "half-collapsed shrine",
+        "the shrine"
       ],
       "tactical_grid": [
         "northwest:cover",

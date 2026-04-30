@@ -2,7 +2,7 @@
   "areaId": "THB001",
   "areaName": "The Barrowmire Settlements",
   "areaType": "town",
-  "areaDescription": "Shrouded in perpetual mist, the Barrowmire Settlements sprawl across sodden earth riddled with ancient burial mounds and sunken paths. Faint ghostlights drift between leaning cottages, and the air is thick with the chill of restless spirits\u2014a dire warning to any who linger after nightfall.",
+  "areaDescription": "Shrouded in perpetual mist, the Barrowmire Settlements sprawl across sodden earth riddled with ancient burial mounds and sunken paths. Faint ghostlights drift between leaning cottages, and the air is thick with the chill of restless spirits—a dire warning to any who linger after nightfall.",
   "dangerLevel": "high",
   "recommendedLevel": 4,
   "climate": "temperate",
@@ -113,7 +113,7 @@
       "npcs": [
         {
           "name": "Maela Kett, the wary tavernkeeper",
-          "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar\u2019s battered safe, wary since recent troubles. She knows much of the town\u2019s secrets but trusts few.",
+          "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar’s battered safe, wary since recent troubles. She knows much of the town’s secrets but trusts few.",
           "attitude": "Guarded but fair; responds well to honest intent but will clam up at suspicion."
         }
       ],
@@ -129,7 +129,7 @@
         "A regular claims to have glimpsed someone fleeing to Mireshadow Storage.",
         "Maela Kett offers a reward for help recovering a stolen heirloom from the bog."
       ],
-      "dmInstructions": "The taproom is a hub for information and roleplay. Use Maela Kett as a resource for rumors, but she will not endanger herself. Use the coded napkin and amulet as subtle clues to both the murder and Barrowmire\u2019s supernatural undercurrents. The taproom is crowded most evenings, complicating stealth.",
+      "dmInstructions": "The taproom is a hub for information and roleplay. Use Maela Kett as a resource for rumors, but she will not endanger herself. Use the coded napkin and amulet as subtle clues to both the murder and Barrowmire’s supernatural undercurrents. The taproom is crowded most evenings, complicating stealth.",
       "doors": [
         {
           "name": "Main Entrance",
@@ -179,7 +179,7 @@
       "locationId": "H02",
       "name": "Mireshadow Storage",
       "type": "warehouse",
-      "description": "A looming, half-rotted warehouse slouching by the old path, its roof sagging with moss and the weight of years. Crates and barrels are stacked haphazardly, shadowed by broken rafters and thick with spider webs and damp. The dank air carries the scent of old spirits\u2014both bottled and spectral.",
+      "description": "A looming, half-rotted warehouse slouching by the old path, its roof sagging with moss and the weight of years. Crates and barrels are stacked haphazardly, shadowed by broken rafters and thick with spider webs and damp. The dank air carries the scent of old spirits—both bottled and spectral.",
       "coordinates": "X11Y10",
       "connectivity": [
         "H01"
@@ -219,7 +219,7 @@
       "plotHooks": [
         "A blood splatter matching the murder scene is hidden beneath a toppled crate.",
         "A coded ledger page mentions a meeting at 'the third mound by ghostlight.'",
-        "Someone has been hiding here\u2014recent bedroll and half-eaten rations remain behind barrels."
+        "Someone has been hiding here—recent bedroll and half-eaten rations remain behind barrels."
       ],
       "dmInstructions": "The warehouse is best for tense investigation, possible ambush by monsters or thieves. If the party lingers, consider adding a hostile lookout or a returning thief. The coded note should guide players toward the burial mounds.",
       "doors": [
@@ -276,14 +276,14 @@
         }
       ],
       "encounters": [],
-      "adventureSummary": "Key location for physical evidence of both the murder and the thieves\u2019 activities. Includes ambush potential."
+      "adventureSummary": "Key location for physical evidence of both the murder and the thieves’ activities. Includes ambush potential."
     },
     {
       "locationId": "H03",
       "name": "Boglight Curiosities",
       "type": "shop",
       "description": "A crooked, lantern-lit shop wedged between leaning cottages, known for its oddities and relics dredged from the mire. Shelves sag with strange artifacts: bottles of ghostlight, dried marsh lilies, and amulets said to ward off spirits. The counter is cluttered with half-finished charms and curious maps of the mounds.",
-      "coordinates": "X12Y10",
+      "coordinates": "X10Y11",
       "connectivity": [
         "H01"
       ],
@@ -356,7 +356,7 @@
       "dcChecks": [
         "Investigation DC 13: Identify the truly valuable magical charm among the trinkets.",
         "Arcana DC 11: Recognize a faint enchantment on the bottled ghostlight.",
-        "Insight DC 14: Discern that Edrin is genuinely concerned for the settlement\u2019s safety."
+        "Insight DC 14: Discern that Edrin is genuinely concerned for the settlement’s safety."
       ],
       "accessibility": "Normal access from the street. Shop is open during daylight and closes after sunset for fear of 'the drifting dead.'",
       "dangerLevel": "High",
@@ -367,7 +367,7 @@
         },
         {
           "name": "Specialty Items",
-          "description": "Charms, relics, and odd maps\u2014many genuine, some not\u2014are displayed behind glass and on shelves."
+          "description": "Charms, relics, and odd maps—many genuine, some not—are displayed behind glass and on shelves."
         },
         {
           "name": "Counter",

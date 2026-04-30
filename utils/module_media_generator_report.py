@@ -46,6 +46,29 @@ def _module_media_dir(project_root: Optional[Path | str], module_name: str, asse
     return root_path / "modules" / module_name / "media" / _SUPPORTED_MEDIA_TYPES.get(asset_type, asset_type)
 
 
+def _normalize_media_asset_id(asset_id: str, asset_type: str) -> str:
+    """Normalize module media asset IDs for stable lookup.
+
+    Monster media IDs MUST follow runtime-safe slug rules so stale payloads like
+    "will-o'-wisp" resolve to canonical files like "will_o_wisp.jpg".
+    """
+    normalized = str(asset_id or "").strip()
+    if not normalized:
+        return ""
+
+    if asset_type != "monster":
+        return normalized
+
+    try:
+        from updates.update_character_info import normalize_character_name
+
+        normalized = normalize_character_name(normalized)
+        return str(normalized or "").strip()
+    except Exception:
+        fallback = normalized.lower().replace(" ", "_").replace("'", "_")
+        return "_".join(segment for segment in fallback.split("_") if segment)
+
+
 def _first_existing_path(base_dir: Path, candidates: Sequence[str]) -> Optional[Path]:
     for candidate in candidates:
         candidate_path = base_dir / candidate
@@ -82,7 +105,8 @@ def _audit_asset_media(
     if asset_type not in _SUPPORTED_MEDIA_TYPES:
         return None
 
-    asset_id = str(asset.get("id") or "").strip()
+    asset_id_raw = str(asset.get("id") or "").strip()
+    asset_id = _normalize_media_asset_id(asset_id_raw, asset_type)
     if not asset_id:
         return None
 

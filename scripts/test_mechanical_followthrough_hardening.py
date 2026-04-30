@@ -17,6 +17,7 @@ import copy
 import os
 import sys
 import unittest
+from unittest.mock import patch
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -300,6 +301,83 @@ class TestVisibleHostileExtraction(unittest.TestCase):
             ],
         )
 
+    def test_source_identity_keys_support_strip_dedupe(self):
+        from web.extensions.tabletop_socket_handlers import _collect_strip_identity_keys, _keys_overlap
+
+        recruited_party_npc = {
+            "name": "Thorn-Touched Dryad Sylara",
+            "source_npc_name": "Thorn-Touched Dryad Sylara",
+            "source_entity_slug": "thorn_touched_dryad_sylara",
+            "character_file_ref": "thorn_touched_dryad_sylara",
+        }
+        current_location_npc = {
+            "name": "Dryad Sylara",
+            "source_npc_name": "Thorn-Touched Dryad Sylara",
+            "source_entity_slug": "thorn_touched_dryad_sylara",
+        }
+
+        self.assertTrue(
+            _keys_overlap(
+                _collect_strip_identity_keys(recruited_party_npc),
+                _collect_strip_identity_keys(current_location_npc),
+            ),
+            "Source metadata should dedupe recruited party NPCs against current-location NPCs",
+        )
+
+    def test_party_data_payload_suppresses_location_npc_matching_recruited_source_identity(self):
+        from web.extensions.tabletop_socket_handlers import handle_party_data_request_impl
+
+        party_tracker = {
+            "module": "The_Thornwood_Watch",
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [
+                {
+                    "name": "Thorn-Touched Dryad Sylara",
+                    "source_npc_name": "Thorn-Touched Dryad Sylara",
+                    "source_entity_slug": "thorn_touched_dryad_sylara",
+                    "character_file_ref": "thorn_touched_dryad_sylara",
+                }
+            ],
+            "worldConditions": {
+                "currentAreaId": "RO001",
+                "currentLocationId": "RO01",
+            },
+        }
+        area_data = {
+            "locations": [
+                {
+                    "locationId": "RO01",
+                    "npcs": [
+                        {"name": "Thorn-Touched Dryad Sylara"},
+                    ],
+                }
+            ]
+        }
+
+        emitted = {}
+
+        def fake_safe_read_json(path):
+            if path == "party_tracker.json":
+                return party_tracker
+            if path.endswith("modules/The_Thornwood_Watch/areas/RO001.json"):
+                return area_data
+            if path.endswith("thorn_touched_dryad_sylara.json"):
+                return {"name": "Thorn-Touched Dryad Sylara", "class": "NPC", "level": 3}
+            return None
+
+        def emit(event_name, payload):
+            emitted[event_name] = payload
+
+        with (
+            patch("utils.file_operations.safe_read_json", side_effect=fake_safe_read_json),
+            patch("utils.module_path_manager.ModulePathManager", lambda module_name: type("PM", (), {"get_character_path": lambda self_inner, name: os.path.join("/tmp", str(name).strip().lower().replace(' ', '_').replace('-', '_').replace("'", '_') + '.json')})()),
+            patch("web.extensions.tabletop_socket_handlers.os.path.exists", return_value=True),
+        ):
+            handle_party_data_request_impl(emit, lambda *args, **kwargs: None)
+
+        payload = emitted.get("party_data_response", {})
+        self.assertEqual(payload.get("location_npcs"), [], "Recruited source identity should suppress duplicate location NPC emission")
+
 
 class TestPreCombatHostilePresenceSourceContracts(unittest.TestCase):
     def test_party_data_payload_includes_location_hostiles(self):
@@ -345,6 +423,181 @@ class TestDMNoteMechanicalVisibilitySourceContracts(unittest.TestCase):
         self.assertIn("pc_data.get('equipment'", source)
         self.assertIn("pc_data.get('ammunition'", source)
         self.assertIn("_summarize_limited_resources", source)
+
+
+class TestSceneFollowerStripEmission(unittest.TestCase):
+    """Verify scene follower records emit correctly into party_data_response."""
+
+    def setUp(self):
+        self.base_dir = os.devnull
+
+    def test_visible_monster_follower_emits_in_location_hostiles(self):
+        from web.extensions.tabletop_socket_handlers import handle_party_data_request_impl
+
+        party_tracker = {
+            "module": "Test_Module",
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [],
+            "worldConditions": {
+                "currentAreaId": "TC001",
+                "currentLocationId": "T01",
+            },
+        }
+        area_data = {"locations": [{"locationId": "T01"}]}
+        follower_store = {
+            "followers": [
+                {
+                    "entity_id": "corrupted_ranger",
+                    "current_location": "T01",
+                    "since_turn": 3,
+                    "display_name": "Corrupted Ranger",
+                    "entity_type": "monster",
+                    "monster_type": "Corrupted Ranger",
+                    "visible_in_strip": True,
+                    "lifecycle_state": "present",
+                    "disposition": "hostile",
+                }
+            ]
+        }
+
+        emitted = {}
+
+        def fake_safe_read_json(path):
+            if path == "party_tracker.json":
+                return party_tracker
+            if path.endswith("modules/Test_Module/areas/TC001.json"):
+                return area_data
+            if path == "data/runtime/scene_followers.json":
+                return follower_store
+            return None
+
+        def fake_exists(path):
+            if "Test_Module" in str(path):
+                return True
+            return False
+
+        def emit(event_name, payload):
+            emitted[event_name] = payload
+
+        with (
+            patch("utils.file_operations.safe_read_json", side_effect=fake_safe_read_json),
+            patch("web.extensions.tabletop_socket_handlers.os.path.exists", side_effect=fake_exists),
+            patch("utils.scene_follower_state.load_followers", return_value=follower_store),
+        ):
+            handle_party_data_request_impl(emit, lambda *args, **kwargs: None)
+
+        payload = emitted.get("party_data_response", {})
+        self.assertIn("location_hostiles", payload)
+        hostiles = payload["location_hostiles"]
+        self.assertEqual(len(hostiles), 1, "Visible monster follower should emit one hostile")
+        self.assertEqual(hostiles[0]["type"], "location_hostile")
+        self.assertEqual(hostiles[0]["name"], "Corrupted Ranger")
+
+    def test_off_location_follower_does_not_emit(self):
+        from web.extensions.tabletop_socket_handlers import handle_party_data_request_impl
+
+        party_tracker = {
+            "module": "Test_Module",
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [],
+            "worldConditions": {
+                "currentAreaId": "TC001",
+                "currentLocationId": "T01",
+            },
+        }
+        area_data = {"locations": [{"locationId": "T01"}]}
+        follower_store = {
+            "followers": [
+                {
+                    "entity_id": "off_location_npc",
+                    "current_location": "T99",
+                    "since_turn": 3,
+                    "display_name": "Off-Location NPC",
+                    "entity_type": "monster",
+                    "monster_type": "Off-Location NPC",
+                    "visible_in_strip": True,
+                    "lifecycle_state": "present",
+                    "disposition": "hostile",
+                }
+            ]
+        }
+
+        emitted = {}
+
+        def fake_safe_read_json(path):
+            if path == "party_tracker.json":
+                return party_tracker
+            if path.endswith("modules/Test_Module/areas/TC001.json"):
+                return area_data
+            if path == "data/runtime/scene_followers.json":
+                return follower_store
+            return None
+
+        def emit(event_name, payload):
+            emitted[event_name] = payload
+
+        with (
+            patch("utils.file_operations.safe_read_json", side_effect=fake_safe_read_json),
+            patch("web.extensions.tabletop_socket_handlers.os.path.exists", return_value=False),
+            patch("utils.scene_follower_state.load_followers", return_value=follower_store),
+        ):
+            handle_party_data_request_impl(emit, lambda *args, **kwargs: None)
+
+        payload = emitted.get("party_data_response", {})
+        self.assertEqual(payload.get("location_hostiles", []), [])
+
+    def test_cleanup_state_follower_does_not_emit(self):
+        from web.extensions.tabletop_socket_handlers import handle_party_data_request_impl
+
+        party_tracker = {
+            "module": "Test_Module",
+            "partyMembers": ["Acheron"],
+            "partyNPCs": [],
+            "worldConditions": {
+                "currentAreaId": "TC001",
+                "currentLocationId": "T01",
+            },
+        }
+        area_data = {"locations": [{"locationId": "T01"}]}
+        follower_store = {
+            "followers": [
+                {
+                    "entity_id": "escaped_prisoner",
+                    "current_location": "T01",
+                    "since_turn": 3,
+                    "display_name": "Escaped Prisoner",
+                    "entity_type": "monster",
+                    "monster_type": "Escaped Prisoner",
+                    "visible_in_strip": True,
+                    "lifecycle_state": "escaped",
+                    "disposition": "escaped",
+                }
+            ]
+        }
+
+        emitted = {}
+
+        def fake_safe_read_json(path):
+            if path == "party_tracker.json":
+                return party_tracker
+            if path.endswith("modules/Test_Module/areas/TC001.json"):
+                return area_data
+            if path == "data/runtime/scene_followers.json":
+                return follower_store
+            return None
+
+        def emit(event_name, payload):
+            emitted[event_name] = payload
+
+        with (
+            patch("utils.file_operations.safe_read_json", side_effect=fake_safe_read_json),
+            patch("web.extensions.tabletop_socket_handlers.os.path.exists", return_value=False),
+            patch("utils.scene_follower_state.load_followers", return_value=follower_store),
+        ):
+            handle_party_data_request_impl(emit, lambda *args, **kwargs: None)
+
+        payload = emitted.get("party_data_response", {})
+        self.assertEqual(payload.get("location_hostiles", []), [])
 
 
 if __name__ == "__main__":

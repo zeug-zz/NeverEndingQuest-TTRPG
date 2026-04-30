@@ -161,7 +161,8 @@
       "adventureSummary": "",
       "aliases": [
         "Gallowswatch Garrison",
-        "H01"
+        "H01",
+        "brindlehearth village"
       ],
       "tactical_grid": [
         "northwest:cover",
@@ -225,7 +226,8 @@
       "adventureSummary": "",
       "aliases": [
         "Fablewrights’ Crossing",
-        "H02"
+        "H02",
+        "from village"
       ],
       "tactical_grid": [
         "northwest:cover",

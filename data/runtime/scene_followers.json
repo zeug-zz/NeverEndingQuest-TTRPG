@@ -1,0 +1,15 @@
+{
+  "followers": [
+    {
+      "entity_id": "corrupted_ranger_thane",
+      "current_location": "NC02",
+      "since_turn": 1,
+      "display_name": "Corrupted Ranger Thane",
+      "entity_type": "monster",
+      "monster_type": "Corrupted Ranger Thane",
+      "visible_in_strip": true,
+      "lifecycle_state": "present",
+      "disposition": "guarded_guide"
+    }
+  ]
+}

@@ -190,6 +190,17 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
    check: Look for phrases like "spare", "join you", "come with you", "volunteers" - all require updatePartyNPCs if NPC agrees
 }
 
+@SCENE_FOLLOWER_STATE={
+   rule: updateSceneFollower is allowed only for grounded durable scene followers/captives/guards.
+   valid_sources: [module_monster_authority, module_npc_authority, existing_scene_follower, active_party_npc_identity]
+   boundary: Narrator does not self-authorize followers. External world entity introduction belongs to the v2 Titan pipeline.
+   location_rule: currentLocation must match current party location.
+   visibility_rule: visibleInStrip may only surface an already-present follower; it does not authorize combat validity.
+   metadata_rule: Preserve source_module/source_npc_name/source_entity_slug/character_file_ref/recruited_from_location_id when known.
+   cleanup_states: [hidden, released, escaped, dead, joined_party, combat_started]
+   fail_reason: "Scene follower update is ungrounded or violates follower lifecycle/location rules."
+}
+
 @DETERMINISTIC_HANDOFF={
    rule: Deterministic handoff is domain-scoped and authoritative for passed domains.
    payload_v1_domains: [travel_state_sync, npc_state_sync, mechanics_precheck]
@@ -206,6 +217,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
    explicit_arrival_verbs: [arrives, enters, joins, appears, emerges, approaches, steps, arrives from, enters from, appears from, steps out, comes from]
    valid: Narration says "Scout Elen arrives from the trail" + moveBackgroundNPC with npcName="Scout Elen" = VALID (explicit arrival verb)
    valid: Narration says "Kira joins your party" + updatePartyNPCs add with npc.name="Scout Kira" = VALID (explicit join verb; canonical name identity match allowed)
+   metadata_rule: Module recruits keep the module canonical display name; source metadata should be attached when safely linked instead of renaming to a fuzzy character file.
    valid: Narration mentions "Scout Elen" WITHOUT explicit arrival verbs + NO action = VALID (incidental mention; travel or non-travel)
    valid: Short mention "Kira" + action npc.name="Scout Kira" = VALID (canonical identity match)
    invalid: Narration uses EXPLICIT arrival verbs (arrives/enters/joins/etc) for off-location NPC but NO moveBackgroundNPC or updatePartyNPCs action = INVALID

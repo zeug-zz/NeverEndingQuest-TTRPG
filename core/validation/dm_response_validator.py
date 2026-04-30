@@ -30,6 +30,7 @@ class DMResponseValidator:
             "levelUp",
             "updatePartyNPCs",
             "updatePartyTracker",
+            "updateSceneFollower",
             "createNewModule",
             "establishHub",
             "storageInteraction",
@@ -170,6 +171,7 @@ class DMResponseValidator:
             "updateTime": ["timeEstimate"],
             "levelUp": ["entityName", "newLevel"],
             "updatePartyNPCs": ["operation", "npc"],
+            "updateSceneFollower": ["entity"],
             "establishHub": ["hubName"],
             "storageInteraction": ["description"],
             "createEncounter": [],  # Complex parameters handled by combat_builder

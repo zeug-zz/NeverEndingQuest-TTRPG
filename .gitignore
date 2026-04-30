@@ -205,9 +205,6 @@ test_*.py
 # Reference documents (local working docs, do not commit)
 docs/reference/
 
-# Ignore accidental structured error-dump filenames at repo root
-{'issues':*
-
 # Documentation files (keep core docs, exclude development plans)
 *_plan.md
 *_analysis.md
@@ -285,7 +282,6 @@ world_registry_backup_*.json
 *_week_old.py
 
 # Strange filename artifacts
-"2\\}\n  ],\n  \\deaths\\: [\\Malarok"
 
 # Files manually deleted from repository - do not re-add
 build_spell_repository.py

@@ -200,6 +200,36 @@ def _dedupe_party_member_names_for_emit(party_members: List[Any]) -> List[str]:
     return deduped
 
 
+def _normalize_strip_identity(value: Any) -> str:
+    from updates.update_character_info import normalize_character_name
+
+    return normalize_character_name(str(value or ""))
+
+
+def _collect_strip_identity_keys(payload: Dict[str, Any]) -> set:
+    keys = set()
+    if not isinstance(payload, dict):
+        return keys
+
+    for candidate in (
+        payload.get("name"),
+        payload.get("display_name"),
+        payload.get("source_npc_name"),
+        payload.get("source_entity_slug"),
+        payload.get("character_file_ref"),
+        payload.get("monsterType"),
+        payload.get("monster_type"),
+    ):
+        normalized = _normalize_strip_identity(candidate)
+        if normalized:
+            keys.add(normalized)
+    return keys
+
+
+def _keys_overlap(left: set, right: set) -> bool:
+    return bool(left and right and left.intersection(right))
+
+
 def _extract_visible_location_hostiles(location_data: Dict[str, Any]) -> List[Dict[str, str]]:
     """Return explicitly visible hostile scene actors for the non-combat strip.
 
@@ -253,6 +283,13 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
         from utils.file_operations import safe_read_json
         from utils.module_path_manager import ModulePathManager
         from updates.update_character_info import normalize_character_name, find_character_file_fuzzy
+        from utils.scene_follower_state import (
+            follower_identity_keys,
+            follower_is_cleanup_state,
+            follower_visible_in_strip,
+            load_followers,
+            normalize_scene_follower_record,
+        )
 
         party_tracker = safe_read_json("party_tracker.json")
         if not party_tracker:
@@ -269,6 +306,8 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
         path_manager = ModulePathManager(current_module)
 
         party_members = []
+        party_member_identity_keys = set()
+        party_npc_identity_keys = set()
 
         active_name = party_tracker.get('active_character')
         if not active_name and party_tracker.get('partyMembers'):
@@ -342,6 +381,7 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                             'image_slug': player_image_meta.get('image_slug'),
                             'image_version': player_image_meta.get('image_version'),
                         })
+                        party_member_identity_keys.update(_collect_strip_identity_keys(party_members[-1]))
             except Exception:
                 # TABLETOP MODE: Add image metadata for portrait cache coherence (minimal fallback)
                 player_slug = _normalize_character_slug(player_name)
@@ -352,12 +392,27 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                     'image_slug': player_image_meta.get('image_slug'),
                     'image_version': player_image_meta.get('image_version'),
                 })
+                party_member_identity_keys.update(_collect_strip_identity_keys(party_members[-1]))
 
         for npc_info in party_tracker.get('partyNPCs', []):
             npc_name = npc_info['name']
+            source_metadata_present = any(
+                str(npc_info.get(key, '') or '').strip()
+                for key in (
+                    'source_module',
+                    'source_npc_name',
+                    'source_entity_slug',
+                    'character_file_ref',
+                    'recruited_from_location_id',
+                )
+            )
+            npc_display_name = str(
+                npc_info.get('source_npc_name') or npc_info.get('name') or npc_name
+            ).strip()
+            character_file_ref = str(npc_info.get('character_file_ref') or '').strip()
 
             try:
-                matched_name = find_character_file_fuzzy(npc_name)
+                matched_name = character_file_ref or find_character_file_fuzzy(npc_display_name)
                 if matched_name:
                     npc_file = path_manager.get_character_path(matched_name)
                     if os.path.exists(npc_file):
@@ -411,11 +466,15 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                                         ammunition_info.append({'name': ammo_name, 'quantity': ammo_qty})
 
                             # TABLETOP MODE: Add image metadata for portrait cache coherence
-                            npc_slug = _normalize_character_slug(npc_data.get('name', npc_name))
+                            npc_slug = _normalize_character_slug(npc_display_name)
                             npc_image_meta = _build_image_metadata(npc_slug, current_module)
 
+                            emitted_name = npc_display_name
+                            if not source_metadata_present:
+                                emitted_name = npc_data.get('name', npc_display_name)
+
                             party_members.append({
-                                'name': npc_data.get('name', npc_name),
+                                'name': emitted_name,
                                 'type': 'npc',
                                 'currentHp': npc_data.get('hitPoints', npc_data.get('currentHp', 0)),
                                 'maxHp': npc_data.get('maxHitPoints', npc_data.get('maxHp', 0)),
@@ -432,20 +491,32 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                                 'classFeatures': class_features,
                                 'image_slug': npc_image_meta.get('image_slug'),
                                 'image_version': npc_image_meta.get('image_version'),
+                                'source_module': npc_info.get('source_module'),
+                                'source_npc_name': npc_info.get('source_npc_name'),
+                                'source_entity_slug': npc_info.get('source_entity_slug'),
+                                'character_file_ref': npc_info.get('character_file_ref'),
+                                'recruited_from_location_id': npc_info.get('recruited_from_location_id'),
                             })
+                            party_npc_identity_keys.update(_collect_strip_identity_keys(party_members[-1]))
                             continue
             except Exception:
                 pass
 
             # TABLETOP MODE: Add image metadata for portrait cache coherence (minimal fallback)
-            npc_slug = _normalize_character_slug(npc_name)
+            npc_slug = _normalize_character_slug(npc_display_name)
             npc_image_meta = _build_image_metadata(npc_slug, current_module)
             party_members.append({
-                'name': npc_name,
+                'name': npc_display_name,
                 'type': 'npc',
                 'image_slug': npc_image_meta.get('image_slug'),
                 'image_version': npc_image_meta.get('image_version'),
+                'source_module': npc_info.get('source_module'),
+                'source_npc_name': npc_info.get('source_npc_name'),
+                'source_entity_slug': npc_info.get('source_entity_slug'),
+                'character_file_ref': npc_info.get('character_file_ref'),
+                'recruited_from_location_id': npc_info.get('recruited_from_location_id'),
             })
+            party_npc_identity_keys.update(_collect_strip_identity_keys(party_members[-1]))
 
         location_npcs = []
         location_hostiles = []
@@ -466,37 +537,39 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                         None,
                     )
 
+                    seen_scene_identity_keys = set(party_member_identity_keys).union(party_npc_identity_keys)
+
                     if current_location_data and 'npcs' in current_location_data:
-                        # TABLETOP MODE: Use canonical equality matching for dedupe to prevent substring false positives
-                        # (e.g., "Ansel" should not suppress "Anselara")
-                        def _canonical_name_for_dedupe(name: str) -> str:
-                            """Normalize name to canonical form for equality comparison."""
-                            return name.lower().strip().replace("'", "").replace(" ", "_")
-
-                        canonical_party_names = {_canonical_name_for_dedupe(member['name']) for member in party_members}
-
                         for npc in current_location_data['npcs']:
                             npc_name = npc.get('name') if isinstance(npc, dict) else npc
-                            if npc_name:
-                                if _canonical_name_for_dedupe(npc_name) not in canonical_party_names:
-                                    npc_data_dict = {'name': npc_name, 'type': 'location_npc'}
-                                    try:
-                                        matched_name = find_character_file_fuzzy(npc_name)
-                                        if matched_name:
-                                            npc_file = path_manager.get_character_path(matched_name)
-                                            if os.path.exists(npc_file):
-                                                npc_data = safe_read_json(npc_file)
-                                                if npc_data:
-                                                    npc_data_dict['currentHp'] = npc_data.get('hitPoints', npc_data.get('currentHp', 0))
-                                                    npc_data_dict['maxHp'] = npc_data.get('maxHitPoints', npc_data.get('maxHp', 0))
-                                    except Exception:
-                                        pass
-                                    # TABLETOP MODE: Add image metadata for portrait cache coherence
-                                    location_npc_slug = _normalize_character_slug(npc_name)
-                                    location_npc_image_meta = _build_image_metadata(location_npc_slug, current_module)
-                                    npc_data_dict['image_slug'] = location_npc_image_meta.get('image_slug')
-                                    npc_data_dict['image_version'] = location_npc_image_meta.get('image_version')
-                                    location_npcs.append(npc_data_dict)
+                            if not npc_name:
+                                continue
+
+                            npc_data_dict = {'name': npc_name, 'type': 'location_npc'}
+                            try:
+                                matched_name = find_character_file_fuzzy(npc_name)
+                                if matched_name:
+                                    npc_file = path_manager.get_character_path(matched_name)
+                                    if os.path.exists(npc_file):
+                                        npc_data = safe_read_json(npc_file)
+                                        if npc_data:
+                                            npc_data_dict['currentHp'] = npc_data.get('hitPoints', npc_data.get('currentHp', 0))
+                                            npc_data_dict['maxHp'] = npc_data.get('maxHitPoints', npc_data.get('maxHp', 0))
+                            except Exception:
+                                pass
+
+                            # TABLETOP MODE: Add image metadata for portrait cache coherence
+                            location_npc_slug = _normalize_character_slug(npc_name)
+                            location_npc_image_meta = _build_image_metadata(location_npc_slug, current_module)
+                            npc_data_dict['image_slug'] = location_npc_image_meta.get('image_slug')
+                            npc_data_dict['image_version'] = location_npc_image_meta.get('image_version')
+
+                            npc_identity_keys = _collect_strip_identity_keys(npc_data_dict)
+                            if _keys_overlap(npc_identity_keys, seen_scene_identity_keys):
+                                continue
+
+                            location_npcs.append(npc_data_dict)
+                            seen_scene_identity_keys.update(npc_identity_keys)
 
                     # TABLETOP MODE: Surface only explicitly visible hostile scene presence pre-combat.
                     # Do not leak generic location monster seeds into the player-visible top strip.
@@ -521,7 +594,79 @@ def handle_party_data_request_impl(emit_fn: Callable[..., None], error_fn: Calla
                             )
                             monster_data_dict['image_slug'] = hostile_image_meta.get('image_slug')
                             monster_data_dict['image_version'] = hostile_image_meta.get('image_version')
+
+                            hostile_identity_keys = _collect_strip_identity_keys(monster_data_dict)
+                            if _keys_overlap(hostile_identity_keys, seen_scene_identity_keys):
+                                continue
+
                             location_hostiles.append(monster_data_dict)
+                            seen_scene_identity_keys.update(hostile_identity_keys)
+
+                    if not active_encounter_id and current_location_data:
+                        follower_store = load_followers()
+                        follower_list = follower_store.get('followers', []) if isinstance(follower_store, dict) else []
+                        for follower in follower_list:
+                            normalized_follower = normalize_scene_follower_record(follower)
+                            if not normalized_follower:
+                                continue
+
+                            follower_location = str(normalized_follower.get('current_location', '') or '').strip().upper()
+                            if follower_location != current_location_id:
+                                continue
+
+                            if follower_is_cleanup_state(normalized_follower):
+                                continue
+                            if not follower_visible_in_strip(normalized_follower):
+                                continue
+
+                            is_monster_like = bool(
+                                str(normalized_follower.get('entity_type', '') or '').strip().lower() == 'monster'
+                                or str(normalized_follower.get('monster_type', '') or '').strip()
+                            )
+                            if not is_monster_like:
+                                continue
+
+                            follower_name = str(
+                                normalized_follower.get('display_name')
+                                or normalized_follower.get('source_npc_name')
+                                or normalized_follower.get('entity_id')
+                                or ''
+                            ).strip()
+                            if not follower_name:
+                                continue
+
+                            follower_asset_key = str(
+                                normalized_follower.get('monster_type')
+                                or normalized_follower.get('source_entity_slug')
+                                or follower_name
+                            ).strip()
+
+                            follower_data_dict = {
+                                'name': follower_name,
+                                'type': 'location_hostile',
+                                'monsterType': follower_asset_key,
+                                'source_module': normalized_follower.get('source_module'),
+                                'source_npc_name': normalized_follower.get('source_npc_name'),
+                                'source_entity_slug': normalized_follower.get('source_entity_slug'),
+                                'character_file_ref': normalized_follower.get('character_file_ref'),
+                                'current_location': follower_location,
+                                'visible_in_strip': bool(normalized_follower.get('visible_in_strip', True)),
+                            }
+                            follower_slug = _normalize_character_slug(follower_asset_key)
+                            follower_image_meta = _build_image_metadata(
+                                follower_slug,
+                                current_module,
+                                media_type="monster",
+                            )
+                            follower_data_dict['image_slug'] = follower_image_meta.get('image_slug')
+                            follower_data_dict['image_version'] = follower_image_meta.get('image_version')
+
+                            follower_identity_keys = _collect_strip_identity_keys(follower_data_dict)
+                            if _keys_overlap(follower_identity_keys, seen_scene_identity_keys):
+                                continue
+
+                            location_hostiles.append(follower_data_dict)
+                            seen_scene_identity_keys.update(follower_identity_keys)
 
         emit_fn('party_data_response', {
             'members': party_members,

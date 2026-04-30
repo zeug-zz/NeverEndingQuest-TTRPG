@@ -95,7 +95,9 @@
       ],
       "aliases": [
         "Sanctum of Echoed Warnings",
-        "H01"
+        "H01",
+        "somber shrine",
+        "the shrine"
       ],
       "npcs": [],
       "monsters": [
@@ -210,7 +212,9 @@
       "areaConnectivityId": [],
       "aliases": [
         "Vault of the Drowned Oath",
-        "H02"
+        "H02",
+        "this chamber",
+        "circular crypt"
       ],
       "npcs": [],
       "monsters": [

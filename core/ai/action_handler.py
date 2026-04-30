@@ -145,6 +145,7 @@ ACTION_ESTABLISH_HUB = "establishHub"
 ACTION_STORAGE_INTERACTION = "storageInteraction"
 ACTION_UPDATE_PARTY_TRACKER = "updatePartyTracker"
 ACTION_MOVE_BACKGROUND_NPC = "moveBackgroundNPC"
+ACTION_UPDATE_SCENE_FOLLOWER = "updateSceneFollower"
 ACTION_SAVE_GAME = "saveGame"
 ACTION_RESTORE_GAME = "restoreGame"
 ACTION_LIST_SAVES = "listSaves"
@@ -461,16 +462,37 @@ def update_party_npcs(party_tracker_data, operation, npc):
         module_name = party_tracker_data.get("module", "").replace(" ", "_")
         path_manager = ModulePathManager(module_name)
 
-        # Use fuzzy matching to find the NPC file
-        from updates.update_character_info import find_character_file_fuzzy
+        if not isinstance(npc, dict):
+            if isinstance(npc, str):
+                npc = {"name": npc}
+            else:
+                return _party_npc_update_error(
+                    "party_npc_invalid_payload: updatePartyNPCs add requires an NPC object or name.",
+                    "invalid_payload",
+                )
 
-        matched_name = find_character_file_fuzzy(npc["name"])
+        requested_name = str(npc.get("name") or "").strip()
+        identity = _resolve_party_npc_recruitment_identity(
+            party_tracker_data,
+            requested_name,
+            path_manager,
+        )
+        if not identity.get("ok"):
+            return _party_npc_update_error(
+                str(identity.get("error_message") or "party NPC recruitment failed."),
+                str(identity.get("reason") or "recruitment_failed"),
+            )
 
-        if matched_name:
-            npc_file = path_manager.get_character_path(matched_name)
+        resolved_display_name = str(identity.get("display_name") or requested_name).strip()
+        source_metadata = identity.get("metadata", {}) if isinstance(identity.get("metadata"), dict) else {}
+
+        candidate_ref = str(source_metadata.get("character_file_ref") or "").strip()
+        if candidate_ref:
+            npc_file = path_manager.get_character_path(candidate_ref)
         else:
-            # If no match found, use the original name for potential creation
-            npc_file = path_manager.get_character_path(npc["name"])
+            from updates.update_character_info import normalize_character_name
+
+            npc_file = path_manager.get_character_path(normalize_character_name(resolved_display_name))
 
         if not os.path.exists(npc_file):
             # NPC file doesn't exist, so we need to create it
@@ -514,7 +536,7 @@ def update_party_npcs(party_tracker_data, operation, npc):
 
                 # Add this debug line right before the subprocess.run call
                 debug(
-                    f"SUBPROCESS: Calling npc_builder.py with arguments: {npc['name']} {npc.get('race', '')} {npc.get('class', '')} {npc_level} {npc.get('background', '')}",
+                    f"SUBPROCESS: Calling npc_builder.py with arguments: {resolved_display_name} {npc.get('race', '')} {npc.get('class', '')} {npc_level} {npc.get('background', '')}",
                     category="character_updates",
                 )
 
@@ -522,7 +544,7 @@ def update_party_npcs(party_tracker_data, operation, npc):
                     [
                         sys.executable,
                         "core/generators/npc_builder.py",
-                        npc["name"],
+                        resolved_display_name,
                         npc.get("race", ""),
                         npc.get("class", ""),
                         npc_level,
@@ -531,12 +553,12 @@ def update_party_npcs(party_tracker_data, operation, npc):
                     check=True,
                 )
                 info(
-                    f"SUCCESS: NPC profile created for {npc['name']}",
+                    f"SUCCESS: NPC profile created for {resolved_display_name}",
                     category="character_updates",
                 )
             except subprocess.CalledProcessError as e:
                 error(
-                    f"FAILURE: Failed to create NPC profile for {npc['name']}: {e}",
+                    f"FAILURE: Failed to create NPC profile for {resolved_display_name}: {e}",
                     category="character_updates",
                 )
                 return
@@ -544,49 +566,439 @@ def update_party_npcs(party_tracker_data, operation, npc):
         # Now we can add the NPC to the party
         # Create entry matching the party_schema.json requirements (name and role)
         npc_entry = {
-            "name": npc.get("name"),
+            "name": resolved_display_name,
             "role": npc.get(
                 "role", npc.get("class", "Companion")
             ),  # Use role if provided, else class, else default
         }
 
-        # Load the actual NPC data to get the correct display name
-        from utils.encoding_utils import safe_json_load
-        from updates.update_character_info import (
-            normalize_character_name,
-            find_character_file_fuzzy,
-        )
-
-        # Use fuzzy matching to find the correct NPC file
-        matched_name = find_character_file_fuzzy(npc["name"])
-        if matched_name:
-            npc_file = path_manager.get_character_path(matched_name)
-        else:
-            # Fallback to normalized name if no match found
-            normalized_name = normalize_character_name(npc["name"])
-            npc_file = path_manager.get_character_path(normalized_name)
-
         if os.path.exists(npc_file):
+            from utils.encoding_utils import safe_json_load
+
             npc_data = safe_json_load(npc_file)
             if npc_data and "name" in npc_data:
-                # Use the name from the character file for consistency
-                npc_entry["name"] = npc_data["name"]
                 debug(
-                    f"STATE_CHANGE: Using character file name '{npc_data['name']}' for party tracker",
+                    f"STATE_CHANGE: Linked character file '{npc_data['name']}' for party tracker without renaming recruited NPC",
                     category="character_updates",
                 )
 
+        for key, value in source_metadata.items():
+            if value not in (None, ""):
+                npc_entry[key] = value
+
         party_tracker_data["partyNPCs"].append(npc_entry)
     elif operation == "remove":
+        remove_name = npc.get("name") if isinstance(npc, dict) else npc
         party_tracker_data["partyNPCs"] = [
-            x for x in party_tracker_data["partyNPCs"] if x["name"] != npc["name"]
+            x for x in party_tracker_data["partyNPCs"] if x["name"] != remove_name
         ]
 
     safe_json_dump(party_tracker_data, "party_tracker.json")
     info(
-        f"STATE_CHANGE: Party NPCs updated - {operation} {npc['name']}",
+        f"STATE_CHANGE: Party NPCs updated - {operation} {npc.get('name') if isinstance(npc, dict) else npc}",
         category="character_updates",
     )
+
+
+def _scene_follower_validation_error(message: str, reason: str) -> Dict[str, Any]:
+    return {
+        "status": "error",
+        "needs_update": False,
+        "error_message": message,
+        "response_data": {"error_message": message, "reason": reason},
+    }
+
+
+def _party_npc_update_error(message: str, reason: str) -> Dict[str, Any]:
+    return {
+        "status": "error",
+        "needs_update": False,
+        "error_message": message,
+        "response_data": {"error_message": message, "reason": reason},
+    }
+
+
+def _resolve_scene_follower_grounding(
+    requested_name: str,
+    party_tracker_data: Dict[str, Any],
+    location_data: Dict[str, Any],
+    parameters: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve a scene follower against authoritative runtime sources."""
+    from utils.module_monster_authority import build_module_monster_authority, normalize_monster_identity
+    from utils.npc_arrival_validator import load_module_npc_names, resolve_npc_identity
+    from updates.update_character_info import find_character_file_fuzzy, normalize_character_name
+    from utils.scene_follower_state import load_followers, find_follower, normalize_scene_follower_entity_id
+
+    normalized_name = str(requested_name or "").strip()
+    if not normalized_name:
+        return {"ok": False, "reason": "missing_entity_name"}
+
+    module_name = str(party_tracker_data.get("module", "") or "").strip()
+    current_location_id = str(
+        (party_tracker_data.get("worldConditions", {}) or {}).get("currentLocationId", "")
+    ).strip().upper()
+    provided_location_id = str(location_data.get("locationId", "") or "").strip().upper()
+    if not provided_location_id:
+        provided_location_id = current_location_id
+
+    if provided_location_id and current_location_id and provided_location_id != current_location_id:
+        return {
+            "ok": False,
+            "reason": "invalid_location",
+            "error_message": (
+                f"scene_follower_invalid_location: follower location '{provided_location_id}' "
+                f"does not match current party location '{current_location_id}'."
+            ),
+        }
+
+    # v2 TITAN STUB — External world entity injection point.
+    # In v2, the Titan background pipeline will introduce external entities
+    # (traders, ambassadors, dragons, etc.) through a deterministic Python-owned
+    # data structure, not through Narrator action parameters.
+    # When that pipeline is built, entity grounding from validated world state
+    # will be added here. For now, fall through to deterministic sources only.
+
+    party_npcs = party_tracker_data.get("partyNPCs", [])
+    party_npc_names = {
+        normalize_scene_follower_entity_id(npc.get("name"))
+        for npc in party_npcs
+        if isinstance(npc, dict)
+    }
+
+    follower_store = load_followers()
+    follower_record = find_follower(follower_store, requested_name)
+    if follower_record is None:
+        follower_record = find_follower(follower_store, normalize_character_name(requested_name))
+
+    if follower_record is not None:
+        return {
+            "ok": True,
+            "source": "existing_follower",
+            "entity_name": follower_record.get("display_name") or follower_record.get("entity_id") or normalized_name,
+            "entity_id": follower_record.get("entity_id") or normalize_character_name(requested_name),
+            "character_file_ref": follower_record.get("character_file_ref") or "",
+            "source_module": follower_record.get("source_module") or module_name,
+            "source_npc_name": follower_record.get("source_npc_name") or follower_record.get("display_name") or normalized_name,
+            "source_entity_slug": follower_record.get("source_entity_slug") or normalize_character_name(
+                follower_record.get("source_npc_name") or follower_record.get("display_name") or normalized_name
+            ),
+            "recruited_from_location_id": follower_record.get("recruited_from_location_id") or current_location_id,
+        }
+
+    module_resolved = False
+    module_monster_authored = False
+    module_npc_authored = False
+    if module_name:
+        try:
+            module_npc_names = load_module_npc_names(module_name)
+            module_resolve = resolve_npc_identity(requested_name, module_npc_names)
+            if module_resolve.status == "matched" and module_resolve.canonical_name:
+                module_resolved = True
+                module_npc_authored = True
+        except Exception:
+            pass
+
+        try:
+            monster_authority = build_module_monster_authority(module_name)
+            request_slug = normalize_monster_identity(requested_name)
+            if request_slug and request_slug in monster_authority:
+                module_resolved = True
+                module_monster_authored = True
+        except Exception:
+            pass
+
+    if not module_resolved and normalize_scene_follower_entity_id(requested_name) in party_npc_names:
+        module_resolved = True
+        module_npc_authored = True
+
+    if not module_resolved:
+        return {"ok": False, "reason": "unresolved_entity"}
+
+    matched_name = find_character_file_fuzzy(requested_name)
+    exact_character_file_ref = ""
+    if matched_name:
+        exact_character_file_ref = matched_name
+
+    resolved_source_npc_name = normalized_name
+    resolved_source_entity_slug = normalize_character_name(normalized_name)
+    entity_type = str(parameters.get("entityType") or parameters.get("entity_type") or "").strip().lower()
+    if not entity_type:
+        entity_type = "monster" if module_monster_authored else "npc"
+
+    return {
+        "ok": True,
+        "source": "module_monster" if module_monster_authored else "module_npc",
+        "entity_name": normalized_name,
+        "entity_id": normalize_character_name(normalized_name),
+        "entity_type": entity_type,
+        "character_file_ref": exact_character_file_ref,
+        "source_module": module_name,
+        "source_npc_name": resolved_source_npc_name,
+        "source_entity_slug": resolved_source_entity_slug,
+        "recruited_from_location_id": current_location_id,
+        "module_npc_authored": module_npc_authored,
+        "module_monster_authored": module_monster_authored,
+    }
+
+
+def _resolve_party_npc_recruitment_identity(
+    party_tracker_data: Dict[str, Any],
+    requested_name: str,
+    path_manager,
+) -> Dict[str, Any]:
+    """Resolve party NPC recruitment identity without renaming canonical module recruits."""
+    from updates.update_character_info import normalize_character_name
+    from utils.npc_arrival_validator import load_module_npc_names, resolve_npc_identity
+
+    module_name = str(party_tracker_data.get("module", "") or "").strip().replace(" ", "_")
+    current_location_id = str(
+        (party_tracker_data.get("worldConditions", {}) or {}).get("currentLocationId", "")
+    ).strip().upper()
+
+    display_name = str(requested_name or "").strip()
+    if not display_name:
+        return {
+            "ok": False,
+            "reason": "missing_entity_name",
+            "error_message": "party_npc_missing_name: updatePartyNPCs requires an NPC name.",
+        }
+
+    metadata: Dict[str, Any] = {}
+    if module_name:
+        try:
+            module_npc_names = load_module_npc_names(module_name)
+            if module_npc_names:
+                module_resolution = resolve_npc_identity(display_name, module_npc_names)
+                if module_resolution.status == "matched" and module_resolution.canonical_name:
+                    display_name = str(module_resolution.canonical_name).strip() or display_name
+                    metadata["source_module"] = module_name
+                    metadata["source_npc_name"] = display_name
+                    metadata["source_entity_slug"] = normalize_character_name(display_name)
+                    metadata["recruited_from_location_id"] = current_location_id
+                elif module_resolution.status == "ambiguous":
+                    return {
+                        "ok": False,
+                        "reason": "ambiguous",
+                        "error_message": (
+                            f"party_npc_ambiguous_identity: '{requested_name}' matches multiple module NPCs."
+                        ),
+                    }
+        except Exception as exc:
+            warning(
+                f"FAILURE: Module NPC recruitment resolution degraded for '{requested_name}': {exc}",
+                category="character_updates",
+            )
+
+    candidate_slugs: List[str] = []
+    for value in (display_name, requested_name):
+        candidate_slug = normalize_character_name(value)
+        if candidate_slug and candidate_slug not in candidate_slugs:
+            candidate_slugs.append(candidate_slug)
+
+    if path_manager and candidate_slugs:
+        for candidate_slug in candidate_slugs:
+            candidate_path = path_manager.get_character_path(candidate_slug)
+            if os.path.exists(candidate_path):
+                metadata["character_file_ref"] = candidate_slug
+                break
+
+    if metadata.get("source_module"):
+        metadata.setdefault("source_npc_name", display_name)
+        metadata.setdefault("source_entity_slug", normalize_character_name(display_name))
+        metadata.setdefault("recruited_from_location_id", current_location_id)
+
+    return {
+        "ok": True,
+        "display_name": display_name,
+        "metadata": metadata,
+    }
+
+
+def update_scene_follower(party_tracker_data, location_data, parameters):
+    """Update a tracked scene follower using validated runtime state."""
+    from utils.scene_follower_state import (
+        create_follower_record,
+        follower_is_cleanup_state,
+        load_followers,
+        normalize_scene_follower_disposition,
+        normalize_scene_follower_entity_id,
+        normalize_scene_follower_record,
+        normalize_scene_follower_visibility,
+        remove_follower_record,
+        save_followers,
+        validate_follower_schema,
+        find_follower,
+        move_follower_to_location,
+    )
+
+    requested_name = str(
+        parameters.get("entity")
+        or parameters.get("entityName")
+        or parameters.get("npcName")
+        or parameters.get("name")
+        or ""
+    ).strip()
+    if not requested_name:
+        return _scene_follower_validation_error(
+            "scene_follower_missing_entity: updateSceneFollower requires an entity name.",
+            "missing_entity_name",
+        )
+
+    grounding = _resolve_scene_follower_grounding(
+        requested_name,
+        party_tracker_data,
+        location_data or {},
+        parameters,
+    )
+    if not grounding.get("ok"):
+        reason = str(grounding.get("reason", "unresolved_entity") or "unresolved_entity")
+        error_message = str(
+            grounding.get("error_message")
+            or f"scene_follower_{reason}: could not ground '{requested_name}' against module or runtime follower state."
+        )
+        return _scene_follower_validation_error(error_message, reason)
+
+    entity_id = str(grounding.get("entity_id") or normalize_scene_follower_entity_id(requested_name)).strip()
+    current_location_id = str(
+        (party_tracker_data.get("worldConditions", {}) or {}).get("currentLocationId", "")
+    ).strip().upper()
+    target_location_id = str(
+        parameters.get("currentLocation")
+        or parameters.get("current_location")
+        or location_data.get("locationId")
+        or current_location_id
+        or ""
+    ).strip().upper()
+
+    if target_location_id and current_location_id and target_location_id != current_location_id:
+        return _scene_follower_validation_error(
+            f"scene_follower_invalid_location: '{target_location_id}' does not match current location '{current_location_id}'.",
+            "invalid_location",
+        )
+
+    state = str(parameters.get("state") or parameters.get("lifecycleState") or parameters.get("lifecycle_state") or "").strip().lower()
+    operation = str(parameters.get("operation") or parameters.get("actionType") or "").strip().lower()
+    disposition = normalize_scene_follower_disposition(
+        parameters.get("disposition") or parameters.get("status") or state
+    )
+    if disposition and disposition not in {"following", "present", "held", "parleying", "hidden", "released", "escaped", "dead", "joined_party", "combat_started", "hostile", "neutral", "friendly", "guarded_guide"}:
+        return _scene_follower_validation_error(
+            f"scene_follower_invalid_disposition: '{disposition}' is not allowed.",
+            "invalid_disposition",
+        )
+
+    visible_in_strip = parameters.get("visibleInStrip")
+    if visible_in_strip is None:
+        visible_in_strip = parameters.get("visible_in_strip")
+    if visible_in_strip is None:
+        visible_in_strip = disposition not in {"hidden", "released", "escaped", "dead", "joined_party", "combat_started"}
+    visible_in_strip = normalize_scene_follower_visibility(visible_in_strip)
+
+    if state in {"hidden", "released", "escaped", "dead", "joined_party", "combat_started"}:
+        operation = "remove" if state in {"released", "escaped", "dead", "joined_party", "combat_started"} else "hide"
+    if not operation:
+        operation = "update"
+
+    store = load_followers()
+    if not validate_follower_schema(store):
+        return _scene_follower_validation_error(
+            "scene_follower_store_invalid: runtime follower store failed schema validation.",
+            "invalid_store",
+        )
+
+    if operation == "remove":
+        if remove_follower_record(store, entity_id) or remove_follower_record(store, requested_name):
+            if not save_followers(store):
+                return _scene_follower_validation_error(
+                    "scene_follower_persist_failed: could not remove follower record.",
+                    "persist_failed",
+                )
+            info(
+                f"STATE_CHANGE: Removed scene follower '{requested_name}' ({entity_id})",
+                category="scene_followers",
+            )
+            return {"status": "continue", "needs_update": True}
+        return _scene_follower_validation_error(
+            f"scene_follower_not_found: '{requested_name}' is not tracked as a scene follower.",
+            "not_found",
+        )
+
+    if operation == "hide":
+        existing = find_follower(store, entity_id) or find_follower(store, requested_name)
+        if not existing:
+            return _scene_follower_validation_error(
+                f"scene_follower_not_found: '{requested_name}' is not tracked as a scene follower.",
+                "not_found",
+            )
+        existing["visible_in_strip"] = False
+        existing["lifecycle_state"] = "hidden"
+        existing["disposition"] = "hidden"
+        existing["display_name"] = str(existing.get("display_name") or requested_name).strip()
+        existing["entity_id"] = entity_id
+        existing["current_location"] = target_location_id or current_location_id
+        if not save_followers(store):
+            return _scene_follower_validation_error(
+                "scene_follower_persist_failed: could not hide follower record.",
+                "persist_failed",
+            )
+        info(
+            f"STATE_CHANGE: Hid scene follower '{requested_name}' ({entity_id})",
+            category="scene_followers",
+        )
+        return {"status": "continue", "needs_update": True}
+
+    follower_record = find_follower(store, entity_id) or find_follower(store, requested_name)
+    if follower_record is None:
+        follower_record = create_follower_record(
+            store,
+            entity_id,
+            target_location_id or current_location_id,
+            since_turn=parameters.get("sinceTurn") or parameters.get("since_turn") or 1,
+        )
+        if follower_record is None:
+            return _scene_follower_validation_error(
+                f"scene_follower_create_failed: could not create record for '{requested_name}'.",
+                "persist_failed",
+            )
+
+    follower_record["entity_id"] = entity_id
+    follower_record["current_location"] = target_location_id or current_location_id
+    follower_record["since_turn"] = parameters.get("sinceTurn") or parameters.get("since_turn") or follower_record.get("since_turn") or 1
+    follower_record["display_name"] = str(parameters.get("displayName") or parameters.get("display_name") or grounding.get("entity_name") or requested_name).strip()
+    follower_record["entity_type"] = str(parameters.get("entityType") or parameters.get("entity_type") or grounding.get("entity_type") or follower_record.get("entity_type") or "").strip().lower()
+    if not follower_record.get("entity_type"):
+        follower_record["entity_type"] = "monster" if grounding.get("module_monster_authored") else "npc"
+    follower_record["monster_type"] = str(parameters.get("monsterType") or parameters.get("monster_type") or follower_record.get("monster_type") or follower_record["display_name"]).strip()
+    follower_record["disposition"] = disposition or follower_record.get("disposition") or "present"
+    follower_record["lifecycle_state"] = state or follower_record.get("lifecycle_state") or "present"
+    follower_record["visible_in_strip"] = visible_in_strip
+    if grounding.get("source_module"):
+        follower_record["source_module"] = grounding.get("source_module")
+    if grounding.get("source_npc_name"):
+        follower_record["source_npc_name"] = grounding.get("source_npc_name")
+    if grounding.get("source_entity_slug"):
+        follower_record["source_entity_slug"] = grounding.get("source_entity_slug")
+    if grounding.get("character_file_ref"):
+        follower_record["character_file_ref"] = grounding.get("character_file_ref")
+    if grounding.get("recruited_from_location_id"):
+        follower_record["recruited_from_location_id"] = grounding.get("recruited_from_location_id")
+
+    follower_record.update(
+        normalize_scene_follower_record(follower_record)
+    )
+
+    if not save_followers(store):
+        return _scene_follower_validation_error(
+            f"scene_follower_persist_failed: could not save follower record for '{requested_name}'.",
+            "persist_failed",
+        )
+
+    info(
+        f"STATE_CHANGE: Updated scene follower '{follower_record.get('display_name', requested_name)}' ({entity_id}) state={follower_record.get('lifecycle_state', state or 'present')} location={follower_record.get('current_location', target_location_id or current_location_id)} visible={follower_record.get('visible_in_strip', False)} source={grounding.get('source')}",
+        category="scene_followers",
+    )
+    return {"status": "continue", "needs_update": True}
 
 
 def run_combat_simulation(encounter_id, party_tracker_data, location_data):
@@ -2286,7 +2698,23 @@ Please use a valid location that exists in the current area ({current_area_id}) 
     elif action_type == ACTION_UPDATE_PARTY_NPCS:
         operation = parameters["operation"]
         npc = parameters["npc"]
-        update_party_npcs(party_tracker_data, operation, npc)
+        party_update_result = update_party_npcs(party_tracker_data, operation, npc)
+        if isinstance(party_update_result, dict) and party_update_result.get("status") == "error":
+            warning(
+                str(party_update_result.get("error_message") or "party NPC update failed"),
+                category="character_updates",
+            )
+            return party_update_result
+
+    elif action_type == ACTION_UPDATE_SCENE_FOLLOWER:
+        update_result = update_scene_follower(party_tracker_data, location_data or {}, parameters)
+        if update_result.get("status") == "error":
+            error_message = str(update_result.get("error_message") or "scene follower update failed")
+            warning(error_message, category="scene_followers")
+            return update_result
+
+        needs_conversation_history_update = True
+        return create_return(status="continue", needs_update=True)
 
     elif action_type == ACTION_UPDATE_ENCOUNTER:
         debug(

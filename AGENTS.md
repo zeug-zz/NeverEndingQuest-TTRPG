@@ -2,6 +2,52 @@
 
 This file provides guidance for AI coding agents working in the NeverEndingQuest repository.
 
+## context-mode MCP Routing Rules
+
+context-mode MCP tools are available and should be used to protect the context window from large raw outputs.
+
+### Think in Code
+- Analyze, count, filter, compare, search, parse, or transform data by writing code with `context-mode_ctx_execute(language, code)` and printing only the answer.
+- Do not read raw data into context when a script can process it inside the sandbox.
+- Prefer pure JavaScript with Node.js built-ins (`fs`, `path`, `child_process`) for these analysis scripts.
+- Use `try/catch` and handle `null` / `undefined` defensively.
+
+### Blocked Patterns
+- Do not use shell `curl` or `wget`; use `context-mode_ctx_fetch_and_index(url, source)` or sandboxed JavaScript `fetch(...)` through `context-mode_ctx_execute`.
+- Do not use inline HTTP calls such as `fetch('http`, `requests.get(`, `requests.post(`, `http.get(`, or `http.request(` outside the context-mode sandbox.
+- For direct web fetching, use `context-mode_ctx_fetch_and_index(url, source)` and then `context-mode_ctx_search(queries)`.
+
+### Redirected Workflows
+- For shell commands likely to emit more than 20 lines, use `context-mode_ctx_batch_execute(commands, queries)` or `context-mode_ctx_execute(language: "shell", code: "...")`.
+- Use shell directly only for narrow local operations such as `git`, `mkdir`, `rm`, `mv`, `cd`, `ls`, `npm install`, and `pip install`.
+- Reading files to edit is fine with normal file tools; reading files to analyze, summarize, or extract facts should use `context-mode_ctx_execute_file(path, language, code)`.
+- For large grep/search results, use sandboxed shell through `context-mode_ctx_execute` rather than dumping matches into context.
+
+### Tool Selection
+- Memory/resume checks: use `context-mode_ctx_search(sort: "timeline")` before asking the user to restate prior decisions.
+- Broad gathering: use `context-mode_ctx_batch_execute(commands, queries)` to run commands, index output, and return searched results in one call.
+- Follow-up lookup: use `context-mode_ctx_search(queries: ["q1", "q2"])` with all questions batched.
+- Processing: use `context-mode_ctx_execute(...)` or `context-mode_ctx_execute_file(...)` so only stdout enters context.
+- Web: use `context-mode_ctx_fetch_and_index(...)`, then `context-mode_ctx_search(...)`.
+- Indexing: use `context-mode_ctx_index(content, source)` for searchable documentation or knowledge content.
+
+### Output Style
+- Be terse and exact: technical substance first, minimal filler.
+- Write large artifacts to files instead of inline responses.
+- Return file paths plus one-line descriptions for generated artifacts.
+- Use descriptive source labels when indexing content so searches can be scoped.
+
+### Session Continuity
+- Skills, roles, and decisions persist for the session; do not abandon them as context grows.
+- On resume, search existing context before asking what was decided or what constraints exist.
+- If context-mode search returns no relevant results, proceed as a fresh session.
+
+### Utility Commands
+- `ctx stats`: call `context-mode_ctx_stats` and report the output.
+- `ctx doctor`: call `context-mode_ctx_doctor` and report the checklist.
+- `ctx upgrade`: call `context-mode_ctx_upgrade`, run the returned shell command, and report the checklist.
+- `ctx purge`: call `context-mode_ctx_purge(confirm: true)` only after warning that it irreversibly deletes the session knowledge base.
+
 ## Project Overview
 
 NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 compatible tabletop RPG campaigns. It features token compression, a web interface with real-time updates, and a comprehensive module creation toolkit.
@@ -1044,6 +1090,41 @@ character_data["is_active_pc"] = True
 ---
 
 ## Recent Changes
+
+### MMG Will-o'-Wisp Safe Slug Queue Fix (COMPLETED - 2026-04-30)
+
+**Status:** COMPLETED - Closed MMG apostrophe-slug regression where toolkit UI still looked up `will-o'-wisp` media paths after safe filename remediation.
+
+**Objective:**
+- Align Module Media Generator unified asset IDs with runtime-safe slug normalization.
+- Ensure stale MMG payload IDs (`will-o'-wisp`) resolve existing `will_o_wisp` module-local media.
+- Harden toolkit asset-row rendering so apostrophe-bearing display names do not break inline click handlers or thumbnail DOM IDs.
+
+**Implementation Summary:**
+- `web/web_interface.py`
+  - Unified asset scan now normalizes monster IDs via `normalize_character_name(...)` for dict and string monster references.
+  - MMG monster image generation now re-normalizes submitted asset IDs before bestiary lookup, monster JSON lookup, generation call, copy destinations, progress emits, and failure records.
+- `utils/module_media_generator_report.py`
+  - Added monster-only asset ID normalization in final media audit path so stale IDs still map to canonical media filenames.
+- `web/templates/module_toolkit.html`
+  - Added serialized inline handler arguments for MMG media clicks (`JSON.stringify`) to prevent apostrophe breaks.
+  - Added `getAssetThumbElementId(...)` helper to sanitize thumbnail DOM IDs.
+- Tests:
+  - Added `scripts/test_module_media_generator_report_safe_slug.py` (3 tests).
+  - Extended `scripts/test_toolkit_module_build_publication_parity.py` with MMG safe-slug source contracts.
+
+**Verification:**
+- `.venv/bin/python -m py_compile web/web_interface.py utils/module_media_generator_report.py scripts/test_module_media_generator_report_safe_slug.py scripts/test_toolkit_module_build_publication_parity.py` -> PASS
+- `.venv/bin/python scripts/test_module_media_generator_report_safe_slug.py` -> PASS (3/3)
+- `.venv/bin/python scripts/test_toolkit_module_build_publication_parity.py` -> PASS (29/29)
+- `.venv/bin/python scripts/test_validator_monster_reference_hygiene.py` -> PASS (9/9)
+- `.venv/bin/python scripts/audit_module_gameplay.py --module Murder_at_the_Drowning_Lass --json` -> PASS (base/thumb coverage includes `will_o_wisp`)
+- Flask test-client check of `/api/toolkit/modules/Murder_at_the_Drowning_Lass/unified-assets` -> `Will-o'-Wisp` emits `id: "will_o_wisp"`, `has_image=true`, `has_thumbnail=true`
+- `openspec validate murder-drowning-lass-will-o-wisp-safe-slug` -> VALID prior to archive
+
+**OpenSpec Archive Note:**
+- `openspec archive murder-drowning-lass-will-o-wisp-safe-slug --yes` synced specs successfully but could not finalize because archive folder `openspec/changes/archive/2026-04-30-murder-drowning-lass-will-o-wisp-safe-slug/` already existed.
+- Active change folder was manually archived to `openspec/changes/archive/2026-04-30-murder-drowning-lass-will-o-wisp-safe-slug-queue-fix/` to clear the queue.
 
 ### Narration-Reality Death/Supernatural State Chain (COMPLETED - 2026-04-28)
 

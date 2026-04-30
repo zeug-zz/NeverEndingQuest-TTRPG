@@ -5,22 +5,46 @@
   "authoritative": true,
   "status": "degraded",
   "freshness_state": "current",
-  "generated_at": "2026-04-30T00:42:59.092434Z",
+  "generated_at": "2026-04-30T07:35:58.777333Z",
   "report_freshness": {
     "state": "current",
     "authoritative": true,
-    "written_at": "2026-04-30T00:42:59.092445Z",
+    "written_at": "2026-04-30T07:35:58.777348Z",
     "phase": "final",
     "workflow": "module_media_generator",
     "refresh_reason": "module_media_generator",
     "contract": "module_media_generator_report.v1",
     "stale_reason": null
   },
-  "total_assets": 1,
-  "complete_assets": 1,
+  "total_assets": 3,
+  "complete_assets": 3,
   "missing_count": 0,
   "missing_assets": [],
   "asset_audits": [
+    {
+      "id": "corrupted_ranger_thane",
+      "name": "Corrupted Ranger Thane",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": true,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/monsters/corrupted_ranger_thane.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/monsters/corrupted_ranger_thane_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
+    {
+      "id": "corrupted_ranger_thane",
+      "name": "Corrupted Ranger Thane",
+      "type": "npc",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": true,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/npcs/corrupted_ranger_thane.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Thornwood_Watch/media/npcs/corrupted_ranger_thane_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
     {
       "id": "wounded_ranger_gareth",
       "name": "Wounded Ranger Gareth",
@@ -35,6 +59,13 @@
     }
   ],
   "generation_failures": [
+    {
+      "asset_id": "corrupted_ranger_thane",
+      "asset_name": "Corrupted Ranger Thane",
+      "asset_type": "npc",
+      "phase": "description",
+      "error": "cannot import name 'NPCBuilder' from 'core.generators.npc_builder' (/Users/zeug/Projects/NeverEndingQuest/core/generators/npc_builder.py)"
+    },
     {
       "asset_id": "wounded_ranger_gareth",
       "asset_name": "Wounded Ranger Gareth",

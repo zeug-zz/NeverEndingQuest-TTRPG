@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-25T00:28:18Z",
+  "generated_at": "2026-04-30T07:33:05Z",
   "module_slug": "Murder_at_the_Drowning_Lass",
   "status": "degraded",
   "ready_status": "pass",
@@ -8,10 +8,10 @@
   "report_freshness": {
     "state": "degraded",
     "authoritative": true,
-    "written_at": "2026-04-25T00:28:18Z",
+    "written_at": "2026-04-30T07:33:05Z",
     "phase": "final",
     "workflow": "toolkit_report_refresh",
-    "refresh_reason": "module_media_generator",
+    "refresh_reason": "will_o_wisp_safe_slug_fix",
     "contract": "toolkit_build_report_refresh_contract.v1",
     "stale_reason": null
   },
@@ -24,7 +24,7 @@
     "phase": "final",
     "refresh_contract": "toolkit_build_report_refresh_contract.v1",
     "refresh_workflow": "toolkit_report_refresh",
-    "refresh_reason": "module_media_generator"
+    "refresh_reason": "will_o_wisp_safe_slug_fix"
   },
   "stages": {
     "continuity": {
@@ -1943,6 +1943,15 @@
               "normalized_shortform_destination_count": 1,
               "missing_npc_authority_count": 3
             }
+          },
+          "classification_metadata": {
+            "classified_by": "gpt-5.4-mini-2026-03-17",
+            "classified_at": "2026-04-30T06:21:19.930571",
+            "entity_count": 0,
+            "destination_count": 15,
+            "npc_count": 14,
+            "provenance": "llm_classification",
+            "feature_flag": "ENABLE_LLM_CLASSIFICATION"
           }
         },
         "changed": false,
@@ -3863,19 +3872,20 @@
               "normalized_shortform_destination_count": 1,
               "missing_npc_authority_count": 3
             }
+          },
+          "classification_metadata": {
+            "classified_by": "gpt-5.4-mini-2026-03-17",
+            "classified_at": "2026-04-30T06:21:19.930571",
+            "entity_count": 0,
+            "destination_count": 15,
+            "npc_count": 14,
+            "provenance": "llm_classification",
+            "feature_flag": "ENABLE_LLM_CLASSIFICATION"
           }
         },
-        "changed": true,
-        "added_refs": [
-          {
-            "target_module": "The_Pumpkin_Kings_Curse",
-            "entity_id": "bramble_lineage",
-            "relation": "reference",
-            "confidence": "high",
-            "notes": "Bramble family lineage appears in linked module arcs."
-          }
-        ],
-        "existing_count": 2,
+        "changed": false,
+        "added_refs": [],
+        "existing_count": 3,
         "final_count": 3
       },
       "continuity_contract": {
@@ -3951,6 +3961,39 @@
             "sources": [
               "areas/OKR001.json#locations[H02].aliases",
               "areas/OKR001.json#locations[H02].name"
+            ]
+          },
+          "brindlehearth village": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/BV001.json#locations[H01].aliases"
+            ]
+          },
+          "circular crypt": {
+            "status": "resolved",
+            "location_id": "H02",
+            "location_name": "Crooked Cairn Hill",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H02].aliases"
+            ]
+          },
+          "cobbled road": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/OKR001.json#locations[H01].aliases"
             ]
           },
           "crimson echo nook": {
@@ -4049,6 +4092,17 @@
               "areas/BV001.json#locations[H02].name"
             ]
           },
+          "from village": {
+            "status": "resolved",
+            "location_id": "H02",
+            "location_name": "Crooked Cairn Hill",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/BV001.json#locations[H02].aliases"
+            ]
+          },
           "gallows shadow cell": {
             "status": "resolved",
             "location_id": "H03",
@@ -4127,6 +4181,17 @@
               "areas/WM001.json#locations[H03].aliases"
             ]
           },
+          "half collapsed shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/SR001.json#locations[H01].aliases"
+            ]
+          },
           "ironbark watchhouse": {
             "status": "resolved",
             "location_id": "H01",
@@ -4149,6 +4214,17 @@
             "sources": [
               "areas/HG001.json#locations[H02].aliases",
               "areas/HG001.json#locations[H02].name"
+            ]
+          },
+          "main road": {
+            "status": "resolved",
+            "location_id": "H03",
+            "location_name": "Witchlight Standing Stone",
+            "candidate_location_ids": [
+              "H03"
+            ],
+            "sources": [
+              "areas/OKR001.json#locations[H03].aliases"
             ]
           },
           "mireshadow storage": {
@@ -4175,6 +4251,17 @@
               "areas/EDC001.json#locations[H03].name"
             ]
           },
+          "riverside tavern": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/THB001.json#locations[H01].aliases"
+            ]
+          },
           "sanctum of echoed warnings": {
             "status": "resolved",
             "location_id": "H01",
@@ -4185,6 +4272,18 @@
             "sources": [
               "areas/EDC001.json#locations[H01].aliases",
               "areas/EDC001.json#locations[H01].name"
+            ]
+          },
+          "shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases",
+              "areas/SR001.json#locations[H01].aliases"
             ]
           },
           "shrouded lantern encampment": {
@@ -4199,6 +4298,17 @@
               "areas/WM001.json#locations[H01].name"
             ]
           },
+          "somber shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases"
+            ]
+          },
           "the drowning lass taproom": {
             "status": "resolved",
             "location_id": "H01",
@@ -4211,6 +4321,18 @@
               "areas/THB001.json#locations[H01].name"
             ]
           },
+          "the shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "location_name": "Shrouded Lantern Encampment",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases",
+              "areas/SR001.json#locations[H01].aliases"
+            ]
+          },
           "thieves threadwalk": {
             "status": "resolved",
             "location_id": "H02",
@@ -4221,6 +4343,17 @@
             "sources": [
               "areas/SR001.json#locations[H02].aliases",
               "areas/SR001.json#locations[H02].name"
+            ]
+          },
+          "this chamber": {
+            "status": "resolved",
+            "location_id": "H02",
+            "location_name": "Crooked Cairn Hill",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H02].aliases"
             ]
           },
           "vault of the drowned oath": {
@@ -4317,6 +4450,68 @@
             "observed": false,
             "player_facing": false,
             "observation_count": 0
+          },
+          "brindlehearth village": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/BV001.json#locations[H01].aliases",
+              "areas/BV001.json#locations[H02].description"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
+          "circular crypt": {
+            "status": "resolved",
+            "location_id": "H02",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H02].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
+          "cobbled road": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/OKR001.json#locations[H01].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
+          "collapsed shrine": {
+            "status": "resolved",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/SR001.json#locations[H01].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1,
+            "location_id": "H01",
+            "normalization": {
+              "type": "shortform_alias_collapse",
+              "strategy": "resolved_suffix_anchor_with_source_overlap",
+              "anchor_phrase": "half collapsed shrine",
+              "anchor_location_id": "H01",
+              "shared_sources": [
+                "areas/SR001.json#locations[H01].aliases"
+              ]
+            }
           },
           "crimson echo nook": {
             "status": "resolved",
@@ -4454,6 +4649,20 @@
             "player_facing": false,
             "observation_count": 0
           },
+          "from village": {
+            "status": "resolved",
+            "location_id": "H02",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/BV001.json#locations[H02].aliases",
+              "areas/BV001.json#locations[H02].description"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
           "gallows shadow cell": {
             "status": "resolved",
             "location_id": "H03",
@@ -4542,6 +4751,19 @@
             "player_facing": false,
             "observation_count": 0
           },
+          "half collapsed shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/SR001.json#locations[H01].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
           "ironbark watchhouse": {
             "status": "resolved",
             "location_id": "H01",
@@ -4569,6 +4791,19 @@
             "observed": false,
             "player_facing": false,
             "observation_count": 0
+          },
+          "main road": {
+            "status": "resolved",
+            "location_id": "H03",
+            "candidate_location_ids": [
+              "H03"
+            ],
+            "sources": [
+              "areas/OKR001.json#locations[H03].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
           },
           "mireshadow storage": {
             "status": "resolved",
@@ -4598,6 +4833,19 @@
             "player_facing": false,
             "observation_count": 0
           },
+          "riverside tavern": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/THB001.json#locations[H01].aliases"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
           "sanctum of echoed warnings": {
             "status": "resolved",
             "location_id": "H01",
@@ -4611,6 +4859,20 @@
             "observed": false,
             "player_facing": false,
             "observation_count": 0
+          },
+          "shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases",
+              "areas/SR001.json#locations[H01].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 2
           },
           "shrouded lantern encampment": {
             "status": "resolved",
@@ -4626,6 +4888,19 @@
             "player_facing": false,
             "observation_count": 0
           },
+          "somber shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
+          },
           "the drowning lass taproom": {
             "status": "resolved",
             "location_id": "H01",
@@ -4635,6 +4910,20 @@
             "sources": [
               "areas/THB001.json#locations[H01].aliases",
               "areas/THB001.json#locations[H01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "the shrine": {
+            "status": "resolved",
+            "location_id": "H01",
+            "candidate_location_ids": [
+              "H01"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H01].aliases",
+              "areas/SR001.json#locations[H01].aliases"
             ],
             "observed": false,
             "player_facing": false,
@@ -4653,6 +4942,19 @@
             "observed": false,
             "player_facing": false,
             "observation_count": 0
+          },
+          "this chamber": {
+            "status": "resolved",
+            "location_id": "H02",
+            "candidate_location_ids": [
+              "H02"
+            ],
+            "sources": [
+              "areas/EDC001.json#locations[H02].aliases"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 1
           },
           "vault of the drowned oath": {
             "status": "resolved",
@@ -5200,6 +5502,14 @@
           "unresolved_destination_phrases": [],
           "normalized_shortform_destination_phrases": [
             {
+              "phrase": "collapsed shrine",
+              "anchor_phrase": "half collapsed shrine",
+              "location_id": "H01",
+              "shared_sources": [
+                "areas/SR001.json#locations[H01].aliases"
+              ]
+            },
+            {
               "phrase": "echoes shrine",
               "anchor_phrase": "veiled echoes shrine",
               "location_id": "H01",
@@ -5241,16 +5551,16 @@
         },
         "summary": {
           "location_count": 24,
-          "location_alias_count": 28,
-          "destination_phrase_count": 29,
+          "location_alias_count": 39,
+          "destination_phrase_count": 41,
           "npc_count": 23,
           "ambiguous_destination_count": 0,
-          "normalized_shortform_destination_count": 1,
+          "normalized_shortform_destination_count": 2,
           "missing_npc_authority_count": 3
         }
       },
       "warnings": [
-        "semantic_authority_normalized_shortform_destination_phrases=1",
+        "semantic_authority_normalized_shortform_destination_phrases=2",
         "semantic_authority_missing_npc_authority=3"
       ],
       "errors": []
@@ -5500,6 +5810,67 @@
         "error": null
       }
     },
+    "llm_classification": {
+      "status": "success",
+      "classification_summary": {
+        "entity": {
+          "candidates": 0,
+          "cache_hits": 0,
+          "llm_classified": 0,
+          "labels": {}
+        },
+        "destination": {
+          "candidates": 5,
+          "cache_hits": 0,
+          "llm_classified": 5,
+          "labels": {
+            "the village": "canonical_alias",
+            "h02. sanctum": "canonical_alias",
+            "this road": "canonical_alias",
+            "this shrine": "canonical_alias",
+            "to keep": "quest_objective"
+          }
+        },
+        "npc_visibility": {
+          "candidates": 14,
+          "cache_hits": 0,
+          "llm_classified": 14,
+          "labels": {
+            "Constable Farrel Dun": "visible",
+            "Old Ellyn, the folklore spinner": "visible",
+            "Gritch the One-Eared, nervous patron": "visible",
+            "Sergeant Halwin Reed": "visible",
+            "Mrs. Rindleby": "visible",
+            "Tamsin Quill": "visible",
+            "Ghostly Royal Messenger": "visible",
+            "Sable, Reluctant Scribe’s Shade": "visible",
+            "Red Maw scouts": "visible",
+            "Corsa 'Threadneedle' Drenn": "visible",
+            "Irren the Ragged": "visible",
+            "Maela Kett, the wary tavernkeeper": "visible",
+            "Edrin Voss, eccentric proprietor": "visible",
+            "Spirit of the Moor": "visible"
+          }
+        }
+      },
+      "applied": {
+        "entity": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        },
+        "destination": {
+          "status": "success",
+          "applied": "0",
+          "aliases_added": "[]"
+        },
+        "npc": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        }
+      }
+    },
     "toolkit_provenance": {
       "status": "success",
       "reason": "toolkit_provenance_prepared",
@@ -5522,20 +5893,18 @@
           "gates": {
             "gameplay": {
               "status": "pass",
-              "reason": "toolkit_structural_media_handoff_only",
-              "exit_code": 1,
-              "blocking_error_count": 1,
-              "warning_count": 17,
+              "reason": "pass",
+              "exit_code": 0,
+              "blocking_error_count": 0,
+              "warning_count": 16,
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/scripts/audit_module_gameplay.py --module Murder_at_the_Drowning_Lass --json --strict-instructions",
-                "exit_code": 1,
-                "stdout": "{\n  \"target\": {\n    \"blocking_errors\": [\n      \"Missing base media for: will_o_wisp (from WM001.json:locations[2].monsters[0])\"\n    ],\n    \"warnings\": [\n      \"Missing video for: abyssal_choker\",\n      \"Missing video for: chasm_bat_swarm\",\n      \"Missing video for: crawling_shadows\",\n      \"Missing video for: duskmire_wolfpack\",\n      \"Missing video for: echo_wraith\",\n      \"Missing video for: giant_weasel\",\n      \"Missing video for: highwayman_lookouts\",\n      \"Missing video for: hungry_wolves\",\n      \"Missing video for: red_maw_enforcer\",\n      \"Missing video for: red_maw_lookout\",\n      \"Missing video for: red_maw_mercenary\",\n      \"Missing video for: shadowed_chasm_spider\",\n      \"Missing video for: sorrowful_deep_lurker\",\n      \"Missing video for: specter_of_the_forgotten\",\n      \"Missing video for: swarm_of_animated_quills\",\n      \"Missing thumb for: will_o_wisp\",\n      \"Missing video for: will_o_wisp\"\n    ],\n    \"coverage_stats\": {\n      \"module\": \"Murder_at_the_Drowning_Lass\",\n      \"referenced_monsters\": 16,\n      \"structural_refs\": 16,\n      \"heuristic_refs\": 0,\n      \"json_valid\": 16,\n      \"json_invalid\": 0,\n      \"json_missing\": 0,\n      \"json_coverage_pct\": 100.0,\n      \"media_base_coverage\": 15,\n      \"media_thumb_coverage\": 15,\n      \"media_video_coverage\": 0,\n      \"media_base_coverage_pct\": 93.8,\n      \"media_policy\": {\n        \"provider_generation_mode\": \"opt_in_manual_only\",\n        \"manual_toolkit_workflow\": [\n          \"Monster Management & Generator -> Generate Monster Images\",\n          \"Module Media Generator -> one-click monster media generation\"\n        ],\n        \"outcome_vocabulary\": [\n          \"reused_or_generated\",\n          \"provider_disabled_missing\",\n          \"attempted_but_unresolved\"\n        ]\n      }\n    },\n    \"fix_list\": [\n      \"Add media: modules/Murder_at_the_Drowning_Lass/media/monsters/will_o_wisp.jpg\"\n    ],\n    \"monster_media_findings\": [\n      {\n        \"slug\": \"abyssal_choker\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"chasm_bat_swarm\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"crawling_shadows\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"THB001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"duskmire_wolfpack\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"giant_weasel\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"WM001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"highwayman_lookouts\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"hungry_wolves\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_enforcer\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_lookout\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[0].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_mercenary\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"shadowed_chasm_spider\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"sorrowful_deep_lurker\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"specter_of_the_forgotten\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"swarm_of_animated_quills\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"will_o_wisp\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"WM001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"provider_disabled_missing\",\n        \"base\": false,\n        \"thumb\": false,\n        \"video\": false\n      }\n    ],\n    \"references\": [\n      {\n        \"slug\": \"crawling_shadows\",\n        \"file\": \"THB001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Crawling Shadows\"\n      },\n      {\n        \"slug\": \"giant_weasel\",\n        \"file\": \"WM001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Giant Weasel\"\n      },\n      {\n        \"slug\": \"will_o_wisp\",\n        \"file\": \"WM001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Will-o'-Wisp\"\n      },\n      {\n        \"slug\": \"red_maw_mercenary\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Mercenary\"\n      },\n      {\n        \"slug\": \"red_maw_lookout\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[0].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Lookout\"\n      },\n      {\n        \"slug\": \"duskmire_wolfpack\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Duskmire Wolfpack\"\n      },\n      {\n        \"slug\": \"red_maw_enforcer\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Enforcer\"\n      },\n      {\n        \"slug\": \"hungry_wolves\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Hungry Wolves\"\n      },\n      {\n        \"slug\": \"highwayman_lookouts\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Highwayman Lookouts\"\n      },\n      {\n        \"slug\": \"swarm_of_animated_quills\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Swarm of Animated Quills\"\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Echo Wraith\"\n      },\n      {\n        \"slug\": \"abyssal_choker\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Abyssal Choker\"\n      },\n      {\n        \"slug\": \"sorrowful_deep_lurker\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Sorrowful Deep Lurker\"\n      },\n      {\n        \"slug\": \"shadowed_chasm_spider\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Shadowed Chasm Spider\"\n      },\n      {\n        \"slug\": \"chasm_bat_swarm\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Chasm Bat Swarm\"\n      },\n      {\n        \"slug\": \"specter_of_the_forgotten\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Specter of the Forgotten\"\n      }\n    ],\n    \"strict_mode\": true\n  },\n  \"baseline\": null\n}",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/audit_module_gameplay.py --module Murder_at_the_Drowning_Lass --json --strict-instructions",
+                "exit_code": 0,
+                "stdout": "{\n  \"target\": {\n    \"blocking_errors\": [],\n    \"warnings\": [\n      \"Missing video for: abyssal_choker\",\n      \"Missing video for: chasm_bat_swarm\",\n      \"Missing video for: crawling_shadows\",\n      \"Missing video for: duskmire_wolfpack\",\n      \"Missing video for: echo_wraith\",\n      \"Missing video for: giant_weasel\",\n      \"Missing video for: highwayman_lookouts\",\n      \"Missing video for: hungry_wolves\",\n      \"Missing video for: red_maw_enforcer\",\n      \"Missing video for: red_maw_lookout\",\n      \"Missing video for: red_maw_mercenary\",\n      \"Missing video for: shadowed_chasm_spider\",\n      \"Missing video for: sorrowful_deep_lurker\",\n      \"Missing video for: specter_of_the_forgotten\",\n      \"Missing video for: swarm_of_animated_quills\",\n      \"Missing video for: will_o_wisp\"\n    ],\n    \"coverage_stats\": {\n      \"module\": \"Murder_at_the_Drowning_Lass\",\n      \"referenced_monsters\": 16,\n      \"structural_refs\": 16,\n      \"heuristic_refs\": 0,\n      \"json_valid\": 16,\n      \"json_invalid\": 0,\n      \"json_missing\": 0,\n      \"json_coverage_pct\": 100.0,\n      \"media_base_coverage\": 16,\n      \"media_thumb_coverage\": 16,\n      \"media_video_coverage\": 0,\n      \"media_base_coverage_pct\": 100.0,\n      \"media_policy\": {\n        \"provider_generation_mode\": \"opt_in_manual_only\",\n        \"manual_toolkit_workflow\": [\n          \"Monster Management & Generator -> Generate Monster Images\",\n          \"Module Media Generator -> one-click monster media generation\"\n        ],\n        \"outcome_vocabulary\": [\n          \"reused_or_generated\",\n          \"provider_disabled_missing\",\n          \"attempted_but_unresolved\"\n        ]\n      }\n    },\n    \"fix_list\": [],\n    \"monster_media_findings\": [\n      {\n        \"slug\": \"abyssal_choker\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"chasm_bat_swarm\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"crawling_shadows\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"THB001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"duskmire_wolfpack\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"giant_weasel\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"WM001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"highwayman_lookouts\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"hungry_wolves\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_enforcer\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[2].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_lookout\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[0].monsters[1]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"red_maw_mercenary\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RME001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"shadowed_chasm_spider\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"sorrowful_deep_lurker\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"EDC001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"specter_of_the_forgotten\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SR001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"swarm_of_animated_quills\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OKR001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"will_o_wisp\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"WM001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      }\n    ],\n    \"references\": [\n      {\n        \"slug\": \"crawling_shadows\",\n        \"file\": \"THB001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Crawling Shadows\"\n      },\n      {\n        \"slug\": \"giant_weasel\",\n        \"file\": \"WM001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Giant Weasel\"\n      },\n      {\n        \"slug\": \"will_o_wisp\",\n        \"file\": \"WM001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Will-o'-Wisp\"\n      },\n      {\n        \"slug\": \"red_maw_mercenary\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Mercenary\"\n      },\n      {\n        \"slug\": \"red_maw_lookout\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[0].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Lookout\"\n      },\n      {\n        \"slug\": \"duskmire_wolfpack\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Duskmire Wolfpack\"\n      },\n      {\n        \"slug\": \"red_maw_enforcer\",\n        \"file\": \"RME001.json\",\n        \"path\": \"locations[2].monsters[1]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Red Maw Enforcer\"\n      },\n      {\n        \"slug\": \"hungry_wolves\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Hungry Wolves\"\n      },\n      {\n        \"slug\": \"highwayman_lookouts\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Highwayman Lookouts\"\n      },\n      {\n        \"slug\": \"swarm_of_animated_quills\",\n        \"file\": \"OKR001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Swarm of Animated Quills\"\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Echo Wraith\"\n      },\n      {\n        \"slug\": \"abyssal_choker\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Abyssal Choker\"\n      },\n      {\n        \"slug\": \"sorrowful_deep_lurker\",\n        \"file\": \"EDC001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Sorrowful Deep Lurker\"\n      },\n      {\n        \"slug\": \"shadowed_chasm_spider\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Shadowed Chasm Spider\"\n      },\n      {\n        \"slug\": \"chasm_bat_swarm\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Chasm Bat Swarm\"\n      },\n      {\n        \"slug\": \"specter_of_the_forgotten\",\n        \"file\": \"SR001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Specter of the Forgotten\"\n      }\n    ],\n    \"strict_mode\": true\n  },\n  \"baseline\": null\n}",
                 "stderr": "",
                 "json": {
                   "target": {
-                    "blocking_errors": [
-                      "Missing base media for: will_o_wisp (from WM001.json:locations[2].monsters[0])"
-                    ],
+                    "blocking_errors": [],
                     "warnings": [
                       "Missing video for: abyssal_choker",
                       "Missing video for: chasm_bat_swarm",
@@ -5552,7 +5921,6 @@
                       "Missing video for: sorrowful_deep_lurker",
                       "Missing video for: specter_of_the_forgotten",
                       "Missing video for: swarm_of_animated_quills",
-                      "Missing thumb for: will_o_wisp",
                       "Missing video for: will_o_wisp"
                     ],
                     "coverage_stats": {
@@ -5564,10 +5932,10 @@
                       "json_invalid": 0,
                       "json_missing": 0,
                       "json_coverage_pct": 100.0,
-                      "media_base_coverage": 15,
-                      "media_thumb_coverage": 15,
+                      "media_base_coverage": 16,
+                      "media_thumb_coverage": 16,
                       "media_video_coverage": 0,
-                      "media_base_coverage_pct": 93.8,
+                      "media_base_coverage_pct": 100.0,
                       "media_policy": {
                         "provider_generation_mode": "opt_in_manual_only",
                         "manual_toolkit_workflow": [
@@ -5581,9 +5949,7 @@
                         ]
                       }
                     },
-                    "fix_list": [
-                      "Add media: modules/Murder_at_the_Drowning_Lass/media/monsters/will_o_wisp.jpg"
-                    ],
+                    "fix_list": [],
                     "monster_media_findings": [
                       {
                         "slug": "abyssal_choker",
@@ -5740,9 +6106,9 @@
                         "confidence": "structural",
                         "source_file": "WM001.json",
                         "source_path": "locations[2].monsters[0]",
-                        "outcome": "provider_disabled_missing",
-                        "base": false,
-                        "thumb": false,
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
                         "video": false
                       }
                     ],
@@ -5864,12 +6230,7 @@
                   },
                   "baseline": null
                 }
-              },
-              "manual_handoff_only": true,
-              "structural_media_debt_count": 1,
-              "structural_media_debt_slugs": [
-                "will_o_wisp"
-              ]
+              }
             },
             "sidecar": {
               "status": "pass",
@@ -5891,10 +6252,10 @@
               "any_failed": false,
               "missing_jsonschema": false,
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module Murder_at_the_Drowning_Lass --json",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module Murder_at_the_Drowning_Lass --json",
                 "exit_code": 0,
-                "stdout": "{\n  \"modules\": {\n    \"Murder_at_the_Drowning_Lass\": {\n      \"module\": \"Murder_at_the_Drowning_Lass\",\n      \"total_passed\": 70,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"EDC001_BU.json (areas/)\",\n            \"THB001_BU.json (areas/)\",\n            \"HG001.json (areas/)\",\n            \"THB001.json (areas/)\",\n            \"WM001.json (areas/)\",\n            \"RME001_BU.json (areas/)\",\n            \"RME001.json (areas/)\",\n            \"OKR001_BU.json (areas/)\",\n            \"HG001_BU.json (areas/)\",\n            \"OKR001.json (areas/)\",\n            \"BV001_BU.json (areas/)\",\n            \"SR001_BU.json (areas/)\",\n            \"EDC001.json (areas/)\",\n            \"SR001.json (areas/)\",\n            \"BV001.json (areas/)\",\n            \"WM001_BU.json (areas/)\"\n          ],\n          \"passed\": 16,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"chasm_bat_swarm.json\",\n            \"echo_wraith.json\",\n            \"red_maw_mercenary.json\",\n            \"red_maw_lookout.json\",\n            \"will_o_wisp.json\",\n            \"shadowed_chasm_spider.json\",\n            \"red_maw_enforcer.json\",\n            \"highwayman_lookouts.json\",\n            \"hungry_wolves.json\",\n            \"sorrowful_deep_lurker.json\",\n            \"duskmire_wolfpack.json\",\n            \"giant_weasel.json\",\n            \"swarm_of_animated_quills.json\",\n            \"crawling_shadows.json\",\n            \"specter_of_the_forgotten.json\",\n            \"abyssal_choker.json\"\n          ],\n          \"passed\": 16,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_OKR001.json\",\n            \"map_SR001.json\",\n            \"map_BV001.json\",\n            \"map_EDC001.json\",\n            \"map_WM001.json\",\n            \"map_THB001.json\",\n            \"map_HG001.json\",\n            \"map_RME001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"party\": {\n          \"files\": [\n            \"party_tracker.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/BV001.json\",\n            \"areas/EDC001.json\",\n            \"areas/HG001.json\",\n            \"areas/OKR001.json\",\n            \"areas/RME001.json\",\n            \"areas/SR001.json\",\n            \"areas/THB001.json\",\n            \"areas/WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"BV001.json <-> map_BV001.json\",\n            \"EDC001.json <-> map_EDC001.json\",\n            \"HG001.json <-> map_HG001.json\",\n            \"OKR001.json <-> map_OKR001.json\",\n            \"RME001.json <-> map_RME001.json\",\n            \"SR001.json <-> map_SR001.json\",\n            \"THB001.json <-> map_THB001.json\",\n            \"WM001.json <-> map_WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"BV001.json <-> map_BV001.json\",\n            \"EDC001.json <-> map_EDC001.json\",\n            \"HG001.json <-> map_HG001.json\",\n            \"OKR001.json <-> map_OKR001.json\",\n            \"RME001.json <-> map_RME001.json\",\n            \"SR001.json <-> map_SR001.json\",\n            \"THB001.json <-> map_THB001.json\",\n            \"WM001.json <-> map_WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
-                "stderr": "",
+                "stdout": "[UpdateCharacterInfo] Creating OpenAI client for chat\n{\n  \"modules\": {\n    \"Murder_at_the_Drowning_Lass\": {\n      \"module\": \"Murder_at_the_Drowning_Lass\",\n      \"total_passed\": 70,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"EDC001_BU.json (areas/)\",\n            \"THB001_BU.json (areas/)\",\n            \"HG001.json (areas/)\",\n            \"THB001.json (areas/)\",\n            \"WM001.json (areas/)\",\n            \"RME001_BU.json (areas/)\",\n            \"RME001.json (areas/)\",\n            \"OKR001_BU.json (areas/)\",\n            \"HG001_BU.json (areas/)\",\n            \"OKR001.json (areas/)\",\n            \"BV001_BU.json (areas/)\",\n            \"SR001_BU.json (areas/)\",\n            \"EDC001.json (areas/)\",\n            \"SR001.json (areas/)\",\n            \"BV001.json (areas/)\",\n            \"WM001_BU.json (areas/)\"\n          ],\n          \"passed\": 16,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"chasm_bat_swarm.json\",\n            \"echo_wraith.json\",\n            \"red_maw_mercenary.json\",\n            \"red_maw_lookout.json\",\n            \"will_o_wisp.json\",\n            \"shadowed_chasm_spider.json\",\n            \"red_maw_enforcer.json\",\n            \"highwayman_lookouts.json\",\n            \"hungry_wolves.json\",\n            \"sorrowful_deep_lurker.json\",\n            \"duskmire_wolfpack.json\",\n            \"giant_weasel.json\",\n            \"swarm_of_animated_quills.json\",\n            \"crawling_shadows.json\",\n            \"specter_of_the_forgotten.json\",\n            \"abyssal_choker.json\"\n          ],\n          \"passed\": 16,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_OKR001.json\",\n            \"map_SR001.json\",\n            \"map_BV001.json\",\n            \"map_EDC001.json\",\n            \"map_WM001.json\",\n            \"map_THB001.json\",\n            \"map_HG001.json\",\n            \"map_RME001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"party\": {\n          \"files\": [\n            \"party_tracker.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/BV001.json\",\n            \"areas/EDC001.json\",\n            \"areas/HG001.json\",\n            \"areas/OKR001.json\",\n            \"areas/RME001.json\",\n            \"areas/SR001.json\",\n            \"areas/THB001.json\",\n            \"areas/WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"BV001.json <-> map_BV001.json\",\n            \"EDC001.json <-> map_EDC001.json\",\n            \"HG001.json <-> map_HG001.json\",\n            \"OKR001.json <-> map_OKR001.json\",\n            \"RME001.json <-> map_RME001.json\",\n            \"SR001.json <-> map_SR001.json\",\n            \"THB001.json <-> map_THB001.json\",\n            \"WM001.json <-> map_WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"BV001.json <-> map_BV001.json\",\n            \"EDC001.json <-> map_EDC001.json\",\n            \"HG001.json <-> map_HG001.json\",\n            \"OKR001.json <-> map_OKR001.json\",\n            \"RME001.json <-> map_RME001.json\",\n            \"SR001.json <-> map_SR001.json\",\n            \"THB001.json <-> map_THB001.json\",\n            \"WM001.json <-> map_WM001.json\"\n          ],\n          \"passed\": 8,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
+                "stderr": "DEBUG:NeverEndingQuest:[UpdateCharacterInfo] Creating OpenAI client for chat",
                 "json": {
                   "modules": {
                     "Murder_at_the_Drowning_Lass": {
@@ -6082,7 +6443,7 @@
               ],
               "continuity_version": "v1",
               "raw": {
-                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python3 /Users/zeug/Projects/NeverEndingQuest/scripts/module_continuity_audit.py --module Murder_at_the_Drowning_Lass --json --strict",
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/module_continuity_audit.py --module Murder_at_the_Drowning_Lass --json --strict",
                 "exit_code": 0,
                 "stdout": "{\n  \"status\": \"pass\",\n  \"module\": \"Murder_at_the_Drowning_Lass\",\n  \"module_path\": \"modules/Murder_at_the_Drowning_Lass\",\n  \"continuity_version\": \"v1\",\n  \"required_keys_present\": [\n    \"continuity_version\",\n    \"entry_state_variants\",\n    \"cross_module_refs\",\n    \"standalone_fallback\"\n  ],\n  \"missing_required_keys\": [],\n  \"normalized_refs_count\": 3,\n  \"blocking_errors\": [],\n  \"warnings\": [],\n  \"strict\": true,\n  \"exit_code\": 0\n}",
                 "stderr": "",
@@ -6125,10 +6486,8 @@
               "Monster Management & Generator -> Generate Monster Images",
               "Module Media Generator -> one-click monster media generation"
             ],
-            "structural_media_debt_count": 1,
-            "structural_media_debt_slugs": [
-              "will_o_wisp"
-            ]
+            "structural_media_debt_count": 0,
+            "structural_media_debt_slugs": []
           },
           "exit_code": 0
         },
@@ -6139,17 +6498,25 @@
             "module_path": "modules/Murder_at_the_Drowning_Lass",
             "version": "v1",
             "summary": {
-              "location_alias_count": 28,
-              "destination_phrase_count": 29,
+              "location_alias_count": 39,
+              "destination_phrase_count": 41,
               "npc_scene_authority_count": 23,
               "ambiguous_destination_count": 0,
               "unresolved_destination_count": 0,
               "missing_npc_authority_count": 3,
-              "normalized_shortform_destination_count": 1,
+              "normalized_shortform_destination_count": 2,
               "blocking_finding_count": 0,
               "warning_count": 3
             },
             "normalized_shortform_destination_phrases": [
+              {
+                "phrase": "collapsed shrine",
+                "anchor_phrase": "half collapsed shrine",
+                "location_id": "H01",
+                "shared_sources": [
+                  "areas/SR001.json#locations[H01].aliases"
+                ]
+              },
               {
                 "phrase": "echoes shrine",
                 "anchor_phrase": "veiled echoes shrine",
@@ -6175,11 +6542,11 @@
             "module_path": "modules/Murder_at_the_Drowning_Lass",
             "status": "degraded",
             "summary": {
-              "probe_count": 11,
-              "pass_count": 11,
+              "probe_count": 20,
+              "pass_count": 19,
               "fail_count": 0,
-              "degraded_count": 0,
-              "travel_probe_count": 3,
+              "degraded_count": 1,
+              "travel_probe_count": 12,
               "handoff_probe_count": 0,
               "hidden_npc_probe_count": 8
             },
@@ -6206,6 +6573,84 @@
                 "failure_class": ""
               },
               {
+                "id": "travel.brindlehearth-village",
+                "type": "travel",
+                "phrase": "brindlehearth village",
+                "status": "degraded",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01",
+                  "H02"
+                ],
+                "sources": [
+                  "areas/BV001.json#locations[H01].aliases",
+                  "areas/BV001.json#locations[H02].description"
+                ],
+                "expected_location_id": "",
+                "status_detail": "Fixture resolves to multiple expected location ids",
+                "failure_class": "travel_fixture_ambiguous_expected_target"
+              },
+              {
+                "id": "travel.circular-crypt",
+                "type": "travel",
+                "phrase": "circular crypt",
+                "status": "pass",
+                "resolved_location_id": "H02",
+                "candidate_location_ids": [
+                  "H02"
+                ],
+                "expected_location_ids": [
+                  "H02"
+                ],
+                "sources": [
+                  "areas/EDC001.json#locations[H02].aliases"
+                ],
+                "expected_location_id": "H02",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.cobbled-road",
+                "type": "travel",
+                "phrase": "cobbled road",
+                "status": "pass",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01"
+                ],
+                "sources": [
+                  "areas/OKR001.json#locations[H01].aliases"
+                ],
+                "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.collapsed-shrine",
+                "type": "travel",
+                "phrase": "collapsed shrine",
+                "status": "pass",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01"
+                ],
+                "sources": [
+                  "areas/SR001.json#locations[H01].aliases"
+                ],
+                "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
                 "id": "travel.echoes-shrine",
                 "type": "travel",
                 "phrase": "echoes shrine",
@@ -6222,6 +6667,102 @@
                   "areas/SR001.json#locations[H01].name"
                 ],
                 "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.half-collapsed-shrine",
+                "type": "travel",
+                "phrase": "half collapsed shrine",
+                "status": "pass",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01"
+                ],
+                "sources": [
+                  "areas/SR001.json#locations[H01].aliases"
+                ],
+                "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.main-road",
+                "type": "travel",
+                "phrase": "main road",
+                "status": "pass",
+                "resolved_location_id": "H03",
+                "candidate_location_ids": [
+                  "H03"
+                ],
+                "expected_location_ids": [
+                  "H03"
+                ],
+                "sources": [
+                  "areas/OKR001.json#locations[H03].aliases"
+                ],
+                "expected_location_id": "H03",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.shrine",
+                "type": "travel",
+                "phrase": "shrine",
+                "status": "pass",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01"
+                ],
+                "sources": [
+                  "areas/EDC001.json#locations[H01].aliases",
+                  "areas/SR001.json#locations[H01].aliases"
+                ],
+                "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.somber-shrine",
+                "type": "travel",
+                "phrase": "somber shrine",
+                "status": "pass",
+                "resolved_location_id": "H01",
+                "candidate_location_ids": [
+                  "H01"
+                ],
+                "expected_location_ids": [
+                  "H01"
+                ],
+                "sources": [
+                  "areas/EDC001.json#locations[H01].aliases"
+                ],
+                "expected_location_id": "H01",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.this-chamber",
+                "type": "travel",
+                "phrase": "this chamber",
+                "status": "pass",
+                "resolved_location_id": "H02",
+                "candidate_location_ids": [
+                  "H02"
+                ],
+                "expected_location_ids": [
+                  "H02"
+                ],
+                "sources": [
+                  "areas/EDC001.json#locations[H02].aliases"
+                ],
+                "expected_location_id": "H02",
                 "status_detail": "Resolved location matches expected destination",
                 "failure_class": ""
               },
@@ -6440,7 +6981,8 @@
             ],
             "blocking_errors": [],
             "warnings": [
-              "handoff_probe_fixture_missing"
+              "handoff_probe_fixture_missing",
+              "travel_fixture_ambiguous_expected_target: travel.brindlehearth-village - Fixture resolves to multiple expected location ids"
             ],
             "exit_code": 0
           }
@@ -6450,14 +6992,12 @@
           "npc_scene_authority['Bram of the Stones, wandering hermit'] has no visible locations or reveal bindings",
           "npc_scene_authority['Lysa Quickfingers'] has no visible locations or reveal bindings",
           "npc_scene_authority['Rovan Blackjaw'] has no visible locations or reveal bindings",
-          "handoff_probe_fixture_missing"
+          "handoff_probe_fixture_missing",
+          "travel_fixture_ambiguous_expected_target: travel.brindlehearth-village - Fixture resolves to multiple expected location ids"
         ],
         "remediation_categories": [
-          "structured_monster_media_missing",
-          "toolkit_manual_media_generation_required",
           "semantic_warning_only",
-          "semantic_tooling_debt",
-          "scene_entity_modeling_candidate"
+          "semantic_tooling_debt"
         ],
         "toolkit_media_policy": {
           "provider_generation_mode": "opt_in_manual_only",
@@ -6465,19 +7005,19 @@
             "Monster Management & Generator -> Generate Monster Images",
             "Module Media Generator -> one-click monster media generation"
           ],
-          "structural_media_debt_count": 1,
-          "structural_media_debt_slugs": [
-            "will_o_wisp"
-          ]
+          "structural_media_debt_count": 0,
+          "structural_media_debt_slugs": []
         },
         "fix_list": [
           "Review semantic audit warnings/tooling debt and remediate if needed",
-          "Review semantic probe warnings/tooling debt and remediate if needed",
-          "Manual toolkit remediation required: Monster Management & Generator -> Generate Monster Images",
-          "Optional batch remediation: Module Media Generator -> one-click monster media generation"
+          "Review semantic probe warnings/tooling debt and remediate if needed"
         ],
         "exit_code": 0
       }
+    },
+    "llm_remediation": {
+      "status": "skipped",
+      "reason": "no_affordances"
     }
   },
   "publication_parity_note": "Post-build parity now reports both structural readiness and semantic publishability.",

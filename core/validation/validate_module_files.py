@@ -24,6 +24,7 @@ Portions derived from SRD 5.2.1, licensed under CC BY 4.0.
 
 import json
 import os
+import re
 import argparse
 from pathlib import Path
 from collections import defaultdict
@@ -272,15 +273,20 @@ class ModuleValidator:
         """
         if not name:
             return ""
-        # Lowercase and strip
-        slug = name.lower().strip()
-        # Remove apostrophes
-        slug = slug.replace("'", "_").replace('"', "")
-        # Replace spaces and hyphens with underscores
-        slug = slug.replace(" ", "_").replace("-", "_")
-        # Remove any remaining non-alphanumeric except underscore
-        slug = "".join(c for c in slug if c.isalnum() or c == "_")
-        return slug
+        # Match runtime slug rules used by ModulePathManager and combat loading.
+        try:
+            from updates.update_character_info import normalize_character_name
+
+            return normalize_character_name(str(name))
+        except Exception:
+            # Fail-open fallback keeps parity with runtime behavior.
+            slug = str(name).strip().lower()
+            slug = slug.replace(" ", "_")
+            slug = slug.replace("'", "_")
+            slug = re.sub(r"[^a-z0-9_]", "_", slug)
+            slug = re.sub(r"_+", "_", slug)
+            slug = slug.strip("_")
+            return slug
 
     def validate_monster_files(self):
         """Validate monster files"""

@@ -2658,9 +2658,10 @@ def get_module_monsters_api(module_name):
                             if 'monsters' in location and location['monsters']:
                                 for monster in location['monsters']:
                                     if isinstance(monster, dict) and 'name' in monster:
-                                        # Normalize the name to match our monster IDs:
-                                        # "Bandit Captain Gorvek" -> "bandit_captain_gorvek"
-                                        monster_id = monster['name'].lower().replace(' ', '_')
+                                        # TABLETOP MODE: Use runtime-safe normalization for
+                                        # monster IDs so punctuation-bearing names (for example,
+                                        # Will-o'-Wisp) align with media and validator contracts.
+                                        monster_id = normalize_character_name(monster['name'])
                                         monster_ids.add(monster_id)
                                     elif isinstance(monster, str):
                                         # Handle string format like "1 Tainted Naiad"
@@ -2668,7 +2669,7 @@ def get_module_monsters_api(module_name):
                                         match = re.search(r'\d*\s*(.+?)(?:\s*\(|$)', monster)
                                         if match:
                                             monster_name = match.group(1).strip()
-                                            monster_id = monster_name.lower().replace(' ', '_')
+                                            monster_id = normalize_character_name(monster_name)
                                             monster_ids.add(monster_id)
         
         # Also scan the monsters folder for this module
@@ -2734,14 +2735,16 @@ def get_module_unified_assets(module_name):
                             if 'monsters' in location and location['monsters']:
                                 for monster in location['monsters']:
                                     if isinstance(monster, dict) and 'name' in monster:
-                                        monster_id = monster['name'].lower().replace(' ', '_')
+                                        # TABLETOP MODE: Keep monster asset IDs aligned with
+                                        # runtime-safe slug normalization.
+                                        monster_id = normalize_character_name(monster['name'])
                                         if monster_id not in monsters:
                                             monsters[monster_id] = {'name': monster['name'], 'type': 'monster'}
                                     elif isinstance(monster, str):
                                         match = re.search(r'\d*\s*(.+?)(?:\s*\(|$)', monster)
                                         if match:
                                             monster_name = match.group(1).strip()
-                                            monster_id = monster_name.lower().replace(' ', '_')
+                                            monster_id = normalize_character_name(monster_name)
                                             if monster_id not in monsters:
                                                 monsters[monster_id] = {'name': monster_name, 'type': 'monster'}
         
@@ -5924,7 +5927,19 @@ def handle_generate_unified_assets(data):
                     
                     for asset in monsters_to_image:
                         try:
-                            info(f"Generating image for monster: {asset['name']}")
+                            raw_asset_id = str(asset.get('id') or '').strip()
+                            raw_asset_name = str(asset.get('name') or raw_asset_id).strip() or raw_asset_id
+                            normalized_asset_id = (
+                                normalize_character_name(raw_asset_name)
+                                or normalize_character_name(raw_asset_id)
+                            )
+                            if not normalized_asset_id:
+                                raise ValueError("Missing monster asset id for MMG image generation")
+
+                            asset_id = normalized_asset_id
+                            asset_name = raw_asset_name or asset_id
+
+                            info(f"Generating image for monster: {asset_name}")
                             
                             # Get monster description
                             description = ""
@@ -5934,12 +5949,12 @@ def handle_generate_unified_assets(data):
                             if os.path.exists(monster_compendium_path):
                                 compendium_data = safe_read_json(monster_compendium_path) or {}
                                 monsters_dict = compendium_data.get('monsters', {})
-                                if asset['id'] in monsters_dict:
-                                    description = monsters_dict[asset['id']].get('description', '')
+                                if asset_id in monsters_dict:
+                                    description = monsters_dict[asset_id].get('description', '')
                             
                             # If no description in compendium, check module file
                             if not description:
-                                monster_file = Path(f"modules/{module_name}/monsters/{asset['id']}.json")
+                                monster_file = Path(f"modules/{module_name}/monsters/{asset_id}.json")
                                 if monster_file.exists():
                                     monster_data = safe_read_json(str(monster_file))
                                     if monster_data:
@@ -5947,18 +5962,18 @@ def handle_generate_unified_assets(data):
                             
                             # Fallback description
                             if not description:
-                                description = f"A fearsome {asset['name']} monster"
+                                description = f"A fearsome {asset_name} monster"
                             
                             # Generate the image
                             result = monster_generator.generate_monster_image(
-                                monster_id=asset['id'],
+                                monster_id=asset_id,
                                 style=style,
                                 model=model,
                                 pack_name=None  # Save to module instead of pack
                             )
                             
                             if result.get('success'):
-                                info(f"Successfully generated image for {asset['name']}")
+                                info(f"Successfully generated image for {asset_name}")
                                 
                                 # Copy the generated images to the module's media folder
                                 import shutil
@@ -5969,38 +5984,38 @@ def handle_generate_unified_assets(data):
                                 if result.get('image_path'):
                                     source_image = Path(result['image_path'])
                                     if source_image.exists():
-                                        dest_image = module_media_dir / f"{asset['id']}.jpg"
+                                        dest_image = module_media_dir / f"{asset_id}.jpg"
                                         shutil.copy2(source_image, dest_image)
                                         info(f"Copied image to module: {dest_image}")
                                 
                                 if result.get('thumbnail_path'):
                                     source_thumb = Path(result['thumbnail_path'])
                                     if source_thumb.exists():
-                                        dest_thumb = module_media_dir / f"{asset['id']}_thumb.jpg"
+                                        dest_thumb = module_media_dir / f"{asset_id}_thumb.jpg"
                                         shutil.copy2(source_thumb, dest_thumb)
                                         info(f"Copied thumbnail to module: {dest_thumb}")
                                 
                                 socketio.emit('unified_generation_progress', {
                                     'percent': int((completed + 1) / total_assets * 100),
-                                    'message': f"Generated image for {asset['name']}",
-                                    'asset_id': asset['id'],
-                                    'asset_name': asset['name'],
+                                    'message': f"Generated image for {asset_name}",
+                                    'asset_id': asset_id,
+                                    'asset_name': asset_name,
                                     'status': 'Image Generated'
                                 })
                             else:
-                                error(f"Failed to generate image for {asset['name']}: {result.get('error')}")
+                                error(f"Failed to generate image for {asset_name}: {result.get('error')}")
                                 generation_failures.append({
-                                    'asset_id': asset.get('id'),
-                                    'asset_name': asset.get('name'),
+                                    'asset_id': asset_id,
+                                    'asset_name': asset_name,
                                     'asset_type': 'monster',
                                     'phase': 'image',
                                     'error': str(result.get('error') or 'Unknown monster image generation failure'),
                                 })
                                 socketio.emit('unified_generation_progress', {
                                     'percent': int((completed + 1) / total_assets * 100),
-                                    'message': f"Failed to generate image for {asset['name']}: {result.get('error')}",
-                                    'asset_id': asset['id'],
-                                    'asset_name': asset['name'],
+                                    'message': f"Failed to generate image for {asset_name}: {result.get('error')}",
+                                    'asset_id': asset_id,
+                                    'asset_name': asset_name,
                                     'status': 'Failed'
                                 })
                             
@@ -6010,9 +6025,11 @@ def handle_generate_unified_assets(data):
                             time.sleep(3)
                             
                         except Exception as e:
-                            error(f"Failed to generate image for monster {asset['name']}: {e}")
+                            error(f"Failed to generate image for monster {asset.get('name', '')}: {e}")
                             generation_failures.append({
-                                'asset_id': asset.get('id'),
+                                'asset_id': normalize_character_name(
+                                    str(asset.get('name') or asset.get('id') or '')
+                                ) or str(asset.get('id') or ''),
                                 'asset_name': asset.get('name'),
                                 'asset_type': 'monster',
                                 'phase': 'image',
@@ -6021,8 +6038,10 @@ def handle_generate_unified_assets(data):
                             completed += 1
                             socketio.emit('unified_generation_progress', {
                                 'percent': int(completed / total_assets * 100),
-                                'message': f"Error generating {asset['name']}: {str(e)}",
-                                'asset_id': asset['id'],
+                                'message': f"Error generating {asset.get('name', 'monster')}: {str(e)}",
+                                'asset_id': normalize_character_name(
+                                    str(asset.get('name') or asset.get('id') or '')
+                                ) or str(asset.get('id') or ''),
                                 'asset_name': asset['name'],
                                 'status': 'Error'
                             })

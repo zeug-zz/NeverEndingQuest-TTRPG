@@ -21,6 +21,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
   updateEncounter: modify an existing encounter.
   updatePartyTracker: update module/area/location fields; use for traveling to EXISTING modules.
   transitionLocation: move to location; only works WITHIN current module.
+  updateSceneFollower: track durable scene followers/captives/guards grounded in deterministic module/NPC/follower authority; visibility does NOT make them combat-valid. Narrator does not self-authorize — external world entity introduction belongs to the v2 Titan pipeline.
   createNewModule: when player commits to new adventure hook; include full narrative in parameters.
   saveGame: create save snapshot using description and mode.
   restoreGame: load a save using save folder identifier.
@@ -172,6 +173,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
    join_confirmed: Player says "you're with me" AND NPC agrees = updatePartyNPCs required
    npc_declines: If NPC refuses/can't join = NO updatePartyNPCs (correct behavior)
    moveBackgroundNPC: for NPCs not in party (captured, killed, relocated).
+   updateSceneFollower: for durable scene followers grounded in module NPC/monster authority or existing follower records. Preserve source_module/source_npc_name/source_entity_slug/characterFileRef/recruitedFromLocationId when known.
    rule: CRITICAL - If NPC accepts invitation to join, MUST include updatePartyNPCs in SAME response.
    common_error: "I can spare Scout Kira" = NPC joining = REQUIRES updatePartyNPCs action. updateCharacterInfo is NOT sufficient.
    correct_flow: NPC agrees -> updatePartyNPCs with operation="add" -> system creates character file automatically
@@ -322,6 +324,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
   updatePlot:          {"plotPointId": string, "newStatus": string, "plotImpact": string}
   updatePartyNPCs:     {"operation": string, "npc": object}  // operation: "add"/"remove"
   moveBackgroundNPC:   {"npcName": string, "context": string, "currentLocation": string}
+  updateSceneFollower:  {"entity": string, "state": string_opt, "entityType": string_opt, "currentLocation": string_opt, "visibleInStrip": bool_opt, "disposition": string_opt, "monsterType": string_opt, "sourceModule": string_opt, "sourceNpcName": string_opt, "sourceEntitySlug": string_opt, "characterFileRef": string_opt, "recruitedFromLocationId": string_opt}
   levelUp:             {"entityName": string, "newLevel": integer}  // integer only, not string
   establishHub:        {"hubName": string, "hubType": string, "description": string, "services": array, "ownership": string}
   exitGame:            {"farewell": string}
@@ -395,6 +398,9 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
   ],
   moveBackgroundNPC:[
     {"action":"moveBackgroundNPC","parameters":{"npcName":"Brother Lintar","context":"Escorted toward the abbey for questioning.","currentLocation":"AD01"}}
+  ],
+  updateSceneFollower:[
+    {"action":"updateSceneFollower","parameters":{"entity":"Corrupted Ranger Thane","state":"present","entityType":"monster","disposition":"guarded_guide","currentLocation":"NC02","visibleInStrip":true,"monsterType":"Corrupted Ranger Thane"}}
   ],
   establishHub:[
     {"action":"establishHub","parameters":{"hubName":"The Silver Swan Inn","hubType":"tavern","description":"A safe base for planning and recovery.","services":["rest","information"],"ownership":"party"}}
