@@ -6879,10 +6879,10 @@
         
         socket.on('image_generation_error', (data) => {
             // Re-enable the button that was marked as loading
-            const loadingButton = document.querySelector('.image-generation-button.loading');
+            const loadingButton = document.querySelector('.image-generation-button.loading-image');
             if (loadingButton) {
                 loadingButton.disabled = false;
-                loadingButton.classList.remove('loading');
+                loadingButton.classList.remove('loading-image');
                 loadingButton.textContent = 'Generate Image';
             }
             

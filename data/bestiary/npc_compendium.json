@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "created": "2025-09-08T21:54:54.376133",
-  "total_npcs": 160,
+  "total_npcs": 162,
   "npcs": {
     "abbess_miralda": {
       "name": "Abbess Miralda",
@@ -76,7 +76,7 @@
     },
     "archivist_automaton": {
       "name": "Archivist Automaton",
-      "description": "A semi-sapient dwarven automaton assigned to monitor and record the cell’s experiments. Scarred and flickering, it is conflicted—its primary programming to help, but secondary instructions to prevent any subject's escape.",
+      "description": "A semi-sapient dwarven automaton assigned to monitor and record the cell\u2019s experiments. Scarred and flickering, it is conflicted\u2014its primary programming to help, but secondary instructions to prevent any subject's escape.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -184,7 +184,7 @@
     },
     "constable_farrel_dun": {
       "name": "Constable Farrel Dun",
-      "description": "The doughty, sharp-eyed local lawman with a bristly mustache, Farrel Dun is known for his even temper and sense of duty. He’s quick to help townsfolk and visitors alike, though his patience for nonsense is limited. Farrel is protective of his staff and wary of outsiders meddling in village affairs, but he values honesty and courage.",
+      "description": "The doughty, sharp-eyed local lawman with a bristly mustache, Farrel Dun is known for his even temper and sense of duty. He\u2019s quick to help townsfolk and visitors alike, though his patience for nonsense is limited. Farrel is protective of his staff and wary of outsiders meddling in village affairs, but he values honesty and courage.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -462,7 +462,7 @@
     },
     "gritch_the_one_eared": {
       "name": "Gritch the One-Eared",
-      "description": "A twitchy, shabby man with a missing ear, Gritch is a regular at Duskmantle Curios. He’s often found pawing through oddments, muttering about curses and treasures. Gritch is evasive but knows more about local criminal dealings than he lets on.",
+      "description": "A twitchy, shabby man with a missing ear, Gritch is a regular at Duskmantle Curios. He\u2019s often found pawing through oddments, muttering about curses and treasures. Gritch is evasive but knows more about local criminal dealings than he lets on.",
       "source_label": "Gritch the One-Eared, nervous patron",
       "source_labels": [
         "Gritch the One-Eared, nervous patron"
@@ -699,7 +699,7 @@
     },
     "maela_kett": {
       "name": "Maela Kett",
-      "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar’s battered safe, wary since recent troubles. She knows much of the town’s secrets but trusts few.",
+      "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar\u2019s battered safe, wary since recent troubles. She knows much of the town\u2019s secrets but trusts few.",
       "source_label": "Maela Kett, the wary tavernkeeper",
       "source_labels": [
         "Maela Kett, the wary tavernkeeper"
@@ -743,15 +743,15 @@
       "legacy_ids": []
     },
     "manifestation_of_the_forest_s_spirit": {
-      "name": "Manifestation of the Forest’s Spirit",
+      "name": "Manifestation of the Forest\u2019s Spirit",
       "description": "A shimmering, wounded avatar of the ancient woods, appearing as a white stag entwined with blood-red roses and spectral vines. Its eyes plead for aid, but its form flickers with dangerous, uncontrolled power.",
-      "source_id": "manifestation_of_the_forest’s_spirit",
+      "source_id": "manifestation_of_the_forest\u2019s_spirit",
       "source_ids": [
-        "manifestation_of_the_forest’s_spirit"
+        "manifestation_of_the_forest\u2019s_spirit"
       ],
       "alternate_descriptions": [],
       "legacy_ids": [
-        "manifestation_of_the_forest’s_spirit"
+        "manifestation_of_the_forest\u2019s_spirit"
       ]
     },
     "martha_finch": {
@@ -931,7 +931,7 @@
     },
     "nimblethorn": {
       "name": "Nimblethorn",
-      "description": "A sly, fey-influenced goblin with mottled green skin and a cap of fungus for a hat. Nimblethorn skips from shadow to shadow, offering cryptic warnings and bargains to those who show respect for the old ways. Deeply connected to the glade’s curse, Nimblethorn knows secret paths and hidden dangers.",
+      "description": "A sly, fey-influenced goblin with mottled green skin and a cap of fungus for a hat. Nimblethorn skips from shadow to shadow, offering cryptic warnings and bargains to those who show respect for the old ways. Deeply connected to the glade\u2019s curse, Nimblethorn knows secret paths and hidden dangers.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -965,7 +965,7 @@
     },
     "old_ellyn": {
       "name": "Old Ellyn",
-      "description": "A spry, sharp-tongued elder with wild silver hair and a knack for captivating crowds with local legends. Ellyn is beloved by children and tolerated by adults, possessing an uncanny memory for the Vale’s strangest tales—some of which may hold real clues.",
+      "description": "A spry, sharp-tongued elder with wild silver hair and a knack for captivating crowds with local legends. Ellyn is beloved by children and tolerated by adults, possessing an uncanny memory for the Vale\u2019s strangest tales\u2014some of which may hold real clues.",
       "source_label": "Old Ellyn, the folklore spinner",
       "source_labels": [
         "Old Ellyn, the folklore spinner"
@@ -1051,7 +1051,7 @@
     },
     "rambling_dwarven_survivor": {
       "name": "Rambling Dwarven Survivor",
-      "description": "A disheveled, wild-eyed dwarf in patched armor, muttering about monsters beneath the ground. He is wary but desperate for help—and may offer warnings, rumors, or even a crude map of the Marches if befriended.",
+      "description": "A disheveled, wild-eyed dwarf in patched armor, muttering about monsters beneath the ground. He is wary but desperate for help\u2014and may offer warnings, rumors, or even a crude map of the Marches if befriended.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1089,7 +1089,7 @@
     },
     "red_maw_scouts": {
       "name": "Red Maw scouts",
-      "description": "Wary, mud-splattered members of the Red Maw gang, clad in patchwork leathers and bearing shortbows and knives. Their demeanor is tense—they’re on the lookout for rivals and authorities, but not immediately hostile unless threatened.",
+      "description": "Wary, mud-splattered members of the Red Maw gang, clad in patchwork leathers and bearing shortbows and knives. Their demeanor is tense\u2014they\u2019re on the lookout for rivals and authorities, but not immediately hostile unless threatened.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1119,21 +1119,21 @@
     "sable": {
       "name": "Sable",
       "description": "A spectral scribe bound to the ledger, cursed to witness every name added. Sable flickers in and out of view, her ink-stained fingers trembling.",
-      "source_label": "Sable, Reluctant Scribe’s Shade",
+      "source_label": "Sable, Reluctant Scribe\u2019s Shade",
       "source_labels": [
-        "Sable, Reluctant Scribe’s Shade"
+        "Sable, Reluctant Scribe\u2019s Shade"
       ],
-      "source_id": "sable,_reluctant_scribe’s_shade",
+      "source_id": "sable,_reluctant_scribe\u2019s_shade",
       "source_ids": [
-        "sable,_reluctant_scribe’s_shade"
+        "sable,_reluctant_scribe\u2019s_shade"
       ],
-      "role_hint": "Reluctant Scribe’s Shade",
+      "role_hint": "Reluctant Scribe\u2019s Shade",
       "role_hints": [
-        "Reluctant Scribe’s Shade"
+        "Reluctant Scribe\u2019s Shade"
       ],
       "alternate_descriptions": [],
       "legacy_ids": [
-        "sable,_reluctant_scribe’s_shade"
+        "sable,_reluctant_scribe\u2019s_shade"
       ]
     },
     "scout_elen": {
@@ -1325,7 +1325,7 @@
     },
     "surviving_druids": {
       "name": "Surviving Druids",
-      "description": "A haggard trio of druids, their once-green robes now stained with bramble blood and their eyes haunted. They cling to the hope of reversing the Wilds’ corruption but are wary of strangers, suspecting betrayal or madness from any who survive here.",
+      "description": "A haggard trio of druids, their once-green robes now stained with bramble blood and their eyes haunted. They cling to the hope of reversing the Wilds\u2019 corruption but are wary of strangers, suspecting betrayal or madness from any who survive here.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1339,7 +1339,7 @@
     },
     "tamsin_quill": {
       "name": "Tamsin Quill",
-      "description": "A sharp-eyed gnome with a quick wit and quicker hands, Tamsin deals in curiosities, maps, and secrets. She’s as likely to trade for a good story as she is for coin.",
+      "description": "A sharp-eyed gnome with a quick wit and quicker hands, Tamsin deals in curiosities, maps, and secrets. She\u2019s as likely to trade for a good story as she is for coin.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1463,7 +1463,7 @@
     },
     "thornkin_rella": {
       "name": "Thornkin Rella",
-      "description": "A quick-witted, thorn-fingered half-fey merchant, Rella always has a mischievous smile and a knack for finding what others cannot. She’s famed for her rare reagents and her odd riddles.",
+      "description": "A quick-witted, thorn-fingered half-fey merchant, Rella always has a mischievous smile and a knack for finding what others cannot. She\u2019s famed for her rare reagents and her odd riddles.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1561,7 +1561,7 @@
     },
     "whisperroot": {
       "name": "Whisperroot",
-      "description": "A spectral dryad, now half-fused with the stone’s roots. Whisperroot weeps for the land’s pain and offers cryptic warnings. Her influence can briefly purify an area if properly entreated.",
+      "description": "A spectral dryad, now half-fused with the stone\u2019s roots. Whisperroot weeps for the land\u2019s pain and offers cryptic warnings. Her influence can briefly purify an area if properly entreated.",
       "alternate_descriptions": [],
       "legacy_ids": []
     },
@@ -1612,7 +1612,15 @@
       "original_generated_at": "2025-08-18T21:12:14.493732",
       "alternate_descriptions": [],
       "legacy_ids": []
+    },
+    "corrupted_ranger_thane": {
+      "name": "Corrupted Ranger Thane",
+      "description": "Once a proud ranger sent to investigate the corruption, Thane has been partially consumed by the taint but retains enough of his humanity to feel the horror of his transformation. His armor bears the marks of desperate battles against creatures that were once his woodland allies, and his eyes flicker between awareness and malevolent hunger."
+    },
+    "wounded_ranger_gareth": {
+      "name": "Wounded Ranger Gareth",
+      "description": "A grizzled ranger who was scouting bandit movements when he and Kael were cornered by corrupted wolves. He has a bleeding shoulder wound but fights with grim determination. He carries a partially completed map of the bandit camp defenses and patrol routes."
     }
   },
-  "last_updated": "2026-04-20T17:30:11.993535"
+  "last_updated": "2026-05-01T10:04:15.161533"
 }

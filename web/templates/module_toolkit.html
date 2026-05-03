@@ -2733,7 +2733,10 @@
                                     <li data-stage="6">Connections</li>
                                     <li data-stage="7">Finalizing</li>
                                     <li data-stage="8">Saving</li>
-                                    <li data-stage="9">Post-Build Finishing</li>
+                                    <li data-stage="9">Readiness Validation</li>
+                                    <li data-stage="10">Readiness Repair</li>
+                                    <li data-stage="11">Readiness Audit</li>
+                                    <li data-stage="12">Post-Build Finishing</li>
                                 </ul>
                                 <p id="status-message">Initializing module builder...</p>
                                 <button class="game-button cancel" id="cancel-btn">Cancel Generation</button>
@@ -6131,14 +6134,19 @@
             if (resultsSection) resultsSection.style.display = 'block';
             const finalStatus = data.final_status || 'success';
             const postBuildStatus = data.post_build_status || finalStatus;
-            const parityNote = data.publication_parity_note || '';
+            const readyStatus = data.ready_status || '';
+            const publishableStatus = data.publishable_status || '';
             const buildReport = data.build_report ? `\n\nBuild Report:\n${JSON.stringify(data.build_report, null, 2)}` : '';
+            let extra = '';
+            if (readyStatus) extra += `Readiness: ${readyStatus}\n`;
+            if (publishableStatus) extra += `Publishability: ${publishableStatus}\n`;
             const output =
                 `Module Name: ${data.module_name}\n` +
                 `Final Status: ${finalStatus}\n` +
-                `Post-Build Status: ${postBuildStatus}\n\n` +
-                `${data.message}\n\n` +
-                `${parityNote}${buildReport}`;
+                `Post-Build Status: ${postBuildStatus}\n` +
+                extra +
+                `\n${data.message}\n` +
+                `${buildReport}`;
             const moduleOutput = document.getElementById('module-output');
             if (moduleOutput) moduleOutput.textContent = output;
             socket.emit('request_module_list');
@@ -6146,7 +6154,13 @@
         
         socket.on('module_error', (data) => {
             let message = data.error || 'Unknown module build error';
-            if (data.generation_succeeded && data.finishing_report) {
+            if (data.generation_succeeded && data.readiness_failed) {
+                message += `\n\nGeneration completed, but readiness convergence failed. Review the readiness result for details.`;
+                if (data.readiness_result) {
+                    message += `\n\nReadiness:\n${JSON.stringify(data.readiness_result, null, 2)}`;
+                }
+                socket.emit('request_module_list');
+            } else if (data.generation_succeeded && data.finishing_report) {
                 message += `\n\nGeneration completed, but finishing failed:\n${buildToolkitFinishingFailureDetails(data.finishing_report)}`;
                 socket.emit('request_module_list');
             }
@@ -7774,9 +7788,15 @@
                 });
         }
 
+        // Builds a type-qualified asset key so NPC and MONSTER rows with the same slug
+        // can be independently selected, addressed in DOM IDs, and resolved in thumbnails.
+        function getAssetKey(assetType, assetId) {
+            return String(assetType ?? '') + ':' + String(assetId ?? '');
+        }
+
         // Display assets in table
-        function getAssetThumbElementId(assetId) {
-            const normalized = String(assetId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        function getAssetThumbElementId(assetKey) {
+            const normalized = String(assetKey ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
             return `asset-thumb-${normalized}`;
         }
 
@@ -7798,9 +7818,12 @@
             document.getElementById('asset-table-container').style.display = 'block';
             
             assets.forEach(asset => {
+                const assetKey = getAssetKey(asset.type, asset.id);
                 const row = document.createElement('tr');
                 row.dataset.assetId = asset.id;
                 row.dataset.assetType = asset.type;
+                row.dataset.assetKey = assetKey;
+                const assetKeyArg = serializeForInlineArg(assetKey);
                 const assetIdArg = serializeForInlineArg(asset.id);
                 const assetTypeArg = serializeForInlineArg(asset.type);
                 const assetNameArg = serializeForInlineArg(asset.name);
@@ -7824,6 +7847,9 @@
                 };
                 
                 const getStatus = () => {
+                    if (asset.media_authority && asset.media_authority !== 'self') {
+                        return '<span style="color: #888;" title="Media linked to MONSTER">Linked to ' + asset.media_authority + '</span>';
+                    }
                     if (asset.has_description && asset.has_image && asset.has_thumbnail) {
                         return '<span style="color: #4CAF50;">Complete</span>';
                     } else if (!asset.has_description) {
@@ -7840,10 +7866,10 @@
                 };
                 
                 row.innerHTML = `
-                    <td><input type="checkbox" class="asset-checkbox" data-id="${asset.id}" onchange="toggleAssetSelection(${assetIdArg})"></td>
+                    <td><input type="checkbox" class="asset-checkbox" data-key="${assetKey}" onchange="toggleAssetSelection(${assetKeyArg})"></td>
                     <td><span class="asset-type-${asset.type}">${asset.type.toUpperCase()}</span></td>
                     <td>${asset.name}</td>
-                    <td><div class="asset-thumbnail-preview" id="${getAssetThumbElementId(asset.id)}" data-asset-type="${asset.type}" data-asset-name="${asset.name}"></div></td>
+                    <td><div class="asset-thumbnail-preview" id="${getAssetThumbElementId(assetKey)}" data-asset-type="${asset.type}" data-asset-name="${asset.name}"></div></td>
                     <td class="status-icon">${getStatusIcon(asset.has_description, false)}</td>
                     <td class="status-icon">${getMediaStatusIcon(asset.has_image, asset.has_static_image, 'image')}</td>
                     <td class="status-icon">${getMediaStatusIcon(asset.has_thumbnail, asset.has_static_thumbnail, 'thumb')}</td>
@@ -7852,12 +7878,16 @@
                 `;
                 
                 tbody.appendChild(row);
-                loadAssetThumbnail(asset.id, asset.type);
+                loadAssetThumbnail(assetKey);
             });
         }
 
-        function loadAssetThumbnail(assetId, assetType) {
-            const thumbContainer = document.getElementById(getAssetThumbElementId(assetId));
+        function loadAssetThumbnail(assetKey) {
+            // Split qualified key back into type and id
+            const colonIdx = assetKey.indexOf(':');
+            const assetType = colonIdx >= 0 ? assetKey.slice(0, colonIdx) : 'npc';
+            const assetId = colonIdx >= 0 ? assetKey.slice(colonIdx + 1) : assetKey;
+            const thumbContainer = document.getElementById(getAssetThumbElementId(assetKey));
             if (!thumbContainer) return;
 
             const moduleSelect = document.getElementById('media-gen-module-select');
@@ -7939,18 +7969,20 @@
             );
         }
 
-        // Selection functions
-        function toggleAssetSelection(assetId) {
-            if (selectedAssets.has(assetId)) {
-                selectedAssets.delete(assetId);
+        // Selection functions — use type-qualified keys so NPC and MONSTER rows
+        // with the same slug are independently selectable.
+        function toggleAssetSelection(assetKey) {
+            if (selectedAssets.has(assetKey)) {
+                selectedAssets.delete(assetKey);
             } else {
-                selectedAssets.add(assetId);
+                selectedAssets.add(assetKey);
             }
             updateGenerateButton();
         }
 
         function selectAllAssets() {
-            moduleAssets.forEach(asset => selectedAssets.add(asset.id));
+            selectedAssets.clear();
+            moduleAssets.forEach(asset => selectedAssets.add(getAssetKey(asset.type, asset.id)));
             document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = true);
             updateGenerateButton();
         }
@@ -7959,7 +7991,7 @@
             selectedAssets.clear();
             moduleAssets.forEach(asset => {
                 if (!asset.has_image || !asset.has_thumbnail) {
-                    selectedAssets.add(asset.id);
+                    selectedAssets.add(getAssetKey(asset.type, asset.id));
                 }
             });
             updateCheckboxes();
@@ -7970,7 +8002,7 @@
             selectedAssets.clear();
             moduleAssets.forEach(asset => {
                 if (!asset.has_description) {
-                    selectedAssets.add(asset.id);
+                    selectedAssets.add(getAssetKey(asset.type, asset.id));
                 }
             });
             updateCheckboxes();
@@ -7985,7 +8017,7 @@
 
         function updateCheckboxes() {
             document.querySelectorAll('.asset-checkbox').forEach(cb => {
-                cb.checked = selectedAssets.has(cb.dataset.id);
+                cb.checked = selectedAssets.has(cb.dataset.key);
             });
         }
 
@@ -8013,8 +8045,16 @@
             const generateDescriptions = document.getElementById('media-gen-descriptions').checked;
             const generateImages = document.getElementById('media-gen-images').checked;
 
-            // Prepare selected assets data
-            const assetsToGenerate = moduleAssets.filter(a => selectedAssets.has(a.id));
+            // Resolve qualified keys back to asset payloads.
+            const assetsToGenerate = [];
+            const seenKeys = new Set();
+            moduleAssets.forEach(a => {
+                const key = getAssetKey(a.type, a.id);
+                if (selectedAssets.has(key) && !seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    assetsToGenerate.push(a);
+                }
+            });
             
             // Count asset types
             const npcCount = assetsToGenerate.filter(a => a.type === 'npc').length;
@@ -8179,9 +8219,16 @@
                 addLog('mediaGenLog', data.message, 'info');
             }
             
-            // Update asset status in table if provided
+            // Update asset status in table if provided.
+            // Match by asset_key when available (type-qualified), falling back to asset_id.
             if (data.asset_id && data.status) {
-                const row = document.querySelector(`tr[data-asset-id="${data.asset_id}"]`);
+                let row = null;
+                if (data.asset_key) {
+                    row = document.querySelector(`tr[data-asset-key="${data.asset_key}"]`);
+                }
+                if (!row) {
+                    row = document.querySelector(`tr[data-asset-id="${data.asset_id}"]`);
+                }
                 if (row) {
                     const statusCell = row.querySelector('td:last-child');
                     if (statusCell) {

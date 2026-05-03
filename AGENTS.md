@@ -1091,6 +1091,35 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Thornwood MMG Monster Authority Canonicalization (COMPLETED - 2026-05-03)
+
+**Status:** COMPLETED - Same-slug monster actors no longer rely on delegated duplicate NPC MMG rows; canonical monster authority now drives unified assets and report output while preserving non-combat monster follower/parley UX.
+
+**Objective:**
+- Stop Thornwood actor-authority leaks where `Bandit Captain Gorvek`, `Corrupted Ranger Thane`, and `Malarok the Corruptor` appeared as duplicate NPC+monster MMG assets from backup area data.
+- Preserve gameplay UX where monster-authoritative actors can still parley, be captured, guide the party, and remain visible as scene followers (`entity_type: "monster"`).
+- Align OpenSpec change `toolkit-mmg-asset-authority-collision-fix` to canonical monster authority contract.
+
+**Implementation Summary:**
+- `web/web_interface.py`
+  - Unified-assets endpoint now builds module monster-authority slugs and suppresses duplicate NPC rows for monster-authoritative IDs.
+  - Added suppression telemetry (`suppressed ... same-slug monster-authoritative NPC rows`) in toolkit logs.
+  - NPC image-generation path now skips stale NPC payloads whose slug is monster-authoritative.
+  - NPC description status search order hardened to include live area NPC descriptions before backup area fallback.
+- `utils/module_media_generator_report.py`
+  - Report audit now canonicalizes same-slug NPC/monster collisions by keeping the monster row and dropping duplicate NPC rows.
+- `scripts/test_toolkit_mmg_authority_contract.py`
+  - Replaced delegated-row assertions with canonical-authority behavioral and source contracts.
+- `openspec/changes/toolkit-mmg-asset-authority-collision-fix/*`
+  - Proposal/design/specs/tasks rewritten to require canonical monster authority and preserve monster narrative interaction paths.
+
+**Verification:**
+- `.venv/bin/python scripts/test_toolkit_mmg_authority_contract.py -v` -> PASS (8/8)
+- `.venv/bin/python scripts/test_toolkit_module_build_publication_parity.py` -> PASS (37/37)
+- `.venv/bin/python core/validation/validate_module_files.py --module The_Thornwood_Watch` -> PASS (49/49)
+- `.venv/bin/python scripts/audit_module_publishability.py --module The_Thornwood_Watch --json` -> FAIL (pre-existing blocker unchanged: `vitreol_corrupted_thrall` base media gap)
+- `openspec validate toolkit-mmg-asset-authority-collision-fix` -> VALID
+
 ### Toolkit Builder Readiness Pipeline Parity Hardening (COMPLETED - 2026-05-03)
 
 **Status:** COMPLETED - Legacy Module Builder readiness now fail-closes with sidebar-compatible freshness markers and module-local readiness artifacts.

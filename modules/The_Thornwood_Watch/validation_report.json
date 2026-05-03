@@ -1,9 +1,9 @@
 {
   "module": "The_Thornwood_Watch",
-  "timestamp": "2026-04-09T13:27:43.180548",
+  "timestamp": "2026-05-03T18:34:29.305865",
   "summary": {
-    "total_files": 46,
-    "total_passed": 48,
+    "total_files": 47,
+    "total_passed": 49,
     "total_failed": 0
   },
   "results": {
@@ -34,6 +34,7 @@
         "wolf.json",
         "lookout.json",
         "malarok_the_corruptor.json",
+        "vitreol_corrupted_thrall.json",
         "tainted_stirge.json",
         "bandit_sentry.json",
         "tree_blight.json",
@@ -54,7 +55,7 @@
         "corrupted_owlbear.json",
         "writhing_grubs.json"
       ],
-      "passed": 25,
+      "passed": 26,
       "failed": 0,
       "errors": []
     },

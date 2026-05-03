@@ -105,13 +105,20 @@ def _audit_asset_media(
     if asset_type not in _SUPPORTED_MEDIA_TYPES:
         return None
 
+    media_authority = str(asset.get("media_authority") or "").strip()
+
     asset_id_raw = str(asset.get("id") or "").strip()
     asset_id = _normalize_media_asset_id(asset_id_raw, asset_type)
     if not asset_id:
         return None
 
     asset_name = str(asset.get("name") or asset_id).strip() or asset_id
-    media_dir = _module_media_dir(project_root, module_name, asset_type)
+
+    # When an NPC row delegates media authority to a monster, check the
+    # monster media folder and mark the entry as complete/skipped for MMG.
+    is_delegated = bool(media_authority) and media_authority != "self"
+    effective_type = "monster" if is_delegated else asset_type
+    media_dir = _module_media_dir(project_root, module_name, effective_type)
     image_path = _first_existing_path(media_dir, [f"{asset_id}.jpg", f"{asset_id}.png"])
     thumbnail_path = _first_existing_path(
         media_dir,
@@ -128,7 +135,7 @@ def _audit_asset_media(
     if not has_thumbnail:
         missing_fields.append("thumbnail")
 
-    return {
+    result: Dict[str, Any] = {
         "id": asset_id,
         "name": asset_name,
         "type": asset_type,
@@ -140,6 +147,14 @@ def _audit_asset_media(
         "missing_fields": missing_fields,
         "complete": not missing_fields,
     }
+
+    if is_delegated:
+        result["authority_delegated"] = True
+        # Delegated entries are considered complete even without local media.
+        result["complete"] = True
+        result["missing_fields"] = []
+
+    return result
 
 
 def build_module_media_generator_report(
@@ -158,6 +173,26 @@ def build_module_media_generator_report(
         if audit is not None:
             asset_audits.append(audit)
 
+    # Canonical same-slug actor authority: if both monster and npc appear for
+    # the same slug, keep the monster audit row and drop the duplicate npc row.
+    canonical_audits: List[Dict[str, Any]] = []
+    grouped_by_slug: Dict[str, List[Dict[str, Any]]] = {}
+    for audit in asset_audits:
+        slug = str(audit.get("id") or "").strip()
+        grouped_by_slug.setdefault(slug, []).append(audit)
+
+    for slug, grouped_rows in grouped_by_slug.items():
+        if not slug:
+            canonical_audits.extend(grouped_rows)
+            continue
+        monster_rows = [row for row in grouped_rows if str(row.get("type") or "") == "monster"]
+        if monster_rows:
+            canonical_audits.append(monster_rows[0])
+        else:
+            canonical_audits.extend(grouped_rows)
+
+    asset_audits = canonical_audits
+
     missing_assets = [
         {
             "id": entry["id"],
@@ -166,7 +201,7 @@ def build_module_media_generator_report(
             "missing_fields": list(entry.get("missing_fields") or []),
         }
         for entry in asset_audits
-        if entry.get("missing_fields")
+        if entry.get("missing_fields") and not entry.get("authority_delegated")
     ]
 
     missing_count = len(missing_assets)

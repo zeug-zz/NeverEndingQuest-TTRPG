@@ -138,7 +138,8 @@ class MonsterGenerator:
         monster_id: str, 
         style: str = "photorealistic",
         model: str = "gpt-image-1",
-        pack_name: Optional[str] = None
+        pack_name: Optional[str] = None,
+        output_dir: Optional[str] = None
     ) -> Dict:
         """
         Generate a single monster image
@@ -223,10 +224,22 @@ class MonsterGenerator:
                 raise Exception("No image data in response")
             
             # Save image
-            save_path = self._save_image(img, monster_id, style, pack_name)
+            save_path = self._save_image(
+                img,
+                monster_id,
+                style,
+                pack_name,
+                output_dir=output_dir,
+            )
             
             # Generate thumbnail
-            thumb_path = self._generate_thumbnail(img, monster_id, style, pack_name)
+            thumb_path = self._generate_thumbnail(
+                img,
+                monster_id,
+                style,
+                pack_name,
+                output_dir=output_dir,
+            )
             
             # Track image cost (fail-open)
             try:
@@ -273,10 +286,13 @@ class MonsterGenerator:
         img: Image.Image, 
         monster_id: str, 
         style: str,
-        pack_name: Optional[str] = None
+        pack_name: Optional[str] = None,
+        output_dir: Optional[str] = None
     ) -> Path:
         """Save generated image to appropriate pack directory"""
-        if pack_name:
+        if output_dir:
+            base_dir = Path(output_dir)
+        elif pack_name:
             base_dir = Path(f"graphic_packs/{pack_name}/monsters")
         else:
             base_dir = Path(f"graphic_packs/temp_{style}/monsters")
@@ -293,10 +309,13 @@ class MonsterGenerator:
         img: Image.Image,
         monster_id: str,
         style: str,
-        pack_name: Optional[str] = None
+        pack_name: Optional[str] = None,
+        output_dir: Optional[str] = None
     ) -> Path:
         """Generate and save thumbnail"""
-        if pack_name:
+        if output_dir:
+            base_dir = Path(output_dir)
+        elif pack_name:
             base_dir = Path(f"graphic_packs/{pack_name}/monsters")
         else:
             base_dir = Path(f"graphic_packs/temp_{style}/monsters")
