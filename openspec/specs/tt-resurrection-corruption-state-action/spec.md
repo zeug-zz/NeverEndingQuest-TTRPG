@@ -1,9 +1,7 @@
 ## Purpose
 
 Define the `resurrectCharacter` action as the only path to clear mechanical dead state, with corrupted resurrection metadata persistence and prompt/validation contracts preferring explicit transitions.
-
 ## Requirements
-
 ### Requirement: Resurrection shall require an explicit state transition
 
 The runtime SHALL provide a dedicated `resurrectCharacter` action for reviving or corrupting mechanically dead PCs.
@@ -22,13 +20,21 @@ The runtime SHALL provide a dedicated `resurrectCharacter` action for reviving o
 
 ### Requirement: Corrupted resurrection shall persist consequences
 
-Corrupted, undead, bargained, or otherwise altered resurrection modes SHALL persist additive metadata describing the supernatural state.
+Corrupted, undead, bargained, or otherwise altered resurrection modes SHALL persist additive schema-valid `supernaturalStates` metadata describing the supernatural state.
 
 #### Scenario: Corrupted resurrection records source
 - GIVEN a dead PC is returned through a corrupted altar
 - WHEN the transition mode is corrupted resurrection
-- THEN the character state SHALL record the source
-- AND SHALL record consequence or supernatural-state metadata
+- THEN the character state SHALL record the source in `supernaturalStates`
+- AND SHALL record consequence or supernatural-state details in schema-valid fields
+- AND SHALL NOT require private `_supernatural_metadata` for future runtime interpretation
+
+#### Scenario: Playable undead resurrection records creature type
+- GIVEN a dead PC is returned as a playable undead character
+- WHEN the explicit resurrection transition succeeds
+- THEN `status` SHALL become `alive`
+- AND `creatureTypes` SHALL include `undead`
+- AND `supernaturalStates` SHALL include a playable undeath or equivalent state record
 
 #### Scenario: Missing mode or source fails
 - WHEN a resurrection transition omits required mode or source
@@ -42,3 +48,4 @@ Prompts and validation guidance SHALL instruct the narrator to use the supported
 #### Scenario: Durable return without action
 - WHEN narration claims a dead PC has durably returned without the explicit transition
 - THEN validation guidance SHALL request correction rather than accepting silent revival
+

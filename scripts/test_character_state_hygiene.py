@@ -15,7 +15,12 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 
-from utils.character_state_hygiene import normalize_life_state_fields, is_mechanically_dead
+from utils.character_state_hygiene import (
+    normalize_life_state_fields,
+    is_mechanically_dead,
+    normalize_supernatural_state_fields,
+    get_supernatural_state_summary,
+)
 
 
 class TestCharacterStateHygiene(unittest.TestCase):
@@ -280,11 +285,59 @@ class TestResurrectCharacterContract(unittest.TestCase):
         self.assertIn("{hit_points}", content)
         self.assertIn("hit points via", content)
 
-    def test_handler_persists_supernatural_metadata(self):
-        """Patch 2: _supernatural_metadata is written to character file after resurrection."""
+    def test_handler_persists_schema_supernatural_state(self):
+        """Patch 2: resurrectCharacter writes schema-valid supernatural state fields."""
         with open(os.path.join(self.REPO_ROOT, "core", "ai", "action_handler.py"), "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("_supernatural_metadata", content)
+        self.assertIn("supernaturalStates", content)
+        self.assertIn("creatureTypes", content)
+
+
+class TestSupernaturalStateNormalization(unittest.TestCase):
+    """Runtime tests for schema-valid supernatural state normalization."""
+
+    def test_legacy_metadata_is_migrated(self):
+        data = {
+            "status": "alive",
+            "hitPoints": 10,
+            "maxHitPoints": 10,
+            "condition": "none",
+            "condition_affected": [],
+            "deathSaves": {"successes": 0, "failures": 0},
+            "_supernatural_metadata": {
+                "resurrection_mode": "corrupted_resurrection",
+                "resurrection_source": "Voidstone Altar",
+                "resurrection_consequences": ["Resistance to necrotic damage"],
+            },
+        }
+
+        normalized = normalize_supernatural_state_fields(data)
+
+        self.assertNotIn("_supernatural_metadata", normalized)
+        self.assertIn("supernaturalStates", normalized)
+        self.assertTrue(len(normalized["supernaturalStates"]) >= 1)
+        self.assertEqual(normalized["supernaturalStates"][0]["category"], "corruption")
+
+    def test_supernatural_summary_includes_types_and_labels(self):
+        data = {
+            "creatureTypes": ["Humanoid", "Undead"],
+            "supernaturalStates": [
+                {
+                    "id": "voidstone_corrupted",
+                    "label": "Voidstone Corrupted",
+                    "category": "corruption",
+                    "source": "Voidstone Altar",
+                    "playable": True,
+                    "mechanicalEffects": ["Resistance to necrotic damage"],
+                    "narrativeEffects": [],
+                    "removal": "",
+                }
+            ],
+        }
+        summary = get_supernatural_state_summary(data, include_effects=True)
+        self.assertIn("types=humanoid,undead", summary)
+        self.assertIn("states=Voidstone Corrupted", summary)
+        self.assertIn("effects=Resistance to necrotic damage", summary)
 
 
 if __name__ == "__main__":

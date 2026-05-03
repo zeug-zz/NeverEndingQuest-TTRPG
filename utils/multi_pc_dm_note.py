@@ -25,6 +25,7 @@ from utils.encoding_utils import safe_json_load
 from utils.module_path_manager import ModulePathManager
 from utils.pc_manager import should_use_abstraction_layer
 from utils.authoritative_state_packet import build_authoritative_state_packet
+from utils.character_state_hygiene import get_supernatural_state_summary
 
 
 def _normalize_display_location_name(location_name: str) -> str:
@@ -215,6 +216,10 @@ def format_pc_full_stats(pc_data: Dict[str, Any], pc_name: str, is_active: bool 
     else:
         parts.append("  Conditions: None")
 
+    supernatural_summary = get_supernatural_state_summary(pc_data, include_effects=True)
+    if supernatural_summary:
+        parts.append(f"  Supernatural: {supernatural_summary}")
+
     # Death saves (shown when relevant: unconscious or dead)
     if status in ("dead", "unconscious") or current_hp == 0:
         death_saves = pc_data.get('deathSaves', {})
@@ -340,6 +345,10 @@ def format_pc_condensed(pc_data: Dict[str, Any], pc_name: str) -> str:
         conditions = [c for c in condition_affected if isinstance(c, str)]
         if conditions:
             parts.append(f"  Cond: {', '.join(conditions)}")
+
+    supernatural_summary = get_supernatural_state_summary(pc_data, include_effects=False)
+    if supernatural_summary:
+        parts.append(f"  Supra: {supernatural_summary}")
 
     # Death saves (compact, shown when dead or unconscious)
     if status in ("dead", "unconscious") or current_hp == 0:

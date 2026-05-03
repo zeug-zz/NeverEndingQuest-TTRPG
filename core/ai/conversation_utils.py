@@ -83,6 +83,7 @@ from utils.module_path_manager import ModulePathManager
 from utils.encoding_utils import safe_json_load
 from utils.plot_formatting import format_plot_for_ai
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
+from utils.character_state_hygiene import get_supernatural_state_summary
 from core.ai.atlas_builder import build_atlas_for_module, format_atlas_for_conversation
 
 # Set script name for logging
@@ -1112,6 +1113,9 @@ BONDS: {member_data['bonds']}
 FLAWS: {member_data['flaws']}
 BACKSTORY: {member_data.get('backstory', 'N/A')[:120] if member_data.get('backstory') else 'N/A'}
 """
+                    supernatural_summary = get_supernatural_state_summary(member_data, include_effects=True)
+                    if supernatural_summary:
+                        formatted_data += f"SUPERNATURAL: {supernatural_summary}\n"
                     character_message = f"Here's the updated character data for {name}:\n{formatted_data}\n"
                     character_data.append({"role": "system", "content": character_message})
             except FileNotFoundError:
@@ -1219,6 +1223,9 @@ BONDS: {npc_data['bonds']}
 FLAWS: {npc_data['flaws']}
 BACKSTORY: {npc_data.get('backstory', 'N/A')[:120] if npc_data.get('backstory') else 'N/A'}
 """
+                    supernatural_summary = get_supernatural_state_summary(npc_data, include_effects=True)
+                    if supernatural_summary:
+                        formatted_data += f"SUPERNATURAL: {supernatural_summary}\n"
                     npc_message = f"Here's the NPC data for {npc_data['name']}:\n{formatted_data}\n"
                     character_data.append({"role": "system", "content": npc_message})
             except FileNotFoundError:

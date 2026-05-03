@@ -505,6 +505,44 @@
     },
     "backstory": {
       "type": "string"
+    },
+    "creatureTypes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "supernaturalStates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "label": {"type": "string"},
+          "category": {"type": "string"},
+          "source": {"type": "string"},
+          "playable": {"type": "boolean"},
+          "mechanicalEffects": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "narrativeEffects": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "removal": {"type": "string"}
+        },
+        "required": [
+          "id",
+          "label",
+          "category",
+          "source",
+          "playable",
+          "mechanicalEffects",
+          "narrativeEffects",
+          "removal"
+        ]
+      }
     }
   },
   "required": [

@@ -1091,6 +1091,47 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### PC Supernatural State Layer + Vitreol Canon Update (COMPLETED - 2026-05-03)
+
+**Status:** COMPLETED - Implemented schema-valid supernatural state persistence/projection across runtime, UI, and PDF; archived OpenSpec change and applied approved Vitreol classification (`humanoid + undead + corrupted`).
+
+**Objective:**
+- Add durable PC supernatural-state storage without overloading `status` life-state authority.
+- Replace private resurrection metadata with schema-valid fields.
+- Project supernatural state into DM/context/combat and player-facing surfaces.
+- Apply approved Vitreol canonical state profile.
+
+**Implementation Summary:**
+- `schemas/char_schema.json`
+  - Added additive `creatureTypes` and `supernaturalStates` schema fields.
+- `utils/character_state_hygiene.py`
+  - Added normalization/migration helpers for supernatural state fields.
+  - Added legacy `_supernatural_metadata` migration into `supernaturalStates` and cleanup.
+  - Added compact supernatural summary helper for prompt/UI projection.
+- `core/ai/action_handler.py`
+  - `resurrectCharacter` now persists schema-valid supernatural state records.
+  - Added `undead_resurrection` mode and removed runtime dependence on private metadata writes.
+- `utils/multi_pc_dm_note.py`, `core/ai/conversation_utils.py`, `core/managers/combat_manager.py`, `core/ai/character_sheet_compressor.py`
+  - Added bounded supernatural state projection in DM Note, conversation context, combat context/truth pack, and compressed character context.
+- `web/templates/game_interface.html`, `web/routes/character_sheet_routes.py`
+  - Added Character Sheet supernatural display block.
+  - Added PDF supernatural summary projection.
+- `characters/vitreol.json`
+  - Applied approved canon profile: `creatureTypes=["humanoid","undead"]` + corruption/undeath `supernaturalStates` records.
+- OpenSpec:
+  - Archived `pc-supernatural-state-layer` to `openspec/changes/archive/2026-05-03-pc-supernatural-state-layer/`.
+  - Synced specs:
+    - `openspec/specs/pc-supernatural-state-schema/spec.md` (new)
+    - `openspec/specs/pc-supernatural-state-context-projection/spec.md` (new)
+    - `openspec/specs/tt-resurrection-corruption-state-action/spec.md` (updated)
+
+**Verification:**
+- `.venv/bin/python -m py_compile utils/character_state_hygiene.py core/ai/action_handler.py core/ai/conversation_utils.py core/managers/combat_manager.py utils/multi_pc_dm_note.py core/ai/character_sheet_compressor.py web/routes/character_sheet_routes.py scripts/test_character_state_hygiene.py scripts/test_supernatural_state_layer.py` -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_character_state_hygiene` -> PASS (30/30)
+- `.venv/bin/python -m unittest -q scripts.test_supernatural_state_layer` -> PASS (9/9)
+- `.venv/bin/python -m unittest -q scripts.test_character_sheet_stats_resilience` -> PASS (5/5)
+- `openspec validate pc-supernatural-state-layer` -> VALID
+
 ### Thornwood MMG Monster Authority Canonicalization (COMPLETED - 2026-05-03)
 
 **Status:** COMPLETED - Same-slug monster actors no longer rely on delegated duplicate NPC MMG rows; canonical monster authority now drives unified assets and report output while preserving non-combat monster follower/parley UX.

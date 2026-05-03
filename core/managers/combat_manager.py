@@ -154,7 +154,7 @@ from config import (
     DM_MINI_MODEL
 )
 from updates.update_character_info import update_character_info, normalize_character_name
-from utils.character_state_hygiene import normalize_life_state_fields
+from utils.character_state_hygiene import normalize_life_state_fields, get_supernatural_state_summary
 import updates.update_encounter as update_encounter
 import updates.update_party_tracker as update_party_tracker
 # Import the preroll generator
@@ -964,6 +964,30 @@ def _build_compact_combat_truth_pack(response_json, encounter_data):
             "deathSaves": death_saves,
             "touchedChanges": meta.get("changes", []),
         }
+
+        creature_types = character_data.get("creatureTypes", [])
+        if isinstance(creature_types, list) and creature_types:
+            pack["creatureTypes"] = [str(entry).strip().lower() for entry in creature_types if str(entry or "").strip()]
+
+        supernatural_states = character_data.get("supernaturalStates", [])
+        if isinstance(supernatural_states, list) and supernatural_states:
+            compact_states = []
+            for state in supernatural_states:
+                if not isinstance(state, dict):
+                    continue
+                compact_states.append({
+                    "id": str(state.get("id") or "").strip(),
+                    "label": str(state.get("label") or "").strip(),
+                    "category": str(state.get("category") or "").strip(),
+                    "playable": bool(state.get("playable", True)),
+                    "mechanicalEffects": [
+                        str(effect).strip()
+                        for effect in state.get("mechanicalEffects", [])
+                        if str(effect or "").strip()
+                    ][:2],
+                })
+            if compact_states:
+                pack["supernaturalStates"] = compact_states
 
         features = character_data.get("classFeatures", [])
         limited_resources = []
@@ -2214,6 +2238,11 @@ TEMP FX: {', '.join([e['name'] for e in char_data.get('temporaryEffects', [])])}
 EQUIP: {equipment_str}
 AMMO: {', '.join([f"{a['name']} x{a['quantity']}" for a in char_data.get('ammunition', [])])}
 ATK: {', '.join([f"{a['name']} ({a.get('type', 'melee')}, {a.get('damageDice', '1d4')} {a.get('damageType', 'bludgeoning')})" for a in char_data.get('attacksAndSpellcasting', [])])}"""
+
+    supernatural_summary = get_supernatural_state_summary(char_data, include_effects=True)
+    if supernatural_summary:
+        formatted_data += f"""
+SUPERNATURAL: {supernatural_summary}"""
     
     # Add spellcasting if present
     spellcasting = char_data.get('spellcasting', {})
@@ -2351,6 +2380,11 @@ TEMP FX: {', '.join([e['name'] for e in npc_data.get('temporaryEffects', [])])}
 EQUIP: {equipment_str}
 AMMO: {', '.join([f"{a['name']} x{a['quantity']}" for a in npc_data.get('ammunition', [])])}
 ATK: {', '.join([f"{a['name']} ({a.get('type', 'melee')}, {a.get('damageDice', '1d4')} {a.get('damageType', 'bludgeoning')})" for a in npc_data.get('attacksAndSpellcasting', [])])}"""
+
+    supernatural_summary = get_supernatural_state_summary(npc_data, include_effects=True)
+    if supernatural_summary:
+        formatted_data += f"""
+SUPERNATURAL: {supernatural_summary}"""
     
     # Add spellcasting if present
     spellcasting = npc_data.get('spellcasting', {})

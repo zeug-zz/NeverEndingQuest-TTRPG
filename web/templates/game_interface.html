@@ -7527,6 +7527,34 @@
                         </div>
                     </div>`;
 
+            // TABLETOP MODE: Supernatural state projection (schema-driven)
+            const creatureTypes = Array.isArray(data.creatureTypes)
+                ? data.creatureTypes.filter(t => t && String(t).trim())
+                : [];
+            const supernaturalStates = Array.isArray(data.supernaturalStates)
+                ? data.supernaturalStates.filter(s => s && typeof s === 'object')
+                : [];
+
+            if (creatureTypes.length > 0 || supernaturalStates.length > 0) {
+                html += '<div class="stat-group" style="margin-top: 3px;"><h4>Supernatural State</h4><div class="stat-group-content">';
+                if (creatureTypes.length > 0) {
+                    html += `<div class="feature-item"><span class="feature-name">Creature Types:</span> ${creatureTypes.join(', ')}</div>`;
+                }
+                supernaturalStates.forEach(state => {
+                    const label = String(state.label || state.id || 'state').trim();
+                    const category = String(state.category || '').trim();
+                    const source = String(state.source || '').trim();
+                    const mechanical = Array.isArray(state.mechanicalEffects) ? state.mechanicalEffects.filter(e => e && String(e).trim()) : [];
+                    const summaryParts = [];
+                    if (category) summaryParts.push(`Category: ${category}`);
+                    if (source) summaryParts.push(`Source: ${source}`);
+                    if (mechanical.length > 0) summaryParts.push(`Effects: ${mechanical.slice(0, 2).join('; ')}`);
+                    const summaryText = summaryParts.join(' | ');
+                    html += `<div class="feature-item"><span class="feature-name">${label}</span>${summaryText ? `<br><span style="font-size: 11px; color: #cccccc;">${summaryText}</span>` : ''}</div>`;
+                });
+                html += '</div></div>';
+            }
+
             // Appearance display hidden - physical traits omitted from Character Sheet UI
             // (Age, Height, Weight, Eyes, Skin, Hair still stored in character data for portrait generation)
             if (data.abilities) {

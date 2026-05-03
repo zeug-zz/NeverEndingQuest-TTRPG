@@ -277,8 +277,26 @@ def format_flatlist(character: Dict[str, Any], keep_paren_info: bool=False) -> s
     backstory_raw = character.get('backstory') or ''
     backstory = backstory_raw[:100] if backstory_raw else ''  # Bounded for flat output
 
+    creature_types = character.get('creatureTypes') or []
+    if isinstance(creature_types, list):
+        creature_types_out = ','.join(str(entry).strip().lower() for entry in creature_types if str(entry or '').strip())
+    else:
+        creature_types_out = ''
+
+    supernatural_labels = []
+    supernatural_states = character.get('supernaturalStates') or []
+    if isinstance(supernatural_states, list):
+        for state in supernatural_states:
+            if not isinstance(state, dict):
+                continue
+            label = str(state.get('label') or '').strip()
+            if label:
+                supernatural_labels.append(label)
+    supernatural_out = ';'.join(supernatural_labels[:3])
+
     out = []
     out.append(f"CHAR={name}; LVL={lvl}; RACE={race}; CLASS={cls}; ALIGN={align}; BG={bg}; AC={ac}; SPD={spd}; STATUS={status}; CONDITION={condition}; AFFECTED={affected};")
+    out.append(f"CREATURE_TYPES={creature_types_out}; SUPERNATURAL={supernatural_out};")
     out.append(f"STATS={{STR:{STR},DEX:{DEX},CON:{CON},INT:{INT},WIS:{WIS},CHA:{CHA}}}; SAVES={saves_out}; SKILLS={{{skills_out}}}; PROF+{prof_bonus};")
     out.append(f"SENSES={{darkvision:{darkv},PP:{pp}}}; LANG={langs_out};")
     out.append(f"PROF={{{prof_out}}};")

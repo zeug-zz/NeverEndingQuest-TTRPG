@@ -34,6 +34,7 @@ from utils.character_creation_audit import (
 )
 from utils.enhanced_logger import error, info, warning
 from utils.saving_throw_utils import get_effective_saving_throw_proficiencies
+from utils.character_state_hygiene import get_supernatural_state_summary, normalize_supernatural_state_fields
 
 
 READINESS_REPAIR_COOLDOWN_SECONDS = 15
@@ -346,6 +347,7 @@ def export_character_pdf_impl(request):
         char_data = safe_read_json(player_file)
         if not char_data:
             return jsonify({'error': 'Failed to read character data'}), 500
+        char_data = normalize_supernatural_state_fields(char_data)
 
         # TABLETOP MODE: Non-fatal readiness audit visibility for legacy sheets.
         readiness = audit_character_readiness(char_data)
@@ -735,6 +737,15 @@ def export_character_pdf_impl(request):
             
             if backstory_parts:
                 page2_fields["Backstory"] = "\n\n".join(backstory_parts)
+
+            supernatural_summary = get_supernatural_state_summary(char_data, include_effects=True)
+            if supernatural_summary:
+                existing_allies = str(page2_fields.get("Allies", "") or "").strip()
+                supernatural_line = f"Supernatural: {supernatural_summary}"
+                if existing_allies:
+                    page2_fields["Allies"] = f"{existing_allies}\n{supernatural_line}"
+                else:
+                    page2_fields["Allies"] = supernatural_line
 
             if treasure_items:
                 page2_fields["Treasure"] = "\n".join(treasure_items)

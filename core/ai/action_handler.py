@@ -3586,7 +3586,11 @@ def _process_resurrect_character(parameters: dict, party_tracker_data: dict) -> 
         dict with status information
     """
     try:
-        from utils.character_state_hygiene import is_mechanically_dead
+        from utils.character_state_hygiene import (
+            is_mechanically_dead,
+            add_or_update_supernatural_state,
+            normalize_supernatural_state_fields,
+        )
         from utils.file_operations import safe_read_json, safe_write_json
         from updates.update_character_info import (
             update_character_info,
@@ -3631,7 +3635,7 @@ def _process_resurrect_character(parameters: dict, party_tracker_data: dict) -> 
             }
 
         # Eligibility check: mode must be recognized
-        valid_modes = {"ordinary_resurrection", "corrupted_resurrection"}
+        valid_modes = {"ordinary_resurrection", "corrupted_resurrection", "undead_resurrection"}
         if mode not in valid_modes:
             return {
                 "applied": False,
@@ -3644,6 +3648,8 @@ def _process_resurrect_character(parameters: dict, party_tracker_data: dict) -> 
 
         if mode == "corrupted_resurrection":
             update_parts.append("Resurrection mode is corrupted -- apply lingering consequences")
+        elif mode == "undead_resurrection":
+            update_parts.append("Resurrection mode is undead -- character is playable and alive")
 
         if consequences:
             update_parts.append(f"Consequences: {', '.join(consequences)}")
@@ -3654,24 +3660,69 @@ def _process_resurrect_character(parameters: dict, party_tracker_data: dict) -> 
         success = update_character_info(character, update_text)
 
         if success:
-            # Persist supernatural metadata for downstream narrative context
-            _supernatural_meta = {
-                "resurrection_mode": mode,
-                "resurrection_source": source,
-                "resurrection_hitPoints": hit_points,
-            }
-            if consequences:
-                _supernatural_meta["resurrection_consequences"] = consequences
-
-            # Re-read character file, patch in metadata, write back (fail-open)
+            # Persist schema-valid supernatural state for downstream context.
+            # TABLETOP MODE: Replace private _supernatural_metadata with
+            # character schema fields (creatureTypes + supernaturalStates).
             try:
                 updated_data = safe_read_json(char_filepath)
                 if updated_data:
-                    updated_data["_supernatural_metadata"] = _supernatural_meta
+                    category = "transformation"
+                    label = "Resurrection Alteration"
+                    state_id = "resurrection_alteration"
+                    if mode == "corrupted_resurrection":
+                        category = "corruption"
+                        label = "Corrupted Resurrection"
+                        state_id = "corrupted_resurrection"
+                    elif mode == "undead_resurrection":
+                        category = "undeath"
+                        label = "Undead Resurrection"
+                        state_id = "undead_resurrection"
+
+                    mechanical_effects = []
+                    narrative_effects = []
+                    for consequence in consequences:
+                        consequence_text = str(consequence or "").strip()
+                        if not consequence_text:
+                            continue
+                        lower_text = consequence_text.lower()
+                        if (
+                            "resistance" in lower_text
+                            or "vulnerability" in lower_text
+                            or "immune" in lower_text
+                            or "damage" in lower_text
+                            or "saving throw" in lower_text
+                        ):
+                            if consequence_text not in mechanical_effects:
+                                mechanical_effects.append(consequence_text)
+                        else:
+                            if consequence_text not in narrative_effects:
+                                narrative_effects.append(consequence_text)
+
+                    state_record = {
+                        "id": state_id,
+                        "label": label,
+                        "category": category,
+                        "source": source,
+                        "playable": True,
+                        "mechanicalEffects": mechanical_effects,
+                        "narrativeEffects": narrative_effects,
+                        "removal": "",
+                    }
+                    updated_data = add_or_update_supernatural_state(updated_data, state_record)
+
+                    if mode == "undead_resurrection":
+                        creature_types = updated_data.get("creatureTypes", [])
+                        if not isinstance(creature_types, list):
+                            creature_types = []
+                        if "undead" not in [str(t).strip().lower() for t in creature_types]:
+                            creature_types.append("undead")
+                            updated_data["creatureTypes"] = creature_types
+
+                    updated_data = normalize_supernatural_state_fields(updated_data)
                     safe_write_json(char_filepath, updated_data)
             except Exception as meta_err:
                 warning(
-                    f"RESURRECT: Failed to persist supernatural metadata for {character}: {meta_err}",
+                    f"RESURRECT: Failed to persist supernatural state for {character}: {meta_err}",
                     category="character_updates",
                 )
 
