@@ -4,7 +4,7 @@
 
 **Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions.
 
-An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a facilitator managing multiple player characters through a tabbed web UI.
+An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
 
 <br clear="left">
 
@@ -14,10 +14,10 @@ An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns —
 
 ### One-Click Installers
 
-| Platform | Installer |
-|----------|-----------|
-| **Windows** | [install_neverendingquest_windows.bat](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/raw/main/install_neverendingquest_windows.bat) — Right-click → Save Link As → double-click |
-| **macOS** | [install_neverendingquest_macos.sh](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/raw/main/install_neverendingquest_macos.sh) — Save to Downloads, then `bash ~/Downloads/install_neverendingquest_macos.sh` |
+| Platform          | Installer                                                                                                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows** | [install_neverendingquest_windows.bat](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/raw/main/install_neverendingquest_windows.bat) — Right-click → Save Link As → double-click                              |
+| **MacOS**   | [install_neverendingquest_macos.sh](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/raw/main/install_neverendingquest_macos.sh) — Save to Downloads, then `bash ~/Downloads/install_neverendingquest_macos.sh` |
 
 Installers handle Python, Git, virtual environment, dependencies, config, and desktop launcher creation.
 
@@ -56,15 +56,18 @@ All fork modifications are marked with `# TABLETOP MODE:` comments and live in e
 
 ## Included Adventure Modules
 
-| Module | Level | Description |
-|--------|-------|-------------|
-| **The Thornwood Watch** | 1–2 | Defend a ranger outpost from bandits and corruption |
-| **Keep of Doom** | 3–5 | Explore a haunted keep and establish your stronghold |
-| **The Pumpkin King's Curse** | 1–3 | Unravel a harvest-time folk-horror curse across Greenfields Vale |
-| **Night of the Restless Dead** | 1–2 | Investigate undead outbreaks beneath a ruined cathedral |
-| **Garden of Demons** | 1–3 | Navigate a fey-touched garden of dangerous whimsy |
-| **Murder at the Drowning Lass** | 1–3 | Solve a tavern murder mystery with branching investigation |
-| **The Hidden City of Numillian** | 3–5 | Discover a subterranean city of paradox and lost knowledge |
+| Module                                 | Level  | Description                                                      |
+| -------------------------------------- | ------ | ---------------------------------------------------------------- |
+| **Night of the Restless Dead**   | 1–2   | Investigate undead outbreaks beneath a ruined cathedral          |
+| **The Thornwood Watch**          | 1–2   | Defend a ranger outpost from bandits and corruption              |
+| **The Pumpkin King's Curse**     | 1–3   | Unravel a harvest-time folk-horror curse across Greenfields Vale |
+| **The Ancients Lab**             | 2–4   | Explore a long-sealed laboratory of forgotten artifice           |
+| **Keep of Doom**                 | 3–5   | Explore a haunted keep and establish your stronghold             |
+| **A Pottsfield Burial**          | 3–5   | Navigate an eerie burial ground and uncover its secrets          |
+| **Echoes of Stone**              | 3–5   | Confront elemental unrest in a petrified valley                  |
+| **Murder at the Drowning Lass**  | 6–6   | Solve a tavern murder mystery with branching investigation       |
+| **The Hidden City of Numillian** | 7–10  | Discover a subterranean city of paradox and lost knowledge       |
+| **Garden of Demons**             | 12–15 | Navigate a fey-touched garden of dangerous whimsy                |
 
 Modules connect through a hub-and-spoke world model. Cross-module continuity is maintained through living summaries, companion memory, and persistent world state.
 
@@ -75,10 +78,10 @@ Modules connect through a hub-and-spoke world model. Cross-module continuity is 
 Create, edit, and publish adventure modules from the web interface:
 
 - **Module Builder** — AI-assisted or manual module creation with area, plot, NPC, and monster generation
-- **NPC & Monster Generators** — Generate stat blocks, backstories, and portraits
-- **Module Media Generator** — Batch image generation for module NPCs and monsters
-- **Homebrew Ingest** — Import community adventures (Homebrewery markdown, PDF) with validation and semantic enrichment
+  - **Homebrew Ingest** — Import community adventures (Homebrewery markdown, PDF) with validation and semantic enrichment
+  - **Module Media Generator** — Batch image generation for module NPCs and monsters
 - **Graphic Pack System** — Reusable/shareable visual asset packs
+  - **NPC & Monster Generators** — Generate stat blocks, backstories, and portraits
 
 ---
 
