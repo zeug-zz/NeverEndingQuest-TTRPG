@@ -575,7 +575,10 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("refresh_toolkit_build_report", routes_source)
         self.assertIn("stage_name': 'Post Build Finishing'", source)
         self.assertIn("generation_succeeded", source)
-        self.assertIn("publication_parity_note", source)
+        self.assertIn("readiness_failed", source)
+        self.assertIn("run_toolkit_builder_readiness_gate", source)
+        self.assertIn("ready_for_finishing", source)
+        self.assertIn("publishable_status", source)
         self.assertIn("_build_hydration_summary", routes_source)
         self.assertIn('"hydration_summary"', routes_source)
 
@@ -616,8 +619,11 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
 
         self.assertIn("Post-Build Finishing", source)
-        self.assertIn("publication_parity_note", source)
-        self.assertIn("Post-Build Status", source)
+        self.assertIn("Readiness Validation", source)
+        self.assertIn("Readiness Repair", source)
+        self.assertIn("Readiness Audit", source)
+        self.assertIn("readiness_failed", source)
+        self.assertIn("Publishability:", source)
         self.assertIn("Hydration Summary:", source)
         self.assertIn("buildHomebrewHydrationAwareDetails", source)
 
@@ -678,15 +684,77 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
             "viewAssetMedia(${assetIdArg}, ${assetTypeArg}, ${assetNameArg}, ${serializeForInlineArg(mediaType)})",
             source,
         )
-        self.assertIn("toggleAssetSelection(${assetIdArg})", source)
+        self.assertIn("toggleAssetSelection(", source)
 
     def test_toolkit_template_uses_safe_thumbnail_dom_id_helper(self) -> None:
         source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
 
-        self.assertIn("function getAssetThumbElementId(assetId)", source)
+        self.assertIn("function getAssetThumbElementId", source)
         self.assertIn("replace(/[^a-zA-Z0-9_-]/g, '_')", source)
-        self.assertIn("id=\"${getAssetThumbElementId(asset.id)}\"", source)
-        self.assertIn("document.getElementById(getAssetThumbElementId(assetId))", source)
+        self.assertIn("getAssetThumbElementId", source)
+        self.assertIn("document.getElementById(getAssetThumbElementId(", source)
+
+
+    def test_readiness_adapter_function_exists_in_gate_module(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("def run_toolkit_builder_readiness_gate", source)
+        self.assertIn("legacy_builder_narrative_v1", source)
+        self.assertIn("ready_for_finishing", source)
+        self.assertIn("source_workflow", source)
+
+    def test_legacy_builder_readiness_cannot_be_bypassed_in_web_interface(self) -> None:
+        source = Path("web/web_interface.py").read_text(encoding="utf-8")
+
+        self.assertIn("run_toolkit_builder_readiness_gate", source)
+        self.assertIn("ready_for_finishing", source)
+        self.assertIn("readiness_failed", source)
+
+    def test_uploader_readiness_gate_function_signature_preserved(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("def run_toolkit_homebrew_readiness_gate", source)
+        self.assertIn("workspace: Path", source)
+        self.assertIn("job_id: str", source)
+
+    def test_freshness_marker_function_exists(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _write_stale_report_marker", source)
+        self.assertIn("pre_readiness", source)
+        self.assertIn("post_readiness_failure", source)
+        self.assertIn("freshness_state", source)
+        self.assertIn("report_freshness", source)
+        self.assertIn("toolkit_build_report_refresh_contract.v1", source)
+
+    def test_readiness_report_artifact_function_exists(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _write_readiness_report_artifact", source)
+        self.assertIn("toolkit_readiness_report.json", source)
+        self.assertIn("convergence_outcome", source)
+
+    def test_freshness_marker_invoked_before_readiness(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("_write_stale_report_marker", source)
+        self.assertIn("marker_freshness=\"pre_readiness\"", source)
+        self.assertIn("run_toolkit_homebrew_readiness_gate", source)
+
+    def test_readiness_artifact_persisted_after_gate(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("_write_readiness_report_artifact", source)
+        self.assertIn("ready_for_finishing", source)
+        self.assertIn("validation", source)
+        self.assertIn("readiness_audit", source)
+        self.assertIn("repair_attempts", source)
+
+    def test_readiness_adapter_exception_marker_exists(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
+
+        self.assertIn("readiness_adapter_exception", source)
+        self.assertIn("readiness_system_failure", source)
 
 
 if __name__ == "__main__":

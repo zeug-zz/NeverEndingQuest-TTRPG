@@ -97,6 +97,7 @@ from utils.npc_identity import (
 from utils.module_media_generator_report import write_module_media_generator_report
 
 from updates.update_character_info import normalize_character_name
+from utils.image_response_payload import convert_image_response_payload
 from core.managers.status_manager import set_status_callback, set_compression_callback
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.character_creation_audit import apply_background_feature_suggestion_if_generic
@@ -133,6 +134,16 @@ except ImportError:
     refresh_toolkit_build_report = None
     run_toolkit_module_postbuild_finishing = None
     TOOLKIT_MODULE_FINISHER_AVAILABLE = False
+
+# TABLETOP MODE: Toolkit builder readiness gate for legacy Describe your Adventure builds.
+try:
+    from web.extensions.toolkit_homebrew_readiness_gate import (
+        run_toolkit_builder_readiness_gate,
+    )
+    TOOLKIT_BUILDER_READINESS_AVAILABLE = True
+except ImportError:
+    run_toolkit_builder_readiness_gate = None
+    TOOLKIT_BUILDER_READINESS_AVAILABLE = False
 
 # TABLETOP MODE: Import missing media auto-generation worker for allied NPC portrait healing
 try:
@@ -2748,8 +2759,35 @@ def get_module_unified_assets(module_name):
                                             if monster_id not in monsters:
                                                 monsters[monster_id] = {'name': monster_name, 'type': 'monster'}
         
+        # Build module monster authority once and use it to suppress same-slug
+        # NPC asset duplicates for monster-authoritative actors.
+        try:
+            from utils.module_monster_authority import build_module_monster_authority
+
+            authority_records = build_module_monster_authority(module_name)
+            monster_authority_slugs = set(authority_records.keys())
+        except Exception as authority_error:
+            warning(
+                f"TOOLKIT: Monster authority build degraded for {module_name}: {authority_error}",
+                category="module_ingest",
+            )
+            monster_authority_slugs = set()
+
+        if monsters:
+            monster_authority_slugs.update(monsters.keys())
+
+        suppressed_npc_slugs = []
+        if npcs and monster_authority_slugs:
+            filtered_npcs = {}
+            for npc_id, npc_data in npcs.items():
+                if npc_id in monster_authority_slugs:
+                    suppressed_npc_slugs.append(npc_id)
+                    continue
+                filtered_npcs[npc_id] = npc_data
+            npcs = filtered_npcs
+
         # Check for descriptions and media status
-        def check_asset_status(asset_id, asset_type, asset_name):
+        def check_asset_status(asset_id, asset_type, asset_name, media_authority=None):
             """Check the status of descriptions and media for an asset."""
             status = {
                 'id': asset_id,
@@ -2764,6 +2802,12 @@ def get_module_unified_assets(module_name):
                 'has_static_video': False,
                 'image_location': 'none',  # 'module', 'static', or 'none'
             }
+            # When an NPC row delegates media authority to a monster, report
+            # media status from the monster folder.
+            effective_type = asset_type
+            if asset_type == 'npc' and media_authority and media_authority != 'self':
+                effective_type = 'monster'
+                status['media_authority'] = media_authority
             
             # Check for description
             if asset_type == 'monster':
@@ -2802,9 +2846,69 @@ def get_module_unified_assets(module_name):
                         descriptions = safe_read_json(desc_file) or {}
                         if asset_id in descriptions:
                             status['has_description'] = True
+                
+                # Search live area files for authored NPC descriptions
+                if not status['has_description']:
+                    areas_dir = os.path.join('modules', module_name, 'areas')
+                    if os.path.exists(areas_dir):
+                        for filename in sorted(os.listdir(areas_dir)):
+                            if filename.endswith('_BU.json'):
+                                continue
+                            if not filename.endswith('.json'):
+                                continue
+                            area_path = os.path.join(areas_dir, filename)
+                            area_data = safe_read_json(area_path)
+                            if not area_data or 'locations' not in area_data:
+                                continue
+                            for location in area_data.get('locations', []):
+                                if 'npcs' not in location or not location['npcs']:
+                                    continue
+                                for npc_entry in location['npcs']:
+                                    if not isinstance(npc_entry, dict):
+                                        continue
+                                    npc_name = npc_entry.get('name', '')
+                                    from utils.npc_identity import canonicalize_npc_identity
+                                    if canonicalize_npc_identity(npc_name).slug == asset_id:
+                                        if npc_entry.get('description'):
+                                            status['has_description'] = True
+                                            break
+                                if status['has_description']:
+                                    break
+                            if status['has_description']:
+                                break
+
+                # Search BU area files for authored NPC descriptions
+                if not status['has_description']:
+                    areas_dir = os.path.join('modules', module_name, 'areas')
+                    if os.path.exists(areas_dir):
+                        for filename in sorted(os.listdir(areas_dir)):
+                            if not filename.endswith('_BU.json'):
+                                continue
+                            area_path = os.path.join(areas_dir, filename)
+                            area_data = safe_read_json(area_path)
+                            if not area_data or 'locations' not in area_data:
+                                continue
+                            for location in area_data.get('locations', []):
+                                if 'npcs' not in location or not location['npcs']:
+                                    continue
+                                for npc_entry in location['npcs']:
+                                    if not isinstance(npc_entry, dict):
+                                        continue
+                                    npc_name = npc_entry.get('name', '')
+                                    from utils.npc_identity import canonicalize_npc_identity
+                                    if canonicalize_npc_identity(npc_name).slug == asset_id:
+                                        if npc_entry.get('description'):
+                                            status['has_description'] = True
+                                            break
+                                if status['has_description']:
+                                    break
+                            if status['has_description']:
+                                break
             
-            # Check for media files
-            media_type_folder = 'monsters' if asset_type == 'monster' else 'npcs'
+            # Check for media files.
+            # When media_authority is delegated to a monster, use the monster
+            # media folder so the same-slug NPC reports correct media status.
+            media_type_folder = 'monsters' if effective_type == 'monster' else 'npcs'
             
             # Check module-specific media first
             module_media_dir = os.path.join('modules', module_name, 'media', media_type_folder)
@@ -2854,7 +2958,10 @@ def get_module_unified_assets(module_name):
         
         # Process NPCs
         for npc_id, npc_data in npcs.items():
-            asset_status = check_asset_status(npc_id, 'npc', npc_data['name'])
+            asset_status = check_asset_status(
+                npc_id, 'npc', npc_data['name'],
+                media_authority=npc_data.get('media_authority')
+            )
             unified_assets.append(asset_status)
         
         # Process monsters
@@ -2865,7 +2972,10 @@ def get_module_unified_assets(module_name):
         # Sort by type then name
         unified_assets.sort(key=lambda x: (x['type'], x['name']))
         
-        info(f"TOOLKIT: Found {len(npcs)} NPCs and {len(monsters)} monsters in module {module_name}")
+        info(
+            f"TOOLKIT: Found {len(npcs)} NPCs and {len(monsters)} monsters in module {module_name}"
+            + (f" (suppressed {len(suppressed_npc_slugs)} same-slug monster-authoritative NPC rows)" if suppressed_npc_slugs else "")
+        )
         
         return jsonify({
             'success': True,
@@ -3665,7 +3775,6 @@ def handle_generate_image(data):
         
         # Try to generate image
         try:
-            # Generate image using GPT-Image
             response = client.images.generate(
                 model="gpt-image-1",
                 prompt=prompt,
@@ -3673,16 +3782,12 @@ def handle_generate_image(data):
                 quality="auto",
                 n=1,
             )
-            # Get the image URL
-            image_url = response.data[0].url
+            image_payload = convert_image_response_payload(response)
         except Exception as dalle_error:
-            # Check if it's a content policy violation
             if "content_policy_violation" in str(dalle_error) or "400" in str(dalle_error):
-                # Silently sanitize and retry
                 from utils.prompt_sanitizer import sanitize_prompt
                 sanitized_prompt = sanitize_prompt(prompt)
                 
-                # Retry with sanitized prompt
                 response = client.images.generate(
                     model="gpt-image-1",
                     prompt=sanitized_prompt,
@@ -3690,19 +3795,25 @@ def handle_generate_image(data):
                     quality="auto",
                     n=1,
                 )
-                image_url = response.data[0].url
+                image_payload = convert_image_response_payload(response)
             else:
-                # Re-raise if it's not a content policy issue
                 raise dalle_error
+
+        try:
+            browser_source = image_payload["browser_source"]
+            image_bytes = image_payload["image_bytes"]
+            image_source = image_payload["source"]
+        except Exception as payload_error:
+            emit('image_generation_error',
+                 {'message': f'Image generation payload error: {payload_error}'})
+            return
         
         # Save the image locally with metadata
         try:
-            # Get current module and game state
             party_data = safe_read_json("party_tracker.json")
             current_module = party_data.get("module", "unknown_module")
             world_conditions = party_data.get("worldConditions", {})
             
-            # Get game time
             game_year = world_conditions.get("year", 0)
             game_month = world_conditions.get("month", "Unknown")
             game_day = world_conditions.get("day", 0)
@@ -3710,28 +3821,33 @@ def handle_generate_image(data):
             location_id = world_conditions.get("currentLocationId", "unknown")
             location_name = world_conditions.get("currentLocation", "Unknown Location")
             
-            # Create images directory for the module
             images_dir = os.path.join("modules", current_module, "images")
             os.makedirs(images_dir, exist_ok=True)
             
-            # Generate filename with both timestamps
             real_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             game_timestamp = f"{game_year}_{game_month}_{game_day}_{game_time.replace(':', '')}"
             filename = f"img_{real_timestamp}_game_{game_timestamp}_{location_id}.png"
             filepath = os.path.join(images_dir, filename)
             
-            # Download and save the image
-            img_response = requests.get(image_url)
-            if img_response.status_code == 200:
+            save_success = False
+            if image_source == "base64" and image_bytes:
                 with open(filepath, 'wb') as f:
-                    f.write(img_response.content)
-                print(f"Saved image to: {filepath}")
-                
-                # Save metadata
+                    f.write(image_bytes)
+                save_success = True
+                print(f"Saved image (base64) to: {filepath}")
+            elif image_source == "url":
+                img_response = requests.get(browser_source)
+                if img_response.status_code == 200:
+                    with open(filepath, 'wb') as f:
+                        f.write(img_response.content)
+                    save_success = True
+                    print(f"Saved image (URL) to: {filepath}")
+            
+            if save_success:
                 metadata_file = os.path.join(images_dir, "image_metadata.json")
                 metadata = safe_read_json(metadata_file) or {"images": []}
                 
-                metadata["images"].append({
+                entry = {
                     "filename": filename,
                     "prompt": prompt,
                     "real_world_time": datetime.now().isoformat(),
@@ -3748,14 +3864,16 @@ def handle_generate_image(data):
                         "area_id": world_conditions.get("currentAreaId", "unknown")
                     },
                     "module": current_module,
-                    "original_url": image_url
-                })
+                    "source": image_source,
+                }
+                if image_source == "url":
+                    entry["original_url"] = browser_source
                 
+                metadata["images"].append(entry)
                 safe_write_json(metadata_file, metadata)
                 print(f"Updated image metadata in: {metadata_file}")
             
         except Exception as save_error:
-            # Don't fail the whole operation if saving fails
             print(f"Warning: Failed to save image locally: {save_error}")
         
         # Track image cost (fail-open, after successful generation)
@@ -3777,9 +3895,9 @@ def handle_generate_image(data):
         except Exception:
             pass  # Fail open
         
-        # Emit the image URL back to the client
+        # Emit browser-usable image source to client
         emit('image_generated', {
-            'image_url': image_url,
+            'image_url': browser_source,
             'prompt': prompt
         })
         
@@ -5381,9 +5499,104 @@ def simulate_build_process(params):
             builder.build_module(narrative)
             info(f"Module build completed successfully")
 
-            # TABLETOP MODE: Post-build finishing parity stages.
+            # TABLETOP MODE: Readiness convergence before post-build finishing.
+            readiness_state = {
+                'status': 'skipped',
+                'module_name': module_name,
+                'ready_for_finishing': False,
+            }
+
+            if TOOLKIT_BUILDER_READINESS_AVAILABLE and run_toolkit_builder_readiness_gate:
+
+                def _builder_readiness_callback(status, payload):
+                    payload = payload or {}
+                    if status == "validating" and payload.get("audit"):
+                        socketio.emit('module_progress', {
+                            'stage': 11,
+                            'stage_name': 'Readiness Audit',
+                            'percentage': 92,
+                            'message': 'Running structural readiness audit...',
+                        })
+                    elif status == "validating":
+                        is_revalidation = bool(payload.get("revalidation"))
+                        msg = "Re-validating after repairs..." if is_revalidation else "Running structural validation..."
+                        socketio.emit('module_progress', {
+                            'stage': 9,
+                            'stage_name': 'Readiness Validation',
+                            'percentage': 82,
+                            'message': msg,
+                        })
+                    elif status == "repairing_deterministic":
+                        det_pass = int(payload.get("pass", 1))
+                        categories = payload.get("categories", {})
+                        cat_summary = ", ".join(sorted(categories.keys())[:3])
+                        socketio.emit('module_progress', {
+                            'stage': 10,
+                            'stage_name': 'Readiness Repair',
+                            'percentage': 88,
+                            'message': f"Deterministic repair pass {det_pass}: {cat_summary}",
+                        })
+                    elif status == "repairing_semantic":
+                        socketio.emit('module_progress', {
+                            'stage': 10,
+                            'stage_name': 'Readiness Repair',
+                            'percentage': 90,
+                            'message': 'Running semantic repairs...',
+                        })
+
+                socketio.emit('module_progress', {
+                    'stage': 9,
+                    'stage_name': 'Readiness Validation',
+                    'percentage': 80,
+                    'message': 'Starting readiness convergence...',
+                })
+
+                try:
+                    readiness_state = run_toolkit_builder_readiness_gate(
+                        module_name,
+                        state_callback=_builder_readiness_callback,
+                    )
+                except Exception as readiness_error:
+                    error(
+                        f"TOOLKIT_BUILDER: Readiness adapter crashed for {module_name}: {readiness_error}",
+                        exception=readiness_error,
+                        category="web_interface",
+                    )
+                    readiness_state = {
+                        'status': 'failed',
+                        'stage': 'readiness',
+                        'reason': 'readiness_adapter_exception',
+                        'error': str(readiness_error),
+                        'module_name': module_name,
+                        'ready_for_finishing': False,
+                    }
+            else:
+                info(
+                    f"TOOLKIT_BUILDER: Builder readiness gate unavailable for {module_name}; "
+                    f"skipping readiness convergence.",
+                    category="web_interface",
+                )
+
+            ready_for_finishing = bool(readiness_state.get("ready_for_finishing", False))
+            readiness_status = str(readiness_state.get("status", "skipped"))
+
+            if not ready_for_finishing:
+                socketio.emit('module_error', {
+                    'error': (
+                        f"Module generation succeeded, but readiness convergence failed. "
+                        f"Module: {module_name} (status={readiness_status})"
+                    ),
+                    'generation_succeeded': True,
+                    'readiness_failed': True,
+                    'readiness_skipped': not TOOLKIT_BUILDER_READINESS_AVAILABLE,
+                    'module_name': module_name,
+                    'readiness_result': readiness_state,
+                })
+                return
+
+            # TABLETOP MODE: Post-build finishing (reachable only after readiness passes).
             socketio.emit('module_progress', {
-                'stage': 9,
+                'stage': 12,
                 'stage_name': 'Post Build Finishing',
                 'percentage': 95,
                 'message': 'Running publication-readiness parity stages...'
@@ -5408,11 +5621,12 @@ def simulate_build_process(params):
                         f"Module: {module_name}"
                     ),
                     'generation_succeeded': True,
+                    'readiness_passed': True,
                     'module_name': module_name,
                     'finishing_report': finishing_report,
                 })
                 return
-            
+
             # Module generation complete
             if per_area_locations and len(per_area_locations) == num_areas:
                 total_locations = sum(per_area_locations)
@@ -5426,16 +5640,18 @@ def simulate_build_process(params):
                     complete_message +
                     ' Post-build finishing completed with degraded status. Review the build report for details.'
                 )
-            
+
+            publishable_status = str(finishing_report.get('publishable_status') or finishing_status)
+
             socketio.emit('module_complete', {
                 'module_name': module_name,
                 'message': complete_message,
                 'final_status': finishing_status,
                 'post_build_status': finishing_status,
+                'ready_status': str(readiness_state.get('ready_for_finishing') and 'pass' or 'fail'),
+                'publishable_status': publishable_status,
                 'build_report': finishing_report,
-                'publication_parity_note': (
-                    'Post-build parity improves publication readiness but does not include full semantic publication probes.'
-                ),
+                'readiness_result': readiness_state,
             })
         except Exception as build_error:
             error(f"Error during build_module execution: {build_error}")
@@ -5683,19 +5899,34 @@ def handle_generate_unified_assets(data):
 
                                 # If still no description, generate new one with AI
                                 if not description_found:
-                                    # Use the NPC builder to generate a description
-                                    from core.generators.npc_builder import NPCBuilder
-                                    npc_builder = NPCBuilder()
-
-                                    # Generate description based on module context
-                                    npc_data = await asyncio.to_thread(
-                                        npc_builder.generate_npc_description,
-                                        asset_name,
-                                        module_context
+                                    # TABLETOP MODE: Use direct AI client instead of
+                                    # the removed NPCBuilder class.
+                                    info(f"Generating AI description for NPC {asset_name}")
+                                    from utils.ai_client_factory import create_chat_client, get_model_config
+                                    client = create_chat_client()
+                                    config = get_model_config("npc_builder")
+                                    ai_prompt = (
+                                        f"Generate a 150-200 word visual description for {asset_name} "
+                                        f"suitable for AI image generation. Include physical appearance, "
+                                        f"clothing, demeanor, and any notable features."
                                     )
-                                    if npc_data:
-                                        description_text = npc_data.get('description', '')
-                                        info(f"Generated new AI description for {asset_name}")
+                                    try:
+                                        resp = client.chat.completions.create(
+                                            model=config["model"],
+                                            **config.get("extra_body", {}),
+                                            temperature=0.7,
+                                            messages=[
+                                                {"role": "system", "content": "You write vivid NPC descriptions for fantasy RPG character portraits."},
+                                                {"role": "user", "content": ai_prompt},
+                                            ],
+                                            max_tokens=300,
+                                        )
+                                        description_text = resp.choices[0].message.content.strip()
+                                        if description_text:
+                                            info(f"Generated new AI description for {asset_name}")
+                                    except Exception as ai_err:
+                                        error(f"AI description generation failed for {asset_name}: {ai_err}")
+                                        description_text = f"A fantasy NPC named {asset_name}"
 
                                 # Save to NPC compendium
                                 if description_text:
@@ -5762,6 +5993,20 @@ def handle_generate_unified_assets(data):
                     'percent': 0,
                     'message': f"Generating images for {len(image_targets)} assets..."
                 })
+
+                # Build module monster authority once for this generation pass.
+                try:
+                    from utils.module_monster_authority import build_module_monster_authority
+
+                    generation_monster_authority = set(
+                        build_module_monster_authority(module_name).keys()
+                    )
+                except Exception as authority_error:
+                    warning(
+                        f"TOOLKIT: MMG generation authority build degraded for {module_name}: {authority_error}",
+                        category="module_ingest",
+                    )
+                    generation_monster_authority = set()
                 
                 # Separate monsters and NPCs for image generation
                 monsters_to_image = [a for a in image_targets if a['type'] == 'monster']
@@ -5777,6 +6022,22 @@ def handle_generate_unified_assets(data):
                         asset_id = identity.slug
                         asset_name = identity.canonical_name
                         lookup_ids = get_npc_compendium_lookup_keys(raw_asset_id or asset_id, raw_asset_name)
+
+                        # Skip stale NPC payloads for monster-authoritative slugs.
+                        if asset_id in generation_monster_authority:
+                            info(
+                                f"Skipping image generation for {asset_name}: "
+                                f"slug is monster-authoritative ({asset_id})"
+                            )
+                            completed += 1
+                            continue
+
+                        # TABLETOP MODE: Skip image generation for NPC rows that delegate
+                        # media authority to a monster (same slug exists as monster).
+                        if asset.get('media_authority'):
+                            info(f"Skipping image generation for {asset_name}: media authority delegated to {asset['media_authority']}")
+                            completed += 1
+                            continue
 
                         # Get NPC description - check multiple sources
                         description = ""
@@ -5929,9 +6190,11 @@ def handle_generate_unified_assets(data):
                         try:
                             raw_asset_id = str(asset.get('id') or '').strip()
                             raw_asset_name = str(asset.get('name') or raw_asset_id).strip() or raw_asset_id
+                            # Normalize submitted asset IDs first so MMG respects
+                            # canonical slug identity (for example: crawling_claws_2).
                             normalized_asset_id = (
-                                normalize_character_name(raw_asset_name)
-                                or normalize_character_name(raw_asset_id)
+                                normalize_character_name(raw_asset_id)
+                                or normalize_character_name(raw_asset_name)
                             )
                             if not normalized_asset_id:
                                 raise ValueError("Missing monster asset id for MMG image generation")
@@ -5964,36 +6227,26 @@ def handle_generate_unified_assets(data):
                             if not description:
                                 description = f"A fearsome {asset_name} monster"
                             
-                            # Generate the image
+                            module_media_dir = Path(f"modules/{module_name}/media/monsters")
+                            module_media_dir.mkdir(parents=True, exist_ok=True)
+
+                            # Generate the image directly into module media.
                             result = monster_generator.generate_monster_image(
                                 monster_id=asset_id,
                                 style=style,
                                 model=model,
-                                pack_name=None  # Save to module instead of pack
+                                pack_name=None,
+                                output_dir=str(module_media_dir),
                             )
                             
                             if result.get('success'):
                                 info(f"Successfully generated image for {asset_name}")
-                                
-                                # Copy the generated images to the module's media folder
-                                import shutil
-                                module_media_dir = Path(f"modules/{module_name}/media/monsters")
-                                module_media_dir.mkdir(parents=True, exist_ok=True)
-                                
-                                # Copy main image and thumbnail from the result paths
+
                                 if result.get('image_path'):
-                                    source_image = Path(result['image_path'])
-                                    if source_image.exists():
-                                        dest_image = module_media_dir / f"{asset_id}.jpg"
-                                        shutil.copy2(source_image, dest_image)
-                                        info(f"Copied image to module: {dest_image}")
-                                
+                                    info(f"Saved image to module: {result['image_path']}")
+
                                 if result.get('thumbnail_path'):
-                                    source_thumb = Path(result['thumbnail_path'])
-                                    if source_thumb.exists():
-                                        dest_thumb = module_media_dir / f"{asset_id}_thumb.jpg"
-                                        shutil.copy2(source_thumb, dest_thumb)
-                                        info(f"Copied thumbnail to module: {dest_thumb}")
+                                    info(f"Saved thumbnail to module: {result['thumbnail_path']}")
                                 
                                 socketio.emit('unified_generation_progress', {
                                     'percent': int((completed + 1) / total_assets * 100),

@@ -927,6 +927,116 @@ class TestToolkitHomebrewReadinessGate(unittest.TestCase):
         pp018 = (plot_data.get("plotPoints") or {}).get("PP018") or {}
         self.assertEqual(pp018.get("prerequisites"), ["PP017"])
 
+    def test_legacy_builder_pre_readiness_marker_is_non_authoritative(self) -> None:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.temp_dir.name)
+            module_dir = Path("modules") / "Marker_Module"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            readiness_gate._write_stale_report_marker(
+                "Marker_Module",
+                marker_status="in_progress",
+                marker_freshness="pre_readiness",
+                message="Readiness convergence in progress...",
+            )
+
+            report_path = module_dir / "toolkit_build_report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report.get("freshness_state"), "stale")
+            freshness = report.get("report_freshness") or {}
+            self.assertFalse(bool(freshness.get("authoritative")))
+            self.assertEqual(report.get("ready_status"), "pending")
+            self.assertEqual(report.get("publishable_status"), "pending")
+        finally:
+            os.chdir(old_cwd)
+
+    def test_legacy_builder_failure_marker_is_authoritative(self) -> None:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.temp_dir.name)
+            module_dir = Path("modules") / "Marker_Module"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            readiness_gate._write_stale_report_marker(
+                "Marker_Module",
+                marker_status="failed",
+                marker_freshness="post_readiness_failure",
+                message="Readiness did not pass",
+            )
+
+            report_path = module_dir / "toolkit_build_report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report.get("freshness_state"), "current")
+            freshness = report.get("report_freshness") or {}
+            self.assertTrue(bool(freshness.get("authoritative")))
+            self.assertEqual(
+                freshness.get("contract"),
+                "toolkit_build_report_refresh_contract.v1",
+            )
+            self.assertEqual(report.get("ready_status"), "fail")
+            self.assertTrue(str(report.get("publishable_status", "")).startswith("fail"))
+        finally:
+            os.chdir(old_cwd)
+
+    def test_legacy_builder_readiness_artifact_contains_audit_details(self) -> None:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.temp_dir.name)
+            module_dir = Path("modules") / "Artifact_Module"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            readiness_gate._write_readiness_report_artifact(
+                "Artifact_Module",
+                {
+                    "status": "failed",
+                    "ready_for_finishing": False,
+                    "convergence_outcome": "fixed_point_detected",
+                    "validation": {"status": "fail"},
+                    "readiness_audit": {"status": "fail"},
+                    "repair_attempts": [{"status": "success"}],
+                    "workspace_artifacts": {
+                        "repair_report": "workspace/repair_report.json"
+                    },
+                },
+            )
+
+            report_path = module_dir / "toolkit_readiness_report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual((report.get("validation") or {}).get("status"), "fail")
+            self.assertEqual((report.get("readiness_audit") or {}).get("status"), "fail")
+            self.assertEqual(len(report.get("repair_attempts") or []), 1)
+            self.assertIn("repair_report", report.get("workspace_artifacts") or {})
+        finally:
+            os.chdir(old_cwd)
+
+    def test_legacy_builder_readiness_delegate_exception_fails_closed(self) -> None:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.temp_dir.name)
+            module_dir = Path("modules") / "Crash_Module"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            with patch.object(
+                readiness_gate,
+                "run_toolkit_homebrew_readiness_gate",
+                side_effect=RuntimeError("boom"),
+            ):
+                result = readiness_gate.run_toolkit_builder_readiness_gate(
+                    "Crash_Module", job_id="job-crash"
+                )
+
+            self.assertFalse(bool(result.get("ready_for_finishing")))
+            self.assertEqual(result.get("reason"), "readiness_adapter_exception")
+            self.assertTrue((module_dir / "toolkit_readiness_report.json").exists())
+
+            marker_path = module_dir / "toolkit_build_report.json"
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            self.assertEqual(marker.get("freshness_state"), "current")
+            self.assertTrue(bool((marker.get("report_freshness") or {}).get("authoritative")))
+        finally:
+            os.chdir(old_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

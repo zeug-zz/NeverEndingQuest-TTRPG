@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -51,6 +52,7 @@ VALID_GAME_MONTHS = {
 
 MAX_DETERMINISTIC_PASSES = 2
 MAX_SEMANTIC_PASSES = 2
+_TOOLKIT_REPORT_FRESHNESS_CONTRACT_VERSION = "toolkit_build_report_refresh_contract.v1"
 
 
 def _utc_now_iso() -> str:
@@ -1576,3 +1578,229 @@ def run_toolkit_homebrew_readiness_gate(
         },
         "completed_at": _utc_now_iso(),
     }
+
+
+# Legacy builder readiness adapter
+# TABLETOP MODE: Provides readiness convergence for legacy
+# Module Builder -> Describe your Adventure narrative builds.
+
+_LEGACY_BUILDER_WORKSPACE_ROOT = Path("user_uploads") / "toolkit" / "legacy_builder_workspaces"
+
+
+def _ensure_legacy_builder_workspace(module_slug: str) -> Path:
+    """Create minimal uploader-style workspace for a legacy builder readiness run."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    workspace_name = f"legacy_builder_{module_slug}_{timestamp}"
+    workspace = _LEGACY_BUILDER_WORKSPACE_ROOT / workspace_name
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    build_result = {
+        "build_mode": "legacy_builder_narrative_v1",
+        "module_name": module_slug,
+        "output_directory": f"./modules/{module_slug}",
+        "started_at": _utc_now_iso(),
+        "completed_at": _utc_now_iso(),
+    }
+    safe_write_json(str(workspace / "build_result.json"), build_result)
+    return workspace
+
+
+def _build_marker_freshness(marker_freshness: str, marker_status: str) -> Dict[str, Any]:
+    """Build sidebar-compatible freshness metadata for readiness marker reports."""
+    freshness_key = str(marker_freshness or "").strip().lower()
+    status_key = str(marker_status or "").strip().lower()
+
+    if freshness_key == "pre_readiness" or status_key == "in_progress":
+        freshness_state = "stale"
+        authoritative = False
+        stale_reason = "readiness_pending"
+    else:
+        freshness_state = "current"
+        authoritative = True
+        stale_reason = None
+
+    return {
+        "state": freshness_state,
+        "authoritative": authoritative,
+        "written_at": _utc_now_iso(),
+        "phase": "readiness",
+        "workflow": "legacy_builder_readiness",
+        "refresh_reason": freshness_key or "readiness_marker",
+        "contract": _TOOLKIT_REPORT_FRESHNESS_CONTRACT_VERSION,
+        "stale_reason": stale_reason,
+    }
+
+
+def _write_stale_report_marker(module_slug: str, marker_status: str, marker_freshness: str, *, message: str = "") -> bool:
+    """Write sidebar-compatible freshness marker to toolkit_build_report.json."""
+    report_dir = Path("modules") / module_slug
+    if not report_dir.exists():
+        return False
+
+    freshness = _build_marker_freshness(marker_freshness, marker_status)
+    report_path = report_dir / "toolkit_build_report.json"
+    marker = {
+        "generated_at": _utc_now_iso(),
+        "status": marker_status,
+        "stage": "readiness_marker",
+        "module_slug": module_slug,
+        "source": "toolkit",
+        "freshness_state": freshness.get("state"),
+        "report_freshness": freshness,
+        "ready_for_finishing": False,
+        "ready_status": "pending" if marker_status == "in_progress" else "fail",
+        "publishable_status": "pending" if marker_status == "in_progress" else "fail_readiness",
+        "message": message or f"Readiness {marker_status} ({marker_freshness})",
+        "stages": {
+            "readiness": {
+                "status": marker_status,
+                "freshness": marker_freshness,
+                "message": message,
+            }
+        },
+        "provenance": {
+            "source": "toolkit",
+            "artifact": "toolkit_build_report.json",
+            "contract": "toolkit_build_report_required",
+            "phase": "readiness",
+            "refresh_contract": _TOOLKIT_REPORT_FRESHNESS_CONTRACT_VERSION,
+            "refresh_workflow": "legacy_builder_readiness",
+            "refresh_reason": marker_freshness,
+        },
+    }
+    write_ok = safe_write_json(str(report_path), marker)
+    if not write_ok:
+        warning(
+            f"TOOLKIT_BUILDER: Failed to write readiness marker for {module_slug}: {report_path}",
+            category="web_interface",
+        )
+    return bool(write_ok)
+
+
+def _write_readiness_report_artifact(module_slug: str, readiness_result: Dict[str, Any]) -> bool:
+    """Persist a compact readiness report at a predictable module-local path.
+
+    Contains canonical convergence fields for sidebar/report consumers.
+    """
+    report_dir = Path("modules") / module_slug
+    if not report_dir.exists():
+        return False
+
+    report_path = report_dir / "toolkit_readiness_report.json"
+    report = {
+        "module_slug": module_slug,
+        "ready_for_finishing": bool(readiness_result.get("ready_for_finishing")),
+        "status": str(readiness_result.get("status", "failed")),
+        "stage": str(readiness_result.get("stage", "readiness")),
+        "reason": str(readiness_result.get("reason", "")),
+        "error": str(readiness_result.get("error", "")),
+        "convergence_outcome": str(readiness_result.get("convergence_outcome", "")),
+        "fixed_point_detected": bool(readiness_result.get("fixed_point_detected")),
+        "deterministic_passes": int(readiness_result.get("deterministic_passes", 0)),
+        "semantic_passes": int(readiness_result.get("semantic_passes", 0)),
+        "residual_blocker_classes": list(readiness_result.get("residual_blocker_classes", [])),
+        "residual_failure_categories": list(readiness_result.get("residual_failure_categories", [])),
+        "residual_failure_errors": list(readiness_result.get("residual_failure_errors", [])),
+        "residual_closure_advanced": bool(readiness_result.get("residual_closure_advanced")),
+        "validation": readiness_result.get("validation", {}),
+        "readiness_audit": readiness_result.get("readiness_audit", {}),
+        "repair_attempts": readiness_result.get("repair_attempts", []),
+        "workspace_artifacts": readiness_result.get("workspace_artifacts", {}),
+        "source_workflow": str(readiness_result.get("source_workflow", "legacy_builder_narrative_v1")),
+        "legacy_workspace": str(readiness_result.get("legacy_workspace", "")),
+        "written_at": _utc_now_iso(),
+    }
+    write_ok = safe_write_json(str(report_path), report)
+    if not write_ok:
+        warning(
+            f"TOOLKIT_BUILDER: Failed to write readiness report for {module_slug}: {report_path}",
+            category="web_interface",
+        )
+    return bool(write_ok)
+
+
+def run_toolkit_builder_readiness_gate(
+    module_slug: str,
+    *,
+    job_id: Optional[str] = None,
+    state_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Run readiness convergence for a legacy Describe your Adventure builder module.
+
+    Creates a minimal uploader-style workspace and delegates to the shared
+    readiness gate so both paths use the same convergence implementation.
+    Also manages report freshness: writes a pre-readiness stale marker before
+    readiness begins and persists a dedicated readiness report artifact.
+    """
+    module_slug = str(module_slug or "").strip()
+    if not module_slug:
+        return {
+            "status": "failed",
+            "stage": "readiness",
+            "error": "module_slug_missing",
+            "module_name": "",
+            "ready_for_finishing": False,
+        }
+
+    resolved_job_id = job_id or f"legacy_builder_{module_slug}_{int(time.time())}"
+
+    # Write pre-readiness stale marker to prevent sidebar from showing stale state.
+    _write_stale_report_marker(
+        module_slug,
+        marker_status="in_progress",
+        marker_freshness="pre_readiness",
+        message="Readiness convergence in progress...",
+    )
+
+    workspace = _ensure_legacy_builder_workspace(module_slug)
+
+    try:
+        result = run_toolkit_homebrew_readiness_gate(
+            workspace=workspace,
+            job_id=resolved_job_id,
+            state_callback=state_callback,
+        )
+    except Exception as readiness_error:
+        error(
+            f"TOOLKIT_BUILDER: Readiness gate failed for {module_slug}: {readiness_error}",
+            exception=readiness_error,
+            category="web_interface",
+        )
+        result = {
+            "status": "failed",
+            "stage": "readiness",
+            "reason": "readiness_adapter_exception",
+            "error": str(readiness_error),
+            "job_id": resolved_job_id,
+            "module_name": module_slug,
+            "ready_for_finishing": False,
+            "convergence_outcome": "readiness_adapter_exception",
+            "fixed_point_detected": False,
+            "deterministic_passes": 0,
+            "semantic_passes": 0,
+            "residual_blocker_classes": ["readiness_system_failure"],
+            "residual_failure_categories": ["readiness_system_failure"],
+            "residual_failure_errors": [str(readiness_error)],
+            "repair_attempts": [],
+            "validation": {},
+            "readiness_audit": {},
+            "completed_at": _utc_now_iso(),
+        }
+
+    result["source_workflow"] = "legacy_builder_narrative_v1"
+    result["legacy_workspace"] = str(workspace)
+
+    # Persist dedicated readiness report artifact.
+    _write_readiness_report_artifact(module_slug, result)
+
+    # If readiness did not pass, write failure freshness marker.
+    if not bool(result.get("ready_for_finishing")):
+        convergence = str(result.get("convergence_outcome", "")) or str(result.get("status", "failed"))
+        _write_stale_report_marker(
+            module_slug,
+            marker_status="failed",
+            marker_freshness="post_readiness_failure",
+            message=f"Readiness did not pass: {convergence}",
+        )
+
+    return result

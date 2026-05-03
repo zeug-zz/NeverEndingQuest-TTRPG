@@ -1091,6 +1091,35 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Builder Readiness Pipeline Parity Hardening (COMPLETED - 2026-05-03)
+
+**Status:** COMPLETED - Legacy Module Builder readiness now fail-closes with sidebar-compatible freshness markers and module-local readiness artifacts.
+
+**Objective:**
+- Ensure legacy Describe-your-Adventure builds run readiness convergence before post-build finishing.
+- Prevent stale passing `toolkit_build_report.json` state from surfacing during in-progress or failed readiness.
+- Preserve uploader readiness contract while adding legacy-only adapter protections.
+
+**Implementation Summary:**
+- `web/extensions/toolkit_homebrew_readiness_gate.py`
+  - Added legacy readiness marker freshness contract with `freshness_state` + `report_freshness` (`toolkit_build_report_refresh_contract.v1`).
+  - Added fail-closed exception handling for delegated readiness adapter (`reason=readiness_adapter_exception`).
+  - Expanded `toolkit_readiness_report.json` payload to include `validation`, `readiness_audit`, `repair_attempts`, and workspace artifact references.
+- `web/web_interface.py`
+  - Fixed readiness callback audit-stage branch ordering so audit status emits correctly.
+  - Added explicit readiness-adapter exception fallback payload in legacy builder flow.
+- Tests:
+  - Extended `scripts/test_toolkit_homebrew_readiness_gate.py` with marker authority, artifact payload, and delegate-exception fail-closed coverage.
+  - Extended `scripts/test_toolkit_module_build_publication_parity.py` source-contract assertions for freshness contract and readiness exception markers.
+- OpenSpec:
+  - Updated `openspec/changes/toolkit-builder-readiness-pipeline-parity/tasks.md` completion notes and verification counts.
+
+**Verification:**
+- `python3 -m py_compile web/extensions/toolkit_homebrew_readiness_gate.py web/web_interface.py scripts/test_toolkit_homebrew_readiness_gate.py scripts/test_toolkit_module_build_publication_parity.py` -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_homebrew_readiness_gate` -> PASS (22/22)
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_module_build_publication_parity` -> PASS (37/37)
+- `openspec validate toolkit-builder-readiness-pipeline-parity` -> VALID
+
 ### MMG Will-o'-Wisp Safe Slug Queue Fix (COMPLETED - 2026-04-30)
 
 **Status:** COMPLETED - Closed MMG apostrophe-slug regression where toolkit UI still looked up `will-o'-wisp` media paths after safe filename remediation.
