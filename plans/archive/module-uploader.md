@@ -28,7 +28,7 @@
 - Rebuild support complete: repeated uploads now require explicit confirmation and use backup + clean rebuild before re-entering build/readiness.
 - Verified corpus checkpoint: `A_Pottsfield_Burial` demonstrates clean ingest/build/readiness success; `The_Ancients_Lab` demonstrates artifact generation and monster closure are working, with remaining issues isolated to post-build semantic/content quality rather than upload ingestion failure.
 - Phase 8 complete: corpus-based quality gate and parity acceptance suite implemented and archived in OpenSpec.
-- Logical successor plan: `plans/module-uploader-2.md` (GUI Builder stabilization + narrative classification).
+- Logical successor plan: `plans/archive/module-uploader-2.md` (GUI Builder stabilization + narrative classification).
 
 ## Goal
 

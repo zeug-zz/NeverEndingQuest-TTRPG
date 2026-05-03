@@ -2,7 +2,7 @@
 
 ## Status
 
-- Draft for review
+- Complete
 - Scope approved for structural fixes first, LLM integration second
 - Apply to future ingests and re-run against existing modules
 - Re-ingest `The_Hidden_City_of_Numillian` after the new flow lands

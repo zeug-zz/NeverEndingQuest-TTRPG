@@ -1369,7 +1369,7 @@ character_data["is_active_pc"] = True
   - `scripts/homebrew_ingest_dev.py`
   - `utils/module_semantic_authority.py`
 - Added planning artifact for the next uploader pass:
-  - `plans/module-uploader-2.md`
+  - `plans/archive/module-uploader-2.md`
   - archived prior plan: `plans/archive/module-uploader.md`
 - Kept one GUI-builder change active (not archived):
   - `openspec/changes/gui-builder-structural-stabilization/`
