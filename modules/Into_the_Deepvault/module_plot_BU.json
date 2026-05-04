@@ -1,0 +1,579 @@
+{
+  "plotTitle": "Into the Deepvault: The Awakening of Deepvault Hold",
+  "mainObjective": "Delve beneath Deepvault Hold and its surrounding lands to uncover the ancient dwarven secrets, confront awakening forces, and prevent the catastrophic resurgence of powers that threaten to devastate the surface world.",
+  "plotPoints": [
+    {
+      "id": "PP001",
+      "title": "Into the Shadowed Vaultlands",
+      "description": "The party is drawn to the Shadowed Vaultlands, where legends speak of ancient dwarven treasures and recent tremors have caused miners and explorers to vanish. Locals warn of prowling shadows and ancestral wards. Navigating the mist-shrouded maze, the party must find the sealed entrance to the vaults, setting in motion the events that will echo throughout all of Deepvault Hold\u2019s domains.",
+      "location": "DA001",
+      "nextPoints": [
+        "PP002"
+      ],
+      "status": "not started",
+      "plotImpact": "Establishes the atmosphere, introduces Deepvault's legend, and launches the quest to investigate the disturbance beneath the stone.",
+      "sideQuests": [
+        {
+          "id": "SQ001",
+          "title": "The Moss-Runes' Secret",
+          "description": "Hidden among the stones are ancient runes covered in moss. Deciphering them may reveal hints about safely traversing the maze or warnings about dangers below.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Deciphering the runes grants advantage to finding hidden paths and traps in future areas."
+        },
+        {
+          "id": "SQ002",
+          "title": "Echoes in the Mist",
+          "description": "A lost explorer\u2019s spirit lingers, whispering for help to find peace. The party can seek out remnants of the explorer\u2019s belongings and lay the spirit to rest.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Aided spirit offers cryptic warnings about the vault\u2019s guardians."
+        }
+      ]
+    },
+    {
+      "id": "PP002",
+      "title": "The Vault\u2019s Hidden Gate",
+      "description": "Within a sunken stone plaza, the party discovers the sealed entrance to the underground vaults\u2014a moss-encrusted portal locked by a dwarven ritual. To open the gate and access the true depths, they must solve a puzzle using clues from the environment and local legends, all while fending off aggressive creatures drawn to the area's lingering magic. Rival explorers, sensing an opportunity, might force a tense negotiation or confrontation.",
+      "location": "DA001",
+      "nextPoints": [
+        "PP003"
+      ],
+      "status": "not started",
+      "plotImpact": "Opening the gate allows access to the vaults and signals the start of deeper threats that will resonate in other regions.",
+      "sideQuests": [
+        {
+          "id": "SQ003",
+          "title": "The Rival Explorers",
+          "description": "A small group of rival treasure-seekers confronts the party, offering either an uneasy alliance or open hostility depending on how negotiations proceed.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Choosing alliance provides extra hands but may split loot or lead to betrayal; hostility results in combat and access to rival\u2019s map fragments."
+        }
+      ]
+    },
+    {
+      "id": "PP003",
+      "title": "Descent Beneath the Stones",
+      "description": "With the portal opened, the party descends into the ancient vaults, encountering crumbling corridors and awakened guardians. Echoes of past tragedies linger, and as the party delves deeper, they uncover hints of disturbances radiating beyond the Vaultlands\u2014signs that something stirs in the wider Deepvault.",
+      "location": "DA001",
+      "nextPoints": [
+        "PP004"
+      ],
+      "status": "not started",
+      "plotImpact": "Progresses the party through increasing danger, foreshadowing that the disturbance may reach other regions.",
+      "sideQuests": [
+        {
+          "id": "SQ004",
+          "title": "The Forgotten Relic",
+          "description": "A chamber off the main path holds a relic of the vault\u2019s ancient builders. Retrieving it may require solving a dangerous trap or negotiating with a spectral protector.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Relic can aid in the final confrontation or be traded to NPCs for assistance."
+        },
+        {
+          "id": "SQ005",
+          "title": "Silent Stones",
+          "description": "Some corridors are inscribed with magical glyphs that can suppress or amplify sound. Experimenting may allow the party to bypass certain sentinels or hazards.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Unlocks stealth-based solutions for future encounters."
+        }
+      ]
+    },
+    {
+      "id": "PP004",
+      "title": "The Vault\u2019s Heart",
+      "description": "In the deepest chamber, the party confronts the spirit-warden and its monstrous creations. To claim the legendary treasure and uncover the truth behind the disturbances, the party must destroy or appease the spirit. Their actions here send ripples through the vaults and awaken echoes that reach the surface, drawing the attention of factions in the Vaulted Marches.",
+      "location": "DA001",
+      "nextPoints": [
+        "PP005"
+      ],
+      "status": "not started",
+      "plotImpact": "Concludes the Shadowed Vaultlands arc and triggers a greater awakening, connecting to the Vaulted Marches.",
+      "sideQuests": [
+        {
+          "id": "SQ006",
+          "title": "Bargain of Shadows",
+          "description": "The spirit-warden offers a pact: return a stolen artifact to its rightful resting place, and the party may leave with both treasure and knowledge.",
+          "involvedLocations": [
+            "DA001"
+          ],
+          "status": "not started",
+          "plotImpact": "Completing the task grants a unique boon and prevents the vault\u2019s collapse."
+        }
+      ]
+    },
+    {
+      "id": "PP005",
+      "title": "Whispers Beneath the Marches",
+      "description": "News of the disturbances draws the party to the Vaulted Marches, where cracked stone arches and misty moors are alive with rumors of old powers awakening. Factions vie for control, and local guides speak of echoing voices at night and glimpses of torchlight vanishing into the ground. The party must decide how to investigate and whom to trust, as the unrest from the Vaultlands begins to spread.",
+      "location": "OV002",
+      "nextPoints": [
+        "PP006"
+      ],
+      "status": "not started",
+      "plotImpact": "Introduces the political and spiritual tensions in the Marches, setting up new alliances and rivalries.",
+      "sideQuests": [
+        {
+          "id": "SQ007",
+          "title": "Mistbound Messenger",
+          "description": "A frightened courier begs the party to deliver a coded message to a prospector deeper within the Marches. The message hints at a hidden passage safe from 'the stonebound,' but others may seek to intercept it.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "Completing the delivery can provide clues about alternative vault entrances and future allies."
+        },
+        {
+          "id": "SQ008",
+          "title": "Echoes of the Past",
+          "description": "A spectral figure appears at midnight, muttering about the 'broken pact.' If approached respectfully, the apparition may grant cryptic warnings or a minor boon.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "The party can gain insight into the deeper threats or provoke spectral hostility throughout the adventure."
+        }
+      ]
+    },
+    {
+      "id": "PP006",
+      "title": "Descent to Hidden Vaults",
+      "description": "Guided by scavenger maps, ghostly whispers, or rival treasure hunters, the party locates a viable entry into the tangled vaults beneath the Marches. As they explore, they encounter direct opposition from other vault-seekers and must choose between confrontation, negotiation, or stealth. The echoes from the Vaultlands hint that something deeper has awakened, urging the party onward.",
+      "location": "OV002",
+      "nextPoints": [
+        "PP007"
+      ],
+      "status": "not started",
+      "plotImpact": "Encounters with rivals and ancient traps; alliances and choices here will influence the dangers or allies the party finds deeper below.",
+      "sideQuests": [
+        {
+          "id": "SQ009",
+          "title": "The Unopened Sarcophagus",
+          "description": "A sealed stone sarcophagus lies off the main path, covered in warning runes. Rumors claim great reward or great curse within.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "Opening the sarcophagus may unleash a guardian spirit or grant a unique artifact, affecting the final confrontation."
+        },
+        {
+          "id": "SQ010",
+          "title": "Rivalry in the Dark",
+          "description": "A rival adventuring band confronts the party, seeking to claim the vault's treasures for themselves.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "Their relationship with the rivals could sway the balance in later encounters."
+        }
+      ]
+    },
+    {
+      "id": "PP007",
+      "title": "The Heart of the Vaulted Marches",
+      "description": "Deep within the Marches, the party finds the source of the disturbances\u2014a powerful relic or slumbering entity bound beneath the stones, now stirring due to increasing intrusion. The vault's defenses are failing, and competing factions converge. The party must choose their approach, and the consequences of their actions begin to affect the entire region.",
+      "location": "OV002",
+      "nextPoints": [
+        "PP008"
+      ],
+      "status": "not started",
+      "plotImpact": "The party must choose whether to claim, seal, or destroy the relic, negotiate or fight with other factions, and confront the awakened threat.",
+      "sideQuests": [
+        {
+          "id": "SQ011",
+          "title": "Sever the Binding Chains",
+          "description": "A chained spirit offers aid if the party will break its ancient bonds.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "The spirit\u2019s release can tip the final conflict in the party\u2019s favor, but at a cost."
+        },
+        {
+          "id": "SQ012",
+          "title": "The Forgotten Pact",
+          "description": "Hidden glyphs describe a long-lost pact between the vault's original builders and the spirits of the Marches.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "Strengthens defenses or gains boons for the final encounter, possibly opening peaceful solutions."
+        }
+      ]
+    },
+    {
+      "id": "PP008",
+      "title": "Echoes Resolved",
+      "description": "In a climactic confrontation, the powers awoken in the Marches must be dealt with\u2014whether ancient guardian, vengeful spirit, or the unleashed relic itself. The party's choices determine whether the Marches are cleansed, cursed anew, or claimed by a new power. The consequences ripple outward, their fame (or infamy) spreading among explorers and spirits alike.",
+      "location": "OV002",
+      "nextPoints": [
+        "PP009"
+      ],
+      "status": "not started",
+      "plotImpact": "The resolution alters the fate of the Vaulted Marches, setting up new opportunities and threats in the region.",
+      "sideQuests": [
+        {
+          "id": "SQ013",
+          "title": "Aftermath and Allegiances",
+          "description": "Survivors and spirits alike seek the party\u2019s judgment or aid as the dust settles.",
+          "involvedLocations": [
+            "OV002"
+          ],
+          "status": "not started",
+          "plotImpact": "Influences the standing of the party among local factions and spirits, setting up future adventures or alliances."
+        }
+      ]
+    },
+    {
+      "id": "PP009",
+      "title": "Shadows Beneath the Yew: Entering the Ancestral Catacombs",
+      "description": "With unrest radiating from the vaults, the party is beckoned to Moorhollow and its Ancestral Catacombs. The recent surge of undead and angry spirits is now understood as part of the same disturbance. The villagers beg the party to descend into the necropolis, discover the cause of the unrest, and restore peace before the corruption spreads further.",
+      "location": "HA003",
+      "nextPoints": [
+        "PP010"
+      ],
+      "status": "not started",
+      "plotImpact": "Links the catacombs' spiritual unrest to the greater disruptions beneath Deepvault Hold.",
+      "sideQuests": [
+        {
+          "id": "SQ014",
+          "title": "Last Rites for the Forgotten",
+          "description": "A mourning villager begs the party to find her ancestor's grave deep in the catacombs and deliver a family heirloom.",
+          "involvedLocations": [
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Succeeding may ease the restless spirits, providing the party with a blessing or safe passage."
+        },
+        {
+          "id": "SQ015",
+          "title": "Spirit of the Lost Priest",
+          "description": "A ghostly priest lingers near the crypt entrance, unable to move on. If the party promises to retrieve his missing holy symbol within the tunnels, he grants them guidance and insight.",
+          "involvedLocations": [
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Completing this side quest grants the party temporary protection from undead."
+        }
+      ]
+    },
+    {
+      "id": "PP010",
+      "title": "The Whispering Maze: Navigating the Catacombs",
+      "description": "Within the catacombs, the party must traverse twisting stone corridors haunted by illusory echoes and spectral traps. The dead stir at every misstep, and the tunnels themselves seem to whisper of the greater unrest emanating from the Depths below.",
+      "location": "HA003",
+      "nextPoints": [
+        "PP011"
+      ],
+      "status": "not started",
+      "plotImpact": "How the party handles the spirits and traps affects the hostility of the catacomb's spectral guardians.",
+      "sideQuests": [
+        {
+          "id": "SQ016",
+          "title": "Cryptic Inheritance",
+          "description": "A hidden niche holds a puzzle box said to contain the 'legacy of the stone-binders.'",
+          "involvedLocations": [
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Unlocking the relic may grant a boon or unleash a new threat within the catacombs."
+        }
+      ]
+    },
+    {
+      "id": "PP011",
+      "title": "Legacy of Wrath: The Hall of Ancestors",
+      "description": "The party discovers the Hall of Ancestors, its spirits restless from a broken oath or desecration. Parley and reparations may avert violence, or the party may be forced to fight the vengeful dead. The origins of these troubles are traced to the deeper disturbances in the Forgebound Wastes and Sundered Depths.",
+      "location": "HA003",
+      "nextPoints": [
+        "PP012"
+      ],
+      "status": "not started",
+      "plotImpact": "The party\u2019s choices influence the final confrontation: diplomacy may avert violence or gain powerful allies.",
+      "sideQuests": [
+        {
+          "id": "SQ017",
+          "title": "The Broken Oath",
+          "description": "A spectral ancestor tasks the party to locate and mend a shattered family sigil somewhere in the catacombs.",
+          "involvedLocations": [
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Restoring the sigil pacifies some spirits, making the final challenge easier."
+        },
+        {
+          "id": "SQ018",
+          "title": "The Defiled Rest",
+          "description": "A defiled sarcophagus radiates malignant energy; cleansing it will weaken the power of the vengeful dead.",
+          "involvedLocations": [
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Cleansing the sarcophagus can grant the party a temporary boon or diminish spectral reinforcements in the climax."
+        }
+      ]
+    },
+    {
+      "id": "PP012",
+      "title": "Into the Deepvault: Confronting the Catacomb\u2019s Wrath",
+      "description": "At the catacombs\u2019 heart, the party faces the vengeful Lord or Lady of the Dead\u2014an ancestral spirit twisted by the same forces threatening the surface. Only by resolving the ancient grievance or defeating the corrupted spirit can the party bring peace to the catacombs and stem the spread of darkness to the Forgebound Wastes.",
+      "location": "HA003",
+      "nextPoints": [
+        "PP013"
+      ],
+      "status": "not started",
+      "plotImpact": "The outcome determines the fate of the catacombs and Moorhollow; success brings peace and potential rewards, while failure dooms the area to further darkness.",
+      "sideQuests": []
+    },
+    {
+      "id": "PP013",
+      "title": "Arrival on the Forgebound Wastes",
+      "description": "With rumors of magical storms and relics stirring, the party travels to the Forgebound Wastes. Here, the disturbance beneath Deepvault has twisted land and spirit alike. Warring scavenger bands and animated relics block the way to the Heart Crucible, an artifact whose power may be key to quelling the unrest or unleashing it further.",
+      "location": "RF004",
+      "nextPoints": [
+        "PP014"
+      ],
+      "status": "not started",
+      "plotImpact": "Choices here determine future alliances as the party enters the most dangerous reaches of Deepvault\u2019s influence.",
+      "sideQuests": [
+        {
+          "id": "SQ019",
+          "title": "The Relic Bargain",
+          "description": "A desperate relic-hunter offers information in exchange for help retrieving a fused bone-and-bronze idol from nearby shifting ruins before it sinks into molten flows.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Completing this quest provides crucial lore about the Heart Crucible and a possible shortcut deeper into the wastes."
+        },
+        {
+          "id": "SQ020",
+          "title": "Molten Messenger",
+          "description": "A scavenger leader asks the party to deliver a truce token past the Scarred Gate to a rival clan, offering safe passage or supplies if successful.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Success earns a non-hostile approach from one major scavenger faction and a unique consumable item."
+        }
+      ]
+    },
+    {
+      "id": "PP014",
+      "title": "Through the Thrumming Plains",
+      "description": "Within the Wastes\u2019 interior, the party traverses fused stone and bone, alive with unpredictable magic. They must decipher runic patterns and survive environmental hazards, encountering outcast mages and spirits who reveal that the unrest is linked to the rune-forge deep below.",
+      "location": "RF004",
+      "nextPoints": [
+        "PP015"
+      ],
+      "status": "not started",
+      "plotImpact": "Alliances or enmities formed with outcast mages influence magical obstacles and the final confrontation.",
+      "sideQuests": [
+        {
+          "id": "SQ021",
+          "title": "Echoes in the Ash",
+          "description": "Investigate a haunting voice heard amid the runic winds; the source is a spirit fused to the landscape, who can reveal secrets about the artifact or curse the party if angered.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Aids in deciphering runic traps later; angered spirit may summon hostile creatures."
+        },
+        {
+          "id": "SQ022",
+          "title": "Runic Outcast\u2019s Plea",
+          "description": "One outcast mage seeks components scattered across the plains, offering to dispel a dangerous magical trap ahead if the party helps.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Bypassing magical traps later becomes possible, or the mage becomes an enemy if refused."
+        }
+      ]
+    },
+    {
+      "id": "PP015",
+      "title": "Crossing the Molten Veins",
+      "description": "The party must navigate rivers of liquid metal and crumbling causeways, guarded by warped constructs and living relics. Choices here\u2014stealth, brute force, or negotiation\u2014determine their strength as they approach the Crucible and the runes that link all of Deepvault\u2019s unrest.",
+      "location": "RF004",
+      "nextPoints": [
+        "PP016"
+      ],
+      "status": "not started",
+      "plotImpact": "How the party approaches this crossing affects their resources for the final confrontation. Secret paths may yield powerful allies or rare relics.",
+      "sideQuests": [
+        {
+          "id": "SQ023",
+          "title": "Bridge of the Living",
+          "description": "A sentient span of stone-bone offers to bear the party across safely if they bring it a relic it craves\u2014requiring a detour into a dangerous side-vault.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Success provides a safe, speedy crossing and a potential ally for the climax."
+        },
+        {
+          "id": "SQ024",
+          "title": "Construct\u2019s Remorse",
+          "description": "A damaged guardian recollects flashes of its ancient creator. If aided, it may reveal a hidden shortcut or grant a boon to the party.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Completing this side quest can make certain guardians non-hostile or provide valuable knowledge for the Heart Crucible."
+        }
+      ]
+    },
+    {
+      "id": "PP016",
+      "title": "The Crucible\u2019s Heart",
+      "description": "At the wastes\u2019 fiery core, the party discovers the Heart Crucible\u2014an ancient forge-throne entwined with colossal runes and the remnants of stone-bound spirits. A final confrontation unfolds: a transformed relic-keeper attempts to consume the Crucible\u2019s power to reshape the wastes, linking the unrest to the Sundered Depths below.",
+      "location": "RF004",
+      "nextPoints": [
+        "PP017"
+      ],
+      "status": "not started",
+      "plotImpact": "All prior decisions culminate: allies may intervene, relics collected alter the outcome, and the fate of the Forgebound Wastes\u2014and the secrets it holds\u2014are decided here.",
+      "sideQuests": [
+        {
+          "id": "SQ025",
+          "title": "The Final Bargain",
+          "description": "A spirit bound to the Crucible offers a pact: promise to restore the wastes or seize its power for yourselves, changing both the land and the party forever.",
+          "involvedLocations": [
+            "RF004"
+          ],
+          "status": "not started",
+          "plotImpact": "Determines epilogue for the wastes, possible boons or curses for the party, and the nature of the relic\u2019s awakening."
+        }
+      ]
+    },
+    {
+      "id": "PP017",
+      "title": "Descent into the Sundered Depths",
+      "description": "Lady Brunna Ironsong summons the party to Grayspire\u2019s End, above a yawning fissure\u2014the only known entrance to the Sundered Depths, where seismic tremors and missing miners point to a final, world-threatening awakening. The party must descend, uncover the source, and rescue any survivors. The journey draws together the threads from all previous regions.",
+      "location": "SD005",
+      "nextPoints": [
+        "PP018"
+      ],
+      "status": "not started",
+      "plotImpact": "Establishes the party\u2019s motivation and sets the stakes for the final confrontation.",
+      "sideQuests": [
+        {
+          "id": "SQ026",
+          "title": "Missing Tools",
+          "description": "Foreman Ulric Flintlace asks the party to recover a set of enchanted mining tools lost during a quake.",
+          "involvedLocations": [
+            "SD005"
+          ],
+          "status": "not started",
+          "plotImpact": "Finding the tools grants access to a shortcut and earns Ulric\u2019s trust, who can provide geological insights."
+        },
+        {
+          "id": "SQ027",
+          "title": "Echoes in the Rocks",
+          "description": "A local prospector claims to have heard strange voices from a sealed tunnel.",
+          "involvedLocations": [
+            "SD005"
+          ],
+          "status": "not started",
+          "plotImpact": "Unveils hints about ancient terrors and the presence of restless spirits below."
+        }
+      ]
+    },
+    {
+      "id": "PP018",
+      "title": "Labyrinth of Shadows",
+      "description": "Within the Depths, the party must navigate shattered corridors, evading deadly chasms and unstable rockfalls. They discover that Duergar Rune-Warriors, led by Varkhaz the Stonebound, are carving runes to awaken something ancient\u2014runic energies that connect to the disturbances in all previous areas.",
+      "location": "SD005",
+      "nextPoints": [
+        "PP019"
+      ],
+      "status": "not started",
+      "plotImpact": "Exposes the main antagonists and the existence of a larger ritual threatening to unleash an ancient horror.",
+      "sideQuests": [
+        {
+          "id": "SQ028",
+          "title": "The Silent Watch",
+          "description": "A damaged construct, Beldrum, guards a collapsed hall. Restoring Beldrum could provide both protection and knowledge about the Depths\u2019 ancient defenses.",
+          "involvedLocations": [
+            "SD005"
+          ],
+          "status": "not started",
+          "plotImpact": "Beldrum\u2019s aid can help bypass Duergar patrols or reveal a secret passage."
+        },
+        {
+          "id": "SQ029",
+          "title": "Ghost of the Past",
+          "description": "The spirit of Thane Durnic appears to those who investigate a forgotten shrine. He seeks the party\u2019s promise to preserve the Depths\u2019 sacred relics from desecration.",
+          "involvedLocations": [
+            "SD005"
+          ],
+          "status": "not started",
+          "plotImpact": "Honoring the spirit\u2019s wish grants guidance and a protective blessing."
+        }
+      ]
+    },
+    {
+      "id": "PP019",
+      "title": "The Shattered Vault",
+      "description": "The party penetrates deeper, finding the Duergar ritual site: a colossal stone vault cracked wide by recent quakes. Here, the Duergar channel rune-magic to awaken an ancient, slumbering horror. The party must confront Varkhaz the Stonebound and his rune-warriors in a desperate battle amid shifting rock and magical surges.",
+      "location": "SD005",
+      "nextPoints": [
+        "PP020"
+      ],
+      "status": "not started",
+      "plotImpact": "Success or failure in stopping Varkhaz determines whether the ancient horror is released. Allies or power gained in prior plot points make the battle easier or harder.",
+      "sideQuests": [
+        {
+          "id": "SQ030",
+          "title": "Saboteur\u2019s Opportunity",
+          "description": "Saboteur Rask offers to help disrupt the Duergar ritual if the party can promise him safe passage and a share of any treasure found.",
+          "involvedLocations": [
+            "SD005"
+          ],
+          "status": "not started",
+          "plotImpact": "Rask\u2019s sabotage can weaken Varkhaz\u2019s forces, but trusting him might have unforeseen consequences."
+        }
+      ]
+    },
+    {
+      "id": "PP020",
+      "title": "Into the Deepvault: The Abyss Stirs",
+      "description": "With the ritual interrupted or fulfilled, the Depths begin to collapse as the ancient horror either wakes or remains sealed. The party must escape, rescue survivors, and confront the consequences of their actions. The fate of Deepvault Hold\u2014and the world above\u2014rests on the party\u2019s choices, with their deeds echoing in legend.",
+      "location": "SD005",
+      "nextPoints": [],
+      "status": "not started",
+      "plotImpact": "Final outcomes ripple into the region\u2019s future\u2014sanctuary reclaimed, Depths lost, or a new threat unleashed.",
+      "sideQuests": [
+        {
+          "id": "SQ031",
+          "title": "The Last Miner",
+          "description": "Archivist Gremli Amberfist begs the party to find Trapped Miner Derval, believed to be alive but lost in the chaos. Time is short as rocks fall and darkness spreads.",
+          "involvedLocations": [
+            "SD005",
+            "HA003"
+          ],
+          "status": "not started",
+          "plotImpact": "Rescuing Derval brings closure and gratitude from the miners; failing may haunt the party or provoke unrest in Grayspire\u2019s End."
+        }
+      ]
+    }
+  ],
+  "activeQuests": [],
+  "completedQuests": [],
+  "failedQuests": [],
+  "worldEvents": [],
+  "dmNotes": []
+}

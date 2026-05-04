@@ -1,0 +1,77 @@
+{
+  "name": "Animated Forge-Tool",
+  "size": "Small",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 15,
+  "hitPoints": 16,
+  "maxHitPoints": 16,
+  "speed": 30,
+  "abilities": {
+    "strength": 12,
+    "dexterity": 14,
+    "constitution": 13,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 1
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "lightning"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing",
+    "fire"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned",
+    "charmed",
+    "exhaustion"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 10
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 0.5,
+  "specialAbilities": [
+    {
+      "name": "False Appearance",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "None"
+    },
+    {
+      "name": "Heated Body",
+      "attackBonus": 0,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "fire"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Heated Slam",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Heated Slam (Fire)",
+      "attackBonus": 0,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "fire"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

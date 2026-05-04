@@ -1,0 +1,20 @@
+{
+  "validation_date": "2026-04-25T13:56:51.603963",
+  "issues": [
+    "NPC 'Foreman Ulric Flintlace' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Lady Brunna Ironsong' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Sergeant Halda Stonebrow' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Archivist Gremli Amberfist' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Saboteur Rask' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Spirit of Thane Durnic' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Guardian Construct Beldrum' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
+  ],
+  "context_summary": {
+    "areas": 5,
+    "npcs": 10,
+    "locations": 0,
+    "plot_points": 4
+  }
+}

@@ -1,0 +1,443 @@
+{
+  "areaId": "OV002",
+  "areaName": "The Vaulted Marches",
+  "areaType": "mixed",
+  "areaDescription": "Cracked stone arches and half-buried vault entrances rise from tangled mists and wind-worn thickets, hinting at ancient secrets beneath the uneven ground. Strange echoes and the distant flicker of torchlight warn travelers that both treasure hunters and older things roam these haunted borderlands.",
+  "dangerLevel": "medium",
+  "recommendedLevel": 3,
+  "climate": "varied",
+  "terrain": "varied terrain",
+  "map": {
+    "mapId": "MAP_I_3",
+    "mapName": "Mixed Map",
+    "totalRooms": 3,
+    "rooms": [
+      {
+        "id": "I01",
+        "type": "room",
+        "connections": [
+          "I02",
+          "I03"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "I02"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Echoed Pillar Crossing"
+      },
+      {
+        "id": "I02",
+        "type": "room",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "I01"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Silent Sentinel Alcove"
+      },
+      {
+        "id": "I03",
+        "type": "room",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Shattered Relic Niche"
+      }
+    ],
+    "layout": [
+      [
+        "I01",
+        "I02",
+        "I03"
+      ]
+    ],
+    "startRoom": "I01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "I01",
+      "name": "Echoed Pillar Crossing",
+      "type": "room",
+      "description": "This broad, mist-shrouded chamber is lined with cracked stone pillars, each carved with faded dwarven runes. Some pillars have toppled, providing partial cover and creating treacherous footing. The walls bear soot-stained reliefs hinting at ancient processions. Whispers echo strangely here, and the air is thick with dust and the scent of earth. Through gaps in the mist, glimpses of torchlight sometimes flicker\u2014signs of recent passage or lurking dangers.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "I02",
+        "I03"
+      ],
+      "areaConnectivity": [
+        "The Ancestral Catacombs"
+      ],
+      "areaConnectivityId": [
+        "I03"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Giant Centipede",
+          "quantity": 3,
+          "description": "These pale, oversized centipedes nest beneath fallen stones, attacking anything that disturbs their lair."
+        }
+      ],
+      "lootTable": [
+        "Tarnished silver ring with dwarven script",
+        "Pouch of semi-precious stones (10 gp)",
+        "Fragmented map scrawled on aged parchment"
+      ],
+      "plotHooks": [
+        "Faint boot prints suggest someone recently passed through\u2014perhaps a rival delver or fleeing survivor.",
+        "A hidden sigil on a pillar matches a symbol described by a local prospector seeking lost kin."
+      ],
+      "dmInstructions": "Use shifting mists to obscure vision and sounds, making it difficult for the party to spot lurking creatures or hidden features. Adjust the number of centipedes based on party strength. The pillar carvings can provide clues to the route deeper into the Vaulted Marches or to secret doors.",
+      "doors": [
+        {
+          "name": "East Archway",
+          "description": "A wide, partially collapsed stone arch leading toward the Silent Sentinel Alcove. Chipped and dust-choked.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "West Passage",
+          "description": "A shadowed corridor blocked in places by tumbled masonry. Allows passage with effort.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 10,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 14,
+          "disableDC": 13,
+          "triggerDC": 10,
+          "damage": "1d6 piercing (falling rubble) if trap is triggered by moving a loose pillar"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 12: Notice centipede burrows under fallen stones.",
+        "Investigation DC 14: Find the hidden sigil on a pillar.",
+        "Survival DC 11: Follow recent boot prints through dust."
+      ],
+      "accessibility": "Normal access, but movement is partially impeded by debris and uneven stone.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Signs Of Age",
+          "description": "Crumbled pillars, soot-stained reliefs, and worn carvings point to centuries of neglect."
+        },
+        {
+          "name": "Interesting Architecture",
+          "description": "The room's pillars curve inward, directing sound and creating eerie echoes."
+        },
+        {
+          "name": "Dust",
+          "description": "Thick dust blankets the floor, hiding tracks and loose stones."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat",
+          "description": "Giant centipedes burst from the rubble if the party disturbs the stones or lingers too long."
+        },
+        {
+          "type": "exploration",
+          "description": "Discovering the hidden sigil or following boot prints reveals clues to the deeper vault routes."
+        }
+      ],
+      "adventureSummary": "The Echoed Pillar Crossing serves as the entryway to the Vaulted Marches, offering both immediate danger and important clues for parties seeking the deeper secrets of Deepvault Hold.",
+      "aliases": [
+        "Echoed Pillar Crossing",
+        "I01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Echoed Pillar Crossing",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I02",
+      "name": "Silent Sentinel Alcove",
+      "type": "room",
+      "description": "A long, narrow chamber dominated by a weathered stone statue of a dwarven warrior, its eyes set with black onyx. The alcove is eerily quiet; even whispers seem muted. Intricate mosaics along the floor depict battles against shadowy foes, but sections are obscured by fallen stones. Faint, cold drafts stir from cracks in the wall.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Animated Statue (Sentinel)",
+          "quantity": 1,
+          "description": "The ancient dwarven statue animates if the onyx eyes are disturbed or hostile magic is sensed."
+        }
+      ],
+      "lootTable": [
+        "Onyx gem eyes (25 gp each, if removed)",
+        "Ancient dwarven locket containing a faded portrait",
+        "Bronze key etched with clan runes (opens a lock in Shattered Relic Niche)"
+      ],
+      "plotHooks": [
+        "A local legend speaks of a guardian who accuses the living of crimes forgotten by time. Interacting with the statue may reveal lost history.",
+        "One section of mosaic depicts a figure matching a description from a missing persons notice."
+      ],
+      "dmInstructions": "The sentinel may be reasoned with via clever roleplay or dwarven heritage, averting combat. If the party possesses knowledge of the ancient mosaics, grant advantage to checks to appease or bypass the guardian.",
+      "doors": [
+        {
+          "name": "West Doorway",
+          "description": "An open arch leading back toward Echoed Pillar Crossing, framed by carved axes.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 10,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 15,
+          "disableDC": 14,
+          "triggerDC": 0,
+          "damage": "2d6 bludgeoning (swinging stone arm) if the statue is forcibly disturbed"
+        }
+      ],
+      "dcChecks": [
+        "History DC 13: Recognize the warrior as a hero from the Clan Wars.",
+        "Religion DC 12: Identify the alcove as a site of ancient dwarven veneration.",
+        "Perception DC 10: Notice slight movement in the statue's joints."
+      ],
+      "accessibility": "Normal access; the alcove is constricted, making movement difficult during combat.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Signs Of Age",
+          "description": "The statue's face is pitted and the onyx eyes are cloudy, but craftsmanship remains impeccable."
+        },
+        {
+          "name": "Interesting Architecture",
+          "description": "Mosaics on the floor depict battles and oaths from dwarven history."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat or roleplay",
+          "description": "The animated sentinel challenges intruders but may be placated by respectful words or offering a dwarven relic."
+        },
+        {
+          "type": "puzzle",
+          "description": "The key found here fits a concealed lock in the Shattered Relic Niche."
+        }
+      ],
+      "adventureSummary": "The Silent Sentinel Alcove tests the party\u2019s respect for dwarven legacy; clever diplomacy can yield valuable clues and artifacts, while disrespect can awaken a potent foe.",
+      "aliases": [
+        "Silent Sentinel Alcove",
+        "I02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Silent Sentinel Alcove",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I03",
+      "name": "Shattered Relic Niche",
+      "type": "room",
+      "description": "This cramped, half-collapsed vault is cluttered with broken statuary and smashed reliquaries. Fragments of gold and stone glint among the rubble, and the faint scent of ancient incense lingers in the still air. A wall niche displays a shattered mural whose missing section reveals a concealed compartment.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [
+        "The Forgebound Wastes"
+      ],
+      "areaConnectivityId": [
+        "I01"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Crawling Claw Swarm",
+          "quantity": 1,
+          "description": "A writhing mass of animated dwarven hands formed from cursed relics, defending the secrets of the vault."
+        }
+      ],
+      "lootTable": [
+        "Small reliquary containing powdered silver (15 gp)",
+        "Ancient dwarven prayer beads",
+        "Runed scroll case (empty, but worth 10 gp)",
+        "Hidden compartment: Clan signet ring (25 gp) and a map fragment if unlocked with the bronze key"
+      ],
+      "plotHooks": [
+        "A fragment of the mural here depicts a forgotten symbol that matches a legend about Deepvault Hold.",
+        "Recovering the signet ring may earn favor with a local dwarven family or reveal their lost history."
+      ],
+      "dmInstructions": "The crawling claw swarm attacks any who dig through the rubble or open the secret compartment. The hidden lock requires the bronze key from the Silent Sentinel Alcove. The map fragment can guide players to deeper sections of the Vaulted Marches.",
+      "doors": [
+        {
+          "name": "West Doorway",
+          "description": "A narrow, buckled passage filled with debris, leading back to Echoed Pillar Crossing.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 13,
+          "disableDC": 12,
+          "triggerDC": 12,
+          "damage": "1d8 necrotic (spiritual backlash) if the compartment is opened without the proper key"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 12: Locate the hidden compartment behind the mural.",
+        "Arcana DC 13: Sense lingering necromantic wards on the relics.",
+        "Thieves' Tools DC 15: Pick the compartment lock if the key is not available."
+      ],
+      "accessibility": "Normal access, but movement is restricted by fallen debris and narrow spaces.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Signs Of Age",
+          "description": "Broken reliquaries and faded murals indicate a once-revered chamber now lost to time."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat",
+          "description": "Disturbing the relics or opening the niche triggers an attack by the crawling claw swarm."
+        },
+        {
+          "type": "exploration",
+          "description": "Unlocking the hidden compartment reveals valuable clues and items for Deepvault Hold\u2019s mysteries."
+        }
+      ],
+      "adventureSummary": "The Shattered Relic Niche offers danger and hidden rewards for those who dare to disturb its cursed remnants, and provides a key clue for progressing deeper into the Vaulted Marches.",
+      "aliases": [
+        "Shattered Relic Niche",
+        "I03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Shattered Relic Niche",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 3 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 3 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 3 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 3 parties"
+    },
+    {
+      "roll": "81-90",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    },
+    {
+      "roll": "91-100",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 3 parties"
+    }
+  ],
+  "areaFeatures": [
+    "bridges",
+    "crossroads",
+    "landmarks"
+  ],
+  "notes": "Balance combat, exploration, and social encounters. Transitions between areas should feel natural.",
+  "spatialContractVersion": 1
+}

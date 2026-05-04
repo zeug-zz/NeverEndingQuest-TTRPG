@@ -90,22 +90,6 @@ old_files/
 legacy/
 modules/backups/
 
-# Game state files - ignore live files, keep BU files
-modules/**/areas/*.json
-!modules/**/areas/*_BU.json
-modules/**/party_tracker.json
-!modules/**/party_tracker_BU.json
-modules/**/module_plot.json
-!modules/**/module_plot_BU.json
-modules/**/player_quests_*.json
-modules/**/map_*.json
-!modules/**/map_*_BU.json
-
-# Keep important metadata files
-!modules/**/validation_report.json
-!modules/**/module_context.json
-!modules/**/MODULE_SUMMARY.md
-
 # Copy files
 *copy.*
 * copy.*
@@ -344,41 +328,64 @@ training/
 # Debug folder - keep debug files organized and local only
 debug/
 
-# Dynamic game content - generated during gameplay for unique campaigns
-modules/*/monsters/
-modules/*/encounters/
+# ============================================================
+# PUBLISHED MODULE GIT CONTRACT — 2026-05-04
+# ============================================================
+# Order is critical: git uses last-match-wins.
+# DEFAULT  -> all module directories ignored.
+# PUBLISHED -> allowlisted module directories discoverable.
+# WITHIN    -> runtime files ignored, canonical artifacts tracked.
 
-# Campaign archives and summaries - keep local, don't commit to repository
-modules/campaign_archives/
-modules/campaign_summaries/
-
-# Player-generated modules - only The_Thornwood_Watch is core
+# — 1. Default-ignore all module directories —
 modules/*/
+
+# — 2. Published module allowlist —
+# MUST add every README-public module here AND in modules/published_modules.json.
 !modules/The_Thornwood_Watch/
 !modules/Keep_of_Doom/
 !modules/Night_of_the_Restless_Dead/
 !modules/The_Pumpkin_Kings_Curse/
 !modules/A_Pottsfield_Burial/
+!modules/Murder_at_the_Drowning_Lass/
+!modules/The_Hidden_City_of_Numillian/
+!modules/The_Ancients_Lab/
+!modules/The_Garden_of_Demons/
+!modules/Into_the_Deepvault/
 
-# Curated module core content for tester parity
-!modules/The_Thornwood_Watch/map_*.json
-!modules/Keep_of_Doom/map_*.json
-!modules/Night_of_the_Restless_Dead/map_*.json
-!modules/The_Pumpkin_Kings_Curse/map_*.json
-!modules/A_Pottsfield_Burial/map_*.json
-!modules/The_Thornwood_Watch/monsters/
-!modules/Keep_of_Doom/monsters/
-!modules/Night_of_the_Restless_Dead/monsters/
-!modules/The_Pumpkin_Kings_Curse/monsters/
-!modules/A_Pottsfield_Burial/monsters/
-!modules/The_Thornwood_Watch/monsters/*.json
-!modules/Keep_of_Doom/monsters/*.json
-!modules/Night_of_the_Restless_Dead/monsters/*.json
-!modules/The_Pumpkin_Kings_Curse/monsters/*.json
-!modules/A_Pottsfield_Burial/monsters/*.json
-# Game state files - should NOT be tracked
-# modules/campaign.json
-# modules/world_registry.json
+# — 3. Runtime mutable state (ignored everywhere) —
+modules/**/areas/*.json
+!modules/**/areas/*_BU.json
+modules/**/module_plot.json
+!modules/**/module_plot_BU.json
+modules/**/party_tracker.json
+!modules/**/party_tracker_BU.json
+modules/**/player_quests_*.json
+modules/**/encounters/
+
+# — 4. Canonical publication artifacts (tracked in published modules) —
+!modules/**/module_context.json
+!modules/**/module_context_BU.json
+!modules/**/validation_report.json
+!modules/**/toolkit_build_report.json
+!modules/**/module_media_generator_report.json
+!modules/**/monster_closure_report.json
+!modules/**/llm_classification_cache.json
+!modules/**/map_*.json
+!modules/**/map_*_BU.json
+!modules/**/monsters/
+!modules/**/monsters/*.json
+!modules/**/MODULE_SUMMARY.md
+!modules/**/README.md
+!modules/**/PLAYER_GUIDE.md
+
+# — 5. Local runtime catalog state (never commit) —
+# NOTE: Also enforced at lines 56-57 and 183-184 (historical duplicates, preserved).
+modules/world_registry.json
+modules/campaign.json
+
+# — 6. Public module catalog (committed) —
+!modules/published_modules.json
+
 .claude/
 kling_prompts/
 

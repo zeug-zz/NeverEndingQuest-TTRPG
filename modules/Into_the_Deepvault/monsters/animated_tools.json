@@ -1,0 +1,66 @@
+{
+  "name": "Animated Tool",
+  "size": "Small",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 15,
+  "hitPoints": 18,
+  "maxHitPoints": 18,
+  "speed": 30,
+  "abilities": {
+    "strength": 10,
+    "dexterity": 16,
+    "constitution": 12,
+    "intelligence": 1,
+    "wisdom": 3,
+    "charisma": 1
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "poison",
+    "psychic"
+  ],
+  "conditionImmunities": [
+    "blinded",
+    "charmed",
+    "deafened",
+    "frightened",
+    "paralyzed",
+    "petrified",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 6
+  },
+  "languages": "",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "False Appearance",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "None"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Slam",
+      "attackBonus": 5,
+      "damageDice": "1d8",
+      "damageBonus": 3,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Within the cramped confines of the Runesmith's Remnant, a chilling guardian stirs--an assembly of once-humble tools bound by arcane force and restless will. This Animated Tool manifests as a grotesque conglomeration of dwarven craftsmanship: rusted hammers, cracked crucibles, scorched tongs, and splintered chisels, each levitating with eerie purpose. Crimson runes etched faintly upon their surfaces pulse with a dim, otherworldly glow, casting flickering shadows upon the alchemical detritus-strewn chamber. The tools clatter and scrape with a metallic chorus, their movements unnervingly deliberate as they converge into shifting formations, sometimes resembling a crude, jagged appendage or a spiked barrier. A faint chemical tang laces the cool air, mingling with the scent of old stone and burnt residue. The creature's relentless sentience is evident in the way it reacts swiftly to disturbances--whirling hammers poised to strike, crucibles tipping as if to spill corrosive contents, and pincers snapping with mechanical precision. Despite its inorganic nature, the Animated Tools exude a palpable urgency, as if guarding secrets buried deep within the Vaultlands. The low mist seeping through cracks in the stone only heightens the oppressive atmosphere, ensuring that any who dare disturb this spectral workshop face a wrath forged from the very instruments of creation and destruction."
+}

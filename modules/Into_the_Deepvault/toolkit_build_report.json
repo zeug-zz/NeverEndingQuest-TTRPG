@@ -1,0 +1,3977 @@
+{
+  "generated_at": "2026-04-30T06:21:16Z",
+  "module_slug": "Into_the_Deepvault",
+  "status": "degraded",
+  "ready_status": "pass",
+  "publishable_status": "pass",
+  "freshness_state": "degraded",
+  "report_freshness": {
+    "state": "degraded",
+    "authoritative": true,
+    "written_at": "2026-04-30T06:21:16Z",
+    "phase": "final",
+    "workflow": "toolkit_report_refresh",
+    "refresh_reason": "sidebar_unstale_media",
+    "contract": "toolkit_build_report_refresh_contract.v1",
+    "stale_reason": null
+  },
+  "strict": true,
+  "source": "toolkit",
+  "provenance": {
+    "source": "toolkit",
+    "artifact": "toolkit_build_report.json",
+    "contract": "toolkit_build_report_required",
+    "phase": "final",
+    "refresh_contract": "toolkit_build_report_refresh_contract.v1",
+    "refresh_workflow": "toolkit_report_refresh",
+    "refresh_reason": "sidebar_unstale_media"
+  },
+  "stages": {
+    "continuity": {
+      "status": "success",
+      "continuity_patch": {
+        "module_context": {
+          "module_name": "Into the Deepvault",
+          "module_id": "Into_the_Deepvault",
+          "areas": {
+            "DA001": {
+              "name": "Deepvault Approach",
+              "type": "dungeon",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "OV002": {
+              "name": "Outer Vaults",
+              "type": "mixed",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "HA003": {
+              "name": "Hall of Ancestors",
+              "type": "dungeon",
+              "locations": [],
+              "npcs": [
+                "Trapped Miner Derval"
+              ],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "RF004": {
+              "name": "Rune-Forgefane",
+              "type": "mixed",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "SD005": {
+              "name": "Sundered Depths",
+              "type": "dungeon",
+              "locations": [
+                "I01",
+                "I02",
+                "I03"
+              ],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            }
+          },
+          "npcs": {
+            "foreman_ulric_flintlace": {
+              "name": "Foreman Ulric Flintlace",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Foreman Ulric Flintlace"
+              ]
+            },
+            "lady_brunna_ironsong": {
+              "name": "Lady Brunna Ironsong",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Lady Brunna Ironsong"
+              ]
+            },
+            "sergeant_halda_stonebrow": {
+              "name": "Sergeant Halda Stonebrow",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Sergeant Halda Stonebrow"
+              ]
+            },
+            "archivist_gremli_amberfist": {
+              "name": "Archivist Gremli Amberfist",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Archivist Gremli Amberfist"
+              ]
+            },
+            "trapped_miner_derval": {
+              "name": "Trapped Miner Derval",
+              "role": "",
+              "faction": "",
+              "description": "A gaunt, frightened dwarven miner clings to the bars of one cell. He is disoriented and haunted by ghostly whispers, but desperate for rescue.",
+              "appears_in": [
+                {
+                  "area": "HA003",
+                  "location": "I02"
+                }
+              ],
+              "aliases": [
+                "Trapped Miner Derval"
+              ]
+            },
+            "saboteur_rask": {
+              "name": "Saboteur Rask",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Saboteur Rask"
+              ]
+            },
+            "spirit_of_thane_durnic": {
+              "name": "Spirit of Thane Durnic",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Spirit of Thane Durnic"
+              ]
+            },
+            "guardian_construct_beldrum": {
+              "name": "Guardian Construct Beldrum",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Guardian Construct Beldrum"
+              ]
+            },
+            "varkhaz_the_stonebound": {
+              "name": "Varkhaz the Stonebound",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Varkhaz the Stonebound"
+              ]
+            },
+            "duergar_rune_warriors": {
+              "name": "Duergar Rune-Warriors",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Duergar Rune-Warriors"
+              ]
+            }
+          },
+          "locations": {
+            "I01": {
+              "name": "Shattered Runeway",
+              "area": "SD005"
+            },
+            "I02": {
+              "name": "Twilight Forge Lab",
+              "area": "SD005"
+            },
+            "I03": {
+              "name": "Hall of Echoing Stone",
+              "area": "SD005"
+            }
+          },
+          "plot_scopes": {
+            "PP001": "SD005",
+            "PP002": "SD005",
+            "PP003": "SD005",
+            "PP004": "SD005"
+          },
+          "references": {
+            "npc:Foreman Ulric Flintlace": [
+              "module:plotStages"
+            ],
+            "npc:Lady Brunna Ironsong": [
+              "module:plotStages"
+            ],
+            "npc:Sergeant Halda Stonebrow": [
+              "module:plotStages"
+            ],
+            "npc:Archivist Gremli Amberfist": [
+              "module:plotStages"
+            ],
+            "npc:Trapped Miner Derval": [
+              "module:plotStages"
+            ],
+            "npc:Saboteur Rask": [
+              "module:plotStages"
+            ],
+            "npc:Spirit of Thane Durnic": [
+              "module:plotStages"
+            ],
+            "npc:Guardian Construct Beldrum": [
+              "module:plotStages"
+            ],
+            "npc:Varkhaz the Stonebound": [
+              "module:plotStages"
+            ],
+            "npc:Duergar Rune-Warriors": [
+              "module:plotStages"
+            ]
+          },
+          "validation_issues": [
+            "NPC 'Foreman Ulric Flintlace' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Lady Brunna Ironsong' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Sergeant Halda Stonebrow' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Archivist Gremli Amberfist' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Saboteur Rask' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Spirit of Thane Durnic' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Guardian Construct Beldrum' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
+          ],
+          "generated_at": "2026-04-25T13:56:51.603595",
+          "continuity": {
+            "continuity_version": "v1",
+            "entry_state_variants": {
+              "cold_start": {
+                "summary": "Party enters Into the Deepvault with no prior continuity context. Present the opening conflict and immediate objective clearly."
+              },
+              "partial_context": {
+                "summary": "Party enters Into the Deepvault with partial prior context. Reinforce known clues before branch-critical decisions."
+              },
+              "late_arc": {
+                "summary": "Party enters Into the Deepvault in late-arc state. Provide compact recap and preserve ending accessibility."
+              }
+            },
+            "cross_module_refs": [],
+            "standalone_fallback": {
+              "enabled": true,
+              "clue_sources": [
+                "module_context",
+                "module_plot"
+              ],
+              "notes": "Into_the_Deepvault remains playable as a standalone module when cross-module continuity is unavailable."
+            }
+          },
+          "semantic_authority": {
+            "version": "v1",
+            "module_slug": "Into_the_Deepvault",
+            "location_aliases": {
+              "echoed antechamber": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/DA001.json#locations[I02].name"
+                ]
+              },
+              "echoed pillar crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].name"
+                ]
+              },
+              "ember scarred watchpost": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].name"
+                ]
+              },
+              "forgotten smiths refuge": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ]
+              },
+              "hall of echoing stone": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].name"
+                ]
+              },
+              "i01": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].aliases"
+                ]
+              },
+              "i02": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].aliases"
+                ]
+              },
+              "i03": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].aliases"
+                ]
+              },
+              "ironbound soul cells": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].name"
+                ]
+              },
+              "runescribed alchemy vault": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].name"
+                ]
+              },
+              "runesmiths remnant": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/DA001.json#locations[I03].name"
+                ]
+              },
+              "shattered anvil crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].name"
+                ]
+              },
+              "shattered relic niche": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].name"
+                ]
+              },
+              "shattered runeway": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].name"
+                ]
+              },
+              "shatterglass experimentum": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].name"
+                ]
+              },
+              "silent sentinel alcove": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].name"
+                ]
+              },
+              "stonewrought threshold": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/DA001.json#locations[I01].name"
+                ]
+              },
+              "twilight forge lab": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].name"
+                ]
+              }
+            },
+            "destination_phrases": {
+              "echoed antechamber": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/DA001.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "echoed pillar crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "ember scarred watchpost": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "forgotten smiths refuge": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
+              "hall of echoing stone": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i01": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i02": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i03": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "ironbound soul cells": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "runescribed alchemy vault": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "runesmiths remnant": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/DA001.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered anvil crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered relic niche": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered runeway": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shatterglass experimentum": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "silent sentinel alcove": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "smiths refuge": {
+                "status": "resolved",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2,
+                "location_id": "I03",
+                "normalization": {
+                  "type": "shortform_alias_collapse",
+                  "strategy": "resolved_suffix_anchor_with_source_overlap",
+                  "anchor_phrase": "forgotten smiths refuge",
+                  "anchor_location_id": "I03",
+                  "shared_sources": [
+                    "areas/RF004.json#locations[I03].aliases",
+                    "areas/RF004.json#locations[I03].name"
+                  ]
+                }
+              },
+              "stonewrought threshold": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/DA001.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "twilight forge lab": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              }
+            },
+            "npc_scene_authority": {
+              "Archivist Gremli Amberfist": {
+                "name_slug": "archivist gremli amberfist",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.archivist_gremli_amberfist"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Duergar Rune-Warriors": {
+                "name_slug": "duergar rune warriors",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP018].description",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP019].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "module_context.json#npcs.duergar_rune_warriors",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "authored_mentions_count": 2,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ]
+              },
+              "Foreman Ulric Flintlace": {
+                "name_slug": "foreman ulric flintlace",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.foreman_ulric_flintlace"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Guardian Construct Beldrum": {
+                "name_slug": "guardian construct beldrum",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.guardian_construct_beldrum"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Lady Brunna Ironsong": {
+                "name_slug": "lady brunna ironsong",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP017].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "module_context.json#npcs.lady_brunna_ironsong",
+                  "module_plot.json#plotPoints[PP017].description"
+                ],
+                "authored_mentions_count": 1,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP017].description"
+                ]
+              },
+              "Saboteur Rask": {
+                "name_slug": "saboteur rask",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.saboteur_rask"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Sergeant Halda Stonebrow": {
+                "name_slug": "sergeant halda stonebrow",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.sergeant_halda_stonebrow"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Spirit of Thane Durnic": {
+                "name_slug": "spirit of thane durnic",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.spirit_of_thane_durnic"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Trapped Miner Derval": {
+                "name_slug": "trapped miner derval",
+                "visible_location_ids": [
+                  "I02"
+                ],
+                "reveal_bindings": [],
+                "sources": [
+                  "areas/HA003.json#locations[I02].dcChecks",
+                  "areas/HA003.json#locations[I02].dmInstructions",
+                  "areas/HA003.json#locations[I02].npcs",
+                  "areas/HA003.json#locations[I02].plotHooks",
+                  "module_context.json#npcs.trapped_miner_derval"
+                ],
+                "authored_mentions_count": 3,
+                "authored_mention_sources": [
+                  "areas/HA003.json#locations[I02].dcChecks",
+                  "areas/HA003.json#locations[I02].dmInstructions",
+                  "areas/HA003.json#locations[I02].plotHooks"
+                ]
+              },
+              "Varkhaz the Stonebound": {
+                "name_slug": "varkhaz the stonebound",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "I02",
+                    "source": "areas/RF004.json#locations[I02].plotHooks",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "I03",
+                    "source": "areas/RF004.json#locations[I03].plotHooks",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP018].description",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP019].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].plotHooks",
+                  "areas/RF004.json#locations[I03].plotHooks",
+                  "module_context.json#npcs.varkhaz_the_stonebound",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "authored_mentions_count": 4,
+                "authored_mention_sources": [
+                  "areas/RF004.json#locations[I02].plotHooks",
+                  "areas/RF004.json#locations[I03].plotHooks",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ]
+              }
+            },
+            "diagnostics": {
+              "duplicate_location_aliases": [],
+              "ambiguous_destination_phrases": [],
+              "unresolved_destination_phrases": [],
+              "normalized_shortform_destination_phrases": [
+                {
+                  "phrase": "smiths refuge",
+                  "anchor_phrase": "forgotten smiths refuge",
+                  "location_id": "I03",
+                  "shared_sources": [
+                    "areas/RF004.json#locations[I03].aliases",
+                    "areas/RF004.json#locations[I03].name"
+                  ]
+                }
+              ],
+              "missing_npc_authority": [
+                {
+                  "npc": "Archivist Gremli Amberfist",
+                  "name_slug": "archivist gremli amberfist",
+                  "sources": [
+                    "module_context.json#npcs.archivist_gremli_amberfist"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Foreman Ulric Flintlace",
+                  "name_slug": "foreman ulric flintlace",
+                  "sources": [
+                    "module_context.json#npcs.foreman_ulric_flintlace"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Guardian Construct Beldrum",
+                  "name_slug": "guardian construct beldrum",
+                  "sources": [
+                    "module_context.json#npcs.guardian_construct_beldrum"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Saboteur Rask",
+                  "name_slug": "saboteur rask",
+                  "sources": [
+                    "module_context.json#npcs.saboteur_rask"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Sergeant Halda Stonebrow",
+                  "name_slug": "sergeant halda stonebrow",
+                  "sources": [
+                    "module_context.json#npcs.sergeant_halda_stonebrow"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Spirit of Thane Durnic",
+                  "name_slug": "spirit of thane durnic",
+                  "sources": [
+                    "module_context.json#npcs.spirit_of_thane_durnic"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                }
+              ]
+            },
+            "summary": {
+              "location_count": 15,
+              "location_alias_count": 18,
+              "destination_phrase_count": 19,
+              "npc_count": 10,
+              "ambiguous_destination_count": 0,
+              "normalized_shortform_destination_count": 1,
+              "missing_npc_authority_count": 6
+            }
+          }
+        },
+        "changed": false,
+        "injected_keys": []
+      },
+      "continuity_enrichment": {
+        "status": "success",
+        "module_context": {
+          "module_name": "Into the Deepvault",
+          "module_id": "Into_the_Deepvault",
+          "areas": {
+            "DA001": {
+              "name": "Deepvault Approach",
+              "type": "dungeon",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "OV002": {
+              "name": "Outer Vaults",
+              "type": "mixed",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "HA003": {
+              "name": "Hall of Ancestors",
+              "type": "dungeon",
+              "locations": [],
+              "npcs": [
+                "Trapped Miner Derval"
+              ],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "RF004": {
+              "name": "Rune-Forgefane",
+              "type": "mixed",
+              "locations": [],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            },
+            "SD005": {
+              "name": "Sundered Depths",
+              "type": "dungeon",
+              "locations": [
+                "I01",
+                "I02",
+                "I03"
+              ],
+              "npcs": [],
+              "plot_points": [
+                "PP001",
+                "PP002",
+                "PP003",
+                "PP004"
+              ]
+            }
+          },
+          "npcs": {
+            "foreman_ulric_flintlace": {
+              "name": "Foreman Ulric Flintlace",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Foreman Ulric Flintlace"
+              ]
+            },
+            "lady_brunna_ironsong": {
+              "name": "Lady Brunna Ironsong",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Lady Brunna Ironsong"
+              ]
+            },
+            "sergeant_halda_stonebrow": {
+              "name": "Sergeant Halda Stonebrow",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Sergeant Halda Stonebrow"
+              ]
+            },
+            "archivist_gremli_amberfist": {
+              "name": "Archivist Gremli Amberfist",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Archivist Gremli Amberfist"
+              ]
+            },
+            "trapped_miner_derval": {
+              "name": "Trapped Miner Derval",
+              "role": "",
+              "faction": "",
+              "description": "A gaunt, frightened dwarven miner clings to the bars of one cell. He is disoriented and haunted by ghostly whispers, but desperate for rescue.",
+              "appears_in": [
+                {
+                  "area": "HA003",
+                  "location": "I02"
+                }
+              ],
+              "aliases": [
+                "Trapped Miner Derval"
+              ]
+            },
+            "saboteur_rask": {
+              "name": "Saboteur Rask",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Saboteur Rask"
+              ]
+            },
+            "spirit_of_thane_durnic": {
+              "name": "Spirit of Thane Durnic",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Spirit of Thane Durnic"
+              ]
+            },
+            "guardian_construct_beldrum": {
+              "name": "Guardian Construct Beldrum",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Guardian Construct Beldrum"
+              ]
+            },
+            "varkhaz_the_stonebound": {
+              "name": "Varkhaz the Stonebound",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Varkhaz the Stonebound"
+              ]
+            },
+            "duergar_rune_warriors": {
+              "name": "Duergar Rune-Warriors",
+              "role": "",
+              "faction": "",
+              "description": "",
+              "appears_in": [],
+              "aliases": [
+                "Duergar Rune-Warriors"
+              ]
+            }
+          },
+          "locations": {
+            "I01": {
+              "name": "Shattered Runeway",
+              "area": "SD005"
+            },
+            "I02": {
+              "name": "Twilight Forge Lab",
+              "area": "SD005"
+            },
+            "I03": {
+              "name": "Hall of Echoing Stone",
+              "area": "SD005"
+            }
+          },
+          "plot_scopes": {
+            "PP001": "SD005",
+            "PP002": "SD005",
+            "PP003": "SD005",
+            "PP004": "SD005"
+          },
+          "references": {
+            "npc:Foreman Ulric Flintlace": [
+              "module:plotStages"
+            ],
+            "npc:Lady Brunna Ironsong": [
+              "module:plotStages"
+            ],
+            "npc:Sergeant Halda Stonebrow": [
+              "module:plotStages"
+            ],
+            "npc:Archivist Gremli Amberfist": [
+              "module:plotStages"
+            ],
+            "npc:Trapped Miner Derval": [
+              "module:plotStages"
+            ],
+            "npc:Saboteur Rask": [
+              "module:plotStages"
+            ],
+            "npc:Spirit of Thane Durnic": [
+              "module:plotStages"
+            ],
+            "npc:Guardian Construct Beldrum": [
+              "module:plotStages"
+            ],
+            "npc:Varkhaz the Stonebound": [
+              "module:plotStages"
+            ],
+            "npc:Duergar Rune-Warriors": [
+              "module:plotStages"
+            ]
+          },
+          "validation_issues": [
+            "NPC 'Foreman Ulric Flintlace' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Lady Brunna Ironsong' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Sergeant Halda Stonebrow' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Archivist Gremli Amberfist' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Saboteur Rask' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Spirit of Thane Durnic' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Guardian Construct Beldrum' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
+            "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
+          ],
+          "generated_at": "2026-04-25T13:56:51.603595",
+          "continuity": {
+            "continuity_version": "v1",
+            "entry_state_variants": {
+              "cold_start": {
+                "summary": "Party enters Into the Deepvault with no prior continuity context. Present the opening conflict and immediate objective clearly."
+              },
+              "partial_context": {
+                "summary": "Party enters Into the Deepvault with partial prior context. Reinforce known clues before branch-critical decisions."
+              },
+              "late_arc": {
+                "summary": "Party enters Into the Deepvault in late-arc state. Provide compact recap and preserve ending accessibility."
+              }
+            },
+            "cross_module_refs": [],
+            "standalone_fallback": {
+              "enabled": true,
+              "clue_sources": [
+                "module_context",
+                "module_plot"
+              ],
+              "notes": "Into_the_Deepvault remains playable as a standalone module when cross-module continuity is unavailable."
+            }
+          },
+          "semantic_authority": {
+            "version": "v1",
+            "module_slug": "Into_the_Deepvault",
+            "location_aliases": {
+              "echoed antechamber": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/DA001.json#locations[I02].name"
+                ]
+              },
+              "echoed pillar crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].name"
+                ]
+              },
+              "ember scarred watchpost": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].name"
+                ]
+              },
+              "forgotten smiths refuge": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ]
+              },
+              "hall of echoing stone": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].name"
+                ]
+              },
+              "i01": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].aliases"
+                ]
+              },
+              "i02": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].aliases"
+                ]
+              },
+              "i03": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].aliases"
+                ]
+              },
+              "ironbound soul cells": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].name"
+                ]
+              },
+              "runescribed alchemy vault": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].name"
+                ]
+              },
+              "runesmiths remnant": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/DA001.json#locations[I03].name"
+                ]
+              },
+              "shattered anvil crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].name"
+                ]
+              },
+              "shattered relic niche": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].name"
+                ]
+              },
+              "shattered runeway": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].name"
+                ]
+              },
+              "shatterglass experimentum": {
+                "status": "resolved",
+                "location_id": "I03",
+                "location_name": "Hall of Echoing Stone",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].name"
+                ]
+              },
+              "silent sentinel alcove": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].name"
+                ]
+              },
+              "stonewrought threshold": {
+                "status": "resolved",
+                "location_id": "I01",
+                "location_name": "Shattered Runeway",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/DA001.json#locations[I01].name"
+                ]
+              },
+              "twilight forge lab": {
+                "status": "resolved",
+                "location_id": "I02",
+                "location_name": "Twilight Forge Lab",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].name"
+                ]
+              }
+            },
+            "destination_phrases": {
+              "echoed antechamber": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/DA001.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "echoed pillar crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "ember scarred watchpost": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "forgotten smiths refuge": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2
+              },
+              "hall of echoing stone": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i01": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/OV002.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i02": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/RF004.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "i03": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/SD005.json#locations[I03].aliases"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "ironbound soul cells": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I02].aliases",
+                  "areas/HA003.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "runescribed alchemy vault": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I01].aliases",
+                  "areas/HA003.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "runesmiths remnant": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I03].aliases",
+                  "areas/DA001.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered anvil crossing": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I01].aliases",
+                  "areas/RF004.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered relic niche": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I03].aliases",
+                  "areas/OV002.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shattered runeway": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I01].aliases",
+                  "areas/SD005.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "shatterglass experimentum": {
+                "status": "resolved",
+                "location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/HA003.json#locations[I03].aliases",
+                  "areas/HA003.json#locations[I03].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "silent sentinel alcove": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/OV002.json#locations[I02].aliases",
+                  "areas/OV002.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "smiths refuge": {
+                "status": "resolved",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "observed": true,
+                "player_facing": true,
+                "observation_count": 2,
+                "location_id": "I03",
+                "normalization": {
+                  "type": "shortform_alias_collapse",
+                  "strategy": "resolved_suffix_anchor_with_source_overlap",
+                  "anchor_phrase": "forgotten smiths refuge",
+                  "anchor_location_id": "I03",
+                  "shared_sources": [
+                    "areas/RF004.json#locations[I03].aliases",
+                    "areas/RF004.json#locations[I03].name"
+                  ]
+                }
+              },
+              "stonewrought threshold": {
+                "status": "resolved",
+                "location_id": "I01",
+                "candidate_location_ids": [
+                  "I01"
+                ],
+                "sources": [
+                  "areas/DA001.json#locations[I01].aliases",
+                  "areas/DA001.json#locations[I01].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              },
+              "twilight forge lab": {
+                "status": "resolved",
+                "location_id": "I02",
+                "candidate_location_ids": [
+                  "I02"
+                ],
+                "sources": [
+                  "areas/SD005.json#locations[I02].aliases",
+                  "areas/SD005.json#locations[I02].name"
+                ],
+                "observed": false,
+                "player_facing": false,
+                "observation_count": 0
+              }
+            },
+            "npc_scene_authority": {
+              "Archivist Gremli Amberfist": {
+                "name_slug": "archivist gremli amberfist",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.archivist_gremli_amberfist"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Duergar Rune-Warriors": {
+                "name_slug": "duergar rune warriors",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP018].description",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP019].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "module_context.json#npcs.duergar_rune_warriors",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "authored_mentions_count": 2,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ]
+              },
+              "Foreman Ulric Flintlace": {
+                "name_slug": "foreman ulric flintlace",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.foreman_ulric_flintlace"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Guardian Construct Beldrum": {
+                "name_slug": "guardian construct beldrum",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.guardian_construct_beldrum"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Lady Brunna Ironsong": {
+                "name_slug": "lady brunna ironsong",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP017].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "module_context.json#npcs.lady_brunna_ironsong",
+                  "module_plot.json#plotPoints[PP017].description"
+                ],
+                "authored_mentions_count": 1,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP017].description"
+                ]
+              },
+              "Saboteur Rask": {
+                "name_slug": "saboteur rask",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.saboteur_rask"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Sergeant Halda Stonebrow": {
+                "name_slug": "sergeant halda stonebrow",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.sergeant_halda_stonebrow"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Spirit of Thane Durnic": {
+                "name_slug": "spirit of thane durnic",
+                "visible_location_ids": [],
+                "reveal_bindings": [],
+                "sources": [
+                  "module_context.json#npcs.spirit_of_thane_durnic"
+                ],
+                "authored_mentions_count": 0,
+                "authored_mention_sources": []
+              },
+              "Trapped Miner Derval": {
+                "name_slug": "trapped miner derval",
+                "visible_location_ids": [
+                  "I02"
+                ],
+                "reveal_bindings": [],
+                "sources": [
+                  "areas/HA003.json#locations[I02].dcChecks",
+                  "areas/HA003.json#locations[I02].dmInstructions",
+                  "areas/HA003.json#locations[I02].npcs",
+                  "areas/HA003.json#locations[I02].plotHooks",
+                  "module_context.json#npcs.trapped_miner_derval"
+                ],
+                "authored_mentions_count": 3,
+                "authored_mention_sources": [
+                  "areas/HA003.json#locations[I02].dcChecks",
+                  "areas/HA003.json#locations[I02].dmInstructions",
+                  "areas/HA003.json#locations[I02].plotHooks"
+                ]
+              },
+              "Varkhaz the Stonebound": {
+                "name_slug": "varkhaz the stonebound",
+                "visible_location_ids": [],
+                "reveal_bindings": [
+                  {
+                    "location_id": "I02",
+                    "source": "areas/RF004.json#locations[I02].plotHooks",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "I03",
+                    "source": "areas/RF004.json#locations[I03].plotHooks",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP018].description",
+                    "reason": "authored_text_reference"
+                  },
+                  {
+                    "location_id": "SD005",
+                    "source": "module_plot.json#plotPoints[PP019].description",
+                    "reason": "authored_text_reference"
+                  }
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I02].plotHooks",
+                  "areas/RF004.json#locations[I03].plotHooks",
+                  "module_context.json#npcs.varkhaz_the_stonebound",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "authored_mentions_count": 4,
+                "authored_mention_sources": [
+                  "areas/RF004.json#locations[I02].plotHooks",
+                  "areas/RF004.json#locations[I03].plotHooks",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ]
+              }
+            },
+            "diagnostics": {
+              "duplicate_location_aliases": [],
+              "ambiguous_destination_phrases": [],
+              "unresolved_destination_phrases": [],
+              "normalized_shortform_destination_phrases": [
+                {
+                  "phrase": "smiths refuge",
+                  "anchor_phrase": "forgotten smiths refuge",
+                  "location_id": "I03",
+                  "shared_sources": [
+                    "areas/RF004.json#locations[I03].aliases",
+                    "areas/RF004.json#locations[I03].name"
+                  ]
+                }
+              ],
+              "missing_npc_authority": [
+                {
+                  "npc": "Archivist Gremli Amberfist",
+                  "name_slug": "archivist gremli amberfist",
+                  "sources": [
+                    "module_context.json#npcs.archivist_gremli_amberfist"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Foreman Ulric Flintlace",
+                  "name_slug": "foreman ulric flintlace",
+                  "sources": [
+                    "module_context.json#npcs.foreman_ulric_flintlace"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Guardian Construct Beldrum",
+                  "name_slug": "guardian construct beldrum",
+                  "sources": [
+                    "module_context.json#npcs.guardian_construct_beldrum"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Saboteur Rask",
+                  "name_slug": "saboteur rask",
+                  "sources": [
+                    "module_context.json#npcs.saboteur_rask"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Sergeant Halda Stonebrow",
+                  "name_slug": "sergeant halda stonebrow",
+                  "sources": [
+                    "module_context.json#npcs.sergeant_halda_stonebrow"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                },
+                {
+                  "npc": "Spirit of Thane Durnic",
+                  "name_slug": "spirit of thane durnic",
+                  "sources": [
+                    "module_context.json#npcs.spirit_of_thane_durnic"
+                  ],
+                  "authored_mentions_count": 0,
+                  "authored_mention_sources": []
+                }
+              ]
+            },
+            "summary": {
+              "location_count": 15,
+              "location_alias_count": 18,
+              "destination_phrase_count": 19,
+              "npc_count": 10,
+              "ambiguous_destination_count": 0,
+              "normalized_shortform_destination_count": 1,
+              "missing_npc_authority_count": 6
+            }
+          }
+        },
+        "changed": false,
+        "added_refs": [],
+        "existing_count": 0,
+        "final_count": 0
+      },
+      "continuity_contract": {
+        "status": "success",
+        "version": "v1",
+        "required_keys_present": [
+          "continuity_version",
+          "entry_state_variants",
+          "cross_module_refs",
+          "standalone_fallback"
+        ],
+        "missing_required_keys": [],
+        "warnings": [],
+        "errors": [],
+        "normalized_refs_count": 0,
+        "alias_resolution": {
+          "resolved": 0,
+          "ambiguous": 0,
+          "unresolved": 0
+        }
+      },
+      "context_path": "modules/Into_the_Deepvault/module_context.json"
+    },
+    "semantic_authority": {
+      "status": "degraded",
+      "semantic_authority": {
+        "version": "v1",
+        "module_slug": "Into_the_Deepvault",
+        "location_aliases": {
+          "echoed antechamber": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I02].aliases",
+              "areas/DA001.json#locations[I02].name"
+            ]
+          },
+          "echoed pillar crossing": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I01].aliases",
+              "areas/OV002.json#locations[I01].name"
+            ]
+          },
+          "ember scarred watchpost": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I02].aliases",
+              "areas/RF004.json#locations[I02].name"
+            ]
+          },
+          "forgotten smiths refuge": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I03].aliases",
+              "areas/RF004.json#locations[I03].name"
+            ]
+          },
+          "hall of echoing stone": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I03].aliases",
+              "areas/SD005.json#locations[I03].name"
+            ]
+          },
+          "i01": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I01].aliases",
+              "areas/HA003.json#locations[I01].aliases",
+              "areas/OV002.json#locations[I01].aliases",
+              "areas/RF004.json#locations[I01].aliases",
+              "areas/SD005.json#locations[I01].aliases"
+            ]
+          },
+          "i02": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I02].aliases",
+              "areas/HA003.json#locations[I02].aliases",
+              "areas/OV002.json#locations[I02].aliases",
+              "areas/RF004.json#locations[I02].aliases",
+              "areas/SD005.json#locations[I02].aliases"
+            ]
+          },
+          "i03": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I03].aliases",
+              "areas/HA003.json#locations[I03].aliases",
+              "areas/OV002.json#locations[I03].aliases",
+              "areas/RF004.json#locations[I03].aliases",
+              "areas/SD005.json#locations[I03].aliases"
+            ]
+          },
+          "ironbound soul cells": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I02].aliases",
+              "areas/HA003.json#locations[I02].name"
+            ]
+          },
+          "runescribed alchemy vault": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I01].aliases",
+              "areas/HA003.json#locations[I01].name"
+            ]
+          },
+          "runesmiths remnant": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I03].aliases",
+              "areas/DA001.json#locations[I03].name"
+            ]
+          },
+          "shattered anvil crossing": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I01].aliases",
+              "areas/RF004.json#locations[I01].name"
+            ]
+          },
+          "shattered relic niche": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I03].aliases",
+              "areas/OV002.json#locations[I03].name"
+            ]
+          },
+          "shattered runeway": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I01].aliases",
+              "areas/SD005.json#locations[I01].name"
+            ]
+          },
+          "shatterglass experimentum": {
+            "status": "resolved",
+            "location_id": "I03",
+            "location_name": "Hall of Echoing Stone",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I03].aliases",
+              "areas/HA003.json#locations[I03].name"
+            ]
+          },
+          "silent sentinel alcove": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I02].aliases",
+              "areas/OV002.json#locations[I02].name"
+            ]
+          },
+          "stonewrought threshold": {
+            "status": "resolved",
+            "location_id": "I01",
+            "location_name": "Shattered Runeway",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I01].aliases",
+              "areas/DA001.json#locations[I01].name"
+            ]
+          },
+          "twilight forge lab": {
+            "status": "resolved",
+            "location_id": "I02",
+            "location_name": "Twilight Forge Lab",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I02].aliases",
+              "areas/SD005.json#locations[I02].name"
+            ]
+          }
+        },
+        "destination_phrases": {
+          "echoed antechamber": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I02].aliases",
+              "areas/DA001.json#locations[I02].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "echoed pillar crossing": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I01].aliases",
+              "areas/OV002.json#locations[I01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "ember scarred watchpost": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I02].aliases",
+              "areas/RF004.json#locations[I02].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "forgotten smiths refuge": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I03].aliases",
+              "areas/RF004.json#locations[I03].name"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 2
+          },
+          "hall of echoing stone": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I03].aliases",
+              "areas/SD005.json#locations[I03].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "i01": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I01].aliases",
+              "areas/HA003.json#locations[I01].aliases",
+              "areas/OV002.json#locations[I01].aliases",
+              "areas/RF004.json#locations[I01].aliases",
+              "areas/SD005.json#locations[I01].aliases"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "i02": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I02].aliases",
+              "areas/HA003.json#locations[I02].aliases",
+              "areas/OV002.json#locations[I02].aliases",
+              "areas/RF004.json#locations[I02].aliases",
+              "areas/SD005.json#locations[I02].aliases"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "i03": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I03].aliases",
+              "areas/HA003.json#locations[I03].aliases",
+              "areas/OV002.json#locations[I03].aliases",
+              "areas/RF004.json#locations[I03].aliases",
+              "areas/SD005.json#locations[I03].aliases"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "ironbound soul cells": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I02].aliases",
+              "areas/HA003.json#locations[I02].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "runescribed alchemy vault": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I01].aliases",
+              "areas/HA003.json#locations[I01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "runesmiths remnant": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I03].aliases",
+              "areas/DA001.json#locations[I03].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "shattered anvil crossing": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I01].aliases",
+              "areas/RF004.json#locations[I01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "shattered relic niche": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I03].aliases",
+              "areas/OV002.json#locations[I03].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "shattered runeway": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I01].aliases",
+              "areas/SD005.json#locations[I01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "shatterglass experimentum": {
+            "status": "resolved",
+            "location_id": "I03",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/HA003.json#locations[I03].aliases",
+              "areas/HA003.json#locations[I03].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "silent sentinel alcove": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/OV002.json#locations[I02].aliases",
+              "areas/OV002.json#locations[I02].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "smiths refuge": {
+            "status": "resolved",
+            "candidate_location_ids": [
+              "I03"
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I03].aliases",
+              "areas/RF004.json#locations[I03].name"
+            ],
+            "observed": true,
+            "player_facing": true,
+            "observation_count": 2,
+            "location_id": "I03",
+            "normalization": {
+              "type": "shortform_alias_collapse",
+              "strategy": "resolved_suffix_anchor_with_source_overlap",
+              "anchor_phrase": "forgotten smiths refuge",
+              "anchor_location_id": "I03",
+              "shared_sources": [
+                "areas/RF004.json#locations[I03].aliases",
+                "areas/RF004.json#locations[I03].name"
+              ]
+            }
+          },
+          "stonewrought threshold": {
+            "status": "resolved",
+            "location_id": "I01",
+            "candidate_location_ids": [
+              "I01"
+            ],
+            "sources": [
+              "areas/DA001.json#locations[I01].aliases",
+              "areas/DA001.json#locations[I01].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          },
+          "twilight forge lab": {
+            "status": "resolved",
+            "location_id": "I02",
+            "candidate_location_ids": [
+              "I02"
+            ],
+            "sources": [
+              "areas/SD005.json#locations[I02].aliases",
+              "areas/SD005.json#locations[I02].name"
+            ],
+            "observed": false,
+            "player_facing": false,
+            "observation_count": 0
+          }
+        },
+        "npc_scene_authority": {
+          "Archivist Gremli Amberfist": {
+            "name_slug": "archivist gremli amberfist",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.archivist_gremli_amberfist"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Duergar Rune-Warriors": {
+            "name_slug": "duergar rune warriors",
+            "visible_location_ids": [],
+            "reveal_bindings": [
+              {
+                "location_id": "SD005",
+                "source": "module_plot.json#plotPoints[PP018].description",
+                "reason": "authored_text_reference"
+              },
+              {
+                "location_id": "SD005",
+                "source": "module_plot.json#plotPoints[PP019].description",
+                "reason": "authored_text_reference"
+              }
+            ],
+            "sources": [
+              "module_context.json#npcs.duergar_rune_warriors",
+              "module_plot.json#plotPoints[PP018].description",
+              "module_plot.json#plotPoints[PP019].description"
+            ],
+            "authored_mentions_count": 2,
+            "authored_mention_sources": [
+              "module_plot.json#plotPoints[PP018].description",
+              "module_plot.json#plotPoints[PP019].description"
+            ]
+          },
+          "Foreman Ulric Flintlace": {
+            "name_slug": "foreman ulric flintlace",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.foreman_ulric_flintlace"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Guardian Construct Beldrum": {
+            "name_slug": "guardian construct beldrum",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.guardian_construct_beldrum"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Lady Brunna Ironsong": {
+            "name_slug": "lady brunna ironsong",
+            "visible_location_ids": [],
+            "reveal_bindings": [
+              {
+                "location_id": "SD005",
+                "source": "module_plot.json#plotPoints[PP017].description",
+                "reason": "authored_text_reference"
+              }
+            ],
+            "sources": [
+              "module_context.json#npcs.lady_brunna_ironsong",
+              "module_plot.json#plotPoints[PP017].description"
+            ],
+            "authored_mentions_count": 1,
+            "authored_mention_sources": [
+              "module_plot.json#plotPoints[PP017].description"
+            ]
+          },
+          "Saboteur Rask": {
+            "name_slug": "saboteur rask",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.saboteur_rask"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Sergeant Halda Stonebrow": {
+            "name_slug": "sergeant halda stonebrow",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.sergeant_halda_stonebrow"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Spirit of Thane Durnic": {
+            "name_slug": "spirit of thane durnic",
+            "visible_location_ids": [],
+            "reveal_bindings": [],
+            "sources": [
+              "module_context.json#npcs.spirit_of_thane_durnic"
+            ],
+            "authored_mentions_count": 0,
+            "authored_mention_sources": []
+          },
+          "Trapped Miner Derval": {
+            "name_slug": "trapped miner derval",
+            "visible_location_ids": [
+              "I02"
+            ],
+            "reveal_bindings": [],
+            "sources": [
+              "areas/HA003.json#locations[I02].dcChecks",
+              "areas/HA003.json#locations[I02].dmInstructions",
+              "areas/HA003.json#locations[I02].npcs",
+              "areas/HA003.json#locations[I02].plotHooks",
+              "module_context.json#npcs.trapped_miner_derval"
+            ],
+            "authored_mentions_count": 3,
+            "authored_mention_sources": [
+              "areas/HA003.json#locations[I02].dcChecks",
+              "areas/HA003.json#locations[I02].dmInstructions",
+              "areas/HA003.json#locations[I02].plotHooks"
+            ]
+          },
+          "Varkhaz the Stonebound": {
+            "name_slug": "varkhaz the stonebound",
+            "visible_location_ids": [],
+            "reveal_bindings": [
+              {
+                "location_id": "I02",
+                "source": "areas/RF004.json#locations[I02].plotHooks",
+                "reason": "authored_text_reference"
+              },
+              {
+                "location_id": "I03",
+                "source": "areas/RF004.json#locations[I03].plotHooks",
+                "reason": "authored_text_reference"
+              },
+              {
+                "location_id": "SD005",
+                "source": "module_plot.json#plotPoints[PP018].description",
+                "reason": "authored_text_reference"
+              },
+              {
+                "location_id": "SD005",
+                "source": "module_plot.json#plotPoints[PP019].description",
+                "reason": "authored_text_reference"
+              }
+            ],
+            "sources": [
+              "areas/RF004.json#locations[I02].plotHooks",
+              "areas/RF004.json#locations[I03].plotHooks",
+              "module_context.json#npcs.varkhaz_the_stonebound",
+              "module_plot.json#plotPoints[PP018].description",
+              "module_plot.json#plotPoints[PP019].description"
+            ],
+            "authored_mentions_count": 4,
+            "authored_mention_sources": [
+              "areas/RF004.json#locations[I02].plotHooks",
+              "areas/RF004.json#locations[I03].plotHooks",
+              "module_plot.json#plotPoints[PP018].description",
+              "module_plot.json#plotPoints[PP019].description"
+            ]
+          }
+        },
+        "diagnostics": {
+          "duplicate_location_aliases": [],
+          "ambiguous_destination_phrases": [],
+          "unresolved_destination_phrases": [],
+          "normalized_shortform_destination_phrases": [
+            {
+              "phrase": "smiths refuge",
+              "anchor_phrase": "forgotten smiths refuge",
+              "location_id": "I03",
+              "shared_sources": [
+                "areas/RF004.json#locations[I03].aliases",
+                "areas/RF004.json#locations[I03].name"
+              ]
+            }
+          ],
+          "missing_npc_authority": [
+            {
+              "npc": "Archivist Gremli Amberfist",
+              "name_slug": "archivist gremli amberfist",
+              "sources": [
+                "module_context.json#npcs.archivist_gremli_amberfist"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            },
+            {
+              "npc": "Foreman Ulric Flintlace",
+              "name_slug": "foreman ulric flintlace",
+              "sources": [
+                "module_context.json#npcs.foreman_ulric_flintlace"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            },
+            {
+              "npc": "Guardian Construct Beldrum",
+              "name_slug": "guardian construct beldrum",
+              "sources": [
+                "module_context.json#npcs.guardian_construct_beldrum"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            },
+            {
+              "npc": "Saboteur Rask",
+              "name_slug": "saboteur rask",
+              "sources": [
+                "module_context.json#npcs.saboteur_rask"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            },
+            {
+              "npc": "Sergeant Halda Stonebrow",
+              "name_slug": "sergeant halda stonebrow",
+              "sources": [
+                "module_context.json#npcs.sergeant_halda_stonebrow"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            },
+            {
+              "npc": "Spirit of Thane Durnic",
+              "name_slug": "spirit of thane durnic",
+              "sources": [
+                "module_context.json#npcs.spirit_of_thane_durnic"
+              ],
+              "authored_mentions_count": 0,
+              "authored_mention_sources": []
+            }
+          ]
+        },
+        "summary": {
+          "location_count": 15,
+          "location_alias_count": 18,
+          "destination_phrase_count": 19,
+          "npc_count": 10,
+          "ambiguous_destination_count": 0,
+          "normalized_shortform_destination_count": 1,
+          "missing_npc_authority_count": 6
+        }
+      },
+      "warnings": [
+        "semantic_authority_normalized_shortform_destination_phrases=1",
+        "semantic_authority_missing_npc_authority=6"
+      ],
+      "errors": []
+    },
+    "registry": {
+      "status": "success",
+      "verify_before": {
+        "present": true,
+        "module_key": "Into_the_Deepvault",
+        "folder_exists": true,
+        "areas_count": 5,
+        "area_ids": [
+          "SD005",
+          "RF004",
+          "HA003",
+          "OV002",
+          "DA001"
+        ],
+        "has_encounters": false,
+        "added_date": "2026-04-25T13:58:00.176434"
+      },
+      "integration_attempted": false
+    },
+    "monster_materialization": {
+      "status": "success",
+      "reason": null,
+      "returncode": 0,
+      "parsed_output": {
+        "status": "success",
+        "created_count": 0,
+        "skipped_existing_count": 14,
+        "missing_in_bestiary_count": 0,
+        "missing_names": [],
+        "path_conflicts_detected": 0,
+        "path_conflicts_repaired": 0,
+        "conflict_paths": [],
+        "hydration_modes": {
+          "existing": 14,
+          "reuse": 0,
+          "bestiary": 0,
+          "generated": 0
+        },
+        "blocker_classes": {},
+        "blocked_count": 0,
+        "monster_results": [
+          {
+            "requested_name": "Animated Forge-Tools",
+            "requested_slug": "animated_forge_tools",
+            "canonical_slug": "animated_forge_tools",
+            "canonical_name": "Animated Forge-Tools",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Animated Statue (Sentinel)",
+            "requested_slug": "animated_statue_sentinel",
+            "canonical_slug": "animated_statue_sentinel",
+            "canonical_name": "Animated Statue (Sentinel)",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Animated Tools",
+            "requested_slug": "animated_tools",
+            "canonical_slug": "animated_tools",
+            "canonical_name": "Animated Tools",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Ashen Wraiths",
+            "requested_slug": "ashen_wraiths",
+            "canonical_slug": "ashen_wraiths",
+            "canonical_name": "Ashen Wraiths",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Chasm Lurker",
+            "requested_slug": "chasm_lurker",
+            "canonical_slug": "chasm_lurker",
+            "canonical_name": "Chasm Lurker",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Crawling Claw Swarm",
+            "requested_slug": "crawling_claw_swarm",
+            "canonical_slug": "crawling_claw_swarm",
+            "canonical_name": "Crawling Claw Swarm",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Echo Wraith",
+            "requested_slug": "echo_wraith",
+            "canonical_slug": "echo_wraith",
+            "canonical_name": "Echo Wraith",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Forged Sentry",
+            "requested_slug": "forged_sentry",
+            "canonical_slug": "forged_sentry",
+            "canonical_name": "Forged Sentry",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Giant Centipede",
+            "requested_slug": "giant_centipede",
+            "canonical_slug": "giant_centipede",
+            "canonical_name": "Giant Centipede",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Giant Wolf Spider",
+            "requested_slug": "giant_wolf_spider",
+            "canonical_slug": "giant_wolf_spider",
+            "canonical_name": "Giant Wolf Spider",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Ironbound Guardian",
+            "requested_slug": "ironbound_guardian",
+            "canonical_slug": "ironbound_guardian",
+            "canonical_name": "Ironbound Guardian",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Molten Bone Golem",
+            "requested_slug": "molten_bone_golem",
+            "canonical_slug": "molten_bone_golem",
+            "canonical_name": "Molten Bone Golem",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Restless Alchemical Wraith",
+            "requested_slug": "restless_alchemical_wraith",
+            "canonical_slug": "restless_alchemical_wraith",
+            "canonical_name": "Restless Alchemical Wraith",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          },
+          {
+            "requested_name": "Shatterglass Amalgam",
+            "requested_slug": "shatterglass_amalgam",
+            "canonical_slug": "shatterglass_amalgam",
+            "canonical_name": "Shatterglass Amalgam",
+            "ok": true,
+            "mode": "existing",
+            "blocker_class": "",
+            "error_message": "",
+            "resolution_mode": "exact",
+            "bestiary_missing": false
+          }
+        ],
+        "candidate_sources": {
+          "seed_count": 0,
+          "authored_count": 14,
+          "seed_missing_fallback_used": true
+        },
+        "module_path": "modules/Into_the_Deepvault",
+        "error": null
+      }
+    },
+    "llm_classification": {
+      "status": "success",
+      "classification_summary": {
+        "entity": {
+          "candidates": 0,
+          "cache_hits": 0,
+          "llm_classified": 0,
+          "labels": {}
+        },
+        "destination": {
+          "candidates": 11,
+          "cache_hits": 0,
+          "llm_classified": 11,
+          "labels": {
+            "shadowy chamber": "evocative_prose",
+            "cluttered chamber": "evocative_prose",
+            "vaulted chamber": "evocative_prose",
+            "echoing hall": "evocative_prose",
+            "mist-shrouded chamber": "evocative_prose",
+            "narrow chamber": "evocative_prose",
+            "this chamber": "evocative_prose",
+            "private chamber": "evocative_prose",
+            "audience hall": "evocative_prose",
+            "stone chamber": "evocative_prose",
+            "wraith. hall": "evocative_prose"
+          }
+        },
+        "npc_visibility": {
+          "candidates": 1,
+          "cache_hits": 0,
+          "llm_classified": 1,
+          "labels": {
+            "Trapped Miner Derval": "visible"
+          }
+        }
+      },
+      "applied": {
+        "entity": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        },
+        "destination": {
+          "status": "success",
+          "applied": "0",
+          "aliases_added": "[]"
+        },
+        "npc": {
+          "status": "success",
+          "applied": 0,
+          "details": []
+        }
+      }
+    },
+    "toolkit_provenance": {
+      "status": "success",
+      "reason": "toolkit_provenance_prepared",
+      "report_path": "modules/Into_the_Deepvault/toolkit_build_report.json"
+    },
+    "publishability": {
+      "status": "success",
+      "ready_status": "pass",
+      "publishable_status": "pass",
+      "source": "toolkit",
+      "report": {
+        "module": "Into_the_Deepvault",
+        "module_path": "modules/Into_the_Deepvault",
+        "source": "toolkit",
+        "ready_status": "pass",
+        "publishable_status": "pass",
+        "readiness": {
+          "module": "Into_the_Deepvault",
+          "overall_status": "pass",
+          "gates": {
+            "gameplay": {
+              "status": "pass",
+              "reason": "toolkit_structural_media_handoff_only",
+              "exit_code": 1,
+              "blocking_error_count": 2,
+              "warning_count": 16,
+              "raw": {
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/audit_module_gameplay.py --module Into_the_Deepvault --json --strict-instructions",
+                "exit_code": 1,
+                "stdout": "{\n  \"target\": {\n    \"blocking_errors\": [\n      \"Missing base media for: animated_forge_tools (from SD005.json:locations[1].monsters[0])\",\n      \"Missing base media for: animated_statue_sentinel (from OV002.json:locations[1].monsters[0])\"\n    ],\n    \"warnings\": [\n      \"Missing thumb for: animated_forge_tools\",\n      \"Missing video for: animated_forge_tools\",\n      \"Missing thumb for: animated_statue_sentinel\",\n      \"Missing video for: animated_statue_sentinel\",\n      \"Missing video for: animated_tools\",\n      \"Missing video for: ashen_wraiths\",\n      \"Missing video for: chasm_lurker\",\n      \"Missing video for: crawling_claw_swarm\",\n      \"Missing video for: echo_wraith\",\n      \"Missing video for: forged_sentry\",\n      \"Missing video for: giant_centipede\",\n      \"Missing video for: giant_wolf_spider\",\n      \"Missing video for: ironbound_guardian\",\n      \"Missing video for: molten_bone_golem\",\n      \"Missing video for: restless_alchemical_wraith\",\n      \"Missing video for: shatterglass_amalgam\"\n    ],\n    \"coverage_stats\": {\n      \"module\": \"Into_the_Deepvault\",\n      \"referenced_monsters\": 14,\n      \"structural_refs\": 14,\n      \"heuristic_refs\": 0,\n      \"json_valid\": 14,\n      \"json_invalid\": 0,\n      \"json_missing\": 0,\n      \"json_coverage_pct\": 100.0,\n      \"media_base_coverage\": 12,\n      \"media_thumb_coverage\": 12,\n      \"media_video_coverage\": 0,\n      \"media_base_coverage_pct\": 85.7,\n      \"media_policy\": {\n        \"provider_generation_mode\": \"opt_in_manual_only\",\n        \"manual_toolkit_workflow\": [\n          \"Monster Management & Generator -> Generate Monster Images\",\n          \"Module Media Generator -> one-click monster media generation\"\n        ],\n        \"outcome_vocabulary\": [\n          \"reused_or_generated\",\n          \"provider_disabled_missing\",\n          \"attempted_but_unresolved\"\n        ]\n      }\n    },\n    \"fix_list\": [\n      \"Add media: modules/Into_the_Deepvault/media/monsters/animated_forge_tools.jpg\",\n      \"Add media: modules/Into_the_Deepvault/media/monsters/animated_statue_sentinel.jpg\"\n    ],\n    \"monster_media_findings\": [\n      {\n        \"slug\": \"animated_forge_tools\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SD005.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"provider_disabled_missing\",\n        \"base\": false,\n        \"thumb\": false,\n        \"video\": false\n      },\n      {\n        \"slug\": \"animated_statue_sentinel\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OV002.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"provider_disabled_missing\",\n        \"base\": false,\n        \"thumb\": false,\n        \"video\": false\n      },\n      {\n        \"slug\": \"animated_tools\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"DA001.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"ashen_wraiths\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RF004.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"chasm_lurker\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SD005.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"crawling_claw_swarm\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OV002.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"SD005.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"forged_sentry\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RF004.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"giant_centipede\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"OV002.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"giant_wolf_spider\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"DA001.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"ironbound_guardian\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"HA003.json\",\n        \"source_path\": \"locations[1].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"molten_bone_golem\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"RF004.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"restless_alchemical_wraith\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"HA003.json\",\n        \"source_path\": \"locations[0].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      },\n      {\n        \"slug\": \"shatterglass_amalgam\",\n        \"confidence\": \"structural\",\n        \"source_file\": \"HA003.json\",\n        \"source_path\": \"locations[2].monsters[0]\",\n        \"outcome\": \"reused_or_generated\",\n        \"base\": true,\n        \"thumb\": true,\n        \"video\": false\n      }\n    ],\n    \"references\": [\n      {\n        \"slug\": \"chasm_lurker\",\n        \"file\": \"SD005.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Chasm Lurker\"\n      },\n      {\n        \"slug\": \"animated_forge_tools\",\n        \"file\": \"SD005.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Animated Forge-Tools\"\n      },\n      {\n        \"slug\": \"echo_wraith\",\n        \"file\": \"SD005.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Echo Wraith\"\n      },\n      {\n        \"slug\": \"molten_bone_golem\",\n        \"file\": \"RF004.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Molten Bone Golem\"\n      },\n      {\n        \"slug\": \"ashen_wraiths\",\n        \"file\": \"RF004.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Ashen Wraiths\"\n      },\n      {\n        \"slug\": \"forged_sentry\",\n        \"file\": \"RF004.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Forged Sentry\"\n      },\n      {\n        \"slug\": \"restless_alchemical_wraith\",\n        \"file\": \"HA003.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Restless Alchemical Wraith\"\n      },\n      {\n        \"slug\": \"ironbound_guardian\",\n        \"file\": \"HA003.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Ironbound Guardian\"\n      },\n      {\n        \"slug\": \"shatterglass_amalgam\",\n        \"file\": \"HA003.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Shatterglass Amalgam\"\n      },\n      {\n        \"slug\": \"giant_centipede\",\n        \"file\": \"OV002.json\",\n        \"path\": \"locations[0].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Giant Centipede\"\n      },\n      {\n        \"slug\": \"animated_statue_sentinel\",\n        \"file\": \"OV002.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Animated Statue (Sentinel)\"\n      },\n      {\n        \"slug\": \"crawling_claw_swarm\",\n        \"file\": \"OV002.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Crawling Claw Swarm\"\n      },\n      {\n        \"slug\": \"giant_wolf_spider\",\n        \"file\": \"DA001.json\",\n        \"path\": \"locations[1].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Giant Wolf Spider\"\n      },\n      {\n        \"slug\": \"animated_tools\",\n        \"file\": \"DA001.json\",\n        \"path\": \"locations[2].monsters[0]\",\n        \"confidence\": \"structural\",\n        \"original\": \"Animated Tools\"\n      }\n    ],\n    \"strict_mode\": true\n  },\n  \"baseline\": null\n}",
+                "stderr": "",
+                "json": {
+                  "target": {
+                    "blocking_errors": [
+                      "Missing base media for: animated_forge_tools (from SD005.json:locations[1].monsters[0])",
+                      "Missing base media for: animated_statue_sentinel (from OV002.json:locations[1].monsters[0])"
+                    ],
+                    "warnings": [
+                      "Missing thumb for: animated_forge_tools",
+                      "Missing video for: animated_forge_tools",
+                      "Missing thumb for: animated_statue_sentinel",
+                      "Missing video for: animated_statue_sentinel",
+                      "Missing video for: animated_tools",
+                      "Missing video for: ashen_wraiths",
+                      "Missing video for: chasm_lurker",
+                      "Missing video for: crawling_claw_swarm",
+                      "Missing video for: echo_wraith",
+                      "Missing video for: forged_sentry",
+                      "Missing video for: giant_centipede",
+                      "Missing video for: giant_wolf_spider",
+                      "Missing video for: ironbound_guardian",
+                      "Missing video for: molten_bone_golem",
+                      "Missing video for: restless_alchemical_wraith",
+                      "Missing video for: shatterglass_amalgam"
+                    ],
+                    "coverage_stats": {
+                      "module": "Into_the_Deepvault",
+                      "referenced_monsters": 14,
+                      "structural_refs": 14,
+                      "heuristic_refs": 0,
+                      "json_valid": 14,
+                      "json_invalid": 0,
+                      "json_missing": 0,
+                      "json_coverage_pct": 100.0,
+                      "media_base_coverage": 12,
+                      "media_thumb_coverage": 12,
+                      "media_video_coverage": 0,
+                      "media_base_coverage_pct": 85.7,
+                      "media_policy": {
+                        "provider_generation_mode": "opt_in_manual_only",
+                        "manual_toolkit_workflow": [
+                          "Monster Management & Generator -> Generate Monster Images",
+                          "Module Media Generator -> one-click monster media generation"
+                        ],
+                        "outcome_vocabulary": [
+                          "reused_or_generated",
+                          "provider_disabled_missing",
+                          "attempted_but_unresolved"
+                        ]
+                      }
+                    },
+                    "fix_list": [
+                      "Add media: modules/Into_the_Deepvault/media/monsters/animated_forge_tools.jpg",
+                      "Add media: modules/Into_the_Deepvault/media/monsters/animated_statue_sentinel.jpg"
+                    ],
+                    "monster_media_findings": [
+                      {
+                        "slug": "animated_forge_tools",
+                        "confidence": "structural",
+                        "source_file": "SD005.json",
+                        "source_path": "locations[1].monsters[0]",
+                        "outcome": "provider_disabled_missing",
+                        "base": false,
+                        "thumb": false,
+                        "video": false
+                      },
+                      {
+                        "slug": "animated_statue_sentinel",
+                        "confidence": "structural",
+                        "source_file": "OV002.json",
+                        "source_path": "locations[1].monsters[0]",
+                        "outcome": "provider_disabled_missing",
+                        "base": false,
+                        "thumb": false,
+                        "video": false
+                      },
+                      {
+                        "slug": "animated_tools",
+                        "confidence": "structural",
+                        "source_file": "DA001.json",
+                        "source_path": "locations[2].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "ashen_wraiths",
+                        "confidence": "structural",
+                        "source_file": "RF004.json",
+                        "source_path": "locations[1].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "chasm_lurker",
+                        "confidence": "structural",
+                        "source_file": "SD005.json",
+                        "source_path": "locations[0].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "crawling_claw_swarm",
+                        "confidence": "structural",
+                        "source_file": "OV002.json",
+                        "source_path": "locations[2].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "echo_wraith",
+                        "confidence": "structural",
+                        "source_file": "SD005.json",
+                        "source_path": "locations[2].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "forged_sentry",
+                        "confidence": "structural",
+                        "source_file": "RF004.json",
+                        "source_path": "locations[2].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "giant_centipede",
+                        "confidence": "structural",
+                        "source_file": "OV002.json",
+                        "source_path": "locations[0].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "giant_wolf_spider",
+                        "confidence": "structural",
+                        "source_file": "DA001.json",
+                        "source_path": "locations[1].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "ironbound_guardian",
+                        "confidence": "structural",
+                        "source_file": "HA003.json",
+                        "source_path": "locations[1].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "molten_bone_golem",
+                        "confidence": "structural",
+                        "source_file": "RF004.json",
+                        "source_path": "locations[0].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "restless_alchemical_wraith",
+                        "confidence": "structural",
+                        "source_file": "HA003.json",
+                        "source_path": "locations[0].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      },
+                      {
+                        "slug": "shatterglass_amalgam",
+                        "confidence": "structural",
+                        "source_file": "HA003.json",
+                        "source_path": "locations[2].monsters[0]",
+                        "outcome": "reused_or_generated",
+                        "base": true,
+                        "thumb": true,
+                        "video": false
+                      }
+                    ],
+                    "references": [
+                      {
+                        "slug": "chasm_lurker",
+                        "file": "SD005.json",
+                        "path": "locations[0].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Chasm Lurker"
+                      },
+                      {
+                        "slug": "animated_forge_tools",
+                        "file": "SD005.json",
+                        "path": "locations[1].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Animated Forge-Tools"
+                      },
+                      {
+                        "slug": "echo_wraith",
+                        "file": "SD005.json",
+                        "path": "locations[2].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Echo Wraith"
+                      },
+                      {
+                        "slug": "molten_bone_golem",
+                        "file": "RF004.json",
+                        "path": "locations[0].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Molten Bone Golem"
+                      },
+                      {
+                        "slug": "ashen_wraiths",
+                        "file": "RF004.json",
+                        "path": "locations[1].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Ashen Wraiths"
+                      },
+                      {
+                        "slug": "forged_sentry",
+                        "file": "RF004.json",
+                        "path": "locations[2].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Forged Sentry"
+                      },
+                      {
+                        "slug": "restless_alchemical_wraith",
+                        "file": "HA003.json",
+                        "path": "locations[0].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Restless Alchemical Wraith"
+                      },
+                      {
+                        "slug": "ironbound_guardian",
+                        "file": "HA003.json",
+                        "path": "locations[1].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Ironbound Guardian"
+                      },
+                      {
+                        "slug": "shatterglass_amalgam",
+                        "file": "HA003.json",
+                        "path": "locations[2].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Shatterglass Amalgam"
+                      },
+                      {
+                        "slug": "giant_centipede",
+                        "file": "OV002.json",
+                        "path": "locations[0].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Giant Centipede"
+                      },
+                      {
+                        "slug": "animated_statue_sentinel",
+                        "file": "OV002.json",
+                        "path": "locations[1].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Animated Statue (Sentinel)"
+                      },
+                      {
+                        "slug": "crawling_claw_swarm",
+                        "file": "OV002.json",
+                        "path": "locations[2].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Crawling Claw Swarm"
+                      },
+                      {
+                        "slug": "giant_wolf_spider",
+                        "file": "DA001.json",
+                        "path": "locations[1].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Giant Wolf Spider"
+                      },
+                      {
+                        "slug": "animated_tools",
+                        "file": "DA001.json",
+                        "path": "locations[2].monsters[0]",
+                        "confidence": "structural",
+                        "original": "Animated Tools"
+                      }
+                    ],
+                    "strict_mode": true
+                  },
+                  "baseline": null
+                }
+              },
+              "manual_handoff_only": true,
+              "structural_media_debt_count": 2,
+              "structural_media_debt_slugs": [
+                "animated_forge_tools",
+                "animated_statue_sentinel"
+              ]
+            },
+            "sidecar": {
+              "status": "pass",
+              "reason": "pass",
+              "source": "toolkit",
+              "exit_code": 0,
+              "raw": {
+                "json": {
+                  "valid": true,
+                  "path": "/Users/zeug/Projects/NeverEndingQuest/modules/Into_the_Deepvault/toolkit_build_report.json",
+                  "module_slug": "Into_the_Deepvault"
+                }
+              }
+            },
+            "schema": {
+              "status": "pass",
+              "reason": "pass",
+              "exit_code": 0,
+              "any_failed": false,
+              "missing_jsonschema": false,
+              "raw": {
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/core/validation/validate_module_files.py --module Into_the_Deepvault --json",
+                "exit_code": 0,
+                "stdout": "{\n  \"modules\": {\n    \"Into_the_Deepvault\": {\n      \"module\": \"Into_the_Deepvault\",\n      \"total_passed\": 50,\n      \"total_failed\": 0,\n      \"files\": {\n        \"area\": {\n          \"files\": [\n            \"SD005.json (areas/)\",\n            \"HA003_BU.json (areas/)\",\n            \"SD005_BU.json (areas/)\",\n            \"RF004.json (areas/)\",\n            \"HA003.json (areas/)\",\n            \"OV002_BU.json (areas/)\",\n            \"OV002.json (areas/)\",\n            \"DA001_BU.json (areas/)\",\n            \"DA001.json (areas/)\",\n            \"RF004_BU.json (areas/)\"\n          ],\n          \"passed\": 10,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"reference_integrity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"monster\": {\n          \"files\": [\n            \"echo_wraith.json\",\n            \"shatterglass_amalgam.json\",\n            \"animated_statue_sentinel.json\",\n            \"ironbound_guardian.json\",\n            \"animated_forge_tools.json\",\n            \"animated_tools.json\",\n            \"ashen_wraiths.json\",\n            \"restless_alchemical_wraith.json\",\n            \"chasm_lurker.json\",\n            \"giant_wolf_spider.json\",\n            \"crawling_claw_swarm.json\",\n            \"giant_centipede.json\",\n            \"molten_bone_golem.json\",\n            \"forged_sentry.json\"\n          ],\n          \"passed\": 14,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map\": {\n          \"files\": [\n            \"map_DA001.json\",\n            \"map_RF004.json\",\n            \"map_HA003.json\",\n            \"map_OV002.json\",\n            \"map_SD005.json\"\n          ],\n          \"passed\": 5,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"party\": {\n          \"files\": [\n            \"party_tracker.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"module_context\": {\n          \"files\": [\n            \"module_context.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"runtime_room_reachability\": {\n          \"files\": [\n            \"areas/DA001.json\",\n            \"areas/HA003.json\",\n            \"areas/OV002.json\",\n            \"areas/RF004.json\",\n            \"areas/SD005.json\"\n          ],\n          \"passed\": 5,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"map_area_parity\": {\n          \"files\": [\n            \"DA001.json <-> map_DA001.json\",\n            \"HA003.json <-> map_HA003.json\",\n            \"OV002.json <-> map_OV002.json\",\n            \"RF004.json <-> map_RF004.json\",\n            \"SD005.json <-> map_SD005.json\"\n          ],\n          \"passed\": 5,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract\": {\n          \"files\": [\n            \"DA001.json <-> map_DA001.json\",\n            \"HA003.json <-> map_HA003.json\",\n            \"OV002.json <-> map_OV002.json\",\n            \"RF004.json <-> map_RF004.json\",\n            \"SD005.json <-> map_SD005.json\"\n          ],\n          \"passed\": 5,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"spatial_contract_warning\": {\n          \"files\": [],\n          \"passed\": 0,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"plot_progression\": {\n          \"files\": [\n            \"module_plot.json\"\n          ],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        },\n        \"connectivity\": {\n          \"files\": [],\n          \"passed\": 1,\n          \"failed\": 0,\n          \"errors\": []\n        }\n      }\n    }\n  },\n  \"summary\": {\n    \"modules_total\": 1,\n    \"any_failed\": false\n  }\n}",
+                "stderr": "",
+                "json": {
+                  "modules": {
+                    "Into_the_Deepvault": {
+                      "module": "Into_the_Deepvault",
+                      "total_passed": 50,
+                      "total_failed": 0,
+                      "files": {
+                        "area": {
+                          "files": [
+                            "SD005.json (areas/)",
+                            "HA003_BU.json (areas/)",
+                            "SD005_BU.json (areas/)",
+                            "RF004.json (areas/)",
+                            "HA003.json (areas/)",
+                            "OV002_BU.json (areas/)",
+                            "OV002.json (areas/)",
+                            "DA001_BU.json (areas/)",
+                            "DA001.json (areas/)",
+                            "RF004_BU.json (areas/)"
+                          ],
+                          "passed": 10,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "reference_integrity": {
+                          "files": [],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "monster": {
+                          "files": [
+                            "echo_wraith.json",
+                            "shatterglass_amalgam.json",
+                            "animated_statue_sentinel.json",
+                            "ironbound_guardian.json",
+                            "animated_forge_tools.json",
+                            "animated_tools.json",
+                            "ashen_wraiths.json",
+                            "restless_alchemical_wraith.json",
+                            "chasm_lurker.json",
+                            "giant_wolf_spider.json",
+                            "crawling_claw_swarm.json",
+                            "giant_centipede.json",
+                            "molten_bone_golem.json",
+                            "forged_sentry.json"
+                          ],
+                          "passed": 14,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "map": {
+                          "files": [
+                            "map_DA001.json",
+                            "map_RF004.json",
+                            "map_HA003.json",
+                            "map_OV002.json",
+                            "map_SD005.json"
+                          ],
+                          "passed": 5,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "plot": {
+                          "files": [
+                            "module_plot.json"
+                          ],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "party": {
+                          "files": [
+                            "party_tracker.json"
+                          ],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "module_context": {
+                          "files": [
+                            "module_context.json"
+                          ],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "runtime_room_reachability": {
+                          "files": [
+                            "areas/DA001.json",
+                            "areas/HA003.json",
+                            "areas/OV002.json",
+                            "areas/RF004.json",
+                            "areas/SD005.json"
+                          ],
+                          "passed": 5,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "map_area_parity": {
+                          "files": [
+                            "DA001.json <-> map_DA001.json",
+                            "HA003.json <-> map_HA003.json",
+                            "OV002.json <-> map_OV002.json",
+                            "RF004.json <-> map_RF004.json",
+                            "SD005.json <-> map_SD005.json"
+                          ],
+                          "passed": 5,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "spatial_contract": {
+                          "files": [
+                            "DA001.json <-> map_DA001.json",
+                            "HA003.json <-> map_HA003.json",
+                            "OV002.json <-> map_OV002.json",
+                            "RF004.json <-> map_RF004.json",
+                            "SD005.json <-> map_SD005.json"
+                          ],
+                          "passed": 5,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "spatial_contract_warning": {
+                          "files": [],
+                          "passed": 0,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "plot_progression": {
+                          "files": [
+                            "module_plot.json"
+                          ],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        },
+                        "connectivity": {
+                          "files": [],
+                          "passed": 1,
+                          "failed": 0,
+                          "errors": []
+                        }
+                      }
+                    }
+                  },
+                  "summary": {
+                    "modules_total": 1,
+                    "any_failed": false
+                  }
+                }
+              }
+            },
+            "continuity": {
+              "status": "pass",
+              "reason": "pass",
+              "exit_code": 0,
+              "blocking_error_count": 0,
+              "warning_count": 1,
+              "required_keys_present": [
+                "continuity_version",
+                "entry_state_variants",
+                "cross_module_refs",
+                "standalone_fallback"
+              ],
+              "continuity_version": "v1",
+              "raw": {
+                "command": "/Users/zeug/Projects/NeverEndingQuest/.venv/bin/python /Users/zeug/Projects/NeverEndingQuest/scripts/module_continuity_audit.py --module Into_the_Deepvault --json --strict",
+                "exit_code": 0,
+                "stdout": "{\n  \"status\": \"degraded\",\n  \"module\": \"Into_the_Deepvault\",\n  \"module_path\": \"modules/Into_the_Deepvault\",\n  \"continuity_version\": \"v1\",\n  \"required_keys_present\": [\n    \"continuity_version\",\n    \"entry_state_variants\",\n    \"cross_module_refs\",\n    \"standalone_fallback\"\n  ],\n  \"missing_required_keys\": [],\n  \"normalized_refs_count\": 0,\n  \"blocking_errors\": [],\n  \"warnings\": [\n    \"cross_module_refs is empty; run scripts/enrich_module_cross_refs.py --module Into_the_Deepvault --apply to seed narrative continuity links\"\n  ],\n  \"strict\": true,\n  \"exit_code\": 0\n}",
+                "stderr": "",
+                "json": {
+                  "status": "degraded",
+                  "module": "Into_the_Deepvault",
+                  "module_path": "modules/Into_the_Deepvault",
+                  "continuity_version": "v1",
+                  "required_keys_present": [
+                    "continuity_version",
+                    "entry_state_variants",
+                    "cross_module_refs",
+                    "standalone_fallback"
+                  ],
+                  "missing_required_keys": [],
+                  "normalized_refs_count": 0,
+                  "blocking_errors": [],
+                  "warnings": [
+                    "cross_module_refs is empty; run scripts/enrich_module_cross_refs.py --module Into_the_Deepvault --apply to seed narrative continuity links"
+                  ],
+                  "strict": true,
+                  "exit_code": 0
+                }
+              }
+            }
+          },
+          "blocking_errors": [],
+          "fix_list": [
+            "Seed narrative cross-module refs: python3 scripts/enrich_module_cross_refs.py --module <slug> --apply"
+          ],
+          "strict_contract": {
+            "source": "toolkit",
+            "requires_gameplay": true,
+            "requires_sidecar": false,
+            "requires_toolkit_provenance": true,
+            "requires_continuity": true,
+            "requires_schema": true,
+            "strict_gameplay": true,
+            "strict_continuity": true
+          },
+          "toolkit_media_policy": {
+            "provider_generation_mode": "opt_in_manual_only",
+            "manual_remediation_workflow": [
+              "Monster Management & Generator -> Generate Monster Images",
+              "Module Media Generator -> one-click monster media generation"
+            ],
+            "structural_media_debt_count": 2,
+            "structural_media_debt_slugs": [
+              "animated_forge_tools",
+              "animated_statue_sentinel"
+            ]
+          },
+          "exit_code": 0
+        },
+        "publication_gates": {
+          "semantic_audit": {
+            "status": "degraded",
+            "module": "Into_the_Deepvault",
+            "module_path": "modules/Into_the_Deepvault",
+            "version": "v1",
+            "summary": {
+              "location_alias_count": 18,
+              "destination_phrase_count": 19,
+              "npc_scene_authority_count": 10,
+              "ambiguous_destination_count": 0,
+              "unresolved_destination_count": 0,
+              "missing_npc_authority_count": 6,
+              "normalized_shortform_destination_count": 1,
+              "blocking_finding_count": 0,
+              "warning_count": 6
+            },
+            "normalized_shortform_destination_phrases": [
+              {
+                "phrase": "smiths refuge",
+                "anchor_phrase": "forgotten smiths refuge",
+                "location_id": "I03",
+                "shared_sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ]
+              }
+            ],
+            "blocker_classes": [],
+            "blocking_findings": [],
+            "blocking_errors": [],
+            "warnings": [
+              "npc_scene_authority['Archivist Gremli Amberfist'] has no visible locations or reveal bindings",
+              "npc_scene_authority['Foreman Ulric Flintlace'] has no visible locations or reveal bindings",
+              "npc_scene_authority['Guardian Construct Beldrum'] has no visible locations or reveal bindings",
+              "npc_scene_authority['Saboteur Rask'] has no visible locations or reveal bindings",
+              "npc_scene_authority['Sergeant Halda Stonebrow'] has no visible locations or reveal bindings",
+              "npc_scene_authority['Spirit of Thane Durnic'] has no visible locations or reveal bindings"
+            ],
+            "exit_code": 0
+          },
+          "semantic_probes": {
+            "module": "Into_the_Deepvault",
+            "module_path": "modules/Into_the_Deepvault",
+            "status": "degraded",
+            "summary": {
+              "probe_count": 5,
+              "pass_count": 5,
+              "fail_count": 0,
+              "degraded_count": 0,
+              "travel_probe_count": 2,
+              "handoff_probe_count": 0,
+              "hidden_npc_probe_count": 3
+            },
+            "probes": [
+              {
+                "id": "travel.forgotten-smiths-refuge",
+                "type": "travel",
+                "phrase": "forgotten smiths refuge",
+                "status": "pass",
+                "resolved_location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "expected_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "expected_location_id": "I03",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "travel.smiths-refuge",
+                "type": "travel",
+                "phrase": "smiths refuge",
+                "status": "pass",
+                "resolved_location_id": "I03",
+                "candidate_location_ids": [
+                  "I03"
+                ],
+                "expected_location_ids": [
+                  "I03"
+                ],
+                "sources": [
+                  "areas/RF004.json#locations[I03].aliases",
+                  "areas/RF004.json#locations[I03].name"
+                ],
+                "expected_location_id": "I03",
+                "status_detail": "Resolved location matches expected destination",
+                "failure_class": ""
+              },
+              {
+                "id": "hidden_npc.duergar-rune-warriors",
+                "type": "hidden_npc",
+                "npc": "Duergar Rune-Warriors",
+                "name_slug": "duergar rune warriors",
+                "visible_location_ids": [],
+                "reveal_location_ids": [
+                  "SD005"
+                ],
+                "expected_location_ids": [
+                  "SD005"
+                ],
+                "authored_mentions_count": 2,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "status": "pass",
+                "failure_class": "",
+                "status_detail": "Revealable NPC authority aligns with authored discovery context"
+              },
+              {
+                "id": "hidden_npc.lady-brunna-ironsong",
+                "type": "hidden_npc",
+                "npc": "Lady Brunna Ironsong",
+                "name_slug": "lady brunna ironsong",
+                "visible_location_ids": [],
+                "reveal_location_ids": [
+                  "SD005"
+                ],
+                "expected_location_ids": [
+                  "SD005"
+                ],
+                "authored_mentions_count": 1,
+                "authored_mention_sources": [
+                  "module_plot.json#plotPoints[PP017].description"
+                ],
+                "status": "pass",
+                "failure_class": "",
+                "status_detail": "Revealable NPC authority aligns with authored discovery context"
+              },
+              {
+                "id": "hidden_npc.varkhaz-the-stonebound",
+                "type": "hidden_npc",
+                "npc": "Varkhaz the Stonebound",
+                "name_slug": "varkhaz the stonebound",
+                "visible_location_ids": [],
+                "reveal_location_ids": [
+                  "I02",
+                  "I03",
+                  "SD005"
+                ],
+                "expected_location_ids": [
+                  "I02",
+                  "I03",
+                  "SD005"
+                ],
+                "authored_mentions_count": 4,
+                "authored_mention_sources": [
+                  "areas/RF004.json#locations[I02].plotHooks",
+                  "areas/RF004.json#locations[I03].plotHooks",
+                  "module_plot.json#plotPoints[PP018].description",
+                  "module_plot.json#plotPoints[PP019].description"
+                ],
+                "status": "pass",
+                "failure_class": "",
+                "status_detail": "Revealable NPC authority aligns with authored discovery context"
+              }
+            ],
+            "blocking_errors": [],
+            "warnings": [
+              "handoff_probe_fixture_missing"
+            ],
+            "exit_code": 0
+          }
+        },
+        "blocking_errors": [],
+        "warnings": [
+          "npc_scene_authority['Archivist Gremli Amberfist'] has no visible locations or reveal bindings",
+          "npc_scene_authority['Foreman Ulric Flintlace'] has no visible locations or reveal bindings",
+          "npc_scene_authority['Guardian Construct Beldrum'] has no visible locations or reveal bindings",
+          "npc_scene_authority['Saboteur Rask'] has no visible locations or reveal bindings",
+          "npc_scene_authority['Sergeant Halda Stonebrow'] has no visible locations or reveal bindings",
+          "npc_scene_authority['Spirit of Thane Durnic'] has no visible locations or reveal bindings",
+          "handoff_probe_fixture_missing"
+        ],
+        "remediation_categories": [
+          "structured_monster_media_missing",
+          "toolkit_manual_media_generation_required",
+          "semantic_warning_only",
+          "semantic_tooling_debt",
+          "scene_entity_modeling_candidate"
+        ],
+        "toolkit_media_policy": {
+          "provider_generation_mode": "opt_in_manual_only",
+          "manual_remediation_workflow": [
+            "Monster Management & Generator -> Generate Monster Images",
+            "Module Media Generator -> one-click monster media generation"
+          ],
+          "structural_media_debt_count": 2,
+          "structural_media_debt_slugs": [
+            "animated_forge_tools",
+            "animated_statue_sentinel"
+          ]
+        },
+        "fix_list": [
+          "Seed narrative cross-module refs: python3 scripts/enrich_module_cross_refs.py --module <slug> --apply",
+          "Review semantic audit warnings/tooling debt and remediate if needed",
+          "Review semantic probe warnings/tooling debt and remediate if needed",
+          "Manual toolkit remediation required: Monster Management & Generator -> Generate Monster Images",
+          "Optional batch remediation: Module Media Generator -> one-click monster media generation"
+        ],
+        "exit_code": 0
+      }
+    },
+    "llm_remediation": {
+      "status": "skipped",
+      "reason": "no_affordances"
+    }
+  },
+  "publication_parity_note": "Post-build parity now reports both structural readiness and semantic publishability.",
+  "semantic_authority_note": "Semantic authority and semantic probes now feed a standalone publishable gate distinct from readiness."
+}

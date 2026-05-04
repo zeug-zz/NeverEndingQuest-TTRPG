@@ -1,0 +1,432 @@
+{
+  "areaId": "RF004",
+  "areaName": "The Forgebound Wastes",
+  "areaType": "mixed",
+  "areaDescription": "Amid blasted slag-fields and serpentine rivers of molten metal, the Forgebound Wastes shimmer with eldritch energies\u2014runes spiraling through the ashen air and fusing stone and bone alike into warped, living relics. The ground itself thrums with the fury of ancient spells, promising death or transformation to any who trespass.",
+  "dangerLevel": "extreme",
+  "recommendedLevel": 4,
+  "climate": "varied",
+  "terrain": "varied terrain",
+  "map": {
+    "mapId": "MAP_I_3",
+    "mapName": "Mixed Map",
+    "totalRooms": 3,
+    "rooms": [
+      {
+        "id": "I01",
+        "type": "room",
+        "connections": [
+          "I02",
+          "I03"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "I02"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "extreme",
+        "name": "Shattered Anvil Crossing"
+      },
+      {
+        "id": "I02",
+        "type": "room",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "I01"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Ember-Scarred Watchpost"
+      },
+      {
+        "id": "I03",
+        "type": "room",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Forgotten Smith's Refuge"
+      }
+    ],
+    "layout": [
+      [
+        "I01",
+        "I02",
+        "I03"
+      ]
+    ],
+    "startRoom": "I01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "I01",
+      "name": "Shattered Anvil Crossing",
+      "type": "room",
+      "description": "Once a grand intersection beneath a vaulted ceiling, the Shattered Anvil Crossing now lies fractured and buckled by ancient magics. Chunks of blackened anvil-stone are scattered across the floor, scorched runes still faintly aglow. Ash drifts thickly, and the walls bear fused silhouettes of tools and bones, melded by forgotten forges. The trembling ground threatens to shift underfoot, and strange echoes of hammer-strikes ring from nowhere.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "I02",
+        "I03"
+      ],
+      "areaConnectivity": [
+        "The Vaulted Marches"
+      ],
+      "areaConnectivityId": [
+        "I03"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Molten Bone Golem",
+          "description": "A hulking construct formed from fused scrap metal and calcified bone, animated by lingering forge-spirits. It patrols the crossing, lashing out at anything it deems an intruder.",
+          "number": 1,
+          "attitude": "Hostile"
+        }
+      ],
+      "lootTable": [
+        "Fragment of a Rune-etched Anvil (arcane focus, worth 25 gp)",
+        "Potion of Fire Resistance",
+        "1d4 Shardsteel Ingots (used for crafting, value 15 gp each)"
+      ],
+      "plotHooks": [
+        "Carved into a fallen pillar, a fragmented rune sequence points toward a hidden forge deeper within Rune-Forgefane.",
+        "A half-melted medallion bearing the sigil of Deepvault Hold can be found among the debris."
+      ],
+      "dmInstructions": "The bone golem may activate if the party lingers or disturbs the debris. The shifting ground can make combat hazardous\u2014Dexterity (Acrobatics) DC 12 each round to avoid tripping. Arcane runes can offer clues for skilled players using Arcana or Investigation.",
+      "doors": [
+        {
+          "name": "East Archway",
+          "description": "A scorched stone archway, its keystone split and blackened by intense heat. Runic markings are faded but still faintly pulse.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 8,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "West Door",
+          "description": "A massive iron door, warped by past explosions. Its hinges screech when moved.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Forgemaster's Key",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 13,
+          "disableDC": 13,
+          "triggerDC": 0,
+          "damage": "2d6 fire (eruption of embers when stepping on a rune-inscribed plate)"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 13: Decipher the lingering runes to predict the golem's patrol pattern.",
+        "Investigation DC 12: Locate a concealed compartment beneath a shattered anvil.",
+        "Perception DC 15: Notice subtle vibrations in the ground warning of instability."
+      ],
+      "accessibility": "Normal access via adjoining corridors; unstable footing in some areas.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Interesting Architecture",
+          "description": "Jagged vaulting and melted iron beams criss-cross overhead, casting complex shadows in the drifting ash."
+        },
+        {
+          "name": "Dust",
+          "description": "Thick, glittering ash carpets the floor, mingled with blackened bone fragments and slag."
+        },
+        {
+          "name": "Shattered Anvil",
+          "description": "The massive remains of an ancient anvil lie broken in the center, its surface etched with runes now split and steaming."
+        }
+      ],
+      "encounters": [
+        {
+          "description": "The Molten Bone Golem emerges from the shadows if the party makes loud noises or disturbs the debris, attacking with molten fists and showering the area with embers."
+        }
+      ],
+      "adventureSummary": "A hazardous crossroads that offers clues to the deeper forges, guarded by a dangerous construct and fraught with environmental dangers.",
+      "aliases": [
+        "Shattered Anvil Crossing",
+        "I01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Shattered Anvil Crossing",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I02",
+      "name": "Ember-Scarred Watchpost",
+      "type": "room",
+      "description": "This chamber was once a defensive outpost\u2014murder holes and arrow slits line the walls, now caked with soot and warped by magical blasts. The air is heavy and hot, shimmering above scorched flooring. Charred remains of dwarven armor and weapon racks are fused with the stone, and an eerie silence suggests the memory of a last stand. The room is haunted by the restless echoes of its fallen defenders.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Ashen Wraiths",
+          "description": "Twisted spirits of dwarves who perished defending the post, their spectral forms flickering with embers and iron fragments. They whisper warnings and curses in Dwarvish.",
+          "number": 2,
+          "attitude": "Hostile unless appeased"
+        }
+      ],
+      "lootTable": [
+        "Burned Watchwarden's Journal (contains cryptic hints about the forgefane's collapse)",
+        "Embersteel Dagger (resistant to heat, worth 30 gp)",
+        "Charred Bag of Holding (can store only up to 50 lbs before tearing)"
+      ],
+      "plotHooks": [
+        "The journal refers to a hidden lever in the Forgotten Smith's Refuge that opens a secret cache.",
+        "One wraith whispers the name of Varkhaz the Stonebound, cursing his betrayal."
+      ],
+      "dmInstructions": "The wraiths attack any who enter, but can be placated with a successful Persuasion check or a proper offering (such as returning a found relic). The journal can be deciphered with Investigation. The murder holes provide cover for defenders.",
+      "doors": [
+        {
+          "name": "Iron Banded Door",
+          "description": "Reinforced with bands of scorched iron, the door is blackened and warped but still solid.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": true,
+          "trap": "A glyph of heat triggers if the door is forced, dealing 2d8 fire damage."
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 15,
+          "disableDC": 13,
+          "triggerDC": 12,
+          "damage": "2d8 fire (glyph of heat on the main door)"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 12: Find concealed alcoves containing burnt mementos.",
+        "History DC 14: Recall the fall of the forgefane's defenders and the significance of their sacrifice.",
+        "Persuasion DC 13: Appease the wraiths by promising to avenge their deaths."
+      ],
+      "accessibility": "Normal access from Shattered Anvil Crossing. Some sections require squeezing past collapsed barricades.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Interesting Architecture",
+          "description": "Overlapping murder holes and defensive arrow slits, now warped and fused by intense heat."
+        },
+        {
+          "name": "Signs Of Age",
+          "description": "Soot-caked walls, fused weapon racks, and scorched banners remain as testaments to a desperate last defense."
+        },
+        {
+          "name": "Wraith-Light",
+          "description": "Pale, flickering lights hover where the wraiths drift, illuminating runes scorched into the floor."
+        }
+      ],
+      "encounters": [
+        {
+          "description": "The ashen wraiths confront intruders, demanding answers for the desecration of their post, but may be bargained with through diplomacy or the return of a lost relic."
+        }
+      ],
+      "adventureSummary": "A haunted watchpost where the ghosts of defenders still linger, offering both danger and cryptic guidance to the wary.",
+      "aliases": [
+        "Ember-Scarred Watchpost",
+        "I02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Ember-Scarred Watchpost",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I03",
+      "name": "Forgotten Smith's Refuge",
+      "type": "room",
+      "description": "Once a private chamber for a revered dwarven smith, this room remains partially intact behind warped stone and slag. Coppersmith\u2019s tools lay scattered across a heavy workbench, now fused with the floor. Faint glimmers of magical protection linger, evidenced by untarnished objects amid blasted surroundings. The air smells of old oil and ozone, and the walls are lined with etched runic patterns\u2014some glowing, some scorched.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [
+        "The Sundered Depths"
+      ],
+      "areaConnectivityId": [
+        "I01"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Forged Sentry",
+          "description": "A battered but still-active animated armor, inscribed with defensive runes, stands watch by the far wall, defending the smith's secrets.",
+          "number": 1,
+          "attitude": "Defensive"
+        }
+      ],
+      "lootTable": [
+        "Smith's Masterwork Tools (advantage on tool checks, 50 gp value)",
+        "Runic Band (once per day, grants resistance to fire for 1 hour)",
+        "Hidden Cache Key (opens a cache connected to a lever mentioned in the Ember-Scarred Watchpost's journal)"
+      ],
+      "plotHooks": [
+        "A hidden lever behind the workbench unlocks a cache elsewhere in Rune-Forgefane.",
+        "Old blueprints depict a 'Stonebound Guardian'\u2014a clue to the identity and weaknesses of Varkhaz the Stonebound."
+      ],
+      "dmInstructions": "The sentry only attacks if the smith's possessions are disturbed. Investigation checks reveal the lever and blueprints. Resting here grants advantage on Constitution saves against heat and exhaustion for the next hour if the runes are activated.",
+      "doors": [
+        {
+          "name": "Secret Panel",
+          "description": "A cleverly disguised section of wall behind the workbench slides aside when the correct rune is pressed.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 17,
+          "breakDC": 20,
+          "keyname": "Hidden Cache Key",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 14,
+          "disableDC": 12,
+          "triggerDC": 14,
+          "damage": "2d4 lightning (runic warding on the workbench if tampered with carelessly)"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 13: Uncover the hidden lever and keyhole behind the workbench.",
+        "Arcana DC 15: Identify the lingering magical protections on the smith's tools.",
+        "Perception DC 11: Notice faint scuff marks indicating the presence of the secret panel."
+      ],
+      "accessibility": "Normal access, though the room is partially blocked by slag and debris. Secret panel requires discovery and unlocking.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Signs Of Age",
+          "description": "Tools corroded by time, scorch marks on the floor, and ancient blueprints warped by heat."
+        },
+        {
+          "name": "Interesting Architecture",
+          "description": "Carved stonework depicts scenes of legendary forging, now cracked and faded."
+        },
+        {
+          "name": "Runic Ward",
+          "description": "Glowing runes line the workbench and doorway, offering subtle magical protection."
+        }
+      ],
+      "encounters": [
+        {
+          "description": "The Forged Sentry animates if anyone tries to take or tamper with the smith's tools or blueprints, defending the legacy of its long-dead master."
+        }
+      ],
+      "adventureSummary": "A secretive smith's sanctuary that holds vital clues and rare tools, but is guarded by arcane wards and a vigilant construct.",
+      "aliases": [
+        "Forgotten Smith's Refuge",
+        "I03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Forgotten Smith's Refuge",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 4 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 4 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 4 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 4 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 4 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 4 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 4 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 4 parties"
+    }
+  ],
+  "areaFeatures": [
+    "landmarks",
+    "ruins",
+    "crossroads"
+  ],
+  "notes": "Balance combat, exploration, and social encounters. Transitions between areas should feel natural.",
+  "spatialContractVersion": 1
+}

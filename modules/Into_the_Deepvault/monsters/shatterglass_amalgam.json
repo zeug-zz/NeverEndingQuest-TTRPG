@@ -1,0 +1,77 @@
+{
+  "name": "Shatterglass Amalgam",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 14,
+  "hitPoints": 32,
+  "maxHitPoints": 32,
+  "speed": 30,
+  "abilities": {
+    "strength": 15,
+    "dexterity": 12,
+    "constitution": 14,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 6
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "bludgeoning"
+  ],
+  "damageResistances": [
+    "piercing",
+    "slashing",
+    "fire"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned",
+    "charmed",
+    "exhaustion"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 10
+  },
+  "languages": "",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Shatterglass Form",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Reflective Shards",
+      "attackBonus": 0,
+      "damageDice": "1d6",
+      "damageBonus": 0,
+      "damageType": "slashing"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Glass Slash",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the fractured shards of a shattered laboratory, the Shatterglass Amalgam is a grotesque fusion of arcane glass and twisted flesh, its form a nightmarish testament to the failed Shatterglass Experimentum. Its body is a jagged mosaic of translucent crystalline plates, each shard refracting the dim torchlight into eerie, fractured rainbows that dance across the cold stone walls. Beneath this glistening armor, sinews of smoky, shadow-touched muscle writhe unnaturally, pulsating with lingering magical residue. Multiple jagged limbs sprout at odd angles, some ending in razor-sharp claws forged from the very glass that birthed it, while others twitch with unsettling, almost sentient motion. Its head is a fractured visage, a mask of cracked crystal with intermittent flickers of glowing arcane runes tracing ghostly paths across its surface, and within, two piercing orbs of cold blue light burn with unyielding malice. The air around the Amalgam crackles faintly with raw, unstable magic, and the faint scent of ozone mingles with the sharp tang of shattered glass. Each movement is accompanied by the ominous chime of splintering crystal, echoing through the vault's oppressive silence. The creature exudes a palpable aura of despair and ruin, a living monument to the dangers of unchecked arcane experimentation, and it lingers as a spectral guardian of the Shatterglass Experimentum's forsaken legacy."
+}

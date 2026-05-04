@@ -1,0 +1,51 @@
+{
+  "name": "Giant Centipede",
+  "size": "Small",
+  "type": "Beast",
+  "alignment": "Unaligned",
+  "armorClass": 13,
+  "hitPoints": 4,
+  "maxHitPoints": 4,
+  "speed": 30,
+  "abilities": {
+    "strength": 5,
+    "dexterity": 14,
+    "constitution": 12,
+    "intelligence": 1,
+    "wisdom": 7,
+    "charisma": 3
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 30,
+    "passivePerception": 8
+  },
+  "languages": "",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Spider Climb",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    }
+  ],
+  "actions": [
+    {
+      "name": "Bite",
+      "attackBonus": 4,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Within the mist-laden expanse of the Echoed Pillar Crossing, a Giant Centipede slithers with eerie grace, its segmented carapace glistening with a slick, obsidian sheen that reflects the faint, flickering torchlight. Each of its numerous, spindly legs moves in harmonious rhythm, creating a soft, unsettling rustle as it navigates the uneven terrain scattered with toppled stone pillars and creeping moss. Its elongated body, easily stretching over six feet, tapers into a razor-sharp tail that flicks with restless anticipation. The creature's multifaceted eyes, glossy and black, survey its surroundings with a predatory intelligence, while venomous mandibles click rhythmically in the cool, damp air. A faint, acrid scent of damp earth and decay clings to its exoskeleton, blending with the cold mist that curls through the chamber. The Giant Centipede is a silent hunter, stalking through the shadows and mist, its movements almost drowned by the echoing whispers and distant drips of water from the stone vaults. It is a lurking menace in the Vaulted Marches, a reminder that even the smallest creatures can wield deadly power beneath the ancient stones."
+}

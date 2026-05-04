@@ -1,0 +1,226 @@
+{
+  "module_name": "Into the Deepvault",
+  "module_id": "Into_the_Deepvault",
+  "areas": {
+    "DA001": {
+      "name": "Deepvault Approach",
+      "type": "dungeon",
+      "locations": [],
+      "npcs": [],
+      "plot_points": [
+        "PP001",
+        "PP002",
+        "PP003",
+        "PP004"
+      ]
+    },
+    "OV002": {
+      "name": "Outer Vaults",
+      "type": "mixed",
+      "locations": [],
+      "npcs": [],
+      "plot_points": [
+        "PP001",
+        "PP002",
+        "PP003",
+        "PP004"
+      ]
+    },
+    "HA003": {
+      "name": "Hall of Ancestors",
+      "type": "dungeon",
+      "locations": [],
+      "npcs": [
+        "Trapped Miner Derval"
+      ],
+      "plot_points": [
+        "PP001",
+        "PP002",
+        "PP003",
+        "PP004"
+      ]
+    },
+    "RF004": {
+      "name": "Rune-Forgefane",
+      "type": "mixed",
+      "locations": [],
+      "npcs": [],
+      "plot_points": [
+        "PP001",
+        "PP002",
+        "PP003",
+        "PP004"
+      ]
+    },
+    "SD005": {
+      "name": "Sundered Depths",
+      "type": "dungeon",
+      "locations": [],
+      "npcs": [],
+      "plot_points": [
+        "PP001",
+        "PP002",
+        "PP003",
+        "PP004"
+      ]
+    }
+  },
+  "npcs": {
+    "foreman_ulric_flintlace": {
+      "name": "Foreman Ulric Flintlace",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Foreman Ulric Flintlace"
+      ]
+    },
+    "lady_brunna_ironsong": {
+      "name": "Lady Brunna Ironsong",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Lady Brunna Ironsong"
+      ]
+    },
+    "sergeant_halda_stonebrow": {
+      "name": "Sergeant Halda Stonebrow",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Sergeant Halda Stonebrow"
+      ]
+    },
+    "archivist_gremli_amberfist": {
+      "name": "Archivist Gremli Amberfist",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Archivist Gremli Amberfist"
+      ]
+    },
+    "trapped_miner_derval": {
+      "name": "Trapped Miner Derval",
+      "role": "",
+      "faction": "",
+      "description": "A gaunt, frightened dwarven miner clings to the bars of one cell. He is disoriented and haunted by ghostly whispers, but desperate for rescue.",
+      "appears_in": [
+        {
+          "area": "HA003",
+          "location": "I02"
+        }
+      ],
+      "aliases": [
+        "Trapped Miner Derval"
+      ]
+    },
+    "saboteur_rask": {
+      "name": "Saboteur Rask",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Saboteur Rask"
+      ]
+    },
+    "spirit_of_thane_durnic": {
+      "name": "Spirit of Thane Durnic",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Spirit of Thane Durnic"
+      ]
+    },
+    "guardian_construct_beldrum": {
+      "name": "Guardian Construct Beldrum",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Guardian Construct Beldrum"
+      ]
+    },
+    "varkhaz_the_stonebound": {
+      "name": "Varkhaz the Stonebound",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Varkhaz the Stonebound"
+      ]
+    },
+    "duergar_rune_warriors": {
+      "name": "Duergar Rune-Warriors",
+      "role": "",
+      "faction": "",
+      "description": "",
+      "appears_in": [],
+      "aliases": [
+        "Duergar Rune-Warriors"
+      ]
+    }
+  },
+  "locations": {},
+  "plot_scopes": {
+    "PP001": "SD005",
+    "PP002": "SD005",
+    "PP003": "SD005",
+    "PP004": "SD005"
+  },
+  "references": {
+    "npc:Foreman Ulric Flintlace": [
+      "module:plotStages"
+    ],
+    "npc:Lady Brunna Ironsong": [
+      "module:plotStages"
+    ],
+    "npc:Sergeant Halda Stonebrow": [
+      "module:plotStages"
+    ],
+    "npc:Archivist Gremli Amberfist": [
+      "module:plotStages"
+    ],
+    "npc:Trapped Miner Derval": [
+      "module:plotStages"
+    ],
+    "npc:Saboteur Rask": [
+      "module:plotStages"
+    ],
+    "npc:Spirit of Thane Durnic": [
+      "module:plotStages"
+    ],
+    "npc:Guardian Construct Beldrum": [
+      "module:plotStages"
+    ],
+    "npc:Varkhaz the Stonebound": [
+      "module:plotStages"
+    ],
+    "npc:Duergar Rune-Warriors": [
+      "module:plotStages"
+    ]
+  },
+  "validation_issues": [
+    "NPC 'Foreman Ulric Flintlace' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Lady Brunna Ironsong' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Sergeant Halda Stonebrow' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Archivist Gremli Amberfist' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Saboteur Rask' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Spirit of Thane Durnic' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Guardian Construct Beldrum' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
+    "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
+  ],
+  "generated_at": "2026-04-25T13:56:51.603595"
+}

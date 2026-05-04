@@ -1,0 +1,68 @@
+{
+  "name": "Giant Wolf Spider",
+  "size": "Small",
+  "type": "Beast",
+  "alignment": "Unaligned",
+  "armorClass": 13,
+  "hitPoints": 11,
+  "maxHitPoints": 11,
+  "speed": 40,
+  "abilities": {
+    "strength": 12,
+    "dexterity": 16,
+    "constitution": 13,
+    "intelligence": 3,
+    "wisdom": 12,
+    "charisma": 4
+  },
+  "savingThrows": [],
+  "skills": {
+    "stealth": 7,
+    "perception": 3
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Spider Climb",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    },
+    {
+      "name": "Web Sense",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    },
+    {
+      "name": "Web Walker",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    }
+  ],
+  "actions": [
+    {
+      "name": "Bite",
+      "attackBonus": 3,
+      "damageDice": "1d6",
+      "damageBonus": 1,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the shadowy recesses of the Echoed Antechamber, the Giant Wolf Spider is a terrifying embodiment of predatory stealth and primal menace. Its massive, chitinous body gleams with a slick, obsidian-black sheen, mottled with muted grays that blend seamlessly with the mist-draped stone ruins. Eight spindly legs, each tipped with razor-sharp claws, move with an eerie, silent grace over the slick flagstones, while bristling hairs cover its limbs and abdomen, sensing even the faintest vibrations in the air. The spider's bulbous eyes--eight in total--reflect the faintest flicker of light, giving it a disquieting, multifaceted gaze that seems to pierce through darkness itself. From its mandibles drips a faint trace of venom, glistening like dew in the dim light, promising swift and painful subdual to unwary prey. It lurks above, nestled in thick, tangled webs spun between cracked pillars, descending like a shadow to ambush explorers disturbed by their own footsteps. The cold, stale air of the vault is thick with the scent of damp earth and decay, punctuated by the faint rustle of silk threads and the soft, unsettling skitter of many legs over ancient stone. This creature embodies the lurking threat of the Vaultlands--silent, patient, and deadly."
+}

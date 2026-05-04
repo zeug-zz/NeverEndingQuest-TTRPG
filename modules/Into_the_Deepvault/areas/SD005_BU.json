@@ -1,0 +1,435 @@
+{
+  "areaId": "SD005",
+  "areaName": "The Sundered Depths",
+  "areaType": "dungeon",
+  "areaDescription": "Beneath the shattered earth yawns a labyrinthine region of collapsed caverns and jagged chasms, where the air is thick with the tang of minerals and distant, echoing screams. Flickering shadows dance along crumbling ledges, and each step risks awakening the ancient terrors lurking in the lightless gloom.",
+  "dangerLevel": "high",
+  "recommendedLevel": 5,
+  "climate": "controlled - cool and damp",
+  "terrain": "stone corridors and chambers",
+  "map": {
+    "mapId": "MAP_I_3",
+    "mapName": "Dungeon Map",
+    "totalRooms": 3,
+    "rooms": [
+      {
+        "id": "I01",
+        "type": "corridor",
+        "connections": [
+          "I02",
+          "I03"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "I02"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "high",
+        "name": "Shattered Runeway"
+      },
+      {
+        "id": "I02",
+        "type": "laboratory",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "I01"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Twilight Forge Lab"
+      },
+      {
+        "id": "I03",
+        "type": "hall",
+        "connections": [
+          "I01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Hall of Echoing Stone"
+      }
+    ],
+    "layout": [
+      [
+        "I01",
+        "I02",
+        "I03"
+      ]
+    ],
+    "startRoom": "I01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "I01",
+      "name": "Shattered Runeway",
+      "type": "corridor",
+      "description": "The Shattered Runeway is a jagged stretch of broken stone, its floor split by fissures and its walls lined with the torn remnants of ancient tapestries. Fragments of dwarven artistry peep through the gloom, while the persistent echo of dripping water and distant, inhuman screams reverberate underfoot. Shadows flicker and dart, promising peril in every alcove.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "I02",
+        "I03"
+      ],
+      "areaConnectivity": [
+        "The Forgebound Wastes"
+      ],
+      "areaConnectivityId": [
+        "I03"
+      ],
+      "aliases": [
+        "Shattered Runeway",
+        "I01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_corridor:Shattered Runeway",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Chasm Lurker",
+          "description": "A predatory, six-legged, stony-skinned beast, camouflaged among the debris, waiting to ambush intruders climbing over the rubble.",
+          "quantity": 2
+        }
+      ],
+      "lootTable": [
+        "1x Dwarven Silver Brooch (25 gp)",
+        "Pouch of Iron Slag (10 gp, potential crafting use)"
+      ],
+      "plotHooks": [
+        "Strange claw marks on the stone suggest a larger predator may lurk deeper within the Sundered Depths.",
+        "A torn piece of a dwarven uniform hints that a lost miner, or their remains, might lie ahead."
+      ],
+      "dmInstructions": "Use the echoing acoustics to foreshadow distant threats. The Chasm Lurkers attack from cover and attempt to drag a PC into a fissure. Adjust monster HP and tactics if party is struggling. Use environmental hazards\u2014crumbling ledges, loose stones\u2014as dynamic elements in combat.",
+      "doors": [
+        {
+          "name": "East Archway",
+          "description": "A partially collapsed archway with a heavy stone lintel, dusted with old runes.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 13,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "West Iron Door",
+          "description": "A battered iron door, tarnished and warped, with a faded dwarven crest.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 19,
+          "keyname": "Wrought Iron Key",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 15,
+          "disableDC": 14,
+          "triggerDC": 0,
+          "damage": "2d6 piercing (spiked pit beneath loose flagstone near the east side)"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Notice faint drag marks leading to a fissure.",
+        "Investigation DC 14: Discern that the tapestries depict a warning about tunneling too deep."
+      ],
+      "accessibility": "The corridor is narrow in places and the floor is uneven. Medium and smaller creatures can pass with care; Large creatures must squeeze.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Echoing Sound",
+          "description": "Every footstep and cry is magnified, bouncing unsettlingly off the cracked stone."
+        },
+        {
+          "name": "Tapestries",
+          "description": "Fragments of ancient, soot-stained tapestries depicting dwarves fighting off shadowy invaders."
+        },
+        {
+          "name": "Jagged Fissures",
+          "description": "Splits in the floor wide enough for a Medium creature to fall through if not careful."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "ambush",
+          "summary": "Chasm Lurkers attack from concealment, targeting isolated or distracted PCs."
+        }
+      ],
+      "adventureSummary": "The Shattered Runeway is the initial gauntlet into the Sundered Depths, testing the party's awareness and caution. It sets the tone for perils to come, hinting at ancient dwarven warnings and the monstrous inhabitants below."
+    },
+    {
+      "locationId": "I02",
+      "name": "Twilight Forge Lab",
+      "type": "laboratory",
+      "description": "This ancient, soot-streaked forge is packed with peculiar alchemical equipment and dormant machinery. Glimmering runes pulse faintly along the walls, and workbenches are cluttered with half-finished constructs and strange reagents. The air is thick with the tang of metal and old, burnt oil.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "aliases": [
+        "Twilight Forge Lab",
+        "I02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_laboratory:Twilight Forge Lab",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Animated Forge-Tools",
+          "description": "A collection of animated hammers, tongs, and bellows, driven mad by corrupted runic energy.",
+          "quantity": 4
+        }
+      ],
+      "lootTable": [
+        "Alchemist's Fire (2 vials)",
+        "Enchanted Tongs (grants advantage on smith's tools checks, 1/day)",
+        "Dwarven Forgemaster's Notes (clue to deeper secrets)",
+        "Bag of Gem Dust (worth 50 gp)"
+      ],
+      "plotHooks": [
+        "A scribbled journal hints that a powerful construct was last seen heading east, deeper into the Sundered Depths.",
+        "Strange scrawls refer to a 'Rune-Core,' possibly hidden nearby or in a connected chamber."
+      ],
+      "dmInstructions": "Animated Forge-Tools attack anyone disturbing the workbenches or attempting to take items. The DM may allow clever PCs to disable or pacify them with successful Arcana checks and use of the alchemical equipment. Evidence here can foreshadow the presence of greater constructs deeper in the dungeon.",
+      "doors": [
+        {
+          "name": "South Secret Panel",
+          "description": "A cleverly disguised panel set into the stonework behind a rack of tools.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 15,
+          "keyname": "",
+          "trapped": true,
+          "trap": "Poison gas trap (detect DC 14, triggers on forced entry, 2d6 poison damage, Con save DC 13 for half)"
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 14,
+          "disableDC": 13,
+          "triggerDC": 13,
+          "damage": "2d6 poison (poisoned gas fills a 10-foot radius on failed disable/trigger)"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 13: Identify the source of the animating rune-magic.",
+        "Investigation DC 15: Locate the secret panel behind the tool rack."
+      ],
+      "accessibility": "Entry is clear from the west (Shattered Runeway), but the east and south exits are blocked or secret.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Alchemical Equipment",
+          "description": "Strange vials and distillation coils, some still bubbling with magical reagents."
+        },
+        {
+          "name": "Dormant Constructs",
+          "description": "Half-built metal guardians, some twitching with residual energy."
+        },
+        {
+          "name": "Glowing Runes",
+          "description": "Softly pulsing glyphs along the forgewalls, warming the air and shedding pale blue light."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "hazard",
+          "summary": "Animated tools react violently if disturbed or if the party attempts to loot the room."
+        }
+      ],
+      "adventureSummary": "A hazardous workshop where knowledge and resources can be gained, but only by braving the chaotic remnants of dwarven industry and their magical defenses."
+    },
+    {
+      "locationId": "I03",
+      "name": "Hall of Echoing Stone",
+      "type": "hall",
+      "description": "Once a grand audience hall, this expansive stone chamber is now fractured by seismic upheavals. The floor is uneven and treacherous, with stalagmites thrusting upward where the ground split. Ancient banners, faded nearly to gray, hang between cracked pillars. Every word spoken here seems to multiply, echoing through the darkness.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "I01"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "aliases": [
+        "Hall of Echoing Stone",
+        "I03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_hall:Hall of Echoing Stone",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Echo Wraith",
+          "description": "A spectral entity drawn to sound, its form shifting with every word uttered. Attacks those who break the silence with shrieks that can stun.",
+          "quantity": 1
+        }
+      ],
+      "lootTable": [
+        "Worn Banner of the Deepvault (historical value, 40 gp)",
+        "Stone-Carved Ring (engraved with dwarven runes)",
+        "Potion of Mind Shielding (advantage on saves vs. charm for 1 hour)"
+      ],
+      "plotHooks": [
+        "A hidden message in the banner's embroidery reveals the location of a concealed vault beneath the Sundered Depths.",
+        "Whispers from the Echo Wraith, if calmed, mention a dwarven spirit trapped further within."
+      ],
+      "dmInstructions": "The Echo Wraith is highly sensitive to noise\u2014loud actions or combat draw its immediate attention. Roleplay opportunities exist if the party attempts to communicate in respectful silence or dwarven. Clever use of the echoes can allow the party to navigate or disorient the Wraith.",
+      "doors": [
+        {
+          "name": "Collapsed East Passage",
+          "description": "A blocked archway choked with rubble and fallen banners.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 18,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 13,
+          "disableDC": 12,
+          "triggerDC": 0,
+          "damage": "2d10 bludgeoning (falling debris if the collapsed passage is forced open unsafely)"
+        }
+      ],
+      "dcChecks": [
+        "History DC 13: Learn the significance of the banners and their connection to the Deepvault.",
+        "Perception DC 15: Notice a hidden pressure plate near the dais."
+      ],
+      "accessibility": "Accessible only via the west corridor; other exits are blocked by rubble or magical ward.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Banners",
+          "description": "Tattered dwarven banners, some embroidered with cryptic warnings and ancient oaths."
+        },
+        {
+          "name": "Echoing Chamber",
+          "description": "The chamber magnifies all sounds, creating a disorienting, near-illusory effect."
+        },
+        {
+          "name": "Cracked Dais",
+          "description": "A shattered stone platform at the far end, stained with ancient blood."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "social/combative",
+          "summary": "The Echo Wraith attacks those who make noise, but can be placated or questioned if approached with silence and respect."
+        }
+      ],
+      "adventureSummary": "A place of lost glory, haunted by echoes\u2014both real and spectral\u2014and hiding the first clues to the fate of the dwarven defenders."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 5 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 5 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 5 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 5 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 5 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 5 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 5 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 5 parties"
+    },
+    {
+      "roll": "81-90",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 5 parties"
+    },
+    {
+      "roll": "91-100",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 5 parties"
+    }
+  ],
+  "areaFeatures": [
+    "hidden passages",
+    "ancient murals",
+    "forgotten shrines"
+  ],
+  "notes": "Consider lighting sources and trap placement. Underground areas may have limited resources.",
+  "spatialContractVersion": 1
+}

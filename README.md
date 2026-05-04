@@ -67,7 +67,7 @@ All fork modifications are marked with `# TABLETOP MODE:` comments and live in e
 | **Into the Deepvault**           | 3–5   | Confront elemental unrest in a petrified valley                  |
 | **Murder at the Drowning Lass**  | 6–6   | Solve a tavern murder mystery with branching investigation       |
 | **The Hidden City of Numillian** | 7–10  | Discover a subterranean city of paradox and lost knowledge       |
-| **Garden of Demons**             | 12–15 | Navigate a fey-touched garden of dangerous whimsy                |
+| **The Garden of Demons**         | 12–15 | Navigate a fey-touched garden of dangerous whimsy                |
 
 Modules connect through a hub-and-spoke world model. Cross-module continuity is maintained through living summaries, companion memory, and persistent world state.
 

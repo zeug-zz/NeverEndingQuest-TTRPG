@@ -1,0 +1,72 @@
+{
+  "mapId": "MAP_I_3",
+  "mapName": "Dungeon Map",
+  "totalRooms": 3,
+  "rooms": [
+    {
+      "id": "I01",
+      "type": "corridor",
+      "connections": [
+        "I02",
+        "I03"
+      ],
+      "coordinates": "X10Y10",
+      "directions": {
+        "east": "I02",
+        "south": "I03"
+      },
+      "tags": [],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "high",
+      "name": "Shattered Runeway"
+    },
+    {
+      "id": "I02",
+      "type": "laboratory",
+      "connections": [
+        "I01"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "west": "I01"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "encounter",
+      "landmark": true,
+      "dangerLevel": "high",
+      "name": "Twilight Forge Lab"
+    },
+    {
+      "id": "I03",
+      "type": "hall",
+      "connections": [
+        "I01"
+      ],
+      "coordinates": "X10Y11",
+      "directions": {
+        "north": "I01"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "encounter",
+      "landmark": true,
+      "dangerLevel": "high",
+      "name": "Hall of Echoing Stone"
+    }
+  ],
+  "layout": [
+    [
+      "I01",
+      "I02",
+      "I03"
+    ]
+  ],
+  "startRoom": "I01",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}

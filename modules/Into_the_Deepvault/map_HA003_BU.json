@@ -1,0 +1,72 @@
+{
+  "mapId": "MAP_I_3",
+  "mapName": "Dungeon Map",
+  "totalRooms": 3,
+  "rooms": [
+    {
+      "id": "I01",
+      "type": "laboratory",
+      "connections": [
+        "I02"
+      ],
+      "coordinates": "X10Y10",
+      "directions": {
+        "east": "I02"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "encounter",
+      "landmark": true,
+      "dangerLevel": "high",
+      "name": "Runescribed Alchemy Vault"
+    },
+    {
+      "id": "I02",
+      "type": "prison",
+      "connections": [
+        "I01",
+        "I03"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "west": "I01",
+        "east": "I03"
+      },
+      "tags": [],
+      "purpose": "encounter",
+      "landmark": false,
+      "dangerLevel": "high",
+      "name": "Ironbound Soul Cells"
+    },
+    {
+      "id": "I03",
+      "type": "laboratory",
+      "connections": [
+        "I02"
+      ],
+      "coordinates": "X12Y10",
+      "directions": {
+        "west": "I02"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "encounter",
+      "landmark": true,
+      "dangerLevel": "high",
+      "name": "Shatterglass Experimentum"
+    }
+  ],
+  "layout": [
+    [
+      "I01",
+      "I02",
+      "I03"
+    ]
+  ],
+  "startRoom": "I02",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}

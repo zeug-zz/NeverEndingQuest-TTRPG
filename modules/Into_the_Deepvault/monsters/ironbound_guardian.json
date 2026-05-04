@@ -1,0 +1,70 @@
+{
+  "name": "Ironbound Guardian",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 16,
+  "hitPoints": 27,
+  "maxHitPoints": 27,
+  "speed": 30,
+  "abilities": {
+    "strength": 15,
+    "dexterity": 10,
+    "constitution": 15,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 5
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "lightning"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned",
+    "charmed",
+    "exhaustion"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 10
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Magic Resistance",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Immutable Form",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Slam",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the shadowed gloom of the Ironbound Soul Cells, the Ironbound Guardian stands as a towering sentinel forged from ancient dwarven craftsmanship and arcane might. Its form is a masterful fusion of cold, dark iron plates riveted tightly over an intricate framework of enchanted steel and runed silver filigree. Jagged edges and pockmarks scar its surface, remnants of countless battles and the relentless passage of time. Silvery runes, faintly pulsing with a ghostly blue light, trace along its limbs and chest, echoing the inscriptions that imprison restless souls within the nearby cells. Its eyes burn with an unyielding sapphire glow, piercing the pervasive chill and mist that clings to the hall like a shroud. Chains and spectral manacles hang from its wrists, relics of its grim duty to bind and subdue the ethereal prisoners it guards. When it moves, the grinding of iron joints reverberates through the vaulted hall, a haunting metallic symphony that chills the bone. Despite its mechanical nature, the Guardian exudes a palpable aura of sorrow and wrath, as if haunted by the very souls it protects--the echoes of failed experiments and desperate pleas etched into the stone walls seeping into its core. Its presence alone suffuses the air with cold dread, a living monument to the dwarves' hubris and the dark secrets buried deep beneath the catacombs."
+}

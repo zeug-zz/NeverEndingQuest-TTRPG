@@ -1,0 +1,80 @@
+{
+  "name": "Molten Bone Golem",
+  "size": "Large",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 14,
+  "hitPoints": 39,
+  "maxHitPoints": 39,
+  "speed": 30,
+  "abilities": {
+    "strength": 17,
+    "dexterity": 9,
+    "constitution": 15,
+    "intelligence": 3,
+    "wisdom": 8,
+    "charisma": 5
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "cold"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing (nonmagical)"
+  ],
+  "damageImmunities": [
+    "fire",
+    "poison"
+  ],
+  "conditionImmunities": [
+    "charmed",
+    "exhaustion",
+    "frightened",
+    "paralyzed",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 9
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Molten Body",
+      "attackBonus": 0,
+      "damageDice": "1d6",
+      "damageBonus": 0,
+      "damageType": "fire"
+    },
+    {
+      "name": "Immutable Form",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Slam",
+      "attackBonus": 5,
+      "damageDice": "2d8",
+      "damageBonus": 3,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Molten Touch",
+      "attackBonus": 5,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "fire"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the shadowed recesses of the Vaultlands' deepest chambers, the Molten Bone Golem is a terrifying fusion of arcane alchemy and dark craftsmanship. Towering nearly eight feet tall, its hulking frame is composed of colossal skeletal remains fused together with glowing veins of molten rock and slag. Jagged bones, blackened and cracked by intense heat, form its ribcage and limbs, while fiery magma pulses rhythmically through the fissures, casting flickering, hellish light on the damp stone walls. Its skull, a grotesque amalgam of fractured bone and molten metal, bears hollow eye sockets that glow with an ember-like fury, illuminating the misty vault with an eerie orange radiance. The golem's movements are slow but deliberate, each step shaking the ground beneath it and leaving faint pools of liquid fire where its feet press against the mossy flagstones. Wisps of acrid smoke curl from its joints, mingling with the cool, damp air of the catacombs, while the faint crackling of cooling magma echoes faintly like distant thunder. Created in forgotten experiments that twisted dwarven rune magic into forbidden alchemy, this construct serves as a relentless guardian against intruders, its molten core burning with the fury of the earth's molten heart and the cold cruelty of death's embrace. Encountering the Molten Bone Golem is to face a living furnace bound by bone and ancient wrath, a haunting sentinel of the Vaultlands' darkest secrets."
+}

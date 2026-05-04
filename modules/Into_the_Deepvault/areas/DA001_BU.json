@@ -1,0 +1,378 @@
+{
+  "areaId": "DA001",
+  "areaName": "The Shadowed Vaultlands",
+  "areaType": "dungeon",
+  "areaDescription": "Low mist drifts through a maze of mossy stone outcroppings and sunken ruins, whispered legends hinting at the treasures hidden beneath the earth. The air is cool and quiet here, broken only by the distant drip of water and the soft shuffle of cautious explorers.",
+  "dangerLevel": "low",
+  "recommendedLevel": 3,
+  "climate": "controlled - cool and damp",
+  "terrain": "stone corridors and chambers",
+  "map": {
+    "mapId": "MAP_I_3",
+    "mapName": "Dungeon Map",
+    "totalRooms": 3,
+    "rooms": [
+      {
+        "id": "I01",
+        "type": "entrance",
+        "connections": [
+          "I02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "I02"
+        },
+        "tags": [
+          "hub",
+          "dead_end"
+        ],
+        "purpose": "transition",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Stonewrought Threshold"
+      },
+      {
+        "id": "I02",
+        "type": "entrance",
+        "connections": [
+          "I01",
+          "I03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "I01",
+          "east": "I03"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "transition",
+        "landmark": false,
+        "dangerLevel": "low",
+        "name": "Echoed Antechamber"
+      },
+      {
+        "id": "I03",
+        "type": "laboratory",
+        "connections": [
+          "I02"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "I02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Runesmith's Remnant"
+      }
+    ],
+    "layout": [
+      [
+        "I01",
+        "I02",
+        "I03"
+      ]
+    ],
+    "startRoom": "I01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "I01",
+      "name": "Stonewrought Threshold",
+      "type": "entrance",
+      "description": "An imposing stone arch rises from the misty ground, carved with faded dwarven runes. Moss and lichen cling to its foundations, and the flagstones beneath are slick with dew. The tunnel beyond slopes gently down into the earth, its walls echoing faintly with the sound of dripping water. A subtle draft hints at deeper chambers below.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "I02"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [],
+      "monsters": [],
+      "lootTable": [
+        "Carved stone token (ancient dwarven family sigil)",
+        "Weathered explorer\u2019s journal (illegible except for the phrase: 'beware the sigils in the dark')"
+      ],
+      "plotHooks": [
+        "Strange claw marks in the moss suggest recent passage by something not quite natural.",
+        "A stone outcropping is loose and seems to hide something behind it."
+      ],
+      "dmInstructions": "This is the main entry into the Vaultlands. Use the archway as a dramatic introduction. If the party investigates the stonework, a DC 12 Investigation check reveals the loose outcropping conceals a small cache (see lootTable). The claw marks can be traced with a DC 13 Survival check, leading into the dungeon and hinting at subterranean wildlife.",
+      "doors": [
+        {
+          "name": "Vault Archway",
+          "description": "An enormous dwarven stone archway adorned with faded runes. No physical door, but the arch marks the border between wilderness and dungeon.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 18,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [],
+      "dcChecks": [
+        "Investigation DC 12: Find the loose outcropping hiding a cache.",
+        "Survival DC 13: Track recent passage of a subterranean creature."
+      ],
+      "accessibility": "Normal access; wide passage, easy to traverse.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Grand Archway",
+          "description": "A massive stone arch covered in faded runes, once a proud symbol of dwarven craftsmanship."
+        },
+        {
+          "name": "Mossy Stones",
+          "description": "Flagstones and stone outcroppings slick with dew and overgrown with moss."
+        }
+      ],
+      "encounters": [],
+      "adventureSummary": "",
+      "aliases": [
+        "Stonewrought Threshold",
+        "I01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_entrance:Stonewrought Threshold",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I02",
+      "name": "Echoed Antechamber",
+      "type": "entrance",
+      "description": "A wide, shadowy chamber where the stone walls are carved with dwarven scenes of daily life and triumph. Several cracked pillars support the ceiling. The air here is still, and every footstep echoes. Faint light filters through cracks in the stonework, illuminating a weathered wooden door to the east and a narrow passage leading deeper.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "I01",
+        "I03"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Giant Wolf Spider",
+          "description": "A lurking, pale arachnid that slips out from the shadows if the party makes too much noise."
+        }
+      ],
+      "lootTable": [
+        "Tarnished copper locket (contains a faded sketch of a dwarf child)",
+        "Set of three dwarven iron keys (none unlock doors in this chamber)"
+      ],
+      "plotHooks": [
+        "A series of recent, muddy boot prints criss-cross the chamber, suggesting other explorers or something more sinister.",
+        "One of the pillars has a section that sounds hollow when tapped."
+      ],
+      "dmInstructions": "If players inspect the pillars (Perception/Investigation DC 13), they find a hollow spot concealing the iron keys (lootTable). Noise may attract the Giant Wolf Spider, which drops from the ceiling for a quick, low-level skirmish.",
+      "doors": [
+        {
+          "name": "Weathered Door",
+          "description": "A battered wooden door reinforced with old iron bands, leading east. The wood is splintering and damp.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 13,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [],
+      "dcChecks": [
+        "Perception DC 13: Notice the hollow in the pillar.",
+        "Investigation DC 13: Find and open the hidden compartment."
+      ],
+      "accessibility": "Normal access, though debris and cracked stone require careful footing.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Weathered Door",
+          "description": "A battered wooden door reinforced with iron, slightly ajar and creaking on its hinges."
+        },
+        {
+          "name": "Narrow Passage",
+          "description": "A tight, dark passage leading further into the Vaultlands."
+        },
+        {
+          "name": "Grand Archway",
+          "description": "The massive arch of the entrance is visible back to the west."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Giant Wolf Spider",
+          "description": "Drops from above if the party is noisy or lingers; can be avoided with Stealth DC 13."
+        }
+      ],
+      "adventureSummary": "",
+      "aliases": [
+        "Echoed Antechamber",
+        "I02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_entrance:Echoed Antechamber",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I03",
+      "name": "Runesmith's Remnant",
+      "type": "laboratory",
+      "description": "A cramped and cluttered chamber filled with remnants of arcane experiments. Alchemical bottles, cracked crucibles, and scorched stone tables indicate hurried work. Crimson runes, still faintly glowing, are etched along the walls. A faint chemical tang lingers in the cold air.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "I02"
+      ],
+      "areaConnectivity": [
+        "The Ancestral Catacombs"
+      ],
+      "areaConnectivityId": [
+        "I01"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Animated Tools",
+          "description": "An assortment of hammers, tongs, and pliers animated by lingering rune-magic. They rattle and clatter menacingly if disturbed."
+        }
+      ],
+      "lootTable": [
+        "Vial of glowing blue liquid (Potion of Climbing)",
+        "Fragmented rune tablet (part of a larger set; clues to deeper vaults)",
+        "Alchemist\u2019s chisel (worth 10 gp to collectors)"
+      ],
+      "plotHooks": [
+        "Experiment notes hint that the runes power defenses deeper in the complex.",
+        "A half-finished rune formula suggests bypassing certain magical locks."
+      ],
+      "dmInstructions": "Disturbing the alchemical equipment or searching the room without caution triggers the Animated Tools (see monsters). The experiment notes can provide clues to bypass magical traps elsewhere. Investigation DC 14 to find the rune tablet among debris.",
+      "doors": [
+        {
+          "name": "Narrow Passage Door",
+          "description": "A squat iron door, scorched and pitted, leading back west.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 15,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 13,
+          "disableDC": 14,
+          "triggerDC": 0,
+          "damage": "If the wrong rune is pressed on the wall, a minor shock deals 1d4 lightning damage to the triggering creature."
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 13: Understand the runes' purpose.",
+        "Investigation DC 14: Find the fragmented rune tablet.",
+        "Perception DC 12: Notice the faint magical glow in the cracks of the wall."
+      ],
+      "accessibility": "Normal access, but clutter and debris make movement slightly difficult (difficult terrain for Medium or larger creatures).",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Alchemical Equipment",
+          "description": "Beakers, crucibles, and half-used reagents, some still fizzing or emitting faint fumes."
+        },
+        {
+          "name": "Experiment Notes",
+          "description": "Scattered parchment covered in dwarven runes, detailing magical experiments and failed enchantments."
+        },
+        {
+          "name": "Strange Ingredients",
+          "description": "Unlabeled jars of powders and preserved fungi, some actively glowing or writhing."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Animated Tools",
+          "description": "If the equipment is disturbed, a set of animated tongs, hammers, and chisels attack."
+        }
+      ],
+      "adventureSummary": "",
+      "aliases": [
+        "Runesmith's Remnant",
+        "I03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_laboratory:Runesmith's Remnant",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "lost traveler",
+      "description": "A lost traveler appropriate for level 3 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 3 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "lost traveler",
+      "description": "A lost traveler appropriate for level 3 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 3 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 3 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 3 parties"
+    }
+  ],
+  "areaFeatures": [
+    "forgotten shrines",
+    "mysterious mechanisms",
+    "ancient murals"
+  ],
+  "notes": "Consider lighting sources and trap placement. Underground areas may have limited resources.",
+  "spatialContractVersion": 1
+}

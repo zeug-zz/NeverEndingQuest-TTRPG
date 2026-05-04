@@ -1,0 +1,46 @@
+{
+  "schema_version": "published_modules.v1",
+  "updated": "2026-05-04",
+  "modules": {
+    "A_Pottsfield_Burial": {
+      "display_name": "A Pottsfield Burial",
+      "level_range": { "min": 3, "max": 5 }
+    },
+    "Into_the_Deepvault": {
+      "display_name": "Into the Deepvault",
+      "level_range": { "min": 3, "max": 5 }
+    },
+    "Keep_of_Doom": {
+      "display_name": "Keep of Doom",
+      "level_range": { "min": 3, "max": 5 }
+    },
+    "Murder_at_the_Drowning_Lass": {
+      "display_name": "Murder at the Drowning Lass",
+      "level_range": { "min": 6, "max": 6 }
+    },
+    "Night_of_the_Restless_Dead": {
+      "display_name": "Night of the Restless Dead",
+      "level_range": { "min": 1, "max": 2 }
+    },
+    "The_Ancients_Lab": {
+      "display_name": "The Ancients Lab",
+      "level_range": { "min": 2, "max": 4 }
+    },
+    "The_Garden_of_Demons": {
+      "display_name": "The Garden of Demons",
+      "level_range": { "min": 12, "max": 15 }
+    },
+    "The_Hidden_City_of_Numillian": {
+      "display_name": "The Hidden City of Numillian",
+      "level_range": { "min": 7, "max": 10 }
+    },
+    "The_Pumpkin_Kings_Curse": {
+      "display_name": "The Pumpkin King's Curse",
+      "level_range": { "min": 1, "max": 3 }
+    },
+    "The_Thornwood_Watch": {
+      "display_name": "The Thornwood Watch",
+      "level_range": { "min": 1, "max": 2 }
+    }
+  }
+}

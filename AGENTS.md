@@ -336,6 +336,67 @@ Major subsystems use dedicated managers:
 
 **Why this matters:** An errant PR to upstream was created by an LLM agent pushing to the wrong remote. The `DISABLE` push guard and these rules prevent recurrence.
 
+#### Module Publication Git Contract
+
+A module is publishable and MUST be committed when all are true:
+- It passes validation and publishability gates.
+- It is listed in `README.md`.
+- It is registered in `modules/published_modules.json`.
+- It is intended for colleagues/testers via `origin`.
+
+**Canonical module artifacts (MUST commit):**
+- `module_context.json`, `module_context_BU.json`
+- `module_plot_BU.json`, `party_tracker_BU.json`
+- `validation_report.json`, `toolkit_build_report.json`
+- `module_media_generator_report.json`, `monster_closure_report.json` (if present)
+- `llm_classification_cache.json` (if present)
+- `areas/*_BU.json`
+- `map_*.json` (live maps are static authored structure, not runtime state)
+- `map_*_BU.json` (if present)
+- `monsters/*.json`
+- `media/**`
+- `README.md`, `PLAYER_GUIDE.md`, `MODULE_SUMMARY.md` (if present)
+
+**Runtime files (MUST NOT commit):**
+- `areas/*.json` except `*_BU.json` (live area state)
+- `module_plot.json` (live plot state)
+- `party_tracker.json` (live party state)
+- `player_quests_*.json` (generated quest projections)
+- `encounters/**` (combat instances)
+- `modules/world_registry.json` (user-local world state)
+- `modules/campaign.json` (user-local campaign state)
+- `*.bak`, `*.backup`, `*.backup_*`, `backup*/` directories
+
+**Public catalog:**
+- `modules/published_modules.json` — the git-authoritative public module catalog.
+- `modules/world_registry.json` and `modules/campaign.json` are user-local runtime state. They MUST NOT be committed.
+
+**Verification commands before commit:**
+```bash
+# Canonical artifacts must return NO match (not ignored) or ! unignore rule:
+git check-ignore -v modules/<slug>/module_context.json
+git check-ignore -v modules/<slug>/map_*.json
+
+# Runtime files must return a non-! matching rule (ignored):
+git check-ignore -v modules/<slug>/module_plot.json
+git check-ignore -v modules/<slug>/party_tracker.json
+git check-ignore -v modules/world_registry.json
+git check-ignore -v modules/campaign.json
+
+# Review staged diff:
+git status --ignored -uall modules/<slug>
+git diff --cached --name-status
+```
+
+**Before commit, verify:**
+- Canonical files are NOT ignored (no match, or matched by `!` unignore rule).
+- Runtime files ARE ignored (matched by non-`!` rule).
+- No `git add -f` was required for canonical artifacts.
+- Staged set contains only canonical publication artifacts, docs, catalog files, and `.gitignore`/skill updates.
+- Push targets `origin` explicitly: `git push origin main`.
+
+**If canonical files are ignored:** Do NOT use `git add -f`. Fix `.gitignore` (add the module slug to Layer 2 allowlist and re-verify), then stage normally.
+
 ### SRD 5.2.1 Compliance
 When implementing game mechanics:
 - Use "5th edition" or "5e" instead of "D&D"

@@ -1,0 +1,476 @@
+{
+  "areaId": "HA003",
+  "areaName": "The Ancestral Catacombs",
+  "areaType": "dungeon",
+  "areaDescription": "Beneath crumbling mausoleums and twisted yew trees, labyrinthine tunnels echo with the haunting whispers of generations past. Shadows coil between rows of ancient sarcophagi, and every footstep stirs the vengeful spirits that guard their sacred legacy.",
+  "dangerLevel": "high",
+  "recommendedLevel": 4,
+  "climate": "controlled - cool and damp",
+  "terrain": "stone corridors and chambers",
+  "map": {
+    "mapId": "MAP_I_3",
+    "mapName": "Dungeon Map",
+    "totalRooms": 3,
+    "rooms": [
+      {
+        "id": "I01",
+        "type": "laboratory",
+        "connections": [
+          "I02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "I02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Runescribed Alchemy Vault"
+      },
+      {
+        "id": "I02",
+        "type": "prison",
+        "connections": [
+          "I01",
+          "I03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "I01",
+          "east": "I03"
+        },
+        "tags": [],
+        "purpose": "encounter",
+        "landmark": false,
+        "dangerLevel": "high",
+        "name": "Ironbound Soul Cells"
+      },
+      {
+        "id": "I03",
+        "type": "laboratory",
+        "connections": [
+          "I02"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "I02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Shatterglass Experimentum"
+      }
+    ],
+    "layout": [
+      [
+        "I01",
+        "I02",
+        "I03"
+      ]
+    ],
+    "startRoom": "I02",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "I01",
+      "name": "Runescribed Alchemy Vault",
+      "type": "laboratory",
+      "description": "This vaulted chamber is lined with granite benches, each etched with ancient dwarven runes that pulse faintly in the gloom. Brass apparatuses, flasks of shimmering elixirs, and shattered vials litter the surfaces. The air is heavy with the scents of ash and alchemical reagents. Faded mural fragments depict dwarven alchemists tending to mysterious crucibles, their eyes replaced by gemstones. The vault is haunted by both the successes and horrors of ancestral experimentation.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "I02"
+      ],
+      "areaConnectivity": [
+        "The Shadowed Vaultlands"
+      ],
+      "areaConnectivityId": [
+        "I03"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Restless Alchemical Wraith",
+          "description": "Once a master alchemist, now reduced to a volatile specter, it lashes out with acidic touch and spectral fumes.",
+          "attitude": "Hostile"
+        }
+      ],
+      "lootTable": [
+        "Alchemical Supplies (50 gp worth, usable for crafting)",
+        "Vial of Elixir of Health",
+        "Runic Glasswork (valuable, 75 gp)",
+        "Fragmented Alchemist's Notes (clues to deeper catacomb secrets)",
+        "Key to Ironbound Soul Cells"
+      ],
+      "plotHooks": [
+        "The experiment notes hint at a failed attempt to bind spirits, connected to the creation of the Ironbound Soul Cells.",
+        "A coded message in dwarven runes references a vault deeper within the catacombs."
+      ],
+      "dmInstructions": "The vault is warded. If the party handles reagents carelessly, a volatile reaction may trigger (DC 13 Dexterity save or take 2d6 acid damage). The wraith defends the vault, only manifesting if an attempt is made to disturb the main workbench or notes.",
+      "doors": [
+        {
+          "name": "Stone Archway to Ironbound Soul Cells",
+          "description": "A thick stone door inscribed with protective runes; faint blue light seeps from the seams.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 20,
+          "keyname": "Key to Ironbound Soul Cells",
+          "trapped": true,
+          "trap": "Releases a burst of alchemical fumes if picked or forced (DC 14 Constitution save or take 1d8 poison damage and be poisoned for 1 minute)."
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 13,
+          "disableDC": 15,
+          "triggerDC": 0,
+          "damage": "1d8 poison (Inhaled); effect: Poisoned for 1 minute"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 14: Identify complex runes and deduce their protective purpose.",
+        "Investigation DC 12: Find the coded message among the notes."
+      ],
+      "accessibility": "Normal access, but the door to the next chamber is locked and trapped.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Experiment Notes",
+          "description": "Stacks of parchment detail failed and successful alchemical bindings, including hints about the Ironbound Soul Cells."
+        },
+        {
+          "name": "Workbenches",
+          "description": "Heavy granite benches scattered with vials, tools, and magical reagents. Some are stained with ancient, undried blood."
+        },
+        {
+          "name": "Rune-Etched Crucible",
+          "description": "A massive brass crucible imbued with faintly glowing runes; residue at the bottom can be analyzed for clues about the vault\u2019s last experiments."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat",
+          "trigger": "Disturbing the main workbench or attempting to take notes or key.",
+          "enemies": [
+            "Restless Alchemical Wraith"
+          ]
+        },
+        {
+          "type": "exploration",
+          "trigger": "Searching through the notes reveals coded messages and historical context."
+        }
+      ],
+      "adventureSummary": "The Runescribed Alchemy Vault offers clues to the nature of the catacombs, a potential key, and a deadly guardian tied to the area\u2019s dark experiments.",
+      "aliases": [
+        "Runescribed Alchemy Vault",
+        "I01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_laboratory:Runescribed Alchemy Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I02",
+      "name": "Ironbound Soul Cells",
+      "type": "prison",
+      "description": "Rows of heavy iron-barred cells line this cold, echoing hall. Each cell is rimmed with silvery runes and furnished with only a stone bench. Chains dangle from the ceilings, some still holding spectral manacles. Murmured voices drift from empty cells, and a chill pervades the air. The walls are scarred with desperate scratchings\u2014runic pleas for freedom, some answered in blood.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "I01",
+        "I03"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Trapped Miner Derval",
+          "description": "A gaunt, frightened dwarven miner clings to the bars of one cell. He is disoriented and haunted by ghostly whispers, but desperate for rescue.",
+          "attitude": "Frightened, desperate for help but hesitant to trust fully."
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Ironbound Guardian",
+          "description": "A massive animated suit of dwarven armor, powered by the souls of former prisoners. Patrols the corridor, attacking intruders on sight.",
+          "attitude": "Hostile"
+        }
+      ],
+      "lootTable": [
+        "Soul-Shackle Keys (open any cell)",
+        "Cell Inscription (hidden clue to Shatterglass Experimentum)",
+        "Derval's Amulet (family keepsake, minor protective charm)",
+        "Pouch of Old Coinage (30 gp, ancient dwarven mint)"
+      ],
+      "plotHooks": [
+        "Derval claims to have seen a spectral figure passing through the walls at night, possibly linked to deeper catacomb secrets.",
+        "The runic pleas scratched into the walls reference a forbidden experiment in the next chamber."
+      ],
+      "dmInstructions": "If the party tries to free Derval, the Ironbound Guardian animates and attacks. Derval can provide information on both the cells and the Shatterglass Experimentum if convinced to trust the party.",
+      "doors": [
+        {
+          "name": "Cell Door (Derval's Cell)",
+          "description": "An iron-barred door reinforced with silver runes and a heavy deadbolt.",
+          "type": "regular",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Soul-Shackle Keys",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "West Door from Alchemy Vault",
+          "description": "A rune-inscribed stone door, slightly ajar but held by a magical locking mechanism.",
+          "type": "heavy",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 13,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Door to Shatterglass Experimentum",
+          "description": "A heavy metal door etched with shattered glass motifs; light glimmers in the etchings.",
+          "type": "regular",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 19,
+          "keyname": "Cell Inscription (secret phrase)",
+          "trapped": true,
+          "trap": "Glass shards spray out if the door is forced open (DC 14 Dexterity save, 2d4 slashing damage)."
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 12,
+          "disableDC": 15,
+          "triggerDC": 0,
+          "damage": "2d4 slashing (shattered glass shards)"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 12: Sense Derval\u2019s fear and desperation.",
+        "Perception DC 13: Notice faint spectral movement between cells.",
+        "History DC 14: Recognize the ancient runes as binding soul magic."
+      ],
+      "accessibility": "Normal access, but cells and eastern door are locked and/or trapped.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Chains",
+          "description": "Heavy iron chains, some ending in spectral manacles, hang from the ceiling\u2014remnants of magical imprisonment."
+        },
+        {
+          "name": "Cell Bars",
+          "description": "Bars reinforced with rune-etched silver, faintly humming with suppressed magic."
+        },
+        {
+          "name": "Runic Pleas",
+          "description": "Desperate pleas and warnings scratched into the walls by former inmates."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat",
+          "trigger": "Attempting to open any cell or free a prisoner.",
+          "enemies": [
+            "Ironbound Guardian"
+          ]
+        },
+        {
+          "type": "roleplay",
+          "trigger": "Interacting with Trapped Miner Derval."
+        }
+      ],
+      "adventureSummary": "The Ironbound Soul Cells challenge the party with a powerful guardian, a prisoner who can reveal valuable information, and runic messages that connect to the broader mysteries of the catacombs.",
+      "aliases": [
+        "Ironbound Soul Cells",
+        "I02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_prison:Ironbound Soul Cells",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    },
+    {
+      "locationId": "I03",
+      "name": "Shatterglass Experimentum",
+      "type": "laboratory",
+      "description": "This shattered laboratory is littered with glass fragments that glint in the faint torchlight. Strange instruments are fused to the stone floor, and the walls are webbed with cracks. At the chamber\u2019s center is a circular glass dais, its surface fractured but still glowing with a cold, arcane light. The air is thick with magical residue, and the lingering sense of a terrible, failed experiment haunts the room.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "I02"
+      ],
+      "areaConnectivity": [
+        "The Vaulted Marches"
+      ],
+      "areaConnectivityId": [
+        "I01"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Shatterglass Amalgam",
+          "description": "A writhing mass of living glass shards, animated by residual magic. It slashes intruders and attempts to absorb magical energy.",
+          "attitude": "Hostile"
+        }
+      ],
+      "lootTable": [
+        "Shatterglass Core (arcane focus, 75 gp)",
+        "Alchemical Glass Tools (collection, 35 gp)",
+        "Fragmented Record Tablet (details on forbidden dwarven rituals)",
+        "Potent Residual Essence (can be harvested with Arcana check for spell component or crafting)"
+      ],
+      "plotHooks": [
+        "The fragmented record tablet reveals the fate of the alchemist who created the guardian in the Ironbound Soul Cells.",
+        "Residual magical energy can be stabilized and used to repair or enhance another magical device."
+      ],
+      "dmInstructions": "Shatterglass Amalgam forms when anyone disturbs the dais or attempts to collect magical residue. The floor is treacherous\u2014failed Dexterity (Acrobatics) checks cause slashing damage from glass. Extra clues can be found by thoroughly searching the laboratory.",
+      "doors": [
+        {
+          "name": "West Door from Ironbound Soul Cells",
+          "description": "A heavy metal door with etched glass motifs, slightly warped from an old explosion.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 0,
+          "damage": "1d6 slashing (from navigating over broken glass shards)"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 15: Understand the purpose of the glass dais and the failed experiment.",
+        "Investigation DC 13: Locate the Fragmented Record Tablet hidden under debris.",
+        "Dexterity (Acrobatics) DC 12: Move safely across the treacherous glass floor."
+      ],
+      "accessibility": "Normal access from Ironbound Soul Cells, but hazardous footing due to shattered glass.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Experiment Notes",
+          "description": "Charred and fragmented parchments provide details on the experiment\u2019s catastrophic end, as well as hints toward forbidden dwarven rituals."
+        },
+        {
+          "name": "Shattered Glass Dais",
+          "description": "A rune-etched circular platform, its surface fractured but still glowing. Touching it can trigger magical effects."
+        },
+        {
+          "name": "Arcane Residue",
+          "description": "Glittering dust of magical energy, lingering from the explosion that destroyed the chamber."
+        }
+      ],
+      "encounters": [
+        {
+          "type": "combat",
+          "trigger": "Disturbing the glass dais or attempting to gather magical essence.",
+          "enemies": [
+            "Shatterglass Amalgam"
+          ]
+        },
+        {
+          "type": "exploration",
+          "trigger": "Carefully searching reveals hidden experimental notes and the record tablet."
+        }
+      ],
+      "adventureSummary": "The Shatterglass Experimentum is the site of a magical disaster, now occupied by a dangerous construct. It hides ritual lore, clues to the catacomb\u2019s secrets, and magical components for clever adventurers.",
+      "aliases": [
+        "Shatterglass Experimentum",
+        "I03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_laboratory:Shatterglass Experimentum",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ]
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 4 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 4 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 4 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 4 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 4 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 4 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 4 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 4 parties"
+    }
+  ],
+  "areaFeatures": [
+    "mysterious mechanisms",
+    "hidden passages",
+    "forgotten shrines"
+  ],
+  "notes": "Consider lighting sources and trap placement. Underground areas may have limited resources.",
+  "spatialContractVersion": 1
+}

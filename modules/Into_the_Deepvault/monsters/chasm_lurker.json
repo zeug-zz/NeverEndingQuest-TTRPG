@@ -1,0 +1,79 @@
+{
+  "name": "Chasm Lurker",
+  "size": "Medium",
+  "type": "Monstrosity",
+  "alignment": "Unaligned",
+  "armorClass": 13,
+  "hitPoints": 27,
+  "maxHitPoints": 27,
+  "speed": 30,
+  "abilities": {
+    "strength": 15,
+    "dexterity": 16,
+    "constitution": 14,
+    "intelligence": 2,
+    "wisdom": 12,
+    "charisma": 6
+  },
+  "savingThrows": [],
+  "skills": {
+    "stealth": 6,
+    "perception": 3
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Spider Climb",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "None"
+    },
+    {
+      "name": "Ambusher",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "None"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "None"
+    },
+    {
+      "name": "Bite",
+      "attackBonus": 5,
+      "damageDice": "1d8",
+      "damageBonus": 3,
+      "damageType": "piercing"
+    },
+    {
+      "name": "Claw",
+      "attackBonus": 5,
+      "damageDice": "1d6",
+      "damageBonus": 3,
+      "damageType": "slashing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the shadowed depths of the Vaultlands, the Chasm Lurker is a nightmarish predator perfectly adapted to the labyrinthine caverns beneath the ancient stone ruins. Its elongated, sinewy body blends seamlessly with the jagged rock faces, covered in mottled, slate-gray carapace plates that shimmer faintly with a damp, mineral sheen. Jagged spines jut from its hunched back, breaking its silhouette against the low-hanging mists that coil through the mossy outcroppings. From a maw filled with rows of needlelike teeth drips a viscous, phosphorescent saliva that casts an eerie glow in the suffocating darkness. Its many eyes--glassy, multifaceted, and glinting like shards of obsidian--scan relentlessly, catching stray glimmers of torchlight with predatory focus. The Chasm Lurker moves with unsettling silence, its hooked claws and flexible limbs allowing it to cling to vertical stone faces and navigate treacherous ledges with unnerving ease. Whispered tales among explorers speak of a low, guttural rasp that precedes its deadly ambush, a sound that seems to seep from the very walls. It hunts with cold intelligence, stalking intruders through the mist-shrouded corridors of the Vaultlands, patiently waiting to drag them into the abyssal chasms from which it came."
+}

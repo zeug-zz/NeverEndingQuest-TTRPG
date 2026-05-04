@@ -11,7 +11,7 @@ metadata:
 
 # Dev Homebrew Ingest Skill
 
-**Purpose:** Developer workflow for preparing, ingesting, finishing, and publishing Homebrew modules into NEQ. Covers both new-source ingest and existing-module remediation.
+**Purpose:** Developer workflow for preparing, ingesting, finishing, publishing, and committing Homebrew modules into NEQ. Covers both new-source ingest and existing-module remediation. For git commit/push of validated modules, see also `module-publish-git` skill.
 
 **Target Audience:** Developers (you + other devs who want to add modules programmatically)
 **NOT for end-users** - End-users should use Toolkit GUI for module creation and upload.
@@ -44,6 +44,11 @@ Both modes converge at the **Finishing + Publication** stage.
 - "register existing module `<slug>`"
 - "remediate module `<slug>`"
 - "bring `<slug>` up to spec"
+
+**Git Publish (after finishing):**
+- "publish module `<slug>`" -> delegates to `module-publish-git` skill
+- "commit module `<slug>`" -> delegates to `module-publish-git` skill
+- "push module `<slug>`" -> delegates to `module-publish-git` skill
 
 ---
 
@@ -195,16 +200,24 @@ The finisher's `_run_registry_stage()` (`web/extensions/toolkit_module_finisher.
          - Writes toolkit_build_report.json to module directory
          - Overall status: success / degraded / failed
          - ready_status: pass / fail
-         - publishable_status: pass / fail
+          - publishable_status: pass / fail
+          |
+          v
+   [F7] GIT PUBLISH (when publishable)
+          - Verify .gitignore published-module contract
+          - Stage canonical artifacts only (see module-publish-git skill)
+          - Refuse runtime files (world_registry, campaign, live areas/plot/party)
+          - Commit with descriptive message
+          - Push to origin main (NEVER upstream)
 ```
 
 ### Finishing Outcomes
 
-| ready_status | publishable_status | Result | Module Builder Visible? |
-|-------------|-------------------|--------|------------------------|
-| pass | pass | `completed` | Yes |
-| pass | fail | `not_publishable` | Yes |
-| fail | fail | `failed` | Yes (if registry restored) |
+| ready_status | publishable_status | Result | Module Builder Visible? | Git Publishable? |
+|-------------|-------------------|--------|------------------------|:--:|
+| pass | pass | `completed` | Yes | YES |
+| pass | fail | `not_publishable` | Yes | NO |
+| fail | fail | `failed` | Yes (if registry restored) | NO |
 
 **Key insight:** Module Builder visibility requires only registry presence. Publishability is a separate quality gate. A module can appear in Module Builder (for portrait generation, inspection, etc.) even if it is `not_publishable`.
 

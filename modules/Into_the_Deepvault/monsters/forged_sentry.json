@@ -1,0 +1,68 @@
+{
+  "name": "Forged Sentry",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 15,
+  "hitPoints": 27,
+  "maxHitPoints": 27,
+  "speed": 30,
+  "abilities": {
+    "strength": 14,
+    "dexterity": 12,
+    "constitution": 14,
+    "intelligence": 6,
+    "wisdom": 10,
+    "charisma": 6
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned",
+    "charmed",
+    "exhaustion"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 10
+  },
+  "languages": "understands Common but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Immutable Form",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Vigilant",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Arm Blade",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Emerging from the shadowed depths of the Vaultlands, the Forged Sentry stands as a towering guardian of forgotten dwarven secrets. Crafted from interlocking plates of darkened iron and ancient steel, its form is a blend of mechanical precision and arcane artistry. Jagged edges and overlapping armor plates are etched with faintly glowing, runic dwarven script that pulses with a cold, bluish light, illuminating the mist that curls around its heavy, clanking feet. Its broad, humanoid silhouette is crowned with a helm shaped like a dwarven warrior's visage, eyes burning with a spectral sapphire fire that pierces the dim gloom. Thick chains and cog-like mechanisms whir softly within its joints, emitting a low metallic hum that resonates through the stone corridors. The air around the Forged Sentry seems to chill and still, as if the very atmosphere warily respects its solemn vigilance. It moves with deliberate, measured steps, each footfall echoing against moss-covered stones, and when it raises its massive gauntleted fists, the runic glow intensifies, ready to unleash arcane might upon any who dare trespass. Silent but unyielding, the Forged Sentry embodies the enduring will of the ancient dwarven artisans -- a sentinel forged not just of metal, but of duty and unbreakable resolve."
+}
