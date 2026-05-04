@@ -7527,34 +7527,6 @@
                         </div>
                     </div>`;
 
-            // TABLETOP MODE: Supernatural state projection (schema-driven)
-            const creatureTypes = Array.isArray(data.creatureTypes)
-                ? data.creatureTypes.filter(t => t && String(t).trim())
-                : [];
-            const supernaturalStates = Array.isArray(data.supernaturalStates)
-                ? data.supernaturalStates.filter(s => s && typeof s === 'object')
-                : [];
-
-            if (creatureTypes.length > 0 || supernaturalStates.length > 0) {
-                html += '<div class="stat-group" style="margin-top: 3px;"><h4>Supernatural State</h4><div class="stat-group-content">';
-                if (creatureTypes.length > 0) {
-                    html += `<div class="feature-item"><span class="feature-name">Creature Types:</span> ${creatureTypes.join(', ')}</div>`;
-                }
-                supernaturalStates.forEach(state => {
-                    const label = String(state.label || state.id || 'state').trim();
-                    const category = String(state.category || '').trim();
-                    const source = String(state.source || '').trim();
-                    const mechanical = Array.isArray(state.mechanicalEffects) ? state.mechanicalEffects.filter(e => e && String(e).trim()) : [];
-                    const summaryParts = [];
-                    if (category) summaryParts.push(`Category: ${category}`);
-                    if (source) summaryParts.push(`Source: ${source}`);
-                    if (mechanical.length > 0) summaryParts.push(`Effects: ${mechanical.slice(0, 2).join('; ')}`);
-                    const summaryText = summaryParts.join(' | ');
-                    html += `<div class="feature-item"><span class="feature-name">${label}</span>${summaryText ? `<br><span style="font-size: 11px; color: #cccccc;">${summaryText}</span>` : ''}</div>`;
-                });
-                html += '</div></div>';
-            }
-
             // Appearance display hidden - physical traits omitted from Character Sheet UI
             // (Age, Height, Weight, Eyes, Skin, Hair still stored in character data for portrait generation)
             if (data.abilities) {
@@ -7685,6 +7657,31 @@
                     });
                     html += '</div></div>';
                 }
+            }
+            // TABLETOP MODE: Supernatural state projection (schema-driven)
+            // Positioned after Racial Traits; state labels only with mouseover tooltips
+            const supernaturalStates = Array.isArray(data.supernaturalStates)
+                ? data.supernaturalStates.filter(s => s && typeof s === 'object')
+                : [];
+            if (supernaturalStates.length > 0) {
+                html += '<div class="stat-group"><h4>Supernatural State</h4><div class="stat-group-content">';
+                supernaturalStates.forEach(state => {
+                    const label = String(state.label || state.id || 'state').trim();
+                    const tooltipParts = [];
+                    const category = String(state.category || '').trim();
+                    const source = String(state.source || '').trim();
+                    const mechanical = Array.isArray(state.mechanicalEffects) ? state.mechanicalEffects.filter(e => e && String(e).trim()) : [];
+                    const narrative = Array.isArray(state.narrativeEffects) ? state.narrativeEffects.filter(e => e && String(e).trim()) : [];
+                    const removal = String(state.removal || '').trim();
+                    if (category) tooltipParts.push(`Category: ${category}`);
+                    if (source) tooltipParts.push(`Source: ${source}`);
+                    if (mechanical.length > 0) tooltipParts.push('<br>Mechanical Effects:<br>- ' + mechanical.join('<br>- '));
+                    if (narrative.length > 0) tooltipParts.push('<br>Narrative Effects:<br>- ' + narrative.join('<br>- '));
+                    if (removal) tooltipParts.push(`<br>Removal: ${removal}`);
+                    const tooltipContent = tooltipParts.join('<br>').replace(/"/g, '&quot;');
+                    html += `<div class="feature-item" data-tooltip-title="${label}" data-tooltip-content="${tooltipContent}"><span class="feature-name">${label}</span></div>`;
+                });
+                html += '</div></div>';
             }
             if (data.backgroundFeature && data.backgroundFeature.name) {
                 const description = (data.backgroundFeature.description || 'No description available.').replace(/"/g, '&quot;');
