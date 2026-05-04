@@ -4,14 +4,14 @@
   "totalRooms": 3,
   "rooms": [
     {
-      "id": "AK01",
+      "id": "AH01",
       "type": "room",
       "connections": [
-        "AK02"
+        "AH02"
       ],
       "coordinates": "X10Y10",
       "directions": {
-        "east": "AK02"
+        "east": "AH02"
       },
       "tags": [
         "dead_end"
@@ -22,16 +22,16 @@
       "name": "Shifting Veil Foyer"
     },
     {
-      "id": "AK02",
+      "id": "AH02",
       "type": "room",
       "connections": [
-        "AK01",
-        "AK03"
+        "AH01",
+        "AH03"
       ],
       "coordinates": "X11Y10",
       "directions": {
-        "west": "AK01",
-        "east": "AK03"
+        "west": "AH01",
+        "east": "AH03"
       },
       "tags": [],
       "purpose": "unknown",
@@ -40,14 +40,14 @@
       "name": "Hall of Fractured Truths"
     },
     {
-      "id": "AK03",
+      "id": "AH03",
       "type": "room",
       "connections": [
-        "AK02"
+        "AH02"
       ],
       "coordinates": "X12Y10",
       "directions": {
-        "west": "AK02"
+        "west": "AH02"
       },
       "tags": [
         "dead_end"
@@ -60,12 +60,12 @@
   ],
   "layout": [
     [
-      "AK01",
-      "AK02",
-      "AK03"
+      "AH01",
+      "AH02",
+      "AH03"
     ]
   ],
-  "startRoom": "AK02",
+  "startRoom": "AH02",
   "version": "1.1",
   "notes": "Extended schema with AI-friendly navigation fields",
   "spatialContractVersion": 1

@@ -4,14 +4,14 @@
   "totalRooms": 3,
   "rooms": [
     {
-      "id": "AO01",
+      "id": "AH01",
       "type": "temple",
       "connections": [
-        "AO02"
+        "AH02"
       ],
       "coordinates": "X10Y10",
       "directions": {
-        "east": "AO02"
+        "east": "AH02"
       },
       "tags": [
         "dead_end"
@@ -22,16 +22,16 @@
       "name": "Veiled Paradox Sanctuary"
     },
     {
-      "id": "AO02",
+      "id": "AH02",
       "type": "guild",
       "connections": [
-        "AO01",
-        "AO03"
+        "AH01",
+        "AH03"
       ],
       "coordinates": "X11Y10",
       "directions": {
-        "west": "AO01",
-        "east": "AO03"
+        "west": "AH01",
+        "east": "AH03"
       },
       "tags": [],
       "purpose": "unknown",
@@ -40,14 +40,14 @@
       "name": "Twilight Vein Concordium"
     },
     {
-      "id": "AO03",
+      "id": "AH03",
       "type": "temple",
       "connections": [
-        "AO02"
+        "AH02"
       ],
       "coordinates": "X12Y10",
       "directions": {
-        "west": "AO02"
+        "west": "AH02"
       },
       "tags": [
         "dead_end"
@@ -60,12 +60,12 @@
   ],
   "layout": [
     [
-      "AO01",
-      "AO02",
-      "AO03"
+      "AH01",
+      "AH02",
+      "AH03"
     ]
   ],
-  "startRoom": "AO02",
+  "startRoom": "AH02",
   "version": "1.1",
   "notes": "Extended schema with AI-friendly navigation fields",
   "spatialContractVersion": 1

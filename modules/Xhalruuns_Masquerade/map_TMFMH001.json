@@ -4,14 +4,14 @@
   "totalRooms": 3,
   "rooms": [
     {
-      "id": "AO01",
+      "id": "AC01",
       "type": "room",
       "connections": [
-        "AO02"
+        "AC02"
       ],
       "coordinates": "X10Y10",
       "directions": {
-        "east": "AO02"
+        "east": "AC02"
       },
       "tags": [
         "dead_end"
@@ -22,16 +22,16 @@
       "name": "Veilpiercer Antechamber"
     },
     {
-      "id": "AO02",
+      "id": "AC02",
       "type": "room",
       "connections": [
-        "AO01",
-        "AO03"
+        "AC01",
+        "AC03"
       ],
       "coordinates": "X11Y10",
       "directions": {
-        "west": "AO01",
-        "east": "AO03"
+        "west": "AC01",
+        "east": "AC03"
       },
       "tags": [],
       "purpose": "unknown",
@@ -40,14 +40,14 @@
       "name": "Hall of Shifting Truths"
     },
     {
-      "id": "AO03",
+      "id": "AC03",
       "type": "room",
       "connections": [
-        "AO02"
+        "AC02"
       ],
       "coordinates": "X12Y10",
       "directions": {
-        "west": "AO02"
+        "west": "AC02"
       },
       "tags": [
         "dead_end"
@@ -60,12 +60,12 @@
   ],
   "layout": [
     [
-      "AO01",
-      "AO02",
-      "AO03"
+      "AC01",
+      "AC02",
+      "AC03"
     ]
   ],
-  "startRoom": "AO02",
+  "startRoom": "AC02",
   "version": "1.1",
   "notes": "Extended schema with AI-friendly navigation fields",
   "spatialContractVersion": 1

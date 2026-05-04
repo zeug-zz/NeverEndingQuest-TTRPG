@@ -1,10 +1,10 @@
 {
   "module": "Xhalruuns_Masquerade",
-  "timestamp": "2026-05-04T17:22:44.383226",
+  "timestamp": "2026-05-04T18:05:29.874716",
   "summary": {
     "total_files": 56,
-    "total_passed": 50,
-    "total_failed": 8
+    "total_passed": 58,
+    "total_failed": 0
   },
   "results": {
     "area": {
@@ -114,34 +114,9 @@
         "TSU001.json <-> map_TSU001.json",
         "TUD001.json <-> map_TUD001.json"
       ],
-      "passed": 2,
-      "failed": 4,
-      "errors": [
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AO01 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AO02 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AO03 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AC01 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AC02 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMFMH001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMFMH001.json: room AC03 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AK01 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AK02 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AK03 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AH01 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AH02 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TMQ001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TMQ001.json: room AH03 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AO01 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AO02 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AO03 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AH01 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AH02 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TNU001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TNU001.json: room AH03 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AK01 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AK02 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AK03 exists in map but not in area",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AQ01 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AQ02 exists in area but not in map",
-        "/Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/areas/TUD001.json vs /Users/zeug/Projects/NeverEndingQuest/modules/Xhalruuns_Masquerade/map_TUD001.json: room AQ03 exists in area but not in map"
-      ]
+      "passed": 6,
+      "failed": 0,
+      "errors": []
     },
     "spatial_contract": {
       "files": [
@@ -152,22 +127,9 @@
         "TSU001.json <-> map_TSU001.json",
         "TUD001.json <-> map_TUD001.json"
       ],
-      "passed": 2,
-      "failed": 4,
-      "errors": [
-        "map_TMFMH001.json: strict spatial contract missing room entry for AC01",
-        "map_TMFMH001.json: strict spatial contract missing room entry for AC02",
-        "map_TMFMH001.json: strict spatial contract missing room entry for AC03",
-        "map_TMQ001.json: strict spatial contract missing room entry for AH01",
-        "map_TMQ001.json: strict spatial contract missing room entry for AH02",
-        "map_TMQ001.json: strict spatial contract missing room entry for AH03",
-        "map_TNU001.json: strict spatial contract missing room entry for AH01",
-        "map_TNU001.json: strict spatial contract missing room entry for AH02",
-        "map_TNU001.json: strict spatial contract missing room entry for AH03",
-        "map_TUD001.json: strict spatial contract missing room entry for AQ01",
-        "map_TUD001.json: strict spatial contract missing room entry for AQ02",
-        "map_TUD001.json: strict spatial contract missing room entry for AQ03"
-      ]
+      "passed": 6,
+      "failed": 0,
+      "errors": []
     },
     "spatial_contract_warning": {
       "files": [],

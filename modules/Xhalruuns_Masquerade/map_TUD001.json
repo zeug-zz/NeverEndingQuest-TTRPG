@@ -4,16 +4,16 @@
   "totalRooms": 3,
   "rooms": [
     {
-      "id": "AK01",
+      "id": "AQ01",
       "type": "room",
       "connections": [
-        "AK02",
-        "AK03"
+        "AQ02",
+        "AQ03"
       ],
       "coordinates": "X10Y10",
       "directions": {
-        "east": "AK02",
-        "south": "AK03"
+        "east": "AQ02",
+        "south": "AQ03"
       },
       "tags": [],
       "purpose": "unknown",
@@ -22,14 +22,14 @@
       "name": "Veilwoven Crossroads"
     },
     {
-      "id": "AK02",
+      "id": "AQ02",
       "type": "room",
       "connections": [
-        "AK01"
+        "AQ01"
       ],
       "coordinates": "X11Y10",
       "directions": {
-        "west": "AK01"
+        "west": "AQ01"
       },
       "tags": [
         "dead_end"
@@ -40,14 +40,14 @@
       "name": "Specter's Choice Alcove"
     },
     {
-      "id": "AK03",
+      "id": "AQ03",
       "type": "room",
       "connections": [
-        "AK01"
+        "AQ01"
       ],
       "coordinates": "X10Y11",
       "directions": {
-        "north": "AK01"
+        "north": "AQ01"
       },
       "tags": [
         "dead_end"
@@ -60,12 +60,12 @@
   ],
   "layout": [
     [
-      "AK01",
-      "AK02",
-      "AK03"
+      "AQ01",
+      "AQ02",
+      "AQ03"
     ]
   ],
-  "startRoom": "AK01",
+  "startRoom": "AQ01",
   "version": "1.1",
   "notes": "Extended schema with AI-friendly navigation fields",
   "spatialContractVersion": 1
