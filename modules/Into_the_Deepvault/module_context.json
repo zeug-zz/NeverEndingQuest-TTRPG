@@ -1038,6 +1038,6 @@
     "provenance": "llm_classification",
     "feature_flag": "ENABLE_LLM_CLASSIFICATION"
   },
-  "author": "",
-  "license": ""
+  "author": "NEQ-TTRPG Module Builder",
+  "license": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
 }

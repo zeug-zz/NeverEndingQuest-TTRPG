@@ -3998,6 +3998,6 @@
       "missing_npc_authority_count": 13
     }
   },
-  "author": "",
-  "license": ""
+  "author": "MoonlightByte - Derived from https://github.com/MoonlightByte/NeverEndingQuest/tree/main/modules/Keep_of_Doom",
+  "license": "https://github.com/MoonlightByte/NeverEndingQuest/blob/main/LICENSE"
 }
