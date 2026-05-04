@@ -26,6 +26,10 @@
       "display_name": "The Ancients Lab",
       "level_range": { "min": 2, "max": 4 }
     },
+    "Xhalruuns_Masquerade": {
+      "display_name": "Xhalruun's Masquerade",
+      "level_range": { "min": 7, "max": 10 }
+    },
     "The_Garden_of_Demons": {
       "display_name": "The Garden of Demons",
       "level_range": { "min": 12, "max": 15 }

@@ -351,6 +351,7 @@ modules/*/
 !modules/The_Ancients_Lab/
 !modules/The_Garden_of_Demons/
 !modules/Into_the_Deepvault/
+!modules/Xhalruuns_Masquerade/
 
 # — 3. Runtime mutable state (ignored everywhere) —
 modules/**/areas/*.json
