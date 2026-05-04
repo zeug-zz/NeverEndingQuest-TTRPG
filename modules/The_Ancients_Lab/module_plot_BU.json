@@ -1,6 +1,6 @@
 {
   "plotTitle": "The Ancients Lab: Descent into Mutation",
-  "mainObjective": "Investigate the arcane disturbances and spreading corruption emanating from the long-lost dwarven research facility buried beneath Blackcrag, traverse the tainted wilderness and forsaken vaults, and confront the mutated horrors and rogue constructs within before the land is consumed.",
+  "mainObjective": "Investigate the arcane disturbances and spreading corruption emanating from the long-lost dwarven research facility buried beneath Blackcrag, traverse the tainted wilderness and forsaken vaults, and confront the mutated horrors and rogue constructs within before the land is consumed. But know this: the Thing below has been called sleeper and warden, ancestor and invitation, reflection and abyss. The facility has shown many faces to many visitors, and the truth you find may depend on which questions you dare to ask. Every choice resonates with the presence below, tilting the balance toward dreams, containment, communion, inheritance, or mirrors.",
   "plotPoints": [
     {
       "id": "PP001",
@@ -26,7 +26,7 @@
         {
           "id": "SQ002",
           "title": "Whispering Stones",
-          "description": "Standing stones atop a windswept ridge bear cryptic runes. Deciphering them grants lore about the facility builders and warns of 'the Thing' awakening below.",
+          "description": "Standing stones atop a windswept ridge bear cryptic runes that shift when read by different observers. A dream-sensitive reader sees sleep-wards meant to soothe; a containment-focused reader sees seal-marks reinforcing a prison; a communion-seeker sees invitation-text calling the willing; a genealogist sees ancestral glyphs naming the buried lineage; a fearful reader sees warning-script about what the mirror reflects. Deciphering them grants lore about the facility builders and warns of the Thing awakening below--but which truth the runes reveal depends on who reads them.",
           "involvedLocations": [
             "BA001"
           ],
@@ -92,7 +92,7 @@
         {
           "id": "SQ006",
           "title": "Murals of Warning",
-          "description": "Investigating the murals reveals cryptic warnings and perhaps a hidden switch or puzzle. Deciphering the images could disarm a deadly trap or reveal a secret passage.",
+          "description": "Investigating the murals reveals cryptic warnings and perhaps a hidden switch or puzzle. The murals depict different histories depending on the viewer's inclination: a dreaming god's slumber, a warden's eternal vigil, a communion ritual in progress, a genealogical record of those who became the facility, or a hall of mirrors reflecting every observer who ever stood here. Deciphering the images could disarm a deadly trap or reveal a secret passage.",
           "involvedLocations": [
             "FG001"
           ],
@@ -114,18 +114,18 @@
     {
       "id": "PP004",
       "title": "The Vaults' Secret Heart",
-      "description": "Deeper within the Vaultways, the party discovers the containment chamber\u2014its arcane wards flickering. Inside is a living mass of shadow and memory, once a guardian, now corrupted by the same forces infecting the land. The party must decide whether to reinforce the wards, attempt to communicate, or destroy the entity before it can escape and worsen the corruption spreading toward the surface.",
+      "description": "Deeper within the Vaultways, the party discovers the containment chamber--its arcane wards flickering. Inside is a living mass of shadow and memory, once a guardian, now corrupted by the same forces infecting the land. The party must decide whether to reinforce the wards, attempt to communicate, or destroy the entity before it can escape and worsen the corruption spreading toward the surface. Each choice tilts toward a different truth: reinforcing may soothe a dreaming mind or strengthen a warden's failing vigil; communicating may open communion or awaken ancestral memory; destroying may shatter a mirror or kill the last guardian of an ancient seal. The entity itself seems to invite all three responses simultaneously.",
       "location": "FG001",
       "nextPoints": [
         "PP005"
       ],
       "status": "not started",
-      "plotImpact": "Confronts players with a moral and strategic choice, combining combat, social, and magical challenges. Their decision dramatically affects the dungeon and city above.",
+      "plotImpact": "Confronts players with a moral and strategic choice that echoes across all five playlines. Reinforcing wards soothes the Dreamer but also strengthens Containment; communicating opens Communion but may unlock Inheritance; destroying risks shattering the Mirror but may be the only way to prevent the Dreamer from waking. The entity's response varies by playline: it may thank the party for lullaby, curse them for imprisonment, embrace them as kin, recognize them as descendants, or show them their own reflections dying.",
       "sideQuests": [
         {
           "id": "SQ008",
           "title": "Fragments of Memory",
-          "description": "Scattered memory-stones around the containment chamber reveal more about the entity\u2019s original purpose and downfall. Piecing them together may reveal a way to purify rather than destroy.",
+          "description": "Scattered memory-stones around the containment chamber reveal more about the entity's original purpose and downfall. Each stone shows a different version of the truth: the entity as dream-warden, containment-guardian, communion-vessel, ancestral-remnant, or mirror-surface. Piecing them together may reveal that all versions are simultaneously true--or that the stones themselves reshape memory to match the reader's expectations.",
           "involvedLocations": [
             "FG001"
           ],
@@ -193,18 +193,18 @@
     {
       "id": "PP007",
       "title": "Shattered Realities",
-      "description": "As the party presses deeper into the Wastes, they encounter zones where reality is thin\u2014gravity warps, time loops, and monstrous wildlife stalks them. Here, they must choose whether to stabilize a reality rift or exploit its chaos, with the outcome influencing the dangers they face as they approach the ancient laboratory's boundaries.",
+      "description": "As the party presses deeper into the Wastes, they encounter zones where reality is thin--gravity warps, time loops, and monstrous wildlife stalks them. These thin places are the dream-surface of a sleeper, the membrane of a containment seal, the threshold of communion, the field of ancestral reversion, or the projection of collective fear. The party must choose whether to stabilize a reality rift or exploit its chaos. A hidden third option exists: step through the thinnest point and see what lies on the other side of reality itself.",
       "location": "AC001",
       "nextPoints": [
         "PP008"
       ],
       "status": "not started",
-      "plotImpact": "Tests party\u2019s resourcefulness and morality; their choices shape which dangers or boons they face deeper within the Wastes.",
+      "plotImpact": "Stabilizing the rift soothes the Dreamer or reinforces Containment. Exploiting chaos accelerates Communion or triggers reversion. Stepping through reveals the Mirror truth: the party sees themselves as the thin place perceives them. Each choice reshapes the landscape ahead according to which playline dominates.",
       "sideQuests": [
         {
           "id": "SQ012",
           "title": "Echoes of the Past",
-          "description": "Fragments of memory linger in a time-warped zone\u2014players can interact with them to learn about the origins of the Wastes.",
+          "description": "Fragments of memory linger in a time-warped zone--players can interact with them to learn about the origins of the Wastes. The memories show the facility's last moments: researchers soothing a dreamer, wardens sealing a containment breach, communion-seekers opening themselves to the presence, genealogists discovering the ancestral truth, or a mirror-room where every experiment saw only itself. Each memory fragment tilts the observer's perception of what happened here.",
           "involvedLocations": [
             "AC001"
           ],
@@ -214,7 +214,7 @@
         {
           "id": "SQ013",
           "title": "The Reality Anchor",
-          "description": "A malfunctioning reality anchor device can be repaired or destroyed. Repairing it stabilizes a portion of the Wastes, making travel safer but attracting hostile attention.",
+          "description": "A malfunctioning reality anchor device can be repaired or destroyed. Repairing it stabilizes a portion of the Wastes, making travel safer but attracting hostile attention. The anchor itself serves different functions per playline: it regulates the dreamer's breath, reinforces containment geometry, maintains the communion threshold, preserves ancestral resonance, or keeps the mirror from distorting. Destroying it may free or destabilize whichever truth it serves.",
           "involvedLocations": [
             "AC001"
           ],
@@ -226,18 +226,18 @@
     {
       "id": "PP008",
       "title": "The Aberrant Conclave",
-      "description": "At the center of the Wastes stands the ruined conclave, where mutated leaders and aberrant entities gather. Here, the party uncovers evidence that the spreading corruption is orchestrated by an ancient consciousness\u2014once a guardian, now twisted by lab experiments gone awry. The party\u2019s choices here determine potential allies or enemies in the final confrontation beneath the Shuddering Wilds.",
+      "description": "At the center of the Wastes stands the ruined conclave, where mutated leaders and aberrant entities gather in two factions. One faction seeks to preserve the current state--the sleepers who wish to keep dreaming, the wardens who maintain containment, the gradualists who prefer slow communion, the separators who resist reversion, the reflectors who study fear. The other faction demands change--the wakers who would rouse the Dreamer, the breach-ers who would break containment, the immediatists who crave full communion now, the reverters who embrace ancestral transformation, the weaponizers who would turn fear itself into a blade. The party must ally with one faction or expose both.",
       "location": "AC001",
       "nextPoints": [
         "PP009"
       ],
       "status": "not started",
-      "plotImpact": "Reveals the mastermind; party actions determine allies or enemies in the final confrontation.",
+      "plotImpact": "Allying with preservers steers toward Dreamer-soothing or Containment-reinforcement endings. Allying with changers tilts toward Communion-completion or Inheritance-reversion. Exposing both fractures the Conclave, which may produce Mirror-endings where the party alone determines the outcome. Every faction sees the Thing differently, and their truths are all partially correct.",
       "sideQuests": [
         {
           "id": "SQ014",
           "title": "The Outcast\u2019s Plea",
-          "description": "A banished mutant seer begs the party to retrieve a memory crystal lost in the conclave\u2019s depths, promising visions of the future in return.",
+          "description": "A banished mutant seer begs the party to retrieve a memory crystal lost in the conclave's depths, promising visions of the future in return. The crystal contains a different prophecy per playline: the dreamer's next cycle, the containment seal's next failure, the next communion window, the next ancestral awakening, or the next reflection the mirror will show. Which future the seer offers depends on which truth the party has been living.",
           "involvedLocations": [
             "AC001"
           ],
@@ -247,7 +247,7 @@
         {
           "id": "SQ015",
           "title": "Seeds of Dissent",
-          "description": "The players discover a faction within the conclave that secretly opposes the ancient consciousness. They can choose to ally with these dissenters or expose them for a reward.",
+          "description": "The players discover a faction within the conclave that secretly opposes the ancient consciousness. They are sleepers who wish to keep dreaming, wardens who maintain containment from within, gradualists who prefer slow communion, separators who resist ancestral reversion, or reflectors who believe fear should be studied not served. The party can choose to ally with these dissenters or expose them for a reward.",
           "involvedLocations": [
             "AC001"
           ],
@@ -259,18 +259,18 @@
     {
       "id": "PP009",
       "title": "Confronting the Source",
-      "description": "The party descends into the pulsing heart of the Aberrant Wastes, where the ancient consciousness\u2014an alien entity merged with the land\u2014awaits. This confrontation, blending combat, psychic challenges, and environmental hazards, directly shapes the fate of the region and whether the corruption spreads to the Shuddering Wilds.",
+      "description": "The party descends into the pulsing heart of the Aberrant Wastes, where the ancient consciousness--an alien entity merged with the land--awaits. The Heartstone ritual chamber reveals the final truth about what the presence below truly is, but the ritual itself means different things per playline: a mood-stabilizer for a dreaming god, an anchor-sacrifice to reinforce containment, a communion-accelerator to complete the joining, a reversion-catalyst to restore ancestral form, or a fear-focus that concentrates terror into a weapon. This confrontation, blending combat, psychic challenges, and environmental hazards, directly shapes the fate of the region and which playline dominates the ending.",
       "location": "AC001",
       "nextPoints": [
         "PP010"
       ],
       "status": "not started",
-      "plotImpact": "Resolution of the Wastes\u2019 corruption; outcome hinges on alliances, lore, and choices made in previous plot points.",
+      "plotImpact": "Using the Heartstone as stabilizer pushes toward Dreamer or Containment endings. Using it as accelerator favors Communion or Inheritance. Skipping the ritual leaves all playlines open but weakens the party's influence on the final outcome. The presence responds differently to each choice, revealing which interpretation it has been wearing all along--or whether it has been wearing all of them at once.",
       "sideQuests": [
         {
           "id": "SQ016",
           "title": "Shatter the Heartstone",
-          "description": "A risky ritual can be attempted to weaken the alien consciousness, but it requires rare reagents and leaves participants vulnerable.",
+          "description": "A risky ritual can be attempted to weaken the alien consciousness, but it requires rare reagents and leaves participants vulnerable. The Heartstone at the ritual's center may function as a dream-suppressant, a sacrifice to reinforce containment, a communion-accelerator, a reversion-catalyst, or a fear-focus depending on the ritual's alignment. The reagents themselves shift meaning: dream-herbs, containment-crystals, communion-nectar, ancestral-bone, or mirror-shard.",
           "involvedLocations": [
             "AC001"
           ],
@@ -282,18 +282,18 @@
     {
       "id": "PP010",
       "title": "Into the Heart of the Shuddering Wilds",
-      "description": "With the source of the corruption disrupted or contained, the party is drawn to the Shuddering Wilds (TTL001)\u2014the forest above the Ancients Lab. Here, unnatural mists and tremors grow stronger. The party must navigate treacherous paths and decipher signs of something colossal stirring deep underground, seeking a way to reach the sealed laboratory at the wilds\u2019 core.",
+      "description": "With the source of the corruption disrupted or contained, the party is drawn to the Shuddering Wilds (TTL001)--the forest above the Ancients Lab. Here, unnatural mists and tremors grow stronger, and the land itself seems to breathe with something vast beneath it. The mists may be the exhalation of a dreaming god, the leakage of a failing containment seal, the call of a lonely intelligence seeking communion, the ancestral memory of what this place once was, or the reflected fears of every living thing that has entered. The party must navigate treacherous paths and decipher signs of something colossal stirring deep underground, seeking a way to reach the sealed laboratory at the wilds' core.",
       "location": "TTL001",
       "nextPoints": [
         "PP011"
       ],
       "status": "not started",
-      "plotImpact": "Establishes the Wilds' menacing tone and sets up the quest to locate the Ancients Lab.",
+      "plotImpact": "Establishes the Wilds' menacing tone and introduces the five-playline atmospheric framework that will intensify as the party approaches the Lab. Every environmental detail the party notices may be a clue about which truth the land carries.",
       "sideQuests": [
         {
           "id": "SQ017",
           "title": "Echoes in the Fog",
-          "description": "A series of echoing, mournful cries lead the party to a lost herbalist's camp. Rescuing the herbalist from carnivorous plants could provide useful knowledge and a strange herbal concoction.",
+          "description": "A series of echoing, mournful cries lead the party to a lost herbalist's camp. The cries may be dream-echoes from the sleeper's mind, containment-breach alarms, communion-attempts from the presence below, ancestral laments, or the party's own fears given voice. Rescuing the herbalist from carnivorous plants could provide useful knowledge and a strange herbal concoction that functions differently per playline.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -303,7 +303,7 @@
         {
           "id": "SQ018",
           "title": "Watcher in the Thicket",
-          "description": "The party notices they are being observed by a mysterious, masked figure who vanishes into the mist. Following them leads to a cache of old maps and warnings scrawled in an ancient dialect.",
+          "description": "The party notices they are being observed by a mysterious, masked figure who vanishes into the mist. The figure may be a dream-walker from the sleeper's subconscious, a containment-scout checking for unauthorized entry, a communion-herald evaluating candidates, an ancestral wraith recognizing kin, or the party's own collective fear observing itself. Following them leads to a cache of old maps and warnings scrawled in an ancient dialect that reads differently depending on the reader's dominant playline.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -315,18 +315,18 @@
     {
       "id": "PP011",
       "title": "Whispers Beneath the Canopy",
-      "description": "Delving deeper into the Shuddering Wilds, the party observes increasingly unnatural phenomena and learns that the land is warped by the ancient laboratory below. To reach the lab, they must seek out the enigmatic Speaker of the Mists, whose riddles are the key to breaching the wards protecting the entrance.",
+      "description": "Delving deeper into the Shuddering Wilds, the party observes increasingly unnatural phenomena and learns that the land is warped by the ancient laboratory below. To reach the lab, they must seek out the enigmatic Speaker of the Mists, whose riddles are the key to breaching the wards protecting the entrance. The Speaker appears differently to each observer: a dream-speaker who recites prophecies from the sleeper's mind, a ward-sentinel who tests whether visitors carry containment protocols, a communion-herald who offers the joining, an ancestral voice that speaks in genealogical riddles, or a reflection of the party's own deepest questions given form and voice.",
       "location": "TTL001",
       "nextPoints": [
         "PP012"
       ],
       "status": "not started",
-      "plotImpact": "Unlocks knowledge needed to access the Ancients Lab, building connection between the Wilds and the laboratory.",
+      "plotImpact": "The Speaker's riddles contain different keys depending on which interpretation the party has been leaning toward. Solving via dream-logic opens the Dreamer path; via protocol opens Containment; via acceptance opens Communion; via genealogy opens Inheritance; via self-knowledge opens the Mirror. The party may not realize they are choosing their ending family with each answer.",
       "sideQuests": [
         {
           "id": "SQ019",
           "title": "The Corrupted Grove",
-          "description": "A section of forest is dying, blighted by toxic ooze from below. Purging the corruption (by fighting or negotiating with warped fey) earns the gratitude of the forest\u2019s lesser spirits.",
+          "description": "A section of forest is dying, blighted by toxic ooze from below. The blight manifests as dream-decay where the sleeper's nightmares bleed through, containment-leakage where the seal erodes, communion-overload where the joining is too much too fast, ancestral-reversion where the land reverts to an older state, or fear-corruption where reflected terror poisons the soil. Purging the corruption (by fighting or negotiating with warped fey) earns the gratitude of the forest's lesser spirits.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -336,7 +336,7 @@
         {
           "id": "SQ020",
           "title": "Moss-Covered Relics",
-          "description": "Adventurers find relics partially unearthed by the tremors\u2014remnants of ancient technology. Restoring or understanding these devices could help communicate with the Speaker of the Mists.",
+          "description": "Adventurers find relics partially unearthed by the tremors--remnants of ancient technology. The relics respond differently to each approach: as dream-tuning instruments, containment-calibration tools, communion-interface devices, ancestry-attuned mechanisms, or mirror-framing lenses. Restoring or understanding these devices could help communicate with the Speaker of the Mists by speaking the language of whichever truth the relic embodies.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -348,18 +348,18 @@
     {
       "id": "PP012",
       "title": "Revelations at the Sunken Threshold",
-      "description": "Guided by the Speaker\u2019s riddles, the party locates the sunken entrance to the Ancients Lab. The colossal presence beneath the Wilds begins to awaken, causing dangerous tremors and unleashing mutated guardians. The party must solve the entrance puzzle and decide whether to stabilize the Wilds or risk a rapid descent to surprise whatever stirs below.",
+      "description": "Guided by the Speaker's riddles, the party locates the sunken entrance to the Ancients Lab. The colossal presence beneath the Wilds begins to awaken, causing dangerous tremors and unleashing mutated guardians. The entrance is protected by a ward circle that functions differently per playline: a dream-gate that regulates the sleeper's breath, a containment-seal that holds shut the door, a communion-door that opens only for the willing, an ancestry-ward that responds to blood, or a fear-cage that imprisons terror itself. The party must solve the entrance puzzle and decide whether to repair the ward circle, disrupt it, or pass through it entirely.",
       "location": "TTL001",
       "nextPoints": [
         "PP013"
       ],
       "status": "not started",
-      "plotImpact": "Grants access to the Ancients Lab and sets up the climactic confrontation.",
+      "plotImpact": "Repairing the ward strengthens whichever playline the ward currently serves (Dreamer-soothing or Containment-reinforcement). Disrupting it opens the path for Communion or Inheritance. Entering through the ward by satisfying its condition (dreaming, containment-protocol, communion-acceptance, ancestral-recognition, or facing fear) commits the party to that playline for the finale. Each variant changes the guardians, the lab's interior, and the Thing's opening stance.",
       "sideQuests": [
         {
           "id": "SQ021",
           "title": "The Broken Circle",
-          "description": "A broken magical ward circle at the entrance could be repaired or disrupted. Repairing it may hold off the awakening force temporarily but requires rare reagents from the Wilds; disrupting it could grant boons to the party, but hasten the emergence of the thing below.",
+          "description": "A broken magical ward circle at the entrance could be repaired or disrupted. The circle is a dream-gate regulating the sleeper's breath, a containment-seal holding shut the door, a communion-door that opens only for the willing, an ancestry-ward that responds to blood, or a fear-cage that imprisons terror itself. Repairing it may hold off the awakening force temporarily but requires rare reagents from the Wilds; disrupting it could grant boons to the party but hasten the emergence of the thing below. Which function the circle serves determines the consequences of either choice.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -371,16 +371,16 @@
     {
       "id": "PP013",
       "title": "The Heart Beneath the Wilds",
-      "description": "The party descends into the Ancients Lab (TTL001), now aware that their every move resonates with the stirring behemoth below. They must confront the mutated, semi-sentient entity fused with dwarven magic and machinery\u2014the final force behind the region's corruption. Their choices determine whether the Shuddering Wilds will return to peace, be consumed, or be forever changed.",
+      "description": "The party descends into the Ancients Lab (TTL001), now aware that their every move resonates with the stirring behemoth below. This is the convergence point where all five truths meet. Grahl reveals their full per-playline truth; Hesk faces their full per-playline dilemma. The Prototype Cure may be a dream-suppressant, a sacrifice of self to reinforce the seal, a communion-reversal serum, a reversion-pause for ancestral transformation, or a fear-release that dissolves the Mirror. The Rune-etched Collar functions as a dream-tether, a containment-anchor, a communion-link, an ancestry-key, or a fear-magnifier depending on which playline dominates. The Narrator SHALL select the ending family based on which playline received the most emergence triggers during gameplay. The 15 possible endings are: DREAMER (A1: The Dreamer Returns to Sleep, A2: The Dreamer Wakens, A3: You Become the Dream); CONTAINMENT (B1: The Warden Endures, B2: The Seal Breaks, B3: You Become the New Warden); COMMUNION (C1: Communion Completed, C2: Communion Rejected, C3: Partial Communion); INHERITANCE (D1: The Cycle Continues, D2: The Reversion Completes, D3: A New Separation); MIRROR (E1: The Mirror Shatters, E2: The Mirror Holds, E3: You Become the Mirror).",
       "location": "TTL001",
       "nextPoints": [],
       "status": "not started",
-      "plotImpact": "Decides the fate of the Shuddering Wilds and the sleeping horror below, with repercussions for the region.",
+      "plotImpact": "The final ending is determined by playline dominance: count emergence triggers from PP004 (ward choice), PP007 (reality choice), PP008 (faction choice), PP009 (Heartstone choice), and PP012 (ward circle choice). The dominant playline selects the ending family; the specific variant (1/2/3) depends on degree of commitment, party cohesion, and whether the party sought to control, accept, or transcend the truth. If two playlines are tied, the party must make a final explicit choice. The ending reshapes the Shuddering Wilds and determines the fate of every NPC who survived the journey.",
       "sideQuests": [
         {
           "id": "SQ022",
           "title": "The Last Attendant",
-          "description": "A surviving, semi-sapient construct within the lab claims to serve the Ancients. It offers aid\u2014or betrayal\u2014depending on how the party treats it and what they promise about the future of the Wilds.",
+          "description": "A surviving, semi-sapient construct within the lab claims to serve the Ancients. It offers aid--or betrayal--depending on how the party treats it and what they promise about the future of the Wilds. Its service manifests per playline: lullaby-singer for the Dreamer, protocol-enforcer for Containment, welcome-host for Communion, genealogist for Inheritance, or truth-teller for the Mirror. It remembers every version of the truth and may reveal whichever one the party has earned.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -390,7 +390,7 @@
         {
           "id": "SQ023",
           "title": "Echoes of the Past",
-          "description": "Fragments of ancient logs offer glimpses into what the Ancients tried and failed to accomplish. Piecing these together may reveal hidden weaknesses or bargaining chips against the thing below.",
+          "description": "Fragments of ancient logs offer glimpses into what the Ancients tried and failed to accomplish. The logs contain five parallel accounts: researchers trying to soothe a dreamer, wardens struggling to maintain containment, seekers attempting communion, genealogists tracing ancestral lineage, and mirror-engineers building a reflection chamber. Piecing these together may reveal hidden weaknesses or bargaining chips against the thing below--or reveal that all five experiments were the same experiment seen through different eyes.",
           "involvedLocations": [
             "TTL001"
           ],
@@ -400,7 +400,7 @@
         {
           "id": "SQ024",
           "title": "The Archivist\u2019s Bargain",
-          "description": "An ancient archivist automaton offers a deal: preserve its records in exchange for knowledge or aid in subduing the Thing. The party must decide whether to trust this relic of the past.",
+          "description": "An ancient archivist automaton offers a deal: preserve its records in exchange for knowledge or aid in subduing the Thing. Hesk's records contain every truth the facility has ever told, but it can only show, never state. The party must decide whether to trust this relic of the past--and whether the records it preserves are dream-archives, containment-logs, communion-testimonies, genealogical-records, or mirror-captures. The answer may be all of them simultaneously.",
           "involvedLocations": [
             "TTL001"
           ],

@@ -1152,6 +1152,49 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### The Ancients Lab Lovecraftian Narrative Enrichment (COMPLETED - 2026-05-04)
+
+**Status:** COMPLETED - Enriched modules/The_Ancients_Lab with 5-playline Lovecraftian narrative depth across 9 NPCs, 13 plot points, 24 side quests, 12 locations, and continuity framing. All changes to existing JSON text fields only (no new fields/schemas). OpenSpec change validated and archived.
+
+**Objective:**
+- Add 5 simultaneous interpretive playlines (Dreamer Beneath, Containment, Communion, Inheritance, Mirror) with 15 endings (3 per playline)
+- Enrich NPC descriptions, roles, factions with multi-interpretation framing
+- Expand dmInstructions in all 12 locations (avg 1803 chars) with standardized playline template
+- Embed ending selection matrix in PP013 with deterministic playline dominance counting
+- Create standalone developer reference (LOVECRAFTIAN_NARRATOR_GUIDE.md, later removed per user request)
+
+**Implementation Summary:**
+- `modules/The_Ancients_Lab/module_context.json` - 9 NPC descriptions, roles, factions populated
+- `modules/The_Ancients_Lab/module_plot_BU.json` - 13 plot points enriched, mainObjective expanded, PP013 contains 15-ending matrix, 18/24 side quests enriched with playline flavor
+- `modules/The_Ancients_Lab/areas/*_BU.json` - 12 location dmInstructions with full playline structure (ATMOSPHERE + PLAYLINE EMERGENCE + KEY NPC INTERPRETATIONS + CHOICE FRAMING)
+- `openspec/changes/archive/2026-05-04-ancients-lab-lovecraftian-narrative/` - Archived change with 4 synced specs
+- `plans/ancients-lab-narrative-enhancement.md` - Master implementation plan
+
+**Verification:**
+- All 6 JSON files parse valid
+- Schema validation: 100% pass (`validate_module_files.py --module The_Ancients_Lab`)
+- No new fields added (audited against original key sets)
+- ASCII compliance: 0 violations
+- All 12 locations (100%) have complete standardized playline template
+- avg dmInstructions: 1803 chars (target: >750)
+- All 9 NPC descriptions >150 chars, all roles/factions populated
+- Plot chain PP001-PP013 linear and traversible, PP013 terminal with all 15 ending names
+
+**Files Modified:**
+- `modules/The_Ancients_Lab/module_context.json`
+- `modules/The_Ancients_Lab/module_plot_BU.json`
+- `modules/The_Ancients_Lab/areas/BA001_BU.json`
+- `modules/The_Ancients_Lab/areas/FG001_BU.json`
+- `modules/The_Ancients_Lab/areas/AC001_BU.json`
+- `modules/The_Ancients_Lab/areas/TTL001_BU.json`
+- `openspec/specs/dm-instructions-playline-guidance/spec.md` (new)
+- `openspec/specs/ending-variant-framework/spec.md` (new)
+- `openspec/specs/npc-lovecraftian-depth/spec.md` (new)
+- `openspec/specs/plot-point-lovecraftian-enrichment/spec.md` (new)
+- `openspec/changes/archive/2026-05-04-ancients-lab-lovecraftian-narrative/` (new)
+- `plans/ancients-lab-narrative-enhancement.md` (new)
+- `AGENTS.md`
+
 ### PC Supernatural State Layer + Vitreol Canon Update (COMPLETED - 2026-05-03)
 
 **Status:** COMPLETED - Implemented schema-valid supernatural state persistence/projection across runtime, UI, and PDF; archived OpenSpec change and applied approved Vitreol classification (`humanoid + undead + corrupted`).

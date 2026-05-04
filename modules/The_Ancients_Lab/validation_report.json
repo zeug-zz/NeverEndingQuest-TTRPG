@@ -1,12 +1,139 @@
 {
-  "validation_date": "2026-04-22T10:13:35.488862",
-  "issues": [
-    "NPC 'The Thing' is referenced in ['module:plotStages'] but not placed in any location"
-  ],
-  "context_summary": {
-    "areas": 4,
-    "npcs": 9,
-    "locations": 0,
-    "plot_points": 4
+  "module": "The_Ancients_Lab",
+  "timestamp": "2026-05-04T19:56:57.596953",
+  "summary": {
+    "total_files": 40,
+    "total_passed": 42,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "AC001_BU.json (areas/)",
+        "BA001_BU.json (areas/)",
+        "TTL001.json (areas/)",
+        "AC001.json (areas/)",
+        "FG001_BU.json (areas/)",
+        "BA001.json (areas/)",
+        "TTL001_BU.json (areas/)",
+        "FG001.json (areas/)"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "mutant_scavenger_lieutenant.json",
+        "swarm_of_bats.json",
+        "wolf.json",
+        "lesser_rust_eel.json",
+        "experimental_splice_remnant.json",
+        "aberrant_creeper.json",
+        "mutated_scavenger_leader.json",
+        "giant_weasel.json",
+        "security_construct.json",
+        "vaultway_shadow.json",
+        "fleshforged_aberrant.json",
+        "huskbound_wretch.json"
+      ],
+      "passed": 12,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_FG001.json",
+        "map_BA001.json",
+        "map_AC001.json",
+        "map_TTL001.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/AC001.json",
+        "areas/BA001.json",
+        "areas/FG001.json",
+        "areas/TTL001.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "AC001.json <-> map_AC001.json",
+        "BA001.json <-> map_BA001.json",
+        "FG001.json <-> map_FG001.json",
+        "TTL001.json <-> map_TTL001.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "AC001.json <-> map_AC001.json",
+        "BA001.json <-> map_BA001.json",
+        "FG001.json <-> map_FG001.json",
+        "TTL001.json <-> map_TTL001.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
   }
 }
