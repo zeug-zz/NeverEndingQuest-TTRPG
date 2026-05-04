@@ -65,6 +65,7 @@ All fork modifications are marked with `# TABLETOP MODE:` comments and live in e
 | **Keep of Doom**                 | 3–5   | Explore a haunted keep and establish your stronghold             |
 | **A Pottsfield Burial**          | 3–5   | Navigate an eerie burial ground and uncover its secrets          |
 | **Into the Deepvault**           | 3–5   | Confront elemental unrest in a petrified valley                  |
+| **Xhalruun's Masquerade**       | 5–8   | Unravel an undead mind flayer's conspiracy in a city of illusions |
 | **Murder at the Drowning Lass**  | 6–6   | Solve a tavern murder mystery with branching investigation       |
 | **The Hidden City of Numillian** | 7–10  | Discover a subterranean city of paradox and lost knowledge       |
 | **The Garden of Demons**         | 12–15 | Navigate a fey-touched garden of dangerous whimsy                |
