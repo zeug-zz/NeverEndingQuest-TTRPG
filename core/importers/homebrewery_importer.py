@@ -640,6 +640,8 @@ def _emit_module_context(
         "plot_scopes": {},
         "references": {"monsters": monsters} if monsters else {},
         "validation_issues": [],
+        "author": "",
+        "license": "",
         "generated_at": datetime.now().isoformat(),
         "import_source": intermediate["source"],
     }

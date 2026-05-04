@@ -383,5 +383,7 @@
     "NPC 'Elric' is referenced in ['module:plotStages'] but not placed in any location",
     "NPC 'The Pumpkin King' is referenced in ['module:plotStages'] but not placed in any location"
   ],
-  "generated_at": "2025-09-21T21:54:51.192449"
+  "generated_at": "2025-09-21T21:54:51.192449",
+  "author": "",
+  "license": ""
 }

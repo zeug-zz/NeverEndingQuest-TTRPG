@@ -222,5 +222,7 @@
     "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
     "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
   ],
-  "generated_at": "2026-04-25T13:56:51.603595"
+  "generated_at": "2026-04-25T13:56:51.603595",
+  "author": "",
+  "license": ""
 }

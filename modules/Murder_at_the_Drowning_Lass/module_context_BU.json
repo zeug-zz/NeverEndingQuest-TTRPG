@@ -63,12 +63,12 @@
       ]
     },
     "OKR001": {
-      "name": "The Old King\u2019s Road",
+      "name": "The Old King’s Road",
       "type": "mixed",
       "locations": [],
       "npcs": [
         "Ghostly Royal Messenger",
-        "Sable, Reluctant Scribe\u2019s Shade"
+        "Sable, Reluctant Scribe’s Shade"
       ],
       "plot_points": [
         "PP001",
@@ -126,7 +126,7 @@
       "name": "Maela Kett, the wary tavernkeeper",
       "role": "",
       "faction": "",
-      "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar\u2019s battered safe, wary since recent troubles. She knows much of the town\u2019s secrets but trusts few.",
+      "description": "A sharp-eyed woman with close-cropped hair and a sleeve of faded tattoos. She keeps a constant watch over patrons and the bar’s battered safe, wary since recent troubles. She knows much of the town’s secrets but trusts few.",
       "appears_in": [
         {
           "area": "THB001",
@@ -141,7 +141,7 @@
       "name": "Constable Farrel Dun",
       "role": "",
       "faction": "",
-      "description": "The doughty, sharp-eyed local lawman with a bristly mustache, Farrel Dun is known for his even temper and sense of duty. He\u2019s quick to help townsfolk and visitors alike, though his patience for nonsense is limited. Farrel is protective of his staff and wary of outsiders meddling in village affairs, but he values honesty and courage.",
+      "description": "The doughty, sharp-eyed local lawman with a bristly mustache, Farrel Dun is known for his even temper and sense of duty. He’s quick to help townsfolk and visitors alike, though his patience for nonsense is limited. Farrel is protective of his staff and wary of outsiders meddling in village affairs, but he values honesty and courage.",
       "appears_in": [
         {
           "area": "BV001",
@@ -156,7 +156,7 @@
       "name": "Old Ellyn, the folklore spinner",
       "role": "",
       "faction": "",
-      "description": "A spry, sharp-tongued elder with wild silver hair and a knack for captivating crowds with local legends. Ellyn is beloved by children and tolerated by adults, possessing an uncanny memory for the Vale\u2019s strangest tales\u2014some of which may hold real clues.",
+      "description": "A spry, sharp-tongued elder with wild silver hair and a knack for captivating crowds with local legends. Ellyn is beloved by children and tolerated by adults, possessing an uncanny memory for the Vale’s strangest tales—some of which may hold real clues.",
       "appears_in": [
         {
           "area": "BV001",
@@ -192,7 +192,7 @@
       "name": "Gritch the One-Eared, nervous patron",
       "role": "",
       "faction": "",
-      "description": "A twitchy, shabby man with a missing ear, Gritch is a regular at Duskmantle Curios. He\u2019s often found pawing through oddments, muttering about curses and treasures. Gritch is evasive but knows more about local criminal dealings than he lets on.",
+      "description": "A twitchy, shabby man with a missing ear, Gritch is a regular at Duskmantle Curios. He’s often found pawing through oddments, muttering about curses and treasures. Gritch is evasive but knows more about local criminal dealings than he lets on.",
       "appears_in": [
         {
           "area": "BV001",
@@ -217,7 +217,7 @@
       "name": "Red Maw scouts",
       "role": "",
       "faction": "",
-      "description": "Wary, mud-splattered members of the Red Maw gang, clad in patchwork leathers and bearing shortbows and knives. Their demeanor is tense\u2014they\u2019re on the lookout for rivals and authorities, but not immediately hostile unless threatened.",
+      "description": "Wary, mud-splattered members of the Red Maw gang, clad in patchwork leathers and bearing shortbows and knives. Their demeanor is tense—they’re on the lookout for rivals and authorities, but not immediately hostile unless threatened.",
       "appears_in": [
         {
           "area": "WM001",
@@ -340,7 +340,7 @@
       ]
     },
     "sable_reluctant_scribe_s_shade": {
-      "name": "Sable, Reluctant Scribe\u2019s Shade",
+      "name": "Sable, Reluctant Scribe’s Shade",
       "role": "",
       "faction": "",
       "description": "A spectral scribe bound to the ledger, cursed to witness every name added. Sable flickers in and out of view, her ink-stained fingers trembling.",
@@ -351,7 +351,7 @@
         }
       ],
       "aliases": [
-        "Sable, Reluctant Scribe\u2019s Shade"
+        "Sable, Reluctant Scribe’s Shade"
       ]
     },
     "corsa_threadneedle_drenn": {
@@ -418,7 +418,7 @@
       "name": "Tamsin Quill",
       "role": "",
       "faction": "",
-      "description": "A sharp-eyed gnome with a quick wit and quicker hands, Tamsin deals in curiosities, maps, and secrets. She\u2019s as likely to trade for a good story as she is for coin.",
+      "description": "A sharp-eyed gnome with a quick wit and quicker hands, Tamsin deals in curiosities, maps, and secrets. She’s as likely to trade for a good story as she is for coin.",
       "appears_in": [
         {
           "area": "HG001",
@@ -501,5 +501,7 @@
     "NPC 'Echo Wraiths' is referenced in ['module:plotStages'] but not placed in any location",
     "NPC 'Ardwen, ghostly map-bearer from legend' is referenced in ['module:plotStages'] but not placed in any location"
   ],
-  "generated_at": "2026-04-25T11:09:48.038989"
+  "generated_at": "2026-04-25T11:09:48.038989",
+  "author": "",
+  "license": ""
 }

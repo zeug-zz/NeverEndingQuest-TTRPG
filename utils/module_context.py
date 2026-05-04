@@ -51,6 +51,10 @@ class ModuleContext:
     # Validation issues
     validation_issues: List[str] = field(default_factory=list)
     
+    # Authorship and licensing (blank for human fill)
+    author: str = ""
+    license: str = ""
+    
     def add_area(self, area_id: str, area_name: str, area_type: str = ""):
         """Register a new area"""
         self.areas[area_id] = {
@@ -276,6 +280,8 @@ VALIDATION REQUIREMENTS - MUST FOLLOW:
             "plot_scopes": self.plot_scopes,
             "references": {k: list(v) for k, v in self.references.items()},
             "validation_issues": self.validation_issues,
+            "author": self.author,
+            "license": self.license,
             "generated_at": datetime.now().isoformat()
         }
     
@@ -299,5 +305,7 @@ VALIDATION REQUIREMENTS - MUST FOLLOW:
         context.plot_scopes = data.get("plot_scopes", {})
         context.references = {k: set(v) for k, v in data.get("references", {}).items()}
         context.validation_issues = data.get("validation_issues", [])
+        context.author = data.get("author", "")
+        context.license = data.get("license", "")
         
         return context

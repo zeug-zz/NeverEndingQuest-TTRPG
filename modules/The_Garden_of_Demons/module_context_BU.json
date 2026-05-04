@@ -56,7 +56,7 @@
       "locations": [],
       "npcs": [
         "Surviving Druids",
-        "Manifestation of the Forest\u2019s Spirit"
+        "Manifestation of the Forest’s Spirit"
       ],
       "plot_points": [
         "PP001",
@@ -87,7 +87,7 @@
       "name": "Thornkin Rella",
       "role": "",
       "faction": "",
-      "description": "A quick-witted, thorn-fingered half-fey merchant, Rella always has a mischievous smile and a knack for finding what others cannot. She\u2019s famed for her rare reagents and her odd riddles.",
+      "description": "A quick-witted, thorn-fingered half-fey merchant, Rella always has a mischievous smile and a knack for finding what others cannot. She’s famed for her rare reagents and her odd riddles.",
       "appears_in": [
         {
           "area": "GV001",
@@ -118,7 +118,7 @@
       "name": "Nimblethorn",
       "role": "",
       "faction": "",
-      "description": "A sly, fey-influenced goblin with mottled green skin and a cap of fungus for a hat. Nimblethorn skips from shadow to shadow, offering cryptic warnings and bargains to those who show respect for the old ways. Deeply connected to the glade\u2019s curse, Nimblethorn knows secret paths and hidden dangers.",
+      "description": "A sly, fey-influenced goblin with mottled green skin and a cap of fungus for a hat. Nimblethorn skips from shadow to shadow, offering cryptic warnings and bargains to those who show respect for the old ways. Deeply connected to the glade’s curse, Nimblethorn knows secret paths and hidden dangers.",
       "appears_in": [
         {
           "area": "BO002",
@@ -134,7 +134,7 @@
       "name": "Whisperroot",
       "role": "",
       "faction": "",
-      "description": "A spectral dryad, now half-fused with the stone\u2019s roots. Whisperroot weeps for the land\u2019s pain and offers cryptic warnings. Her influence can briefly purify an area if properly entreated.",
+      "description": "A spectral dryad, now half-fused with the stone’s roots. Whisperroot weeps for the land’s pain and offers cryptic warnings. Her influence can briefly purify an area if properly entreated.",
       "appears_in": [
         {
           "area": "BO002",
@@ -203,7 +203,7 @@
         }
       ],
       "aliases": [
-        "Shade of Alenwen (Myrlaen\u2019s lost love)",
+        "Shade of Alenwen (Myrlaen’s lost love)",
         "Shade of Alenwen"
       ]
     },
@@ -211,7 +211,7 @@
       "name": "Surviving Druids",
       "role": "",
       "faction": "",
-      "description": "A haggard trio of druids, their once-green robes now stained with bramble blood and their eyes haunted. They cling to the hope of reversing the Wilds\u2019 corruption but are wary of strangers, suspecting betrayal or madness from any who survive here.",
+      "description": "A haggard trio of druids, their once-green robes now stained with bramble blood and their eyes haunted. They cling to the hope of reversing the Wilds’ corruption but are wary of strangers, suspecting betrayal or madness from any who survive here.",
       "appears_in": [
         {
           "area": "SOT004",
@@ -223,7 +223,7 @@
       ]
     },
     "manifestation_of_the_forest_s_spirit": {
-      "name": "Manifestation of the Forest\u2019s Spirit",
+      "name": "Manifestation of the Forest’s Spirit",
       "role": "",
       "faction": "",
       "description": "A shimmering, wounded avatar of the ancient woods, appearing as a white stag entwined with blood-red roses and spectral vines. Its eyes plead for aid, but its form flickers with dangerous, uncontrolled power.",
@@ -234,7 +234,7 @@
         }
       ],
       "aliases": [
-        "Manifestation of the Forest\u2019s Spirit"
+        "Manifestation of the Forest’s Spirit"
       ]
     }
   },
@@ -270,16 +270,18 @@
     "npc:Gravenbark Guardians": [
       "module:plotStages"
     ],
-    "npc:Shade of Alenwen (Myrlaen\u2019s lost love)": [
+    "npc:Shade of Alenwen (Myrlaen’s lost love)": [
       "module:plotStages"
     ],
     "npc:Surviving Druids": [
       "module:plotStages"
     ],
-    "npc:Manifestation of the Forest\u2019s Spirit": [
+    "npc:Manifestation of the Forest’s Spirit": [
       "module:plotStages"
     ]
   },
   "validation_issues": [],
-  "generated_at": "2026-04-25T12:35:32.323994"
+  "generated_at": "2026-04-25T12:35:32.323994",
+  "author": "",
+  "license": ""
 }

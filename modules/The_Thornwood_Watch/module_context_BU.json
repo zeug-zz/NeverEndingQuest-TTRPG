@@ -3,7 +3,7 @@
   "module_id": "The_Thornwood_Watch",
   "areas": {
     "RO001": {
-      "name": "Rangers\u2019 Outpost",
+      "name": "Rangers’ Outpost",
       "type": "wilderness",
       "locations": [],
       "npcs": [
@@ -1999,5 +1999,7 @@
       "ambiguous_destination_count": 0,
       "missing_npc_authority_count": 0
     }
-  }
+  },
+  "author": "",
+  "license": ""
 }

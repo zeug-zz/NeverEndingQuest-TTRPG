@@ -43,7 +43,7 @@
       ]
     },
     "TTL001": {
-      "name": "The Thing\u2019s Lair",
+      "name": "The Thing’s Lair",
       "type": "mixed",
       "locations": [],
       "npcs": [
@@ -72,7 +72,7 @@
       "name": "Rambling Dwarven Survivor",
       "role": "",
       "faction": "",
-      "description": "A disheveled, wild-eyed dwarf in patched armor, muttering about monsters beneath the ground. He is wary but desperate for help\u2014and may offer warnings, rumors, or even a crude map of the Marches if befriended.",
+      "description": "A disheveled, wild-eyed dwarf in patched armor, muttering about monsters beneath the ground. He is wary but desperate for help—and may offer warnings, rumors, or even a crude map of the Marches if befriended.",
       "appears_in": [
         {
           "area": "BA001",
@@ -98,7 +98,7 @@
       "name": "Archivist Automaton",
       "role": "",
       "faction": "",
-      "description": "A semi-sapient dwarven automaton assigned to monitor and record the cell\u2019s experiments. Scarred and flickering, it is conflicted\u2014its primary programming to help, but secondary instructions to prevent any subject's escape.",
+      "description": "A semi-sapient dwarven automaton assigned to monitor and record the cell’s experiments. Scarred and flickering, it is conflicted—its primary programming to help, but secondary instructions to prevent any subject's escape.",
       "appears_in": [
         {
           "area": "TTL001",
@@ -210,5 +210,7 @@
   "validation_issues": [
     "NPC 'The Thing' is referenced in ['module:plotStages'] but not placed in any location"
   ],
-  "generated_at": "2026-04-22T10:13:35.488444"
+  "generated_at": "2026-04-22T10:13:35.488444",
+  "author": "",
+  "license": ""
 }

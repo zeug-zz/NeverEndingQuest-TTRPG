@@ -116,7 +116,7 @@
       "name": "Deputy Silas Cragg",
       "role": "",
       "faction": "",
-      "description": "A gaunt, sharp-eyed man in a patched uniform, Deputy Silas Cragg acts as the town's unofficial law and the Gravebinders' chief enforcer. He is ever-watchful, wary of strangers, and harbors deep suspicions of anyone poking into the town\u2019s affairs. Cragg is terse, but may offer wary cooperation if convinced the party means no harm.",
+      "description": "A gaunt, sharp-eyed man in a patched uniform, Deputy Silas Cragg acts as the town's unofficial law and the Gravebinders' chief enforcer. He is ever-watchful, wary of strangers, and harbors deep suspicions of anyone poking into the town’s affairs. Cragg is terse, but may offer wary cooperation if convinced the party means no harm.",
       "appears_in": [
         {
           "area": "PVC001",
@@ -147,7 +147,7 @@
       "name": "Ezra Pike",
       "role": "",
       "faction": "",
-      "description": "The chief embalmer, Ezra is a gaunt, hollow-eyed man in his late fifties with a rasping voice and the calm hands of a practiced mortician. He is intensely private but deeply knowledgeable about the fate of Pottsfield\u2019s dead.",
+      "description": "The chief embalmer, Ezra is a gaunt, hollow-eyed man in his late fifties with a rasping voice and the calm hands of a practiced mortician. He is intensely private but deeply knowledgeable about the fate of Pottsfield’s dead.",
       "appears_in": [
         {
           "area": "PO001",
@@ -163,7 +163,7 @@
       "name": "Widow Elsie Tallow",
       "role": "",
       "faction": "",
-      "description": "A gaunt, veiled woman in black, tending a lantern and muttering prayers for the dead. She is both gatekeeper and mourner, fiercely protective of the grounds. Elsie knows much about Pottsfield\u2019s secret rites, but is haunted by memories of loved ones lost (and returned).",
+      "description": "A gaunt, veiled woman in black, tending a lantern and muttering prayers for the dead. She is both gatekeeper and mourner, fiercely protective of the grounds. Elsie knows much about Pottsfield’s secret rites, but is haunted by memories of loved ones lost (and returned).",
       "appears_in": [
         {
           "area": "PVC001",
@@ -193,7 +193,7 @@
       "name": "Father Milgrom",
       "role": "",
       "faction": "",
-      "description": "A gaunt, hollow-eyed priest in tattered vestments, bound unwillingly to the altar. He is lucid but despairing, haunted by his failure to stop the Veilwood\u2019s corruption. Milgrom is desperate for absolution and guidance, and holds vital knowledge about the curse\u2014and its undoing.",
+      "description": "A gaunt, hollow-eyed priest in tattered vestments, bound unwillingly to the altar. He is lucid but despairing, haunted by his failure to stop the Veilwood’s corruption. Milgrom is desperate for absolution and guidance, and holds vital knowledge about the curse—and its undoing.",
       "appears_in": [
         {
           "area": "TSW001",
@@ -209,7 +209,7 @@
       "name": "Masked Reveler",
       "role": "",
       "faction": "",
-      "description": "A jovial figure in a patchwork cloak and a carved pumpkin mask, the Masked Reveler is both entertainer and secret-keeper. They organize strange harvest games and encourage newcomers to take part. Beneath their mirth lies a calculating mind, ever watching the crowd for threats to Pottsfield\u2019s order.",
+      "description": "A jovial figure in a patchwork cloak and a carved pumpkin mask, the Masked Reveler is both entertainer and secret-keeper. They organize strange harvest games and encourage newcomers to take part. Beneath their mirth lies a calculating mind, ever watching the crowd for threats to Pottsfield’s order.",
       "appears_in": [
         {
           "area": "PVC001",
@@ -268,7 +268,7 @@
       "name": "Freed Spirits",
       "role": "",
       "faction": "",
-      "description": "A chorus of faint, shimmering figures\u2014villagers lost to the Parish curse\u2014rise here if the Bound Spirit from the Stillhouse was released. They are grateful, speaking in riddles and blessing the party, but warn of a greater malignancy deeper within.",
+      "description": "A chorus of faint, shimmering figures—villagers lost to the Parish curse—rise here if the Bound Spirit from the Stillhouse was released. They are grateful, speaking in riddles and blessing the party, but warn of a greater malignancy deeper within.",
       "appears_in": [
         {
           "area": "PPG001",
@@ -1773,5 +1773,7 @@
       "ambiguous_destination_count": 0,
       "missing_npc_authority_count": 0
     }
-  }
+  },
+  "author": "Module narrative derived from https://homebrewery.naturalcrit.com/share/XFNvcjITKpyJ",
+  "license": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
 }

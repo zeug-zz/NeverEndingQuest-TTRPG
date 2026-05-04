@@ -268,5 +268,7 @@
     "NPC 'Ranger Branik' is referenced in ['campaign:faction:Circle of the Wild Heart'] but not placed in any location",
     "NPC 'Feyfriend Lirael' is referenced in ['campaign:faction:Circle of the Wild Heart'] but not placed in any location"
   ],
-  "generated_at": "2025-05-16T00:56:54.735718"
+  "generated_at": "2025-05-16T00:56:54.735718",
+  "author": "",
+  "license": ""
 }

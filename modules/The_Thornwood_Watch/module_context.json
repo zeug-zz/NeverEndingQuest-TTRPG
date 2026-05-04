@@ -2054,5 +2054,7 @@
     "npc_count": 18,
     "provenance": "llm_classification",
     "feature_flag": "ENABLE_LLM_CLASSIFICATION"
-  }
+  },
+  "author": "",
+  "license": ""
 }
