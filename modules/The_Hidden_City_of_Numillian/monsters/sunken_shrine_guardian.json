@@ -1,0 +1,79 @@
+{
+  "name": "Sunken Shrine Guardian",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 14,
+  "hitPoints": 22,
+  "maxHitPoints": 22,
+  "speed": 20,
+  "abilities": {
+    "strength": 14,
+    "dexterity": 10,
+    "constitution": 14,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 5
+  },
+  "savingThrows": [
+    "Con +4"
+  ],
+  "skills": {},
+  "damageVulnerabilities": [
+    "lightning"
+  ],
+  "damageResistances": [
+    "bludgeoning, piercing, and slashing from nonmagical attacks"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "charmed",
+    "exhaustion",
+    "frightened",
+    "paralyzed",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 10
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Amphibious",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Shrine Ward",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Slam",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Tidal Burst",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "The Sunken Shrine Guardian is a solemn relic of Numillian's older wards, a statue-like construct built to protect a submerged sanctum from intruders and corrosion alike. Its frame is carved from pale stone, lacquered bronze, and barnacle-scored metal plates, with joints sealed by dark resin and threaded with faintly glowing ward-lines that pulse like trapped moonlight beneath water. Weather and time have softened its features, but its face remains unmistakably vigilant: a smooth, masklike visage with hollow eye-slits lit from within by a cold blue-green gleam. Moss clings to its shoulders, silt cakes its hem, and ribbons of algae trail from its arms as though the shrine itself has grown around it.\n\nWhen it stirs, it does so with deliberate, ritual precision, each movement slow and heavy as a submerged bell. It carries a ceremonial halberd or hooked spear etched with sacred sigils, and its presence brings a hush to the air, as if the water around it is listening. In battle, it stands immovable at chokepoints and altar steps, guarding sealed offerings, hidden passages, and forbidden memory-vaults. Soft currents swirl at its feet, lantern light dims near its form, and the scent of wet stone and old incense hangs thick in the chamber."
+}

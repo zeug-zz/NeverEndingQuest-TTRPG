@@ -1,0 +1,89 @@
+{
+  "mapId": "MAP_G_4",
+  "mapName": "Dungeon Map",
+  "totalRooms": 4,
+  "rooms": [
+    {
+      "id": "G01",
+      "type": "entrance",
+      "connections": [
+        "G02",
+        "G04"
+      ],
+      "coordinates": "X10Y10",
+      "directions": {
+        "east": "G02"
+      },
+      "tags": [
+        "hub"
+      ],
+      "purpose": "transition",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Veiled Threshold"
+    },
+    {
+      "id": "G02",
+      "type": "vault",
+      "connections": [
+        "G01",
+        "G03"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "west": "G01"
+      },
+      "tags": [],
+      "purpose": "quest_goal",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Sealed Memory Vault"
+    },
+    {
+      "id": "G03",
+      "type": "corridor",
+      "connections": [
+        "G02",
+        "G04"
+      ],
+      "coordinates": "X13Y10",
+      "directions": {
+        "west": "G04"
+      },
+      "tags": [],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Whispering Trialway"
+    },
+    {
+      "id": "G04",
+      "type": "laboratory",
+      "connections": [
+        "G01",
+        "G03"
+      ],
+      "coordinates": "X12Y10",
+      "directions": {
+        "east": "G03"
+      },
+      "tags": [],
+      "purpose": "encounter",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Astral Experiment Hall"
+    }
+  ],
+  "layout": [
+    [
+      "G01",
+      "G02",
+      "G04",
+      "G03"
+    ]
+  ],
+  "startRoom": "G01",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}

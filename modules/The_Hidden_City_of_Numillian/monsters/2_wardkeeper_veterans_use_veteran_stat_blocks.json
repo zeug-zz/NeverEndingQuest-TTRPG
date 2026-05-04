@@ -1,0 +1,62 @@
+{
+  "name": "Wardkeeper veteran",
+  "size": "Medium",
+  "type": "Humanoid",
+  "alignment": "any alignment",
+  "armorClass": 17,
+  "hitPoints": 58,
+  "maxHitPoints": 58,
+  "speed": 30,
+  "abilities": {
+    "strength": 16,
+    "dexterity": 13,
+    "constitution": 14,
+    "intelligence": 10,
+    "wisdom": 11,
+    "charisma": 10
+  },
+  "savingThrows": [
+    "Str +5",
+    "Con +4"
+  ],
+  "skills": {
+    "Athletics": 5,
+    "Perception": 2
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 0,
+    "passivePerception": 12
+  },
+  "languages": "Common plus one other language",
+  "challengeRating": 3,
+  "specialAbilities": [],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "2 attacks with Longsword or Heavy Crossbow",
+      "damageBonus": 0,
+      "damageType": "varies"
+    },
+    {
+      "name": "Longsword",
+      "attackBonus": 5,
+      "damageDice": "1d8",
+      "damageBonus": 3,
+      "damageType": "slashing"
+    },
+    {
+      "name": "Heavy Crossbow",
+      "attackBonus": 3,
+      "damageDice": "1d10",
+      "damageBonus": 1,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

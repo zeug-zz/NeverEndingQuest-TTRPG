@@ -1,0 +1,73 @@
+{
+  "name": "Astral Fracture",
+  "size": "Medium",
+  "type": "Aberration",
+  "alignment": "unaligned",
+  "armorClass": 13,
+  "hitPoints": 18,
+  "maxHitPoints": 18,
+  "speed": 0,
+  "abilities": {
+    "strength": 1,
+    "dexterity": 16,
+    "constitution": 10,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 5
+  },
+  "savingThrows": [],
+  "skills": {
+    "perception": 2,
+    "stealth": 5
+  },
+  "damageVulnerabilities": [
+    "force"
+  ],
+  "damageResistances": [
+    "necrotic",
+    "psychic"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned",
+    "prone",
+    "grappled",
+    "restrained"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "understands Deep Speech but can't speak",
+  "challengeRating": 0.5,
+  "specialAbilities": [
+    {
+      "name": "Astral Flicker",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "force"
+    },
+    {
+      "name": "Fractured Form",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Shard Pulse",
+      "attackBonus": 5,
+      "damageDice": "2d6",
+      "damageBonus": 3,
+      "damageType": "force"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "An astral fracture is not a creature in the ordinary sense, but a wound in reality given hateful shape. It appears as a hovering split in the air, a jagged seam of starless darkness rimmed with pale violet light, as though the sky itself had been cracked open and never fully closed. Within the tear drift fragments of impossible geometry: shards of translucent stone, flickers of distant constellations, and ghostly reflections of nearby halls seen from wrong angles. Thin lines of silver energy lash outward like broken ward-sigils, humming with a sound felt more than heard.\n\nIn the Curated Quarter or the deeper trials of Numillian, an astral fracture would feel horribly out of place amid careful ledgers and sealed thresholds, yet it seems drawn to places of order under strain. It bends lantern light, distorts whispered voices, and leaves frost-like glitter across polished stone. Nearby objects may tremble, slide, or vanish for a heartbeat into the crack's depth before snapping back. When agitated, the fracture widens into a ragged oval, revealing a cold void full of drifting ruins and distant, watching stars. Its presence inspires unease, as if unseen minds are pressing against the world from beyond the veil."
+}

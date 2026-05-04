@@ -1,0 +1,81 @@
+{
+  "name": "Echo-Haunt",
+  "size": "Medium",
+  "type": "Undead",
+  "alignment": "Neutral Evil",
+  "armorClass": 12,
+  "hitPoints": 22,
+  "maxHitPoints": 22,
+  "speed": 0,
+  "abilities": {
+    "strength": 6,
+    "dexterity": 14,
+    "constitution": 12,
+    "intelligence": 10,
+    "wisdom": 12,
+    "charisma": 14
+  },
+  "savingThrows": [
+    "Dex +4",
+    "Wis +3"
+  ],
+  "skills": {
+    "Perception": 3,
+    "Stealth": 4
+  },
+  "damageVulnerabilities": [
+    "radiant"
+  ],
+  "damageResistances": [
+    "necrotic",
+    "bludgeoning, piercing, and slashing from nonmagical attacks"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "exhaustion",
+    "frightened",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "understands Common but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Incorporeal Movement",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "force"
+    },
+    {
+      "name": "Echo Trail",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Haunting Touch",
+      "attackBonus": 4,
+      "damageDice": "2d6",
+      "damageBonus": 2,
+      "damageType": "necrotic"
+    },
+    {
+      "name": "Echo Cry",
+      "attackBonus": 3,
+      "damageDice": "2d4",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

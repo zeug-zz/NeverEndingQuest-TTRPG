@@ -1,0 +1,581 @@
+{
+  "areaId": "HF002",
+  "areaName": "The First Trials Ruins",
+  "areaType": "dungeon",
+  "areaDescription": "Broken halls and half-buried courtyards stretch across this forgotten ruin, where cracked stone, faded sigils, and the echo of distant footsteps make every turn feel like a test already begun. Dust hangs in the stale air, and the old mechanisms still stir at times, trapping the unwary in puzzles, shifting passages, and dangers best met with caution.",
+  "dangerLevel": "medium",
+  "recommendedLevel": 5,
+  "climate": "controlled - cool and damp",
+  "terrain": "stone corridors and chambers",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Dungeon Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "entrance",
+        "connections": [
+          "G02",
+          "G04"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "transition",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Veiled Threshold"
+      },
+      {
+        "id": "G02",
+        "type": "vault",
+        "connections": [
+          "G01",
+          "G03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01"
+        },
+        "tags": [],
+        "purpose": "quest_goal",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Sealed Memory Vault"
+      },
+      {
+        "id": "G03",
+        "type": "corridor",
+        "connections": [
+          "G02",
+          "G04"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {
+          "west": "G04"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Whispering Trialway"
+      },
+      {
+        "id": "G04",
+        "type": "laboratory",
+        "connections": [
+          "G01",
+          "G03"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "east": "G03"
+        },
+        "tags": [],
+        "purpose": "encounter",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Astral Experiment Hall"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G04",
+        "G03"
+      ]
+    ],
+    "startRoom": "G01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Veiled Threshold",
+      "type": "entrance",
+      "description": "A shattered ceremonial gate half-swallowed by sand and ivy marks the first breach into the Hall of First Trials. Faded illusion-runes still shimmer in the cracked archway, briefly overlaying three different versions of the same entrance: one pristine, one ruined, and one blocked by ghostly stone. The air here feels tested, as if the ruin itself is asking whether the party belongs.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02",
+        "G04"
+      ],
+      "aliases": [
+        "Veiled Threshold",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_entrance:Veiled Threshold",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Curated Quarter"
+      ],
+      "areaConnectivityId": [
+        "G04"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Guardian Wisp",
+          "description": "A dim, rune-fed guardian that flares when anyone crosses the threshold without speaking the old challenge phrase.",
+          "role": "sentinel",
+          "quantity": 2
+        }
+      ],
+      "lootTable": [
+        "Cracked trial medallion",
+        "Dust-caked electrum chime",
+        "Scroll tube containing a partial site map"
+      ],
+      "plotHooks": [
+        "A hidden inscription near the arch suggests the first trial is not combat but recognition.",
+        "The illusion of the ruined gate flickers toward G04, hinting at a safer route through the laboratory wing."
+      ],
+      "dmInstructions": "This entrance is part of Hall of First Trials. Adjust encounters based on party strength. The gate should teach the ruin's core logic: observation, patience, and respect for old wards.",
+      "doors": [
+        {
+          "name": "Ceremonial Gate",
+          "description": "Twin stone leaves carved with closed eyes and interlocking sigils, now jammed in a crooked half-open position.",
+          "type": "heavy",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 18,
+          "keyname": "",
+          "trapped": true,
+          "trap": "If forced without solving the threshold glyph, a psychic flash deals 2d6 psychic damage and pushes intruders 10 feet back."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Threshold Rebuff",
+          "description": "A reactive ward hidden in the arch punishes brute-force entry.",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "2d6 psychic damage and pushed 10 feet back; on a failed DC 13 Wisdom save, the target has disadvantage on its next check in the ruin."
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 13: Notice which illusion-layer is stable enough to trust.",
+        "History DC 12: Recall the ceremonial wording used by Numillian trial gates.",
+        "Arcana DC 14: Identify the ward pattern that powers the threshold rebuff."
+      ],
+      "accessibility": "Normal access; visible from a distance, but the threshold reacts to careless entry.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Triple-Image Arch",
+          "description": "The gate appears in three states at once, making the correct path unclear until studied."
+        },
+        {
+          "name": "Rune-Dust Floor",
+          "description": "Fine dust gathers in the grooves of old sigils, revealing recent footsteps or hidden pressure plates."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "First Challenge of Presence",
+          "description": "The threshold tests the party with a brief illusion of the hall's former guardians, forcing them to stand still and answer a riddle or endure a psychic lash.",
+          "difficulty": "Medium"
+        }
+      ],
+      "adventureSummary": "The party arrives at the ruin's first test, where entry itself is framed as a trial of composure and perception."
+    },
+    {
+      "locationId": "G02",
+      "name": "Sealed Memory Vault",
+      "type": "vault",
+      "description": "A round chamber sunk below the courtyard, its walls lined with sealed niches and memory-slates that hum when approached. The vault door is not merely locked; it is convinced. Strange lenses in the ceiling replay fragments of past intruders, comparing them against a forgotten ideal. At the chamber's center stands a stone plinth with a palm-shaped depression and a fading warning about stolen recollections.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G03"
+      ],
+      "aliases": [
+        "Sealed Memory Vault",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_vault:Sealed Memory Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Kobe, a guarded resident tied to the vault",
+          "description": "A tense resident kept under warded protection, treated as both witness and key to the vault's preservation logic. They know the chamber's routines and are frightened of what the memories might reveal.",
+          "attitude": "guarded"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Mnemonic Sentinel",
+          "description": "A crystal-bodied construct that attacks anyone who tampers with the memory niches.",
+          "role": "guardian",
+          "quantity": 1
+        },
+        {
+          "name": "Memory Echo",
+          "description": "A psychic residue that repeats hostile motions from prior intruders.",
+          "role": "hazard",
+          "quantity": 2
+        }
+      ],
+      "lootTable": [
+        "Memory prism worth 75 gp",
+        "Potion of Mind Shielding",
+        "Stone key etched with a palm sigil"
+      ],
+      "plotHooks": [
+        "Kobe can identify which memory-slates are false and which contain the route to deeper chambers.",
+        "A damaged niche hints that someone deliberately altered the vault's records before the crisis began."
+      ],
+      "dmInstructions": "This vault is part of Hall of First Trials. Make the chamber feel like a place where truth is stored imperfectly. Kobe should be protected, frightened, and essential, not casually exposed to danger.",
+      "doors": [
+        {
+          "name": "Vault Seal",
+          "description": "A circular stone door with a palm-shaped recess and layered concentric runes that rotate when touched.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 22,
+          "keyname": "Palm Sigil Key",
+          "trapped": true,
+          "trap": "A failed bypass triggers a memory surge: the opener takes 2d8 psychic damage and must succeed on a DC 14 Wisdom save or be stunned until the end of its next turn."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Mnemonic Surge",
+          "description": "The vault's record lenses overload when the seal is disturbed incorrectly.",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 14,
+          "damage": "2d8 psychic damage and the target must succeed on a DC 14 Wisdom save or be stunned until the end of its next turn."
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 15: Separate genuine memory-slates from crafted decoys.",
+        "Arcana DC 14: Stabilize the lens array long enough to access the vault safely.",
+        "Persuasion DC 13: Calm Kobe enough to obtain a crucial detail about the chamber."
+      ],
+      "accessibility": "Requires passing the entrance and dealing with a locked seal; accessible with careful play or the proper key.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Replaying Lenses",
+          "description": "Ceiling lenses project flickering scenes of past intrusions and failed attempts."
+        },
+        {
+          "name": "Memory Niches",
+          "description": "Dozens of wall niches hold slivers of preserved thought, some intact and some corrupted."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Vault Comparison Rite",
+          "description": "The chamber compares the party against stored impressions, turning their own shadows into hostile echoes if they linger too long.",
+          "difficulty": "Medium"
+        }
+      ],
+      "adventureSummary": "This chamber protects a living witness and a bank of altered memories that point toward the ruin's deeper secrets."
+    },
+    {
+      "locationId": "G03",
+      "name": "Whispering Trialway",
+      "type": "corridor",
+      "description": "A long corridor of broken reliefs and collapsed ceiling panels, where every footstep returns a second later as a different voice. The walls bear faded scenes of initiates walking blindfolded between mirrors; some mirrors remain, set into the masonry like watchful eyes. Occasional gusts carry whispered instructions that are sometimes helpful, sometimes malicious, and never entirely trustworthy.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G02",
+        "G04"
+      ],
+      "aliases": [
+        "Whispering Trialway",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_corridor:Whispering Trialway",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Ilyra, Wardkeeper adjudicator",
+          "description": "A stern adjudicator stationed here to observe whether travelers can navigate the trialway without relying on brute force. She records every misstep and every act of restraint.",
+          "attitude": "watchful"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Mirror Scrivener",
+          "description": "A thin, glass-limbed entity that scribbles false directions into the air and attacks those who follow them.",
+          "role": "lurker",
+          "quantity": 1
+        },
+        {
+          "name": "Whisper Swarm",
+          "description": "A cloud of disembodied trial-voices that disorients and distracts.",
+          "role": "hazard",
+          "quantity": 1
+        }
+      ],
+      "lootTable": [
+        "Ink-black chalk stick",
+        "Silvered mirror shard",
+        "Wardkeeper token stamped with a closed eye"
+      ],
+      "plotHooks": [
+        "Ilyra can confirm that the corridor's whispers are part of an official test, not a random haunting.",
+        "One mirror shard reflects a hidden passage toward G04 only when the party speaks a true statement aloud."
+      ],
+      "dmInstructions": "This corridor should feel tense and cerebral. Ilyra is not a combatant by default; she is an evaluator whose approval or disapproval can alter how much help the party receives later.",
+      "doors": [
+        {
+          "name": "North Mirror Door",
+          "description": "A shallow arch filled by a suspended mirror pane, hairline-cracked but still responsive to spoken commands.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 16,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "South Relief Door",
+          "description": "A stone slab embossed with blindfolded figures and a concealed seam at its base.",
+          "type": "regular",
+          "locked": true,
+          "lockDC": 14,
+          "breakDC": 18,
+          "keyname": "Wardkeeper Token",
+          "trapped": true,
+          "trap": "If opened without presenting a token, a whisper pulse imposes disadvantage on Wisdom checks for 10 minutes."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo Snare",
+          "description": "The corridor amplifies movement into misleading voices that draw travelers toward unstable floor sections.",
+          "detectDC": 13,
+          "disableDC": 14,
+          "triggerDC": 13,
+          "damage": "1d8 psychic damage and the target is pulled 10 feet in the direction of the loudest false echo."
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Distinguish a real hallway seam from a mirrored illusion.",
+        "Insight DC 14: Tell which whisper is trying to help and which is trying to mislead.",
+        "Stealth DC 12: Move through the corridor without awakening the whisper swarm."
+      ],
+      "accessibility": "Open passage between the vault and the laboratory wing, but dangerous because of sound-based wards and deceptive geometry.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Mirror Insets",
+          "description": "Fragments of polished stone reflect different versions of the same corridor."
+        },
+        {
+          "name": "Whispered Instructions",
+          "description": "The air carries trial phrases that can aid or mislead depending on how the party responds."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Adjudicator's Observation",
+          "description": "Ilyra watches the party negotiate the corridor's illusions, intervening only if they violate the trial's spirit.",
+          "difficulty": "Low"
+        }
+      ],
+      "adventureSummary": "A deceptive passage where the ruin evaluates honesty, caution, and the ability to ignore misleading guidance."
+    },
+    {
+      "locationId": "G04",
+      "name": "Astral Experiment Hall",
+      "type": "laboratory",
+      "description": "A shattered laboratory and ritual observatory where cracked star-charts hang above broken worktables and copper rings embedded in the floor still turn by themselves. The room smells faintly of ozone and old incense. On the far wall, a constellation map has been scratched over and over until it resembles a warning sigil, as though the original experiments went too far and were later denied.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G01",
+        "G03"
+      ],
+      "aliases": [
+        "Astral Experiment Hall",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_laboratory:Astral Experiment Hall",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Lower Vaults"
+      ],
+      "areaConnectivityId": [
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Shuluth, unseen voice behind the wards",
+          "description": "An unseen, disembodied presence that speaks through the hall's rotating rings and broken lenses, offering guidance that is always too precise to be trusted.",
+          "attitude": "manipulative"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Astral Fracture",
+          "description": "A shard-like elemental of light and static created by unstable star magic.",
+          "role": "hazard",
+          "quantity": 1
+        },
+        {
+          "name": "Spellbound Homunculus",
+          "description": "A tiny lab construct still obeying commands long after its creators vanished.",
+          "role": "guard",
+          "quantity": 2
+        }
+      ],
+      "lootTable": [
+        "Star-etched lens",
+        "Scroll of Detect Thoughts",
+        "Alchemical silver dust",
+        "Formula notes for ward stabilization"
+      ],
+      "plotHooks": [
+        "Shuluth's voice reveals that the First Trials were designed to filter minds as much as bodies.",
+        "A damaged star-chart shows a path to a deeper, sealed route that bypasses the obvious exits."
+      ],
+      "dmInstructions": "This room should feel like the intellectual core of the dungeon. Shuluth can speak here, but should remain indirect and unsettling, never fully present. Use this space to foreshadow the larger Numillian crisis without resolving it.",
+      "doors": [
+        {
+          "name": "Ringed Observatory Door",
+          "description": "A circular iris of bronze spokes that opens when the floor rings are aligned to the ceiling chart.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 20,
+          "keyname": "",
+          "trapped": true,
+          "trap": "Misaligned rings discharge a burst of force that deals 2d6 force damage to creatures within 10 feet of the door."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Constellation Backlash",
+          "description": "The laboratory's star-mapping apparatus punishes incorrect alignment with a sudden surge of astral energy.",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 14,
+          "damage": "2d6 force damage and the target is pushed 10 feet; on a failed DC 13 Intelligence save, it cannot take reactions until the end of its next turn."
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 15: Align the floor rings with the true star pattern.",
+        "Investigation DC 14: Notice the over-scratched warning sigil hiding the original diagram.",
+        "Religion DC 12: Recognize the hall as part of an initiation meant to test spiritual discipline as well as intellect."
+      ],
+      "accessibility": "Accessible from the trialway; the room is unstable but not sealed.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Turning Floor Rings",
+          "description": "Copper rings inset in the stone rotate slowly, changing the room's spatial logic."
+        },
+        {
+          "name": "Scratched Constellation Wall",
+          "description": "A once-precise chart has been repeatedly defaced into a warning sign."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Astral Calibration Test",
+          "description": "The room forces the party to correct a rotating constellation pattern while dealing with hostile lab remnants.",
+          "difficulty": "Medium"
+        }
+      ],
+      "adventureSummary": "The laboratory reveals that the first trials were both magical and psychological, with one hidden voice still steering events from within the ruin."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    }
+  ],
+  "areaFeatures": [
+    "hidden passages",
+    "ancient murals",
+    "mysterious mechanisms"
+  ],
+  "notes": "Consider lighting sources and trap placement. Underground areas may have limited resources.",
+  "spatialContractVersion": 1
+}

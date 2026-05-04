@@ -1,0 +1,66 @@
+{
+  "name": "Giant Constrictor Snake",
+  "size": "Huge",
+  "type": "Beast",
+  "alignment": "Unaligned",
+  "armorClass": 12,
+  "hitPoints": 60,
+  "maxHitPoints": 60,
+  "speed": 30,
+  "abilities": {
+    "strength": 19,
+    "dexterity": 14,
+    "constitution": 12,
+    "intelligence": 1,
+    "wisdom": 10,
+    "charisma": 3
+  },
+  "savingThrows": [],
+  "skills": {
+    "perception": 3
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 0,
+    "passivePerception": 13
+  },
+  "languages": "",
+  "challengeRating": 2,
+  "specialAbilities": [
+    {
+      "name": "Hold Breath",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Constrict",
+      "attackBonus": 6,
+      "damageDice": "2d8",
+      "damageBonus": 4,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Bite",
+      "attackBonus": 6,
+      "damageDice": "2d6",
+      "damageBonus": 4,
+      "damageType": "piercing"
+    },
+    {
+      "name": "Constrict",
+      "attackBonus": 6,
+      "damageDice": "2d8",
+      "damageBonus": 4,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

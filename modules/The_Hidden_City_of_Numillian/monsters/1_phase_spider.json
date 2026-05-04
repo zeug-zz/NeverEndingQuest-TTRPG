@@ -1,0 +1,60 @@
+{
+  "name": "Phase Spider",
+  "size": "Medium",
+  "type": "Monstrosity",
+  "alignment": "Unaligned",
+  "armorClass": 13,
+  "hitPoints": 32,
+  "maxHitPoints": 32,
+  "speed": 30,
+  "abilities": {
+    "strength": 15,
+    "dexterity": 15,
+    "constitution": 12,
+    "intelligence": 6,
+    "wisdom": 10,
+    "charisma": 6
+  },
+  "savingThrows": [],
+  "skills": {
+    "Perception": 3,
+    "Stealth": 4
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "",
+  "challengeRating": 3,
+  "specialAbilities": [
+    {
+      "name": "Spider Climb",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Ethereal Jaunt",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Bite",
+      "attackBonus": 5,
+      "damageDice": "1d10",
+      "damageBonus": 2,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

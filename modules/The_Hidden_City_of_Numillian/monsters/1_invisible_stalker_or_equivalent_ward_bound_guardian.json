@@ -1,0 +1,86 @@
+{
+  "name": "Invisible Stalker",
+  "size": "Medium",
+  "type": "Elemental",
+  "alignment": "Neutral",
+  "armorClass": 14,
+  "hitPoints": 19,
+  "maxHitPoints": 19,
+  "speed": 50,
+  "abilities": {
+    "strength": 16,
+    "dexterity": 19,
+    "constitution": 14,
+    "intelligence": 10,
+    "wisdom": 15,
+    "charisma": 11
+  },
+  "savingThrows": [
+    "Dex +5",
+    "Con +2",
+    "Wis +2"
+  ],
+  "skills": {
+    "Perception": 4,
+    "Stealth": 7
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing from nonmagical attacks"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "exhaustion",
+    "grappled",
+    "paralyzed",
+    "petrified",
+    "poisoned",
+    "prone",
+    "restrained",
+    "unconscious"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 14
+  },
+  "languages": "Auran, understands Common but can't speak",
+  "challengeRating": 0.5,
+  "specialAbilities": [
+    {
+      "name": "Invisibility",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Faultless Tracker",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Slam",
+      "attackBonus": 5,
+      "damageDice": "1d6",
+      "damageBonus": 3,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

@@ -1,0 +1,623 @@
+{
+  "areaId": "SS005",
+  "areaName": "The Shuluth Expanse",
+  "areaType": "town",
+  "areaDescription": "Black stone roads and half-buried shrines stretch across a blighted region where the air tastes of ash, salt, and old incense. In the shattered townships of the Expanse, whispering cults and things that should remain entombed in the deep watch from every doorway, making even daylight feel like a borrowed mercy.",
+  "dangerLevel": "extreme",
+  "recommendedLevel": 8,
+  "climate": "temperate",
+  "terrain": "urban streets and buildings",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Town Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "market",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Veiled Bazaar"
+      },
+      {
+        "id": "G02",
+        "type": "warehouse",
+        "connections": [
+          "G01",
+          "G03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01",
+          "east": "G03"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "extreme",
+        "name": "Echo Vault"
+      },
+      {
+        "id": "G03",
+        "type": "gate",
+        "connections": [
+          "G02",
+          "G04"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "G02",
+          "east": "G04"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "transition",
+        "landmark": false,
+        "dangerLevel": "extreme",
+        "name": "Riddle Gate"
+      },
+      {
+        "id": "G04",
+        "type": "market",
+        "connections": [
+          "G03"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {
+          "west": "G03"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Sunken Market"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G02",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "SS005-G01",
+      "name": "Veiled Bazaar",
+      "type": "market",
+      "description": "A sunken market of black awnings and salt-stiff canopies where traders whisper through porcelain veils. The stalls sell incense, ward-chalk, bone charms, and sealed jars of ash-gray spice. Every transaction is watched by carved stone masks mounted on the surrounding rooftops, and the shadows beneath the stalls feel a little too attentive.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "SS005-G02"
+      ],
+      "aliases": [
+        "Veiled Bazaar",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_market:Veiled Bazaar",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Lower Vaults"
+      ],
+      "areaConnectivityId": [
+        "G04"
+      ],
+      "npcs": [
+        {
+          "name": "Mirael, a surface-contact scout",
+          "description": "A sharp-eyed courier in dust-dark travel leathers, quietly trading information and warning outsiders which stalls are safe. She is wary but helpful if the party proves they are not Shuluth cult-sympathizers.",
+          "attitude": "Wary and helpful"
+        },
+        {
+          "name": "Elaris, a diplomat of the Secrecy Council",
+          "description": "A veiled official negotiating supply access while pretending to be an ordinary merchant. She can secure permits, but only if the party agrees to keep certain truths buried.",
+          "attitude": "Controlled, diplomatic"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Ash Veil Cultist",
+          "quantity": 4,
+          "role": "Ambushers hidden among the stalls"
+        },
+        {
+          "name": "Whispering Shade",
+          "quantity": 1,
+          "role": "A lurking manifestation under the central awning"
+        }
+      ],
+      "lootTable": [
+        "2d6 gp in mixed coin wrapped in incense paper",
+        "Ward-chalk stick",
+        "Potion of healing",
+        "Silvered prayer beads",
+        "Jar of ash-salt spice"
+      ],
+      "plotHooks": [
+        "A merchant claims to have seen a map fragment leading toward the Hall of First Trials.",
+        "Mirael can guide the party to a hidden route if they help expose a cult fixer in the bazaar.",
+        "A stall owner offers a sealed token that functions as a warning pass in the Curated Districts."
+      ],
+      "dmInstructions": "Use this as the party's first stop in the Shuluth Expanse. It should feel like a tense, information-rich introduction: social pressure, suspicious glances, and a low-level threat that can turn into a fight if the players push too hard. Any overtly divine or radiant magic draws attention from the nearby cult watchers.",
+      "doors": [
+        {
+          "name": "South Archway",
+          "description": "A broad stone arch leading into the next lane, its lintel carved with faded market sigils and a cracked eye motif.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Listening Charms",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 0,
+          "damage": "No direct damage; trigger whispered alarms that summon 1d4 Ash Veil Cultists in 1d4 rounds."
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 13: Spot which vendor is feeding information to the cult.",
+        "Perception DC 14: Notice the listening charms hidden in the awnings.",
+        "Persuasion DC 15: Convince a merchant to reveal a secret route."
+      ],
+      "accessibility": "Normal access through the market lanes, though movement is slowed by crowds and suspicious vendors.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Crowd Areas",
+          "description": "Dense pockets of shoppers and traders create cover, concealment, and opportunities for pickpocketing or eavesdropping."
+        },
+        {
+          "name": "Haggling Spots",
+          "description": "Low stone tables and hanging scales serve as negotiation points where favors can be bought as easily as goods."
+        },
+        {
+          "name": "Vendor Stalls",
+          "description": "Rattling stalls of cloth, bone, and incense line the bazaar, each one a potential source of rumors or danger."
+        }
+      ],
+      "encounters": [
+        "A bargaining dispute turns into a public accusation of cult sympathy.",
+        "A Whispering Shade tests the party by mimicking the voice of someone they trust.",
+        "Mirael quietly requests escort to a safer lane if the bazaar becomes hostile."
+      ],
+      "adventureSummary": "The Veiled Bazaar is the party's first contact with the Shuluth Expanse: a tense trade hub where information is currency, cult influence is everywhere, and the road onward is guarded by eyes that never fully blink."
+    },
+    {
+      "locationId": "SS005-G02",
+      "name": "Echo Vault",
+      "type": "warehouse",
+      "description": "A fortified warehouse built into a collapsed shrine foundation, its walls lined with sealed amphorae and echoing stone racks. Every sound lingers too long here, as if the room itself is repeating conversations for unseen listeners. The lower shelves contain hidden compartments used to move contraband, relics, and forbidden records between safe hands.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "SS005-G01",
+        "SS005-G03"
+      ],
+      "aliases": [
+        "Echo Vault",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_warehouse:Echo Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Arannis, vault scholar and alarmed archivist",
+          "description": "A frantic scholar cataloging relic shipments and secretly searching for records tied to Numillian's hidden wards. He speaks quickly, scribbles faster, and keeps glancing at the rafters as if expecting them to answer back.",
+          "attitude": "Anxious but cooperative"
+        },
+        {
+          "name": "Kobe, guarded resident tied to the vault",
+          "description": "A protective resident overseeing the warehouse's sealed lower chambers. Kobe is suspicious of outsiders, but clearly afraid of what will happen if the wrong records are removed.",
+          "attitude": "Guarded and distrustful"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Ward-Sworn Brute",
+          "quantity": 2,
+          "role": "Warehouse enforcers hiding behind storage racks"
+        },
+        {
+          "name": "Echo Wisp",
+          "quantity": 2,
+          "role": "Sound-fed spirits that repeat commands and confuse intruders"
+        }
+      ],
+      "lootTable": [
+        "Bundle of sealed correspondence",
+        "Scroll of detect magic",
+        "Potion of mind reading",
+        "50 gp in trade bars",
+        "Archivist's wax seal"
+      ],
+      "plotHooks": [
+        "Arannis possesses a partial route note pointing toward the Riddle Gate.",
+        "Kobe knows which records are authentic and which were planted to mislead investigators.",
+        "A hidden compartment contains a reference to the Hall of First Trials and a warning about psychic warding."
+      ],
+      "dmInstructions": "This location should function as a lore and pressure point. Let the players learn that the Expanse is organized around secrecy, controlled access, and a growing vault crisis. The warehouse can become a social scene, a stealth scene, or a combat scene depending on how openly the party investigates the lower chambers.",
+      "doors": [
+        {
+          "name": "Front Loading Door",
+          "description": "A heavy iron-banded wooden door with a chain winch and soot-black hinges.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 20,
+          "keyname": "Warehouse Chain Key",
+          "trapped": true,
+          "trap": "A vibration rune releases a burst of echoing force and alerts nearby wardens."
+        },
+        {
+          "name": "Hidden Shelf Panel",
+          "description": "A narrow sliding panel concealed behind stacked amphorae and dust cloths.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 14,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo Rune",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 0,
+          "damage": "2d8 thunder damage and a loud report that alerts all creatures in adjacent rooms."
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 14: Find the concealed record cache in the lower shelves.",
+        "Arcana DC 15: Identify the echo rune and understand its trigger.",
+        "Insight DC 13: Determine whether Kobe is protecting the vault or hiding a lie."
+      ],
+      "accessibility": "Moderate access; the front door is secured and watched, but the hidden shelf panel allows quieter entry for those who know where to look.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Dust",
+          "description": "Thick dust lies over the racks, making recent disturbances easy to read but also easy to erase."
+        },
+        {
+          "name": "Storage Racks",
+          "description": "Tall stone-and-wood racks create lanes of cover and narrow sightlines for ambushes."
+        },
+        {
+          "name": "Hidden Compartments",
+          "description": "Secret drawers and false bottoms conceal documents, relics, and contraband tied to the vault crisis."
+        }
+      ],
+      "encounters": [
+        "The party is asked to verify a shipment while cult agents try to steal a record bundle.",
+        "A Ward-Sworn Brute attempts to seize any document mentioning Numillian's lower seals.",
+        "Echo Wisps repeat a confession that could expose one of the warehouse's protectors."
+      ],
+      "adventureSummary": "Echo Vault is a guarded repository of records and relics where the party can uncover the first hard evidence of a larger crisis, but only if they survive the warehouse's wards and the people desperate to keep its contents secret."
+    },
+    {
+      "locationId": "SS005-G03",
+      "name": "Riddle Gate",
+      "type": "gate",
+      "description": "A black stone gate framed by broken obelisks and rotating rings of carved questions. The surface of the arch shimmers with faint psychic static, and each answer spoken aloud is briefly echoed by a different voice. Those who approach can feel the gate weighing intent as much as identity.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "SS005-G02",
+        "SS005-G04"
+      ],
+      "aliases": [
+        "Riddle Gate",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_gate:Riddle Gate",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Thalanis, Secrecy Council examiner",
+          "description": "A severe examiner stationed to judge who may pass deeper into the Expanse. Thalanis treats every answer as a test of loyalty, not intelligence, and watches for any sign of hidden motive.",
+          "attitude": "Suspicious and formal"
+        },
+        {
+          "name": "Letharel, the silent border warden",
+          "description": "A silent sentinel who stands near the gate's shadow line, enforcing the boundary with minimal movement and maximum authority. Letharel's silence feels less like restraint and more like a warning.",
+          "attitude": "Implacable and watchful"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Riddle Sentinel",
+          "quantity": 2,
+          "role": "Animated ward constructs guarding the gate"
+        },
+        {
+          "name": "Psychic Leech",
+          "quantity": 1,
+          "role": "A parasite that feeds on failed answers and confusion"
+        }
+      ],
+      "lootTable": [
+        "Gate token stamped with a ward sigil",
+        "Spell scroll of comprehend languages",
+        "Gemmed eye charm",
+        "20 gp in polished black coins"
+      ],
+      "plotHooks": [
+        "Thalanis can authorize passage if the party solves the gate's formal test or produces evidence from Echo Vault.",
+        "The gate's carved questions reference the Hall of First Trials and hint at a deeper psychic gauntlet.",
+        "A hidden phrase, learned from Mirael or Arannis, can bypass one stage of the gate's scrutiny."
+      ],
+      "dmInstructions": "Treat this as the main transition point between the market district and the deeper, more controlled parts of the town. The gate should reward players who gathered information earlier, while punishing brute force with psychic backlash or reinforcements. If the party acts respectfully, Thalanis may become a useful but stern ally.",
+      "doors": [
+        {
+          "name": "Inner Riddle Slab",
+          "description": "A seamless stone panel that slides aside only after the gate accepts an answer.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 22,
+          "keyname": "Gate Token of Passage",
+          "trapped": true,
+          "trap": "A psychic pulse lashes intruders with disorienting questions and summons ward sentries."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Questioning Sigils",
+          "detectDC": 16,
+          "disableDC": 17,
+          "triggerDC": 0,
+          "damage": "3d6 psychic damage and disadvantage on the next Intelligence or Wisdom check made in the area."
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 15: Tell which answer Thalanis expects versus which answer is true.",
+        "Arcana DC 16: Interpret the gate's psychic resonance and suppress one ward cycle.",
+        "History DC 14: Recall ceremonial gate forms used by secretive city-states."
+      ],
+      "accessibility": "Restricted access; passage requires either authorization, a solved riddle sequence, or forceful breach under heavy scrutiny.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Signs Of Age",
+          "description": "Long erosion marks and repeated repairs show that this gate has been tested by many generations of intruders."
+        },
+        {
+          "name": "Carved Questions",
+          "description": "Rotating rings of text pose layered riddles that can open, delay, or punish passage."
+        },
+        {
+          "name": "Psychic Static",
+          "description": "A faint mental pressure blankets the area, making lies harder to maintain and fear harder to ignore."
+        }
+      ],
+      "encounters": [
+        "The gate asks a sequence of riddles that change based on the party's earlier choices.",
+        "Letharel may silently prevent violence if the party attempts to rush the checkpoint.",
+        "A failed answer causes a Riddle Sentinel to animate and challenge the intruders."
+      ],
+      "adventureSummary": "Riddle Gate is the Expanse's formal boundary into deeper secrecy, where riddles, psychic pressure, and stern authority determine whether the party may proceed toward the hidden heart of Numillian."
+    },
+    {
+      "locationId": "SS005-G04",
+      "name": "Sunken Market",
+      "type": "market",
+      "description": "A half-collapsed market square where the paving stones have sunk around an ancient shrine basin. Water seeps through cracks in the black rock, leaving mineral stains and the scent of old incense. Traders here deal in salvage, relic permits, and favors spoken softly enough that the walls cannot be sure they heard them.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "SS005-G03"
+      ],
+      "aliases": [
+        "Sunken Market",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_market:Sunken Market",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "HF002",
+        "Veilwood Fringe"
+      ],
+      "areaConnectivityId": [
+        "HF002",
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Seryn Vale, keeper of the first trial",
+          "description": "A calm, exacting keeper who oversees the first true test for those seeking the deeper vault ways. Seryn watches for honesty under stress and offers guidance only to those who can endure discomfort without lashing out.",
+          "attitude": "Measured and testing"
+        },
+        {
+          "name": "Kobe, guarded resident tied to the vault",
+          "description": "Kobe appears here under close watch, escorting a sealed parcel and refusing to discuss its contents. The resident's fear makes every word feel rehearsed, as though someone has instructed them exactly what not to say.",
+          "attitude": "Guarded and frightened"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Sunken Shrine Guardian",
+          "quantity": 1,
+          "role": "Awakened stone defender rising from the basin"
+        },
+        {
+          "name": "Ash Veil Cultist",
+          "quantity": 3,
+          "role": "Relic thieves posing as market patrons"
+        }
+      ],
+      "lootTable": [
+        "Relic permit seal",
+        "Potion of heroism",
+        "Black pearl worth 100 gp",
+        "Incense bundle keyed to a warded shrine",
+        "Map scrap showing the Hall of First Trials entrance"
+      ],
+      "plotHooks": [
+        "Seryn can send the party into the Hall of First Trials if they agree to carry a warning for the warded chambers.",
+        "Kobe may reveal that the vault crisis is tied to a breach below the market basin.",
+        "A shrine ledger names a hidden descent and confirms that the next stage lies in HF002."
+      ],
+      "dmInstructions": "This is the transition point into the dungeon area and should feel like the town is giving way to a controlled trial space. Let Seryn act as a gatekeeper who can either provide a formal introduction to the Hall of First Trials or withhold access until the party proves themselves. If combat breaks out, the shrine basin can become hazardous terrain.",
+      "doors": [
+        {
+          "name": "Basin Stair",
+          "description": "A narrow stair cut into the side of the sunken shrine basin, descending beneath a ring of cracked prayer stones.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Relic Permit Seal",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Ritual Sinkhole",
+          "detectDC": 13,
+          "disableDC": 14,
+          "triggerDC": 12,
+          "damage": "2d6 bludgeoning damage from collapsing stone and a fall into shallow, debris-filled water."
+        }
+      ],
+      "dcChecks": [
+        "Religion DC 14: Identify the shrine's original purpose and why it was sunk.",
+        "Perception DC 13: Notice the hidden stair into the Hall of First Trials.",
+        "Athletics DC 15: Keep footing on the wet, uneven basin stones during a fight."
+      ],
+      "accessibility": "Limited access; the market is open to the public, but the descent into the shrine basin is controlled by permits and the keeper's approval.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Haggling Spots",
+          "description": "Stone benches around the basin let traders negotiate while keeping one eye on the shrine and the other on their rivals."
+        },
+        {
+          "name": "Vendor Stalls",
+          "description": "Salvage booths and relic tables cluster around the edges, offering clues, permits, and contraband in equal measure."
+        },
+        {
+          "name": "Sunken Basin",
+          "description": "The collapsed shrine depression can flood, collapse, or serve as a difficult battlefield depending on how the scene unfolds."
+        }
+      ],
+      "encounters": [
+        "Seryn Vale administers a formal challenge before granting descent.",
+        "Ash Veil Cultists attempt to intercept the party's permit or steal the shrine ledger.",
+        "The Sunken Shrine Guardian awakens if anyone disturbs the basin's central seal."
+      ],
+      "adventureSummary": "The Sunken Market is a relic exchange and access point to the Hall of First Trials, where the party can earn sanctioned entry, uncover the vault crisis's first physical evidence, and descend from town intrigue into controlled danger."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 8 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 8 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 8 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 8 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 8 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 8 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 8 parties"
+    }
+  ],
+  "areaFeatures": [
+    "local tavern",
+    "market square",
+    "merchant quarter"
+  ],
+  "notes": "NPCs should have daily routines. Political factions create roleplay opportunities.",
+  "spatialContractVersion": 1
+}

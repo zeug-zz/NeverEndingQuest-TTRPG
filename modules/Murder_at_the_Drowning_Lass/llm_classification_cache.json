@@ -1,0 +1,35 @@
+{
+  "destination": {
+    "1126775bf48d7c2c3797009eb8751b282c37ecd0dfba356ff6f91315f9e57061": "canonical_alias",
+    "d4a875ef90dabded33c842909ecceff4c9025ea83454baa55c3e30e93082cb7b": "canonical_alias",
+    "d01c9667027b7d470b94c1acdd100c930203da977a2cf8b90b3a95bf6e93546e": "canonical_alias",
+    "db4e321e6fb365320bc9a3b84bc782fe1fb5622401951f17aeb0cc74086e1651": "canonical_alias",
+    "69c7b8fb9605a5e85e75cfc3238977e8948bbfc7bd40da4a8e8fa1ac26bf33aa": "canonical_alias",
+    "5cdb4fce7ef905e9abab984166d69ca5d59af100d852607ef825e11655a3a85a": "canonical_alias",
+    "0dd211d9be5b52572c1efe7a68f8eafa38e56f95e8a216821be69a25a0fe3fdf": "canonical_alias",
+    "57be633a825ca101466475a6c78d251cec437fd02aad98ecbe66540ea1a3b888": "canonical_alias",
+    "b81ef6ff26a69c9c445354bc526fec8d9e2ec3b096ab78d84e8de05e8291a29c": "canonical_alias",
+    "f0ff2c3301b6432ff7db0ff8b61ecc9b3bb145b3267e1d87786da06db99d2714": "canonical_alias",
+    "19a94110fde302981862b994fc6aa67f1aea18bd6b03e133b90fdce90d15e8c9": "canonical_alias",
+    "c77b481eec88b2f165d2404846db57a7d36b1f1a09eb16e35c4c0dae3b1791e0": "canonical_alias",
+    "9f25532e9cfecd1b2e54c08fb7373c28183a11f7abd4bd7400ee19cd53c082ab": "canonical_alias",
+    "c9372193e990b99d72a01e313568c04ed9dc64fd94a42e4dcbe930b0591d51b0": "quest_objective",
+    "c0c03f553031a6e0a1104356ed5a97b1e121a9dc430252885180a66e9dff0ebb": "canonical_alias"
+  },
+  "npc_visibility": {
+    "77a8c2cb7aa9f8391286bb49517d0ad189b17ce18bc96405ebeab8a790887616": "visible",
+    "74b64707935e37ef9234772d9730113e4ca22f409c1708b72c336a017559549c": "visible",
+    "6aa535a2ff37a08f4fe6d79534dbfbfce1ff2d929c66a01f2c22f563ac4142bb": "visible",
+    "c0cfdfb7530041d8fbb745d2e93cc7a217631acb29f90773cfeee4c2ef1bd161": "visible",
+    "f390434f2239e47215e10c87ae0435a28cce0cda257c77dc79234ca223213d79": "visible",
+    "5aab9a9e38d103009b96976abee3a80a848cf670bf1b32ddc3d87f42ad4c8982": "visible",
+    "7204f85be9e2cdf0e82b5e43d3fb7a0254d5565908579e15349db29843f1aa82": "visible",
+    "3aaf0761ebe0a70273816823e8374c313ad05e14481515631645a4a79e64ff9d": "visible",
+    "e036e3930c857b270683960fa362d00a68fe44349090f7399a17e11682fd0b4a": "visible",
+    "622a1eeea3ca9e2bdc9d7905c3d154a00c19e2ab4785c222e241cb37c5e9772e": "visible",
+    "0e85918d2115c1ef64d96ac1e4c19ea12831d7eff02b7a951a52daa2cfc8dd19": "visible",
+    "3182bc782a21fd0f9b3dc255d2d79a742bb6d836fc649e9abf9a24e78106bbc7": "visible",
+    "03d2f41c551d351f2d6731b9c76747354388bd3e9c14a9f5d7ec110f38dc94fb": "visible",
+    "ebb542716a539b5dd9df5366ac23f247cfc9cb3872f5d952256dedc44e985b23": "visible"
+  }
+}

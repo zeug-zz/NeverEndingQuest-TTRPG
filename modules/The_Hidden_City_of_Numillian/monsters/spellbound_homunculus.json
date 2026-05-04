@@ -1,0 +1,87 @@
+{
+  "name": "Spellbound Homunculus",
+  "size": "Tiny",
+  "type": "Construct",
+  "alignment": "unaligned",
+  "armorClass": 13,
+  "hitPoints": 5,
+  "maxHitPoints": 5,
+  "speed": 20,
+  "abilities": {
+    "strength": 4,
+    "dexterity": 15,
+    "constitution": 11,
+    "intelligence": 6,
+    "wisdom": 10,
+    "charisma": 3
+  },
+  "savingThrows": [],
+  "skills": {
+    "perception": 2,
+    "stealth": 4
+  },
+  "damageVulnerabilities": [
+    "fire"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Arcane Instinct",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "force"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Sting",
+      "attackBonus": 4,
+      "damageDice": "1d4",
+      "damageBonus": 2,
+      "damageType": "piercing"
+    },
+    {
+      "name": "Arcane Spark",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "force"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "spellcasting": {
+    "ability": "Intelligence",
+    "spellSaveDC": 11,
+    "spellAttackBonus": 3,
+    "spells": {
+      "cantrips": [
+        "mage hand",
+        "minor illusion",
+        "prestidigitation"
+      ],
+      "level1": [
+        "shield",
+        "detect magic"
+      ]
+    }
+  },
+  "description": "A spellbound homunculus is a tiny construct shaped like a meticulous artisan's familiar, but every line of it suggests it was made for secrecy rather than companionship. Its body is formed from lacquered brass, pale ceramic, and stitched parchment, with joints that click softly like a clockwork seal being opened. Thin ward-runes crawl across its shell in faintly glowing ink, flaring brighter when it senses lies, tampering, or uninvited hands. Its eyes are small glass lenses tinted like amber, always reflecting candlelight as if they are reading the room twice over. In the Curated Quarter, it might perch motionless on a ledger stack, a reliquary shelf, or the lintel of a locked door, then unfold with sudden, precise motion into a hovering scout. It moves with unnerving intelligence, drifting on invisible currents, trailing scraps of luminous script and the faint scent of ozone, wax, and old paper. Though diminutive, it carries an air of disciplined vigilance, as if bound by an unseen archivist's command to preserve, observe, and quietly sound the alarm at the first sign of intrusion."
+}

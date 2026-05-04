@@ -1,0 +1,70 @@
+{
+  "name": "Drowned Memory",
+  "size": "Medium",
+  "type": "Undead",
+  "alignment": "Neutral Evil",
+  "armorClass": 12,
+  "hitPoints": 13,
+  "maxHitPoints": 13,
+  "speed": 20,
+  "abilities": {
+    "strength": 8,
+    "dexterity": 14,
+    "constitution": 12,
+    "intelligence": 10,
+    "wisdom": 12,
+    "charisma": 14
+  },
+  "savingThrows": [],
+  "skills": {
+    "Perception": 3,
+    "Stealth": 4
+  },
+  "damageVulnerabilities": [
+    "radiant"
+  ],
+  "damageResistances": [
+    "cold",
+    "necrotic"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "understands Common but can't speak",
+  "challengeRating": 0.5,
+  "specialAbilities": [
+    {
+      "name": "Waterlogged Haunting",
+      "attackBonus": 0,
+      "damageDice": "1d6",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    },
+    {
+      "name": "Memory Drain",
+      "attackBonus": 4,
+      "damageDice": "1d4",
+      "damageBonus": 2,
+      "damageType": "necrotic"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Spectral Touch",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "necrotic"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "A Drowned Memory is what remains when a recollection is drowned in warded water, sealed too long in a vault of stolen truths, and then dragged back into the world half-alive. It appears as a gaunt humanoid silhouette suspended in a ragged shroud of black, ink-dark water that never spills to the floor. Its body is translucent and distorted, as if seen through a rain-streaked lens; pale features drift within it in fragments--an eye, a mouth, a hand clutching at nothing--constantly shifting into different identities. Faded script, ledger marks, and broken sigils crawl across its skin like bruises made of language. Around it hangs the scent of wet stone, old paper, and extinguished lantern oil.\n\nThe creature moves with a slow, shuddering purpose, gliding rather than walking, leaving behind ripples of whispered voices and half-remembered names. When it turns its head, nearby onlookers may glimpse their own faces reflected in its flooded body, warped and pleading. It is drawn to sealed records, memory-slates, and anyone who knows too much, feeding on recollection and leaving confusion in its wake. In dim light, it seems to leak fragments of other lives--childhood rooms, locked doors, drowned courtyards--like visions trapped beneath a dark surface."
+}

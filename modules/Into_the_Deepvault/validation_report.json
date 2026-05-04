@@ -1,20 +1,147 @@
 {
-  "validation_date": "2026-04-25T13:56:51.603963",
-  "issues": [
-    "NPC 'Foreman Ulric Flintlace' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Lady Brunna Ironsong' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Sergeant Halda Stonebrow' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Archivist Gremli Amberfist' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Saboteur Rask' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Spirit of Thane Durnic' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Guardian Construct Beldrum' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Varkhaz the Stonebound' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Duergar Rune-Warriors' is referenced in ['module:plotStages'] but not placed in any location"
-  ],
-  "context_summary": {
-    "areas": 5,
-    "npcs": 10,
-    "locations": 0,
-    "plot_points": 4
+  "module": "Into_the_Deepvault",
+  "timestamp": "2026-05-04T13:17:00.821902",
+  "summary": {
+    "total_files": 48,
+    "total_passed": 50,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "SD005.json (areas/)",
+        "HA003_BU.json (areas/)",
+        "SD005_BU.json (areas/)",
+        "RF004.json (areas/)",
+        "HA003.json (areas/)",
+        "OV002_BU.json (areas/)",
+        "OV002.json (areas/)",
+        "DA001_BU.json (areas/)",
+        "DA001.json (areas/)",
+        "RF004_BU.json (areas/)"
+      ],
+      "passed": 10,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "echo_wraith.json",
+        "shatterglass_amalgam.json",
+        "animated_statue_sentinel.json",
+        "ironbound_guardian.json",
+        "animated_forge_tools.json",
+        "animated_tools.json",
+        "ashen_wraiths.json",
+        "restless_alchemical_wraith.json",
+        "chasm_lurker.json",
+        "giant_wolf_spider.json",
+        "crawling_claw_swarm.json",
+        "giant_centipede.json",
+        "molten_bone_golem.json",
+        "forged_sentry.json"
+      ],
+      "passed": 14,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_DA001.json",
+        "map_RF004.json",
+        "map_HA003.json",
+        "map_OV002.json",
+        "map_SD005.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/DA001.json",
+        "areas/HA003.json",
+        "areas/OV002.json",
+        "areas/RF004.json",
+        "areas/SD005.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "DA001.json <-> map_DA001.json",
+        "HA003.json <-> map_HA003.json",
+        "OV002.json <-> map_OV002.json",
+        "RF004.json <-> map_RF004.json",
+        "SD005.json <-> map_SD005.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "DA001.json <-> map_DA001.json",
+        "HA003.json <-> map_HA003.json",
+        "OV002.json <-> map_OV002.json",
+        "RF004.json <-> map_RF004.json",
+        "SD005.json <-> map_SD005.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
   }
 }

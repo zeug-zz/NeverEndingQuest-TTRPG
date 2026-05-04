@@ -1,0 +1,76 @@
+{
+  "name": "Veilwood blight",
+  "size": "Small",
+  "type": "Plant",
+  "alignment": "unaligned",
+  "armorClass": 13,
+  "hitPoints": 10,
+  "maxHitPoints": 10,
+  "speed": 20,
+  "abilities": {
+    "strength": 12,
+    "dexterity": 12,
+    "constitution": 12,
+    "intelligence": 1,
+    "wisdom": 8,
+    "charisma": 3
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "fire"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "blinded",
+    "deafened",
+    "exhaustion",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 9
+  },
+  "languages": "",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "False Appearance",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    },
+    {
+      "name": "Blight Spores",
+      "attackBonus": 0,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "poison"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Claw",
+      "attackBonus": 3,
+      "damageDice": "1d6",
+      "damageBonus": 1,
+      "damageType": "slashing"
+    },
+    {
+      "name": "Blight Spores",
+      "attackBonus": 0,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "poison"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

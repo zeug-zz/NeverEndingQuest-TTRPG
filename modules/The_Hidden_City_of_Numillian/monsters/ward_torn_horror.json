@@ -1,0 +1,68 @@
+{
+  "name": "Ward-Torn Horror",
+  "size": "Medium",
+  "type": "Aberration",
+  "alignment": "unaligned",
+  "armorClass": 12,
+  "hitPoints": 22,
+  "maxHitPoints": 22,
+  "speed": 30,
+  "abilities": {
+    "strength": 14,
+    "dexterity": 12,
+    "constitution": 14,
+    "intelligence": 3,
+    "wisdom": 10,
+    "charisma": 5
+  },
+  "savingThrows": [],
+  "skills": {
+    "perception": 2
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [
+    "psychic"
+  ],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Ward-Broken Flesh",
+      "attackBonus": 0,
+      "damageDice": "1d6",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    },
+    {
+      "name": "Unstable Form",
+      "attackBonus": 0,
+      "damageDice": "1d4",
+      "damageBonus": 0,
+      "damageType": "force"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Claw",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    },
+    {
+      "name": "Warping Shriek",
+      "attackBonus": 0,
+      "damageDice": "1d8",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

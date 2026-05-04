@@ -1,0 +1,71 @@
+{
+  "name": "Animated Scarecrow",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 11,
+  "hitPoints": 22,
+  "maxHitPoints": 22,
+  "speed": 20,
+  "abilities": {
+    "strength": 13,
+    "dexterity": 11,
+    "constitution": 12,
+    "intelligence": 1,
+    "wisdom": 3,
+    "charisma": 1
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "fire"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing from nonmagical attacks"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "charmed",
+    "exhaustion",
+    "frightened",
+    "paralyzed",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 6
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 0.5,
+  "specialAbilities": [
+    {
+      "name": "False Appearance",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Claw",
+      "attackBonus": 3,
+      "damageDice": "1d4",
+      "damageBonus": 1,
+      "damageType": "slashing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

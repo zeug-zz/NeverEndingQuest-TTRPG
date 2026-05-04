@@ -1,0 +1,76 @@
+{
+  "name": "Vault Rat Swarm",
+  "size": "Small",
+  "type": "Swarm of Tiny beasts",
+  "alignment": "unaligned",
+  "armorClass": 12,
+  "hitPoints": 13,
+  "maxHitPoints": 13,
+  "speed": 30,
+  "abilities": {
+    "strength": 7,
+    "dexterity": 15,
+    "constitution": 11,
+    "intelligence": 2,
+    "wisdom": 10,
+    "charisma": 4
+  },
+  "savingThrows": [],
+  "skills": {
+    "perception": 2,
+    "stealth": 4
+  },
+  "damageVulnerabilities": [
+    "fire"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [],
+  "conditionImmunities": [
+    "charmed",
+    "frightened",
+    "grappled",
+    "paralyzed",
+    "petrified",
+    "prone",
+    "restrained",
+    "stunned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Swarm",
+      "attackBonus": 0,
+      "damageDice": "2d6",
+      "damageBonus": 0,
+      "damageType": "piercing"
+    },
+    {
+      "name": "Vault Dweller",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Bite",
+      "attackBonus": 4,
+      "damageDice": "2d6",
+      "damageBonus": 2,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "Vault rats are not the filthy alley-scavengers of common cities, but lean, uncanny rodents bred by neglect and old warding into something more watchful. A swarm of them moves like spilled ink across stone, their bodies sleek and dust-gray with pale, almost chalky bellies, narrow snouts, and bright beadlike eyes that catch lantern light in a cold, reflective shimmer. Their tails are long and whip-thin, often threaded with bits of wire, parchment fibers, or tarnished brass filings stolen from sealed chambers. In the Curated Quarter and the lower vaults of Numillian, they haunt ledger rooms, storage crypts, and forgotten crawlspaces, slipping through cracks with an eerie discipline that feels less animal and more deliberate. When disturbed, they do not scatter at once; they surge, climb, and coil around boots and door hinges, gnawing at leather, wax seals, and even old wood as if testing for weakness. Their whiskers twitch at hidden mechanisms, and their chittering sounds almost like the rustle of pages being turned in the dark. A vault rat swarm carries the scent of dust, damp stone, and old paper, making it feel like the ruin itself has learned to breed."
+}

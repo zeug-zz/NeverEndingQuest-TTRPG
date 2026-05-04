@@ -1,0 +1,76 @@
+{
+  "name": "Whisper Swarm",
+  "size": "Tiny",
+  "type": "Swarm of Tiny aberrations",
+  "alignment": "unaligned",
+  "armorClass": 13,
+  "hitPoints": 7,
+  "maxHitPoints": 7,
+  "speed": 10,
+  "abilities": {
+    "strength": 3,
+    "dexterity": 16,
+    "constitution": 10,
+    "intelligence": 2,
+    "wisdom": 10,
+    "charisma": 3
+  },
+  "savingThrows": [],
+  "skills": {
+    "Perception": 2,
+    "Stealth": 5
+  },
+  "damageVulnerabilities": [
+    "thunder"
+  ],
+  "damageResistances": [
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [],
+  "conditionImmunities": [
+    "charmed",
+    "frightened",
+    "grappled",
+    "paralyzed",
+    "petrified",
+    "prone",
+    "restrained",
+    "stunned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Swarm",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Whispering Distraction",
+      "attackBonus": 0,
+      "damageDice": "0d0",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Dissonant Nibbling",
+      "attackBonus": 5,
+      "damageDice": "2d4",
+      "damageBonus": 3,
+      "damageType": "psychic"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "A whisper swarm is not a single creature so much as a shivering cloud of stolen voices, each one thin as breath across a keyhole. In the dim alleys of the Curated Quarter or the dust-choked halls of Numillian's buried trials, it appears first as a tremor in the air: a halo of pale motes, like ash caught in lantern light, drifting in a loose, hungry spiral. As it gathers, the swarm resolves into hundreds of translucent fragments--mouths without faces, syllables without speakers, and ribbons of sound that coil and uncoil like smoke. Faint runes, ledger marks, and broken seal impressions flicker within its body as if it has fed on secrets long enough to wear them as a skin.\n\nThe swarm moves with eerie purpose, slipping through cracks, under doors, and around ward-lines as though listening for the shape of a thought. When threatened, it erupts in a cacophony of overlapping murmurs: warnings, lies, half-remembered commands, and the intimate cadence of voices long dead. Those caught too close feel their own words snag in their throats, as if the swarm is tasting them. In the stillness after it passes, the air smells faintly of wax, old paper, and static, and every nearby shadow seems to lean in, eager to overhear."
+}

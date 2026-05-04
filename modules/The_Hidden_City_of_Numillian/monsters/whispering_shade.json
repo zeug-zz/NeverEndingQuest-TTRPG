@@ -1,0 +1,84 @@
+{
+  "name": "Whispering Shade",
+  "size": "Medium",
+  "type": "Undead",
+  "alignment": "neutral evil",
+  "armorClass": 12,
+  "hitPoints": 13,
+  "maxHitPoints": 13,
+  "speed": 0,
+  "abilities": {
+    "strength": 6,
+    "dexterity": 14,
+    "constitution": 10,
+    "intelligence": 10,
+    "wisdom": 12,
+    "charisma": 14
+  },
+  "savingThrows": [],
+  "skills": {
+    "Stealth": 4,
+    "Perception": 3
+  },
+  "damageVulnerabilities": [
+    "radiant"
+  ],
+  "damageResistances": [
+    "acid",
+    "cold",
+    "fire",
+    "lightning",
+    "thunder",
+    "bludgeoning",
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "necrotic",
+    "poison"
+  ],
+  "conditionImmunities": [
+    "charmed",
+    "frightened",
+    "grappled",
+    "paralyzed",
+    "petrified",
+    "poisoned",
+    "prone",
+    "restrained"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 13
+  },
+  "languages": "understands Common but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Incorporeal Movement",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Withering Touch",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "necrotic"
+    },
+    {
+      "name": "Whisper of Dread",
+      "attackBonus": 0,
+      "damageDice": "1d6",
+      "damageBonus": 0,
+      "damageType": "psychic"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive",
+  "description": "A Whispering Shade is a thin, half-seen undead that seems to be made from dusk, old secrets, and the residue of stolen voices. In the lantern glow of Numillian, it appears as a tall humanoid silhouette draped in ragged folds of darkness, its edges forever unraveling into soot-like wisps. Where a face should be, there is only a faint suggestion of features: a hollow veil of shadow crossed by glimmers like reflected script, as though names and warnings were written across empty air. Its hands are long-fingered and almost translucent, leaving trails of dim frost when they move.\n\nIt drifts soundlessly through alleys, archives, and sealed chambers, rarely rushing unless it has already been noticed. When it feeds, it leans close to the ear of the living, and the air around it fills with overlapping murmurs, clipped phrases, and the sensation of being watched by someone who knows your true name. In the Curated Quarter, it might cling to ledger rooms, warded doorways, or the corners of shuttered homes, drawn to secrecy, fear, and unfinished business. A Whispering Shade is not merely a ghostly predator, but a living hush given malice--a presence that turns candlelight cold and makes every whispered rumor feel like a warning from the dead."
+}

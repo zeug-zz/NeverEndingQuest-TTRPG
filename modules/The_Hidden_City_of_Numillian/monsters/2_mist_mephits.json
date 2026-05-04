@@ -1,0 +1,77 @@
+{
+  "name": "Mist Mephit",
+  "size": "Small",
+  "type": "Elemental",
+  "alignment": "neutral evil",
+  "armorClass": 12,
+  "hitPoints": 5,
+  "maxHitPoints": 5,
+  "speed": 30,
+  "abilities": {
+    "strength": 5,
+    "dexterity": 14,
+    "constitution": 10,
+    "intelligence": 9,
+    "wisdom": 10,
+    "charisma": 11
+  },
+  "savingThrows": [],
+  "skills": {
+    "Perception": 2,
+    "Stealth": 4
+  },
+  "damageVulnerabilities": [
+    "bludgeoning"
+  ],
+  "damageResistances": [
+    "fire",
+    "lightning",
+    "thunder"
+  ],
+  "damageImmunities": [
+    "poison"
+  ],
+  "conditionImmunities": [
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 12
+  },
+  "languages": "Auran, Terran",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Death Burst",
+      "attackBonus": 0,
+      "damageDice": "2d6",
+      "damageBonus": 0,
+      "damageType": "cold"
+    },
+    {
+      "name": "Fog Form",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Claws",
+      "attackBonus": 4,
+      "damageDice": "1d4",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    },
+    {
+      "name": "Blinding Breath",
+      "attackBonus": 0,
+      "damageDice": "1d8",
+      "damageBonus": 0,
+      "damageType": "cold"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

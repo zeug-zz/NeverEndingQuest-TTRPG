@@ -1,0 +1,559 @@
+{
+  "areaId": "VA001",
+  "areaName": "Veilwood Fringe",
+  "areaType": "wilderness",
+  "areaDescription": "Mist clings to the pale trunks of Veilwood, where the forest thins into whispering copses and fern-choked clearings. The air is cool and resin-sweet, and though the paths are quiet and the wildlife wary, the land feels more watchful than hostile.",
+  "dangerLevel": "low",
+  "recommendedLevel": 5,
+  "climate": "temperate",
+  "terrain": "plains",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Wilderness Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "ruins",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Shattered Numillian Ruins"
+      },
+      {
+        "id": "G02",
+        "type": "ravine",
+        "connections": [
+          "G01",
+          "G03",
+          "G04"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01",
+          "east": "G03"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "low",
+        "name": "Echoing Rift Ravine"
+      },
+      {
+        "id": "G03",
+        "type": "hilltop",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "G02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Veilwatch Hilltop"
+      },
+      {
+        "id": "G04",
+        "type": "cave",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "encounter",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Whisperdeep Cave"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G02",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Shattered Numillian Ruins",
+      "type": "ruins",
+      "description": "A broken Numillian outpost half-swallowed by pale roots and fog, where cracked arches and fallen survey stones jut from the moss like teeth. The site feels abandoned at first glance, but its wards still hum faintly in the stone.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Shattered Numillian Ruins",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_ruins:Shattered Numillian Ruins",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Veilwood Approach",
+        "The Shuluth Expanse"
+      ],
+      "areaConnectivityId": [
+        "VA001",
+        "SS005-G04"
+      ],
+      "npcs": [
+        {
+          "name": "Letharel, the silent border warden",
+          "description": "A watchful border sentinel who studies tracks, wards, and travelers alike, using gestures and carved slate to communicate in near silence.",
+          "attitude": "Wary but not hostile"
+        }
+      ],
+      "monsters": [
+        "2 Veilwood blights",
+        "1 animated armor shard-guardian"
+      ],
+      "lootTable": [
+        "Cracked Numillian waystone etched with directional runes",
+        "Potion of healing",
+        "Silvered ward-chalk (3 uses)",
+        "50 gp in old survey coin"
+      ],
+      "plotHooks": [
+        "Letharel can confirm that the ruins mark the safest old route into Numillian.",
+        "A damaged waystone points toward the Hall of First Trials.",
+        "The ward-hum becomes stronger near a buried stair hidden under roots."
+      ],
+      "dmInstructions": "Use this as the party's first strong Numillian touchpoint in Veilwood Fringe. Keep danger low-to-moderate, but make the wards feel intelligent and ancient. Letharel should be able to guide or warn the party without giving away the bigger mystery.",
+      "doors": [
+        {
+          "name": "Collapsed Archive Door",
+          "description": "A bronze-banded stone slab lying half off its frame, its surface scored by age and root pressure.",
+          "type": "heavy",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 16,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Fading Warding Sigils",
+          "detectDC": 13,
+          "disableDC": 14,
+          "triggerDC": 13,
+          "damage": "2d6 psychic damage and disadvantage on the next Wisdom check made in the ruins"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Notice the ward-stones that still vibrate beneath the moss.",
+        "History DC 14: Recognize the ruins as a Numillian border-post rather than a military fort.",
+        "Arcana DC 15: Determine that the remaining magic is defensive and keyed to intruders' intent."
+      ],
+      "accessibility": "Normal access through a broken forest path and shallow root-choked steps.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Root-Cracked Survey Stones",
+          "description": "Stone markers bearing faded Numillian measurements and directional glyphs."
+        },
+        {
+          "name": "Faint Ward Resonance",
+          "description": "A low psychic hum that prickles the mind when approached with hostile intent."
+        }
+      ],
+      "encounters": [
+        "A brief standoff with Letharel before he agrees to speak or guide the party.",
+        "A defensive ward flares if the party disturbs the central stone without care."
+      ],
+      "adventureSummary": "This ruined border post serves as the first sign that Numillian's hidden protections extend into Veilwood Fringe, and that the forest is more than a wilderness approach."
+    },
+    {
+      "locationId": "G02",
+      "name": "Echoing Rift Ravine",
+      "type": "ravine",
+      "description": "A narrow ravine where pale stone drops away into a mist-filled cleft, and every sound returns a heartbeat later as a distorted whisper. Ferns cling to the edges, while old Numillian masonry is visible in the exposed walls below.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G03",
+        "G04"
+      ],
+      "aliases": [
+        "Echoing Rift Ravine",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_ravine:Echoing Rift Ravine",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Mirael, a surface-contact scout",
+          "description": "A quick-eyed scout who uses ravine ledges and signal mirrors to watch for movement beyond the forest fringe.",
+          "attitude": "Helpful, cautious"
+        },
+        {
+          "name": "Letharel, divided border warden",
+          "description": "The same sentinel as the ruins, now visibly torn between strict secrecy and the need to warn others of what lies deeper in Numillian.",
+          "attitude": "Conflicted and guarded"
+        }
+      ],
+      "monsters": [
+        "1 phase spider",
+        "2 mist mephits"
+      ],
+      "lootTable": [
+        "Signal mirror with a hidden Numillian lens",
+        "Grappling hook",
+        "Vial of antitoxin",
+        "Map scrap showing the Hall of First Trials route"
+      ],
+      "plotHooks": [
+        "Mirael has seen a diplomat's seal moving toward the deeper trails.",
+        "Letharel admits the ravine is the best route to intercept or shadow intruders.",
+        "The ravine's echoes sometimes repeat words that were never spoken aloud."
+      ],
+      "dmInstructions": "This is a navigation and surveillance location. Let the ravine amplify conversation, secrets, and confusion. Mirael can provide a safe route or a warning, while Letharel's divided loyalties should become apparent here.",
+      "doors": [
+        {
+          "name": "Broken Stone Span",
+          "description": "A fractured bridge of fitted stone slabs crossing the ravine at a narrow point.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": true,
+          "trap": "Loose stones collapse if rushed, forcing a Dexterity save or a fall into the ravine."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo-Lure Drop",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 14,
+          "damage": "2d8 bludgeoning damage from a fall and 1d6 psychic damage from the ravine's echoing resonance"
+        }
+      ],
+      "dcChecks": [
+        "Survival DC 13: Follow the safest ledges without alerting creatures below.",
+        "Perception DC 14: Spot hidden movement along the opposite wall.",
+        "Insight DC 15: Tell that Letharel is withholding information for protective reasons, not deceit."
+      ],
+      "accessibility": "Accessible via narrow ledges, a broken stone span, and climbing roots; moderate caution required.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Whispering Stone",
+          "description": "The ravine walls carry voices strangely, making even small sounds feel secretive."
+        },
+        {
+          "name": "Hidden Masonry Ledges",
+          "description": "Old Numillian work forms footholds and concealed observation points along the wall."
+        }
+      ],
+      "encounters": [
+        "A tense exchange with Mirael over whether outsiders should be guided deeper.",
+        "A brief ambush by phase-spider movement from the misted wall.",
+        "A whispered warning, carried by the ravine, about a witness in danger."
+      ],
+      "adventureSummary": "The ravine serves as the party's first real information hub, combining scouting, divided loyalties, and a physical route into the deeper Numillian approach."
+    },
+    {
+      "locationId": "G03",
+      "name": "Veilwatch Hilltop",
+      "type": "hilltop",
+      "description": "A low hill crowned with wind-bent shrubs and a ring of weathered survey posts, offering a clear view over the misty fringe and the hidden lines of ancient approach roads. At dusk, the posts catch the light like watchful eyes.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Veilwatch Hilltop",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_hilltop:Veilwatch Hilltop",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Elaris, a diplomat of the Secrecy Council",
+          "description": "A polished envoy with carefully measured speech, sent to assess whether the hidden city can survive exposure without collapsing into panic.",
+          "attitude": "Formal, watchful"
+        },
+        {
+          "name": "Thalanis, Secrecy Council examiner",
+          "description": "A severe evaluator who tests claims, motives, and proof with relentless precision.",
+          "attitude": "Suspicious and exacting"
+        }
+      ],
+      "monsters": [
+        "1 giant constrictor snake",
+        "2 animated scarecrows"
+      ],
+      "lootTable": [
+        "Secrecy Council signet token",
+        "Binoculars",
+        "Scroll case containing route authorization",
+        "75 gp in mixed trade coin"
+      ],
+      "plotHooks": [
+        "Elaris wants the party to prove whether outsiders can be trusted with Numillian's location.",
+        "Thalanis can certify or deny the party's right to continue deeper.",
+        "A survey post contains a coded reference to the Hall of First Trials."
+      ],
+      "dmInstructions": "Use this as a negotiation and verification point. Elaris and Thalanis should feel like two sides of the same political blade: one pragmatic, one uncompromising. This location can grant formal access or delay it with a test.",
+      "doors": [
+        {
+          "name": "Survey Cache Hatch",
+          "description": "A flush iron hatch hidden beneath a ring of stone posts and lichen.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Secrecy Council signet token",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Alarm Lens",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 15,
+          "damage": "No damage; instead, it alerts nearby wardens and causes disadvantage on Stealth checks for 1 hour"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 14: Read Elaris's measured concern as genuine political caution rather than hostility.",
+        "Investigation DC 15: Decode the survey-post markings that point toward deeper Numillian routes.",
+        "Persuasion DC 16: Convince Thalanis to issue conditional passage."
+      ],
+      "accessibility": "Easily reached by a winding hill path, though the summit is exposed to wind and observation.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Ring of Survey Posts",
+          "description": "Ancient markers that once measured land, sightlines, and psychic ward distance."
+        },
+        {
+          "name": "Clear Overlook",
+          "description": "A broad view of the fringe, useful for scouting, signaling, or spotting patrols."
+        }
+      ],
+      "encounters": [
+        "A formal interview or challenge from Thalanis regarding the party's intent.",
+        "A political exchange with Elaris over secrecy versus urgency.",
+        "An opportunistic beast drawn by the hilltop's exposed position."
+      ],
+      "adventureSummary": "Veilwatch Hilltop is the political and observational checkpoint of the fringe, where access to deeper Numillian can be granted, delayed, or conditioned."
+    },
+    {
+      "locationId": "G04",
+      "name": "Whisperdeep Cave",
+      "type": "cave",
+      "description": "A resin-scented cave beneath the root line, where the walls are carved with soft spirals and listening motifs that seem to capture stray thoughts. The air is cool, still, and unnervingly attentive.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Whisperdeep Cave",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_cave:Whisperdeep Cave",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Hall of First Trials"
+      ],
+      "areaConnectivityId": [
+        "HF002"
+      ],
+      "npcs": [
+        {
+          "name": "Seryn Vale, keeper of the first trial",
+          "description": "A calm, exacting guardian who oversees the entry rites and judges whether visitors are ready for Numillian's psychic tests.",
+          "attitude": "Measured and impartial"
+        },
+        {
+          "name": "Arannis, vault scholar and alarmed archivist",
+          "description": "A frazzled scholar carrying notes, fragments, and urgent warnings about a deeper vault crisis.",
+          "attitude": "Anxious but cooperative"
+        },
+        {
+          "name": "Kobe, guarded resident tied to the vault",
+          "description": "A quiet local whose presence seems important to the wards, kept under watch for their safety and for what they know.",
+          "attitude": "Guarded, uncertain"
+        }
+      ],
+      "monsters": [
+        "2 psionic guardians",
+        "1 swarm of bats"
+      ],
+      "lootTable": [
+        "Trial token carved from pale bone",
+        "Archivist's notes on ward failures",
+        "Spell scroll of detect magic",
+        "Small pouch containing 30 gp and a sealed wax tag"
+      ],
+      "plotHooks": [
+        "Seryn Vale can initiate the first trial or deny entry to deeper Numillian.",
+        "Arannis reveals that the vault crisis is escalating below the city.",
+        "Kobe may hold a key detail about the ward network and the person being protected."
+      ],
+      "dmInstructions": "This cave is the transition from wilderness to dungeon. Make the atmosphere quiet and ceremonial, but allow Arannis's alarm to break the calm. Seryn should present the first true test of intent, memory, or restraint.",
+      "doors": [
+        {
+          "name": "Listening Arch",
+          "description": "A narrow stone arch etched with spiral grooves that vibrate softly when spoken through.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 17,
+          "keyname": "",
+          "trapped": true,
+          "trap": "Speaking a lie through the arch triggers a psychic pulse and seals the passage for 1 minute."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Thought-Listening Glyph",
+          "detectDC": 16,
+          "disableDC": 17,
+          "triggerDC": 16,
+          "damage": "3d6 psychic damage and the target can't take reactions until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 15: Identify the cave as a warded threshold tuned to thought and intent.",
+        "Insight DC 14: Recognize that Seryn's judgment is based on necessity, not cruelty.",
+        "Investigation DC 16: Find Arannis's hidden notes describing a deeper vault instability."
+      ],
+      "accessibility": "Reached by a concealed root path and a low stone opening; easy to enter once found, but difficult to approach unnoticed.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Listening Motifs",
+          "description": "Carved spirals and ear-like shapes that seem designed to catch and preserve spoken words."
+        },
+        {
+          "name": "Root-Filtered Silence",
+          "description": "The cave dampens outside sound, making it ideal for secrets and tests of honesty."
+        }
+      ],
+      "encounters": [
+        "Seryn Vale administers a first trial before the party may proceed.",
+        "Arannis urgently requests help to stabilize a failing vault process.",
+        "Kobe's guarded behavior hints at a life at the center of the crisis."
+      ],
+      "adventureSummary": "Whisperdeep Cave is the threshold to the Hall of First Trials and the point where the wilderness mystery turns into a structured Numillian ordeal."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 5 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "lost traveler",
+      "description": "A lost traveler appropriate for level 5 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 5 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "environmental hazard",
+      "description": "A environmental hazard appropriate for level 5 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    }
+  ],
+  "areaFeatures": [
+    "ancient trees",
+    "water sources",
+    "rock formations"
+  ],
+  "notes": "Weather and terrain should affect travel times. Random encounters keep exploration tense.",
+  "spatialContractVersion": 1
+}

@@ -1,0 +1,88 @@
+{
+  "name": "Animated Armor Shard-Guardian",
+  "size": "Medium",
+  "type": "Construct",
+  "alignment": "Unaligned",
+  "armorClass": 18,
+  "hitPoints": 33,
+  "maxHitPoints": 33,
+  "speed": 25,
+  "abilities": {
+    "strength": 14,
+    "dexterity": 11,
+    "constitution": 13,
+    "intelligence": 1,
+    "wisdom": 3,
+    "charisma": 1
+  },
+  "savingThrows": [],
+  "skills": {},
+  "damageVulnerabilities": [
+    "bludgeoning"
+  ],
+  "damageResistances": [
+    "piercing",
+    "slashing"
+  ],
+  "damageImmunities": [
+    "poison",
+    "psychic"
+  ],
+  "conditionImmunities": [
+    "blinded",
+    "charmed",
+    "deafened",
+    "exhaustion",
+    "frightened",
+    "paralyzed",
+    "petrified",
+    "poisoned"
+  ],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 6
+  },
+  "languages": "understands the languages of its creator but can't speak",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Antimagic Susceptibility",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "force"
+    },
+    {
+      "name": "False Appearance",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Multiattack",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    },
+    {
+      "name": "Slam",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Shard Burst",
+      "attackBonus": 4,
+      "damageDice": "1d8",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

@@ -1,0 +1,63 @@
+{
+  "name": "Ward-Sworn Brute",
+  "size": "Medium",
+  "type": "Humanoid",
+  "alignment": "any alignment",
+  "armorClass": 14,
+  "hitPoints": 15,
+  "maxHitPoints": 15,
+  "speed": 30,
+  "abilities": {
+    "strength": 16,
+    "dexterity": 12,
+    "constitution": 14,
+    "intelligence": 8,
+    "wisdom": 10,
+    "charisma": 9
+  },
+  "savingThrows": [
+    "Str +5",
+    "Con +4"
+  ],
+  "skills": {
+    "Athletics": 5,
+    "Intimidation": 1
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 0,
+    "passivePerception": 10
+  },
+  "languages": "Common",
+  "challengeRating": 1,
+  "specialAbilities": [
+    {
+      "name": "Ward-Bound Resolve",
+      "attackBonus": 0,
+      "damageDice": "0",
+      "damageBonus": 0,
+      "damageType": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Maul",
+      "attackBonus": 5,
+      "damageDice": "1d12",
+      "damageBonus": 3,
+      "damageType": "bludgeoning"
+    },
+    {
+      "name": "Shield Bash",
+      "attackBonus": 5,
+      "damageDice": "1d6",
+      "damageBonus": 3,
+      "damageType": "bludgeoning"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

@@ -1,0 +1,95 @@
+{
+  "mapId": "MAP_G_4",
+  "mapName": "Wilderness Map",
+  "totalRooms": 4,
+  "rooms": [
+    {
+      "id": "G01",
+      "type": "ruins",
+      "connections": [
+        "G02"
+      ],
+      "coordinates": "X10Y11",
+      "directions": {
+        "east": "G02"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "unknown",
+      "landmark": true,
+      "dangerLevel": "low",
+      "name": "Shattered Numillian Ruins"
+    },
+    {
+      "id": "G02",
+      "type": "ravine",
+      "connections": [
+        "G01",
+        "G03",
+        "G04"
+      ],
+      "coordinates": "X11Y11",
+      "directions": {
+        "west": "G01",
+        "north": "G03",
+        "south": "G04"
+      },
+      "tags": [
+        "hub"
+      ],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "low",
+      "name": "Echoing Rift Ravine"
+    },
+    {
+      "id": "G03",
+      "type": "hilltop",
+      "connections": [
+        "G02"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "south": "G02"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "unknown",
+      "landmark": true,
+      "dangerLevel": "low",
+      "name": "Veilwatch Hilltop"
+    },
+    {
+      "id": "G04",
+      "type": "cave",
+      "connections": [
+        "G02"
+      ],
+      "coordinates": "X11Y12",
+      "directions": {
+        "north": "G02"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "encounter",
+      "landmark": true,
+      "dangerLevel": "low",
+      "name": "Whisperdeep Cave"
+    }
+  ],
+  "layout": [
+    [
+      "G01",
+      "G02",
+      "G03",
+      "G04"
+    ]
+  ],
+  "startRoom": "G01",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}
