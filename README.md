@@ -2,9 +2,7 @@
 
 <img src="dm_logo.png" alt="NeverEndingQuest DM Logo" width="96" align="left" style="margin-right: 16px;">
 
-**Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions.
-
-An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
+**Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions. An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
 
 <br clear="left">
 
@@ -56,19 +54,19 @@ All fork modifications are marked with `# TABLETOP MODE:` comments and live in e
 
 ## Included Adventure Modules
 
-| Module                                 | Level  | Description                                                      |
-| -------------------------------------- | ------ | ---------------------------------------------------------------- |
-| **Night of the Restless Dead**   | 1–2   | Investigate undead outbreaks beneath a ruined cathedral          |
-| **The Thornwood Watch**          | 1–2   | Defend a ranger outpost from bandits and corruption              |
-| **The Pumpkin King's Curse**     | 1–3   | Unravel a harvest-time folk-horror curse across Greenfields Vale |
-| **The Ancients Lab**             | 2–4   | Explore a long-sealed laboratory of forgotten artifice           |
-| **Keep of Doom**                 | 3–5   | Explore a haunted keep and establish your stronghold             |
-| **A Pottsfield Burial**          | 3–5   | Navigate an eerie burial ground and uncover its secrets          |
-| **Into the Deepvault**           | 3–5   | Confront elemental unrest in a petrified valley                  |
-| **Xhalruun's Masquerade**       | 5–8   | Unravel an undead mind flayer's conspiracy in a city of illusions |
-| **Murder at the Drowning Lass**  | 6–6   | Solve a tavern murder mystery with branching investigation       |
-| **The Hidden City of Numillian** | 7–10  | Discover a subterranean city of paradox and lost knowledge       |
-| **The Garden of Demons**         | 12–15 | Navigate a fey-touched garden of dangerous whimsy                |
+| Module                                 | Level  | Description                                                       |
+| -------------------------------------- | ------ | ----------------------------------------------------------------- |
+| **Night of the Restless Dead**   | 1–2   | Investigate undead outbreaks beneath a ruined cathedral           |
+| **The Thornwood Watch**          | 1–2   | Defend a ranger outpost from bandits and corruption               |
+| **The Pumpkin King's Curse**     | 1–3   | Unravel a harvest-time folk-horror curse across Greenfields Vale  |
+| **The Ancients Lab**             | 2–4   | Explore a long-sealed laboratory of forgotten artifice            |
+| **Keep of Doom**                 | 3–5   | Explore a haunted keep and establish your stronghold              |
+| **A Pottsfield Burial**          | 3–5   | Navigate an eerie burial ground and uncover its secrets           |
+| **Into the Deepvault**           | 3–5   | Confront elemental unrest in a petrified valley                   |
+| **Xhalruun's Masquerade**        | 5–8   | Unravel an undead mind flayer's conspiracy in a city of illusions |
+| **Murder at the Drowning Lass**  | 6–6   | Solve a tavern murder mystery with branching investigation        |
+| **The Hidden City of Numillian** | 7–10  | Discover a subterranean city of paradox and lost knowledge        |
+| **The Garden of Demons**         | 12–15 | Navigate a fey-touched garden of dangerous whimsy                 |
 
 Modules connect through a hub-and-spoke world model. Cross-module continuity is maintained through living summaries, companion memory, and persistent world state.
 
