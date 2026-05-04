@@ -2,7 +2,7 @@
 
 <img src="dm_logo.png" alt="NeverEndingQuest DM Logo" width="96" align="left" style="margin-right: 16px;">
 
-**Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions. An AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
+**Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions. NeverEndingQuest is an AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
 
 <br clear="left">
 
