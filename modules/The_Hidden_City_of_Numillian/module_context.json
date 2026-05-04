@@ -2262,7 +2262,7 @@
       "_llm_metadata": {
         "provenance": "llm_classification",
         "classified_by": "gpt-5.4-mini-2026-03-17",
-        "classified_at": "2026-04-30T06:21:20.326890"
+        "classified_at": "2026-05-04T05:45:08.369684"
       }
     },
     "diagnostics": {
@@ -2421,7 +2421,7 @@
   },
   "classification_metadata": {
     "classified_by": "gpt-5.4-mini-2026-03-17",
-    "classified_at": "2026-04-30T06:21:20.330381",
+    "classified_at": "2026-05-04T05:45:08.373231",
     "entity_count": 10,
     "destination_count": 14,
     "npc_count": 16,

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-30T06:21:20Z",
+  "generated_at": "2026-05-04T05:45:08Z",
   "module_slug": "The_Hidden_City_of_Numillian",
   "status": "degraded",
   "ready_status": "pending",
@@ -8,10 +8,10 @@
   "report_freshness": {
     "state": "stale",
     "authoritative": false,
-    "written_at": "2026-04-30T06:21:20Z",
+    "written_at": "2026-05-04T05:45:08Z",
     "phase": "pre_publishability",
     "workflow": "toolkit_report_refresh",
-    "refresh_reason": "sidebar_unstale_media",
+    "refresh_reason": "module_media_generator",
     "contract": "toolkit_build_report_refresh_contract.v1",
     "stale_reason": "publishability_pending"
   },
@@ -24,7 +24,7 @@
     "phase": "pre_publishability",
     "refresh_contract": "toolkit_build_report_refresh_contract.v1",
     "refresh_workflow": "toolkit_report_refresh",
-    "refresh_reason": "sidebar_unstale_media"
+    "refresh_reason": "module_media_generator"
   },
   "stages": {
     "continuity": {
@@ -2294,7 +2294,7 @@
               "_llm_metadata": {
                 "provenance": "llm_classification",
                 "classified_by": "gpt-5.4-mini-2026-03-17",
-                "classified_at": "2026-04-28T23:08:45.182765"
+                "classified_at": "2026-04-30T06:21:20.326890"
               }
             },
             "diagnostics": {
@@ -2453,13 +2453,15 @@
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-28T23:08:45.185992",
+            "classified_at": "2026-04-30T06:21:20.330381",
             "entity_count": 10,
             "destination_count": 14,
             "npc_count": 16,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
-          }
+          },
+          "author": "Unknown - Module derived from https://homebrewery.naturalcrit.com/share/coAxrMp2I7tj",
+          "license": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
         },
         "changed": false,
         "injected_keys": []
@@ -4730,7 +4732,7 @@
               "_llm_metadata": {
                 "provenance": "llm_classification",
                 "classified_by": "gpt-5.4-mini-2026-03-17",
-                "classified_at": "2026-04-28T23:08:45.182765"
+                "classified_at": "2026-04-30T06:21:20.326890"
               }
             },
             "diagnostics": {
@@ -4889,13 +4891,15 @@
           },
           "classification_metadata": {
             "classified_by": "gpt-5.4-mini-2026-03-17",
-            "classified_at": "2026-04-28T23:08:45.185992",
+            "classified_at": "2026-04-30T06:21:20.330381",
             "entity_count": 10,
             "destination_count": 14,
             "npc_count": 16,
             "provenance": "llm_classification",
             "feature_flag": "ENABLE_LLM_CLASSIFICATION"
-          }
+          },
+          "author": "Unknown - Module derived from https://homebrewery.naturalcrit.com/share/coAxrMp2I7tj",
+          "license": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
         },
         "changed": false,
         "added_refs": [],

@@ -1,0 +1,92 @@
+{
+  "module_slug": "The_Hidden_City_of_Numillian",
+  "source": "module_media_generator",
+  "contract": "module_media_generator_report.v1",
+  "authoritative": true,
+  "status": "pass",
+  "freshness_state": "current",
+  "generated_at": "2026-05-04T05:45:08.219160Z",
+  "report_freshness": {
+    "state": "current",
+    "authoritative": true,
+    "written_at": "2026-05-04T05:45:08.219173Z",
+    "phase": "final",
+    "workflow": "module_media_generator",
+    "refresh_reason": "module_media_generator",
+    "contract": "module_media_generator_report.v1",
+    "stale_reason": null
+  },
+  "total_assets": 5,
+  "complete_assets": 5,
+  "missing_count": 0,
+  "missing_assets": [],
+  "asset_audits": [
+    {
+      "id": "echo_haunt",
+      "name": "Echo-Haunt",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/echo_haunt.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/echo_haunt_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
+    {
+      "id": "ward_sworn_brute",
+      "name": "Ward-Sworn Brute",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/ward_sworn_brute.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/ward_sworn_brute_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
+    {
+      "id": "ward_torn_horror",
+      "name": "Ward-Torn Horror",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/ward_torn_horror.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/ward_torn_horror_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
+    {
+      "id": "animated_armor_shard_guardian",
+      "name": "animated armor shard-guardian",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/animated_armor_shard_guardian.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/animated_armor_shard_guardian_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    },
+    {
+      "id": "invisible_stalker_or_equivalent_ward_bound_guardian",
+      "name": "invisible stalker or equivalent ward-bound guardian",
+      "type": "monster",
+      "has_image": true,
+      "has_thumbnail": true,
+      "has_video": false,
+      "image_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/invisible_stalker_or_equivalent_ward_bound_guardian.jpg",
+      "thumbnail_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/media/monsters/invisible_stalker_or_equivalent_ward_bound_guardian_thumb.jpg",
+      "missing_fields": [],
+      "complete": true
+    }
+  ],
+  "generation_failures": [],
+  "module_media_policy": {
+    "module_local_only": true,
+    "static_fallback_counts": false,
+    "completion_rule": "image_and_thumbnail"
+  },
+  "report_path": "/Users/zeug/Projects/NeverEndingQuest/modules/The_Hidden_City_of_Numillian/module_media_generator_report.json"
+}
