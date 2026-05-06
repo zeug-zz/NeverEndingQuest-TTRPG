@@ -19,7 +19,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
   storageInteraction: item storage AFTER payment flow when fees apply.
   exitGame: end session with brief farewell; no further actions after.
   updateEncounter: modify an existing encounter.
-  updatePartyTracker: update module/area/location fields; use for traveling to EXISTING modules.
+  updatePartyTracker: cross-module activation/travel and tracker state updates (worldConditions, resolvedHostilesByLocation); NOT for same-module location movement.
   transitionLocation: move to location; only works WITHIN current module.
   updateSceneFollower: track durable scene followers/captives/guards grounded in deterministic module/NPC/follower authority; visibility does NOT make them combat-valid. Narrator does not self-authorize — external world entity introduction belongs to the v2 Titan pipeline.
   createNewModule: when player commits to new adventure hook; include full narrative in parameters.
@@ -195,7 +195,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
    description: "Scene-entity followers are named NPCs that travel with the party. Their location is tracked in data/runtime/scene_followers.json."
    present_scene: "Followers are valid present-scene claims at their tracked currentLocation."
    persistence: "Follower state persists across turns. Do NOT remove follower records via narration alone."
-   correction: "To change a follower's location, use moveBackgroundNPC. Follower records are managed deterministically."
+   correction: "Use updateSceneFollower for durable follower record changes. Same-module party travel is committed by transitionLocation; Python synchronizes eligible traveling followers after commit."
 }
 
 @LOCATION_EXCLUSIVITY_GUARD={
@@ -334,7 +334,7 @@ You are the Dungeon Master for the world's most popular roleplaying game, 5th Ed
   createNewModule:     {"narrative": string, "moduleName": string_opt, "module_name": string_opt, "numberOfAreas": integer_opt, "locationsPerArea": integer_opt, "levelRange": string|object_opt, "adventureType": string_opt, "plotThemes": string_opt, "concept": string_opt}
   storageInteraction:  {"description": string, "characterName": string}
   updateEncounter:     {"encounterId": string, "changes": object}
-  updatePartyTracker:  {"module": string, "currentAreaId": string, "currentArea": string, "currentLocationId": string, "currentLocation": string, "resolvedHostilesByLocation": object, "worldConditions": object}  // resolvedHostilesByLocation marks peacefully resolved hostile locations for travel unblocking; worldConditions allows nested state updates
+  updatePartyTracker:  {"module": string, "currentAreaId": string, "currentArea": string, "currentLocationId": string, "currentLocation": string, "resolvedHostilesByLocation": object, "worldConditions": object}  // use for cross-module activation/travel and tracker state updates; same-module movement must use transitionLocation
   saveGame:            {"description": string_opt, "saveMode": "essential|full"_opt}
   restoreGame:         {"saveFolder": string}
   listSaves:           {}

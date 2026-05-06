@@ -55,6 +55,15 @@ _FOLLOWER_DISPOSITION_VALUES = _FOLLOWER_VISIBLE_STATES | _FOLLOWER_HIDDEN_STATE
     "friendly",
     "guarded_guide",
 }
+_FOLLOWER_TRAVEL_DISPOSITIONS = {
+    "guarded_guide",
+    "following",
+    "captive",
+    "held",
+    "parleying",
+    "companion",
+    "escorted",
+}
 
 
 def _follower_path() -> str:
@@ -344,6 +353,117 @@ def move_follower_to_location(
             store["followers"] = followers
             return True
     return False
+
+
+def _is_traveling_follower_record(
+    record: Dict[str, Any],
+    old_location_id: str,
+) -> bool:
+    """Return True when follower should travel with party transition."""
+    if not isinstance(record, dict):
+        return False
+
+    lifecycle_state = normalize_scene_follower_disposition(
+        record.get("lifecycle_state") or record.get("state")
+    )
+    if lifecycle_state != "present":
+        return False
+
+    current_location = str(record.get("current_location", "") or "").strip().upper()
+    if not current_location or current_location != old_location_id:
+        return False
+
+    disposition = normalize_scene_follower_disposition(record.get("disposition"))
+    if disposition in _FOLLOWER_TRAVEL_DISPOSITIONS:
+        return True
+
+    if follower_visible_in_strip(record) and disposition in {
+        "friendly",
+        "neutral",
+        "hostile",
+    }:
+        return True
+
+    return False
+
+
+def sync_traveling_followers_to_location(
+    old_location_id: str,
+    new_location_id: str,
+    *,
+    reason: str = "transitionLocation",
+) -> Dict[str, Any]:
+    """Move conservative traveling followers after successful party transition.
+
+    This helper is fail-open by design. It returns summary diagnostics and
+    never raises to callers that already committed party travel.
+    """
+    summary: Dict[str, Any] = {
+        "ok": True,
+        "reason": str(reason or "transitionLocation"),
+        "old_location_id": str(old_location_id or "").strip().upper(),
+        "new_location_id": str(new_location_id or "").strip().upper(),
+        "moved": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    old_location = summary["old_location_id"]
+    new_location = summary["new_location_id"]
+
+    if not old_location or not new_location or old_location == new_location:
+        summary["ok"] = False
+        summary["errors"].append("invalid_transition_locations")
+        return summary
+
+    try:
+        store = load_followers()
+        records = get_follower_records(store)
+        if not records:
+            return summary
+
+        changed = False
+        for record in records:
+            normalized = normalize_scene_follower_record(record)
+            entity_id = str(
+                normalized.get("entity_id") or record.get("entity_id") or ""
+            ).strip()
+            if not entity_id:
+                summary["skipped"].append("unknown_entity")
+                continue
+
+            if _is_traveling_follower_record(normalized, old_location):
+                record["current_location"] = new_location
+                changed = True
+                summary["moved"].append(entity_id)
+                continue
+
+            summary["skipped"].append(entity_id)
+
+        if changed:
+            saved = save_followers(store)
+            if not saved:
+                summary["ok"] = False
+                summary["errors"].append("persist_failed")
+                warning(
+                    "STATE_SYNC: Scene follower sync could not persist updated locations",
+                    category="scene_followers",
+                )
+            else:
+                info(
+                    f"STATE_SYNC: Scene follower sync moved={len(summary['moved'])} old={old_location} new={new_location}",
+                    category="scene_followers",
+                )
+
+        return summary
+    except Exception as e:
+        summary["ok"] = False
+        summary["errors"].append("exception")
+        warning(
+            f"STATE_SYNC: Scene follower sync degraded: {e}",
+            category="scene_followers",
+        )
+        return summary
 
 
 def remove_follower_record(store: Dict[str, Any], entity_id: str) -> bool:

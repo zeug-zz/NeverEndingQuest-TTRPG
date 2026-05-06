@@ -50,6 +50,10 @@ USE_COMPRESSED_COMBAT = True                            # Toggle for compressed 
 COMBAT_API_TIMEOUT_SECONDS = 120                        # Per-call timeout for combat LLM calls (prevents indefinite hangs)
 COMBAT_CONNECT_TIMEOUT_SECONDS = 10                     # TCP connection timeout for combat LLM calls
 
+# --- Narrator System Settings ---
+NARRATOR_API_TIMEOUT_SECONDS = 120                      # Per-call timeout for narrator LLM calls (prevents indefinite hangs)
+NARRATOR_CONNECT_TIMEOUT_SECONDS = 10                   # TCP connection timeout for narrator LLM calls
+
 # --- Streaming UX Settings ---
 # TABLETOP MODE: Reversion defaults - keep stable block narration UX.
 ENABLE_CHAT_STREAMING = False                          # Reversion default: keep canonical block narration path

@@ -17,7 +17,8 @@ import os
 # Ensure we can import from utils
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.party_tracker_merge import _merge_party_tracker_updates
+from utils.action_normalization import normalize_action_list_for_authority
+from utils.party_tracker_merge import PartyTrackerMergeError, _merge_party_tracker_updates
 
 
 class TestDirectKeyMerge(unittest.TestCase):
@@ -158,7 +159,12 @@ class TestSpecialKeyBehavior(unittest.TestCase):
             "currentArea": "Heart of Fields"
         }
         
-        result = _merge_party_tracker_updates(current_data, parameters)
+        result = _merge_party_tracker_updates(
+            current_data,
+            parameters,
+            current_module="TestModule",
+            allow_same_module_location_write=True,
+        )
         
         # Assertions: All location keys in worldConditions
         wc = result["worldConditions"]
@@ -243,6 +249,111 @@ class TestEdgeCases(unittest.TestCase):
         
         # Assertions: Replaces entirely
         self.assertEqual(result["worldConditions"], "cleared")
+
+
+class TestActionAuthorityNormalization(unittest.TestCase):
+    """Tests for updatePartyTracker same-module authority normalization."""
+
+    def test_no_module_location_tracker_converts_to_transition(self):
+        actions = [
+            {
+                "action": "updatePartyTracker",
+                "parameters": {"currentLocationId": "NC05"},
+            }
+        ]
+        party_state = {
+            "module": "The_Thornwood_Watch",
+            "worldConditions": {"currentLocationId": "NC02"},
+        }
+
+        normalized, events = normalize_action_list_for_authority(actions, party_state)
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0].get("action"), "transitionLocation")
+        self.assertEqual(
+            normalized[0].get("parameters", {}).get("newLocation"),
+            "NC05",
+        )
+        self.assertTrue(
+            any(
+                event.get("type")
+                == "converted_same_module_tracker_location_to_transition"
+                for event in events
+            )
+        )
+
+    def test_same_location_tracker_keys_stripped_preserving_world_state(self):
+        actions = [
+            {
+                "action": "updatePartyTracker",
+                "parameters": {
+                    "currentLocationId": "NC05",
+                    "resolvedHostilesByLocation": {"NC05": True},
+                },
+            }
+        ]
+        party_state = {
+            "module": "The_Thornwood_Watch",
+            "worldConditions": {"currentLocationId": "NC05"},
+        }
+
+        normalized, events = normalize_action_list_for_authority(actions, party_state)
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0].get("action"), "updatePartyTracker")
+        self.assertNotIn("currentLocationId", normalized[0].get("parameters", {}))
+        self.assertEqual(
+            normalized[0].get("parameters", {}).get("resolvedHostilesByLocation"),
+            {"NC05": True},
+        )
+        self.assertTrue(
+            any(
+                event.get("type") == "stripped_noop_same_location_tracker_keys"
+                for event in events
+            )
+        )
+
+
+class TestPartyTrackerMergeGuard(unittest.TestCase):
+    """Tests for fail-closed same-module tracker merge guard."""
+
+    def test_reject_unsafe_same_module_location_write(self):
+        current_data = {
+            "module": "The_Thornwood_Watch",
+            "worldConditions": {"currentLocationId": "NC02"},
+        }
+        parameters = {"currentLocationId": "NC05"}
+
+        with self.assertRaises(PartyTrackerMergeError):
+            _merge_party_tracker_updates(
+                current_data,
+                parameters,
+                current_module="The_Thornwood_Watch",
+            )
+
+    def test_cross_module_tracker_update_allowed(self):
+        current_data = {
+            "module": "The_Thornwood_Watch",
+            "worldConditions": {"currentLocationId": "NC02"},
+        }
+        parameters = {
+            "module": "Keep_of_Doom",
+            "currentLocationId": "KD01",
+            "currentAreaId": "KD001",
+            "currentArea": "Outer Keep",
+        }
+
+        result = _merge_party_tracker_updates(
+            current_data,
+            parameters,
+            current_module="The_Thornwood_Watch",
+        )
+
+        self.assertEqual(result.get("module"), "Keep_of_Doom")
+        self.assertEqual(
+            result.get("worldConditions", {}).get("currentLocationId"),
+            "KD01",
+        )
 
 
 if __name__ == "__main__":

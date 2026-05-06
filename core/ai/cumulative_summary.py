@@ -980,10 +980,7 @@ def update_journal_with_summary(
                         import subprocess
 
                         result = subprocess.run(
-                            [
-                                sys.executable,
-                                "scripts/memory_management/compress_memories.py",
-                            ],
+                            [sys.executable, "scripts/memory_management/compress_memories.py"],
                             capture_output=True,
                             text=True,
                             timeout=5,

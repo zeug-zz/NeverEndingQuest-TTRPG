@@ -294,6 +294,8 @@ Skill Checks:
 
 CRITICAL RULE: When a player explicitly states they are attempting ANY action that could fail and has meaningful consequences, you MUST ask for a skill check BEFORE narrating any outcome.
 
+Treat this as a requestRoll moment: stop narrating, ask for the roll, and wait for the result before resolving success or failure.
+
 Common player phrases that REQUIRE immediate skill checks:
 - "I try to persuade/convince/negotiate..." → Persuasion check
 - "I attempt to lie/deceive/mislead..." → Deception check  
@@ -521,6 +523,7 @@ Use updatePartyTracker action with module change:
 - You only need to provide the module name in the updatePartyTracker action
 - The starting location (including area and location IDs) will be set automatically
 - Only include location parameters if you need to override the default starting location for special circumstances
+- Do NOT use updatePartyTracker for same-module movement. Same-module movement must use transitionLocation.
 
 ### MODULE TRAVEL NARRATION:
 1. **Travel Description**: Use atmospheric travel narration describing the journey
@@ -1072,6 +1075,7 @@ Examples of when to use moveBackgroundNPC:
 - When known, preserve source metadata fields on follower records: `source_module`, `source_npc_name`, `source_entity_slug`, `character_file_ref`, and `recruited_from_location_id`.
 - Strip visibility does NOT make a follower combat-valid; visible followers are presentation state only.
 - Hidden, released, escaped, dead, joined_party, and combat_started follower states should remove or hide the follower from the strip.
+- Do not use moveBackgroundNPC as follower location persistence. Use updateSceneFollower for follower state updates; transitionLocation commits party movement and Python syncs eligible traveling followers.
 - Do not use updatePartyNPCs for followers that remain outside the party roster.
 
 ### NPC Arrival State Sync (Explicit Arrival Claims)

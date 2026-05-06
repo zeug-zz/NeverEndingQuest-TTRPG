@@ -152,6 +152,7 @@ ACTION USAGE VALIDATION:
   - When supported encounter ops are present, treat ops as authoritative mechanics payload and changes as readable mirror.
   - changes-only remains compatibility-valid during migration.
   - Supported enemy encounter ops in this slice: hp_delta, set_hp, condition_add, condition_remove, set_status.
+  - If a combat history line is marked [ALREADY_APPLIED], do not accept new ops that replay the same committed enemy damage, hit, miss, ammo, or status result.
   - updateEncounter prose mirrors and ops MUST remain enemy-only; player or allied NPC targets inside updateEncounter are INVALID.
   - Unsupported or ambiguous encounter ops should preserve safe fallback behavior when changes provides a valid enemy-state mirror.
 - requestRoll: Preferred for player-facing saving throws, ability checks, skill checks, and concentration saves.
@@ -162,6 +163,7 @@ ACTION USAGE VALIDATION:
   - ability required for saving_throw and ability_check.
   - skill required for skill_check.
   - advantage is optional (normal, advantage, disadvantage).
+- During ENEMY_PHASE, prompting any PC what they do is INVALID unless the response is only resolving PC-target damage/conditions via updateCharacterInfo.
 - Prose-only save/check/concentration asks remain compatibility-valid during migration (requestRoll preferred, not exclusive).
 - NEVER recommend updateCharacterInfo for monsters - it will always fail
 - Example monster update: {"action": "updateEncounter", "parameters": {"encounterId": "XXX", "changes": "Goblin takes 8 damage, HP from 15 to 7"}}

@@ -165,7 +165,10 @@ from utils.file_operations import safe_write_json
 import core.ai.cumulative_summary as cumulative_summary
 from utils.enhanced_logger import debug, info, warning, error, game_event, set_script_name
 from utils.save_roll_contract import calculate_concentration_dc
-from utils.combat_phase_integrity_precheck import validate_combat_phase_integrity_precheck
+from utils.combat_phase_integrity_precheck import (
+    validate_already_applied_enemy_replay_precheck,
+    validate_combat_phase_integrity_precheck,
+)
 from utils.combat_narration_consistency_precheck import (
     validate_combat_narration_consistency_precheck,
     validate_update_encounter_enemy_boundary_precheck,
@@ -1159,6 +1162,7 @@ def validate_combat_response(response, encounter_data, user_input, conversation_
     # --- TABLETOP MODE: DETERMINISTIC NARRATION/ROUTING PRECHECKS ---
     # Reject explicit hit/miss narration contradictions and invalid enemy routing
     # before probabilistic validation, while preserving fail-open behavior on ambiguity.
+    response_json = None
     try:
         response_json = parse_json_safely(response)
         if response_json and isinstance(response_json, dict):
@@ -1186,6 +1190,24 @@ def validate_combat_response(response, encounter_data, user_input, conversation_
     except Exception as narration_precheck_error:
         debug(
             f"VALIDATION_ERROR: Narration/routing prechecks failed open due to error: {narration_precheck_error}",
+            category="combat_validation",
+        )
+
+    try:
+        replay_ok, replay_reason = validate_already_applied_enemy_replay_precheck(
+            response_json,
+            encounter_data,
+            conversation_history=conversation_history,
+        )
+        if not replay_ok:
+            debug(
+                f"VALIDATION_FAIL: Already-applied replay precheck rejected response: {replay_reason}",
+                category="combat_validation",
+            )
+            return f"VALIDATION FAILURE: {replay_reason}"
+    except Exception as replay_precheck_error:
+        debug(
+            f"VALIDATION_ERROR: Already-applied replay precheck failed open due to error: {replay_precheck_error}",
             category="combat_validation",
         )
     # --- END MULTI-PC VALIDATION GUARDRAIL ---

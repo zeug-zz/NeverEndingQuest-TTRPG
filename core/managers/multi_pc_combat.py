@@ -1155,11 +1155,11 @@ class MultiPCCombatManager:
                     }, verbose=tt_debug.is_tabletop_verbose())
                 
                 # TABLETOP MODE: Add prefill marker so UI auto-populates /dmg command
-                return f"[skipTTS][prefill:/dmg ] Dungeon Master: Hit! (Rolled {roll} vs AC {ac}). Roll damage.", None
+                return f"[skipTTS][ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit! (Rolled {roll} vs AC {ac}). Roll damage.", None
             else:
                 # Miss logic - pass to LLM for narration
                 weapon_context = f" with {weapon_name}" if weapon_name else ""
-                log_msg = f"[System: {actor_name} attacked {target.name}{weapon_context} with roll {roll} vs AC {ac} and MISSED.]"
+                log_msg = f"[ALREADY_APPLIED] [System: {actor_name} attacked {target.name}{weapon_context} with roll {roll} vs AC {ac} and MISSED.]"
                 
                 # TABLETOP MODE: Debug miss
                 if tt_debug:
@@ -1172,7 +1172,7 @@ class MultiPCCombatManager:
                         "result": "continue_to_llm"
                     }, verbose=tt_debug.is_tabletop_verbose())
                 
-                return f"[skipTTS] Dungeon Master: Miss. (Rolled {roll} vs AC {ac}).\nProcessing outcome...", log_msg
+                return f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Miss. (Rolled {roll} vs AC {ac}). Attack result committed.\nProcessing outcome...", log_msg
                 
         elif command == "/dmg":
             # Syntax: /dmg [amount] [flavor text...]
@@ -1233,9 +1233,10 @@ class MultiPCCombatManager:
                             creature["status"] = "dead"
                         break
             
-            log_msg = f"[System: {actor_name} dealt {amount} damage ({flavor_text}) to {target.name}. HP: {target.hp}/{target.max_hp}.{status_update}]"
+            result_hp_text = f"Result HP: {target.hp}/{target.max_hp}{status_update}."
+            log_msg = f"[ALREADY_APPLIED] [System: {actor_name} dealt {amount} damage ({flavor_text}) to {target.name}. {result_hp_text}]"
             
-            return f"[skipTTS] Dungeon Master: Damage applied ({amount}). Target HP: {target.hp}/{target.max_hp}{status_update}.\nProcessing outcome...", log_msg
+            return f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Damage applied ({amount}). {result_hp_text}\nProcessing outcome...", log_msg
             
         return None, None
 
@@ -1543,13 +1544,17 @@ class MultiPCCombatManager:
             return ""
             
         state = self._state.pc_states[pc_name]
+        current_phase = "PC_PHASE" if not self._turns.pc_phase_complete else "ENEMY_PHASE"
         
         lines = [
-            f"!!! CRITICAL OVERRIDE: THE CURRENT ACTIVE PLAYER CHARACTER IS: [{pc_name}] !!!",
-            f"IGNORE all other turn indicators. Only [{pc_name}] can act now.",
+            f"CURRENT_PHASE: {current_phase}",
             f"HP: {state.current_hp}/{state.max_hp}",
             f"Status: {state.status.value}",
         ]
+
+        if not self._turns.pc_phase_complete:
+            lines.insert(0, f"!!! CRITICAL OVERRIDE: THE CURRENT ACTIVE PLAYER CHARACTER IS: [{pc_name}] !!!")
+            lines.insert(1, f"IGNORE all other turn indicators. Only [{pc_name}] can act now.")
         
         if state.status == PCStatus.INCAPACITATED:
             lines.append(f"Death Saves - Successes: {state.death_save_successes}/3, Failures: {state.death_save_failures}/3")
@@ -1567,7 +1572,7 @@ class MultiPCCombatManager:
         lines = [f"=== PC PARTY TURN STATUS (Round {self._state.current_round}) ==="]
         
         for name, state in self._state.pc_states.items():
-            marker = "[>]" if name == self._state.current_pc_name else "   "
+            marker = "[>]" if (not self._turns.pc_phase_complete and name == self._state.current_pc_name) else "   "
             status_icon = {
                 PCStatus.READY: "[WAIT] Ready",
                 PCStatus.ACTED: "[DONE] Acted",
@@ -1673,14 +1678,9 @@ REQUIRED RESPONSE:
         current_actor = self.get_current_actor()
         actor_name = self._state.current_pc_name or (current_actor.name if current_actor else "Current Actor")
         
-        # Count remaining PCs
-        available_pcs = self.get_available_pcs()
-        pcs_remaining = len(available_pcs)
-        
         return f"""
 ==============================================================================
 CURRENT PHASE: PC_PHASE | ACTIVE ACTOR: {actor_name}
-PCS REMAINING THIS ROUND: {pcs_remaining}
 AWAITING /end COMMAND: YES (enemies cannot act yet)
 [BLOCKED] FORBIDDEN ACTORS (DO NOT NARRATE): {forbidden_str[:70]}
 REQUIRED RESPONSE:
@@ -1719,7 +1719,7 @@ cause combat desync. Only [{actor_name}] has authority to act now.
             if pc_state:
                 if pc_state.status == PCStatus.ACTED:
                     return "[X]", "Acted"
-                elif name == self._state.current_pc_name:
+                elif not self._turns.pc_phase_complete and name == self._state.current_pc_name:
                     return "[>]", "CURRENT TURN"
             return "[ ]", "Waiting"
         
@@ -1777,32 +1777,14 @@ cause combat desync. Only [{actor_name}] has authority to act now.
         
         # PC_PHASE
         active_pc_name: str = self._state.current_pc_name or "Current PC"
-        active_pc_index = -1
-        
-        for i, combatant in enumerate(sorted_queue):
-            if combatant.name == active_pc_name:
-                active_pc_index = i
-                break
-        
+        active_pc_index = next((i for i, combatant in enumerate(sorted_queue) if combatant.name == active_pc_name), -1)
+
         if active_pc_index < 0:
             return f">>> CURRENT: {active_pc_name} - PLAYER TURN (await input)", [active_pc_name]
-        
-        # Find NPCs acting before active PC
-        npcs_before = [
-            combatant.name for i, combatant in enumerate(sorted_queue[:active_pc_index])
-            if TurnQueueManager._is_valid_enemy_phase_actor(combatant)
-        ]
-        
-        if npcs_before:
-            npc_list = "\n".join([f"- {name}" for name in npcs_before])
-            instruction = f""">>> PROCESS ALL OF THESE IN ONE RESPONSE (Initiative Order):
-{npc_list}
->>> THEN STOP AT: {active_pc_name} (Player)"""
-            return instruction, npcs_before + [active_pc_name]
-        else:
-            active_init = sorted_queue[active_pc_index].initiative
-            instruction = f">>> CURRENT: {active_pc_name} ({active_init}) - PLAYER TURN (await input)"
-            return instruction, [active_pc_name]
+
+        active_init = sorted_queue[active_pc_index].initiative
+        instruction = f">>> CURRENT: {active_pc_name} ({active_init}) - PLAYER TURN (await input)"
+        return instruction, [active_pc_name]
     
     def format_initiative_tracker(self, encounter_data: Dict[str, Any]) -> str:
         """
@@ -2018,11 +2000,15 @@ def modify_combat_prompt_for_multi_pc(
         Modified prompt for multi-PC combat
     """
     # Add multi-PC header section
+    current_phase = "PC_PHASE" if not manager.pc_phase_complete else "ENEMY_PHASE"
     multi_pc_header = f"""
 ++ MULTI-PC COMBAT MODE ACTIVE ++
 This combat involves multiple player characters. Each PC takes their turn when 
 selected by the player via the character tabs. Address the current PC by name
 using [{pc_name}] instead of generic "you" references.
+
+CURRENT_PHASE: {current_phase}
+CURRENT_PHASE overrides any [>] marker. [>] is PC_PHASE-only.
 
 {manager.format_party_turn_summary()}
 

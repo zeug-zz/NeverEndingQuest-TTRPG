@@ -599,6 +599,51 @@ class TestNarratorContractSourceGuards(unittest.TestCase):
         self.assertIn("def _is_plot_point_unlocked(point):", content)
         self.assertIn("plot_status_by_id", content)
 
+    def test_system_prompt_update_party_tracker_contract_is_cross_module(self):
+        """Compressed system prompt should keep same-module movement on transitionLocation."""
+        prompt_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "prompts", "system_prompt_compressed.txt"
+        )
+        with open(prompt_path, "r") as f:
+            content = f.read()
+
+        self.assertIn("updatePartyTracker: cross-module activation/travel", content)
+        self.assertIn("NOT for same-module location movement", content)
+
+    def test_system_prompt_follower_state_references_update_scene_follower(self):
+        """Follower contract should reference updateSceneFollower, not moveBackgroundNPC persistence."""
+        prompt_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "prompts", "system_prompt_compressed.txt"
+        )
+        with open(prompt_path, "r") as f:
+            content = f.read()
+
+        start = content.find("@FOLLOWER_STATE={")
+        self.assertNotEqual(start, -1)
+        end = content.find("}\n\n@LOCATION_EXCLUSIVITY_GUARD", start)
+        self.assertNotEqual(end, -1)
+        follower_block = content[start:end]
+
+        self.assertIn("updateSceneFollower", follower_block)
+        self.assertNotIn("use moveBackgroundNPC", follower_block)
+
+    def test_validation_prompt_marks_same_module_tracker_movement_invalid(self):
+        """Compressed validation prompt should reject same-module movement via updatePartyTracker."""
+        prompt_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "prompts", "validation", "validation_prompt_compressed.txt"
+        )
+        with open(prompt_path, "r") as f:
+            content = f.read()
+
+        self.assertIn(
+            "same-module location movement via updatePartyTracker is INVALID",
+            content,
+        )
+        self.assertIn("cross-module activation/travel", content)
+
 
 class TestDeathSupernaturalStateContracts(unittest.TestCase):
     """Source-contract: death and supernatural state shape guidance in prompts."""

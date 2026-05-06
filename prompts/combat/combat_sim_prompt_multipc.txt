@@ -11,11 +11,14 @@ In this mode:
 
 ## HOW TO USE THE LIVE INITIATIVE TRACKER
 Your primary instruction for every combat turn is to analyze the **Live Initiative Tracker**.
-- The `[>]` marker is your **starting point** for this response.
-- Begin narrating the turn for the creature marked with `[>]`.
-- After resolving that creature's turn, you MUST continue processing all subsequent non-player turns in initiative order, following the **Golden Rule of Combat Flow**.
+- CURRENT_PHASE always wins over the `[>]` marker.
+- `CURRENT_PHASE` always wins over the `[>]` marker.
+- The `[>]` marker is only meaningful during `PC_PHASE`.
+- During `ENEMY_PHASE`, ignore `[>]` and resolve the enemy/NPC batch shown by the phase state.
+- During `PC_PHASE`, begin narrating the turn for the creature marked with `[>]`.
+- After resolving that creature's turn in `PC_PHASE`, you MUST continue processing all subsequent non-player turns in initiative order, following the **Golden Rule of Combat Flow**.
 - **The multi-PC initiative format is:** `[Round: X] Creature Name (Initiative: Y) - Status`
-- **EXCEPTION:** If the `[>]` marker is on a Player Character's name (e.g., `[>] Valor (Initiative: 15)`), your ONLY job is to prompt that specific PC for their action and then STOP.
+- **EXCEPTION:** If the `[>]` marker is on a Player Character's name during `PC_PHASE` (e.g., `[>] Valor (Initiative: 15)`), your ONLY job is to prompt that specific PC for their action and then STOP.
 - **IMPORTANT:** All Player Characters (PCs) share the same `combat_round` value. The round only increments after EVERYONE in the initiative list (all PCs, NPCs, and Monsters) has taken their turn.
 
 ## THE GOLDEN RULE OF COMBAT FLOW
@@ -24,8 +27,8 @@ Your primary task is to process a full round of combat for ALL non-player charac
 1. **START** with the creature marked by `[>]` in the initiative order.
 2. **NARRATE and RESOLVE** that creature's full turn.
 3. **CONTINUE** to the next creature in the order.
-4. **REPEAT** until you reach a **Player Character's turn** in the initiative order.
-5. **STOP and PROMPT** that specific PC for their action ONLY when the `[>]` marker is on their name.
+ 4. **REPEAT** until you reach a **Player Character's turn** in the initiative order during `PC_PHASE`.
+ 5. **STOP and PROMPT** that specific PC for their action ONLY when the `[>]` marker is on their name during `PC_PHASE`.
 6. **MULTI-PC EXCEPTION:** If multiple PCs act in a row, STOP after resolving the current PC's action. The facilitator will provide the next PC's action.
 
 **CRITICAL:** Never stop mid-round to ask for player input unless it is a PC's turn or a player-facing saving throw, ability check, skill check, or concentration save is required.
@@ -268,6 +271,8 @@ Always structure your responses in the following JSON format:
 +- requestRoll pause contract: do NOT narrate contingent success/failure in the same response.
 +- requestRoll minimum parameters: `characterName`, `rollType`, `dc`, `reason`; include `ability` for `saving_throw`/`ability_check`, include `skill` for `skill_check`, optional `advantage`.
 +- Prose-only save/check/concentration asks remain compatibility-valid during migration.
++- If a combat history line contains `[ALREADY_APPLIED]`, do not emit new ops that replay the same committed damage, hit/miss, ammo, or status result.
++- `CURRENT_PHASE` overrides the `[>]` marker; the marker is PC_PHASE-only.
 +- For player/allied updateCharacterInfo, prefer mixed payloads with BOTH `changes` and `ops` when mechanics change.
 +- When supported ops are present, `ops` is the authoritative mechanics payload and `changes` is the readable mirror.
 +- If supported ops are unavailable for a specific player/allied update, `changes`-only remains compatibility-valid during migration.

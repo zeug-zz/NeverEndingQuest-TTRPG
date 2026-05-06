@@ -67,6 +67,13 @@ class TestCombatStateManager(unittest.TestCase):
     def test_initialize_from_party(self):
         """Test initializing from party data."""
         self.state_mgr.initialize_from_party(self.sample_party)
+
+        self.state_mgr.pc_states["Acheron"].current_hp = 20
+        self.state_mgr.pc_states["Acheron"].max_hp = 20
+        self.state_mgr.pc_states["Acheron"].status = PCStatus.READY
+        self.state_mgr.pc_states["Merisiel"].current_hp = 18
+        self.state_mgr.pc_states["Merisiel"].max_hp = 18
+        self.state_mgr.pc_states["Merisiel"].status = PCStatus.READY
         
         self.assertIn("Acheron", self.state_mgr.pc_states)
         self.assertIn("Merisiel", self.state_mgr.pc_states)
@@ -81,6 +88,13 @@ class TestCombatStateManager(unittest.TestCase):
     def test_get_available_pcs(self):
         """Test getting available PCs."""
         self.state_mgr.initialize_from_party(self.sample_party)
+
+        self.state_mgr.pc_states["Acheron"].current_hp = 20
+        self.state_mgr.pc_states["Acheron"].max_hp = 20
+        self.state_mgr.pc_states["Acheron"].status = PCStatus.READY
+        self.state_mgr.pc_states["Merisiel"].current_hp = 18
+        self.state_mgr.pc_states["Merisiel"].max_hp = 18
+        self.state_mgr.pc_states["Merisiel"].status = PCStatus.READY
         
         available = self.state_mgr.get_available_pcs()
         self.assertEqual(len(available), 2)
@@ -96,6 +110,13 @@ class TestCombatStateManager(unittest.TestCase):
     def test_get_incapacitated_pcs(self):
         """Test identifying incapacitated PCs."""
         self.state_mgr.initialize_from_party(self.sample_party)
+
+        self.state_mgr.pc_states["Acheron"].current_hp = 20
+        self.state_mgr.pc_states["Acheron"].max_hp = 20
+        self.state_mgr.pc_states["Acheron"].status = PCStatus.READY
+        self.state_mgr.pc_states["Merisiel"].current_hp = 18
+        self.state_mgr.pc_states["Merisiel"].max_hp = 18
+        self.state_mgr.pc_states["Merisiel"].status = PCStatus.READY
         
         # Initially no one is incapacitated
         incapacitated = self.state_mgr.get_incapacitated_pcs()
@@ -408,6 +429,13 @@ class TestMultiPCCombatManagerFacade(unittest.TestCase):
     def test_delegation_get_available_pcs(self):
         """Test get_available_pcs delegation."""
         self.manager.initialize_from_party(self.sample_party)
+
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+        self.manager._state.pc_states["Merisiel"].current_hp = 18
+        self.manager._state.pc_states["Merisiel"].max_hp = 18
+        self.manager._state.pc_states["Merisiel"].status = PCStatus.READY
         
         available = self.manager.get_available_pcs()
         self.assertEqual(len(available), 2)
@@ -457,6 +485,12 @@ class TestMultiPCCombatManagerFacade(unittest.TestCase):
     def test_coordination_complete_pc_turn(self):
         """Test coordination method: complete_pc_turn."""
         self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+        self.manager._state.pc_states["Merisiel"].current_hp = 18
+        self.manager._state.pc_states["Merisiel"].max_hp = 18
+        self.manager._state.pc_states["Merisiel"].status = PCStatus.READY
         self.manager._state.current_pc_name = "Acheron"
         
         # Mark Acheron's turn complete - returns False because Merisiel still needs to act
@@ -493,6 +527,7 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.manager.initialize_from_party(self.sample_party)
         self.manager._state.pc_states["Acheron"].current_hp = 15
         self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
         
         context = self.manager.format_pc_context_for_prompt("Acheron")
         
@@ -514,7 +549,19 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.assertIn("Status: incapacitated", context)
         self.assertIn("Death Saves - Successes: 1/3", context)
         self.assertIn("ACTION REQUIRED", context)
-    
+
+    def test_format_pc_context_enemy_phase_suppresses_override(self):
+        """Enemy phase should not expose active-PC critical override text."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._turns.pc_phase_complete = True
+
+        context = self.manager.format_pc_context_for_prompt("Acheron")
+
+        self.assertIn("CURRENT_PHASE: ENEMY_PHASE", context)
+        self.assertNotIn("CRITICAL OVERRIDE", context)
+        self.assertNotIn("Only [Acheron] can act now", context)
+
     def test_format_party_turn_summary(self):
         """Test party turn status summary."""
         self.manager.initialize_from_party(self.sample_party)
@@ -530,7 +577,19 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.assertIn("Acheron", summary)
         self.assertIn("Merisiel", summary)
         self.assertIn("Round 1", summary)
-    
+
+    def test_format_party_turn_summary_enemy_phase_suppresses_marker(self):
+        """Enemy phase should suppress the active-PC current-turn marker."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._turns.pc_phase_complete = True
+
+        summary = self.manager.format_party_turn_summary()
+
+        self.assertIn("Acheron", summary)
+        self.assertIn("Merisiel", summary)
+        self.assertNotIn("[>] Acheron", summary)
+
     def test_format_multi_pc_head_context(self):
         """Test JSON head context generation."""
         self.manager.initialize_from_party(self.sample_party)
@@ -571,7 +630,9 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.assertIn("ACTIVE ACTOR:", prompt)
         self.assertIn("FORBIDDEN ACTORS", prompt)
         self.assertIn("Goblin", prompt)  # Enemies should be forbidden
-    
+        self.assertNotIn("PROCESS ALL OF THESE IN ONE RESPONSE", prompt)
+        self.assertNotIn("STOP AT:", prompt)
+
     def test_get_required_response_prompt_enemy_phase(self):
         """Test required response prompt during enemy phase."""
         self.manager.initialize_from_party(self.sample_party)
@@ -591,6 +652,63 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.assertIn("BATCH RESOLUTION", prompt)
         self.assertIn("Acheron", prompt)  # PCs should be forbidden
         self.assertIn("Merisiel", prompt)
+
+    def test_format_initiative_tracker_enemy_phase_suppresses_current_marker(self):
+        """Enemy phase should suppress the [>] current-turn marker in tracker output."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._state.pc_states["Acheron"].initiative_modifier = 2
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Merisiel"].initiative_modifier = 2
+        self.manager._state.pc_states["Merisiel"].current_hp = 18
+        self.manager._state.pc_states["Merisiel"].max_hp = 18
+
+        self.manager.initialize_turn_queue(self.sample_encounter)
+        self.manager._turns.pc_phase_complete = True
+
+        tracker = self.manager.format_initiative_tracker(self.sample_encounter)
+
+        self.assertIn("ROUND INFO", tracker)
+        self.assertIn("Acheron", tracker)
+        self.assertIn("Merisiel", tracker)
+        self.assertNotIn("[>] Acheron", tracker)
+
+    def test_deterministic_command_markers_use_already_applied(self):
+        """Fast-lane /att and /dmg outputs should mark committed mechanics."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._state.pc_states["Acheron"].initiative_modifier = 2
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+
+        encounter = {
+            "id": "CMD-1",
+            "creatures": [
+                {
+                    "name": "Goblin",
+                    "type": "enemy",
+                    "initiative": 12,
+                    "armorClass": 15,
+                    "currentHitPoints": 12,
+                    "maxHitPoints": 12,
+                    "status": "alive",
+                }
+            ],
+        }
+        self.manager.initialize_turn_queue(encounter)
+
+        feedback, log_msg = self.manager.handle_combat_command("/att Goblin 18", encounter, actor_name="Acheron")
+        self.assertIn("[ALREADY_APPLIED]", feedback)
+        self.assertIn("[prefill:/dmg ]", feedback)
+        self.assertIsNone(log_msg)
+
+        damage_feedback, damage_log = self.manager.handle_combat_command("/dmg 5", encounter, actor_name="Acheron")
+        self.assertIn("[ALREADY_APPLIED]", damage_feedback)
+        self.assertIn("Result HP: 7/12", damage_feedback)
+        self.assertIn("[ALREADY_APPLIED]", damage_log)
+        self.assertIn("Result HP: 7/12", damage_log)
     
     def test_format_initiative_tracker(self):
         """Test initiative tracker formatting."""
@@ -851,6 +969,7 @@ class TestIntegrationScenarios(unittest.TestCase):
             self.manager._state.pc_states[pc_name].initiative_modifier = 2
             self.manager._state.pc_states[pc_name].current_hp = 20
             self.manager._state.pc_states[pc_name].max_hp = 20
+            self.manager._state.pc_states[pc_name].status = PCStatus.READY
         
         self.manager.initialize_turn_queue(encounter)
         

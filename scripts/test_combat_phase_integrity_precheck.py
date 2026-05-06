@@ -65,6 +65,18 @@ def _build_response(
     return payload
 
 
+def _build_already_applied_history(target: str = "Goblin Scout", amount: int = 12, result_hp: int = 0, max_hp: int = 12) -> list:
+    return [
+        {
+            "role": "user",
+            "content": (
+                f"[ALREADY_APPLIED] [System: Acheron dealt {amount} damage (spear) to {target}. "
+                f"Result HP: {result_hp}/{max_hp}.]"
+            ),
+        }
+    ]
+
+
 class TestCombatPhaseIntegrityPrecheck(unittest.TestCase):
     """Deterministic phase-integrity checks and fail-open behavior."""
 
@@ -156,6 +168,59 @@ class TestCombatPhaseIntegrityPrecheck(unittest.TestCase):
         self.assertTrue(valid)
         self.assertEqual(reason, "")
 
+    def test_exit_guard_allows_same_response_final_defeat_ops(self):
+        from utils.combat_phase_integrity_precheck import validate_combat_phase_integrity_precheck
+
+        response_json = _build_response(
+            actions=[
+                {
+                    "action": "updateEncounter",
+                    "parameters": {
+                        "encounterId": "L05-E1",
+                        "changes": "Goblin Scout takes 12 damage (HP 12->0) and is now dead.",
+                        "ops": [
+                            {"op": "hp_delta", "creature": "Goblin Scout", "delta": -12},
+                            {"op": "set_status", "creature": "Goblin Scout", "status": "dead"},
+                        ],
+                    },
+                },
+                {"action": "exit", "parameters": {"encounterId": "L05-E1", "reason": "All enemies defeated"}},
+            ]
+        )
+        valid, reason = validate_combat_phase_integrity_precheck(
+            response_json,
+            _build_encounter(hostiles_alive=True),
+            _base_phase_state(),
+        )
+        self.assertTrue(valid)
+        self.assertEqual(reason, "")
+
+    def test_exit_guard_rejects_when_simulation_is_indeterminate(self):
+        from utils.combat_phase_integrity_precheck import validate_combat_phase_integrity_precheck
+
+        response_json = _build_response(
+            actions=[
+                {
+                    "action": "updateEncounter",
+                    "parameters": {
+                        "encounterId": "L05-E1",
+                        "changes": "Goblin Scout takes damage and is defeated.",
+                        "ops": [
+                            {"op": "set_hp", "creature": "Goblin Scout", "hp": "eight"},
+                        ],
+                    },
+                },
+                {"action": "exit", "parameters": {"encounterId": "L05-E1", "reason": "All enemies defeated"}},
+            ]
+        )
+        valid, reason = validate_combat_phase_integrity_precheck(
+            response_json,
+            _build_encounter(hostiles_alive=True),
+            _base_phase_state(),
+        )
+        self.assertFalse(valid)
+        self.assertIn("exact supported enemy hp_delta, set_hp, or set_status ops", reason.lower())
+
     def test_exit_guard_fail_open_when_encounter_not_authoritative(self):
         from utils.combat_phase_integrity_precheck import validate_combat_phase_integrity_precheck
 
@@ -171,6 +236,56 @@ class TestCombatPhaseIntegrityPrecheck(unittest.TestCase):
             response_json,
             _build_encounter(include_creatures=False),
             _base_phase_state(),
+        )
+        self.assertTrue(valid)
+        self.assertEqual(reason, "")
+
+    def test_already_applied_duplicate_enemy_hp_delta_is_rejected(self):
+        from utils.combat_phase_integrity_precheck import validate_already_applied_enemy_replay_precheck
+
+        response_json = _build_response(
+            actions=[
+                {
+                    "action": "updateEncounter",
+                    "parameters": {
+                        "encounterId": "L05-E1",
+                        "changes": "Goblin Scout takes 12 damage (HP 12->0) and is now dead.",
+                        "ops": [
+                            {"op": "hp_delta", "creature": "Goblin Scout", "delta": -12},
+                        ],
+                    },
+                }
+            ]
+        )
+        valid, reason = validate_already_applied_enemy_replay_precheck(
+            response_json,
+            _build_encounter(hostiles_alive=True),
+            _build_already_applied_history(amount=12, result_hp=0),
+        )
+        self.assertFalse(valid)
+        self.assertIn("duplicate enemy hp_delta", reason.lower())
+
+    def test_already_applied_distinct_new_damage_still_valid(self):
+        from utils.combat_phase_integrity_precheck import validate_already_applied_enemy_replay_precheck
+
+        response_json = _build_response(
+            actions=[
+                {
+                    "action": "updateEncounter",
+                    "parameters": {
+                        "encounterId": "L05-E1",
+                        "changes": "Goblin Scout takes 5 damage (HP 12->7).",
+                        "ops": [
+                            {"op": "hp_delta", "creature": "Goblin Scout", "delta": -5},
+                        ],
+                    },
+                }
+            ]
+        )
+        valid, reason = validate_already_applied_enemy_replay_precheck(
+            response_json,
+            _build_encounter(hostiles_alive=True),
+            _build_already_applied_history(amount=12, result_hp=0),
         )
         self.assertTrue(valid)
         self.assertEqual(reason, "")

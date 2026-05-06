@@ -47,7 +47,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
   createNewModule: ONLY after specific commitment ("Yes investigate barrow")
   exitGame: end session
   storageInteraction: store/retrieve items AFTER payment
-  updatePartyTracker: module/location updates; triggers archiving
+  updatePartyTracker: cross-module activation/travel and tracker-state updates; triggers archiving
   moveBackgroundNPC: NPCs not in party (captured/killed/relocated)
   updatePartyNPCs: add/remove traveling companions
   rest: dedicated rest action; runtime applies mechanical recovery
@@ -93,7 +93,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
 @MODULE_TRAVEL={
   valid_updatePartyTracker: ["I travel to Frostward_Peaks","Take us to Desert Crown module"]
   invalid_use_transitionLocation: ["Let's go"(same module),"I leave inn","We travel to forest"]
-  rule: Module name mentioned = updatePartyTracker; Location in current module = transitionLocation
+  rule: Module name mentioned = updatePartyTracker; Location in current module = transitionLocation; same-module location movement via updatePartyTracker is INVALID
 }
 
 @COMBAT_RULES={
@@ -198,6 +198,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
    visibility_rule: visibleInStrip may only surface an already-present follower; it does not authorize combat validity.
    metadata_rule: Preserve source_module/source_npc_name/source_entity_slug/character_file_ref/recruited_from_location_id when known.
    cleanup_states: [hidden, released, escaped, dead, joined_party, combat_started]
+   movement_rule: Same-module party movement uses transitionLocation; follower co-location is synchronized by Python. Do NOT require moveBackgroundNPC to persist follower location.
    fail_reason: "Scene follower update is ungrounded or violates follower lifecycle/location rules."
 }
 

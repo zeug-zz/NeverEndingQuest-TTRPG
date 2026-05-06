@@ -159,7 +159,10 @@ ACTION_REQUEST_ROLL = "requestRoll"
 
 
 # Import merge helper from utils for testability
-from utils.party_tracker_merge import _merge_party_tracker_updates
+from utils.party_tracker_merge import (
+    PartyTrackerMergeError,
+    _merge_party_tracker_updates,
+)
 
 
 def pre_validate_transition(
@@ -652,7 +655,7 @@ def _resolve_scene_follower_grounding(
             ),
         }
 
-    # v2 TITAN STUB — External world entity injection point.
+    # v2 TITAN STUB - External world entity injection point.
     # In v2, the Titan background pipeline will introduce external entities
     # (traders, ambassadors, dragons, etc.) through a deterministic Python-owned
     # data structure, not through Narrator action parameters.
@@ -2206,6 +2209,37 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                 new_location_id = updated_party_tracker["worldConditions"][
                     "currentLocationId"
                 ]
+
+                # TABLETOP MODE: Keep traveling scene followers synchronized with
+                # successful party transitions (fail-open behavior).
+                try:
+                    from utils.scene_follower_state import (
+                        sync_traveling_followers_to_location,
+                    )
+
+                    follower_sync = sync_traveling_followers_to_location(
+                        old_location_id=current_location_id,
+                        new_location_id=new_location_id,
+                        reason="transitionLocation",
+                    )
+                    moved_count = len(follower_sync.get("moved", []))
+                    skipped_count = len(follower_sync.get("skipped", []))
+                    if moved_count or skipped_count:
+                        info(
+                            f"STATE_SYNC: Scene follower transition sync moved={moved_count} skipped={skipped_count}",
+                            category="scene_followers",
+                        )
+                    if follower_sync.get("errors"):
+                        warning(
+                            f"STATE_SYNC: Scene follower transition sync degraded errors={len(follower_sync.get('errors', []))}",
+                            category="scene_followers",
+                        )
+                except Exception as follower_sync_error:
+                    warning(
+                        f"STATE_SYNC: Scene follower transition sync degraded: {follower_sync_error}",
+                        category="scene_followers",
+                    )
+
                 # Include location IDs in the transition message for reliable matching
                 conversation_history.append(
                     {
@@ -3192,9 +3226,24 @@ Please use a valid location that exists in the current area ({current_area_id}) 
                         )
 
             # Update party tracker with all provided parameters using merge helper
-            current_party_data = _merge_party_tracker_updates(
-                current_party_data, parameters
-            )
+            try:
+                current_party_data = _merge_party_tracker_updates(
+                    current_party_data,
+                    parameters,
+                    current_module=current_module,
+                    allow_same_module_location_write=False,
+                )
+            except PartyTrackerMergeError as merge_error:
+                error_message = str(merge_error)
+                warning(
+                    f"STATE_CHANGE: Rejected updatePartyTracker merge: {error_message}",
+                    category="party_management",
+                )
+                return create_return(
+                    status="error",
+                    needs_update=False,
+                    response_data={"error_message": error_message},
+                )
 
             # Save updated party tracker
             safe_json_dump(current_party_data, "party_tracker.json")

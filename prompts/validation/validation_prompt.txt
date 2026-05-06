@@ -226,7 +226,7 @@ Requires "narrative" parameter containing rich story description with embedded m
    - Create new storage ("I make a lockbox for valuables")
    - View storage contents ("What's in our storage?", "Check the chest")
    Requires "description" parameter with natural language description and "characterName" for the character performing the action.
-"updatePartyTracker": Used when party module or location information needs updating. This action can trigger automatic conversation archiving and module summarization when module changes are detected. Required for inter-module travel. Should be used when players express intent to:
+"updatePartyTracker": Used for cross-module activation/travel and tracker-state updates. This action can trigger automatic conversation archiving and module summarization when module changes are detected. Required for inter-module travel. Should be used when players express intent to:
    - Travel to other modules ("I travel to [Module Name]", "Let's go to [Region]")
    - Change current module or location information
    - Update party tracking data
@@ -249,8 +249,9 @@ Requires "narrative" parameter containing rich story description with embedded m
     **VALID BUNDLE EXAMPLE:** [{"action":"transitionLocation","parameters":{"newLocation":"V07"}}, {"action":"updateTime","parameters":{"timeEstimate":15}}] - both actions in same response.
     **INVALID EXAMPLE:** [{"action":"transitionLocation","parameters":{"newLocation":"V07"}}] alone without updateTime.
    
-   If player mentions a location from the current module, use transitionLocation.
-   If player mentions another module by name, use updatePartyTracker with module parameter.
+    If player mentions a location from the current module, use transitionLocation.
+    Using updatePartyTracker for same-module location movement is INVALID.
+    If player mentions another module by name, use updatePartyTracker with module parameter.
    
     Requires parameters for the specific updates:
     - module, currentLocationId, currentLocation, currentAreaId, currentArea: Standard module/location tracking
@@ -267,10 +268,12 @@ Requires "narrative" parameter containing rich story description with embedded m
    
    Requires "npcName" parameter (exact NPC name) and "context" parameter (narrative explanation of what happened). The system intelligently determines whether to remove, relocate, or update the NPC based on context.
    
-   **INVALID USAGE:**
+    **INVALID USAGE:**
    - Using on party NPCs (NPCs traveling with the party) [INVALID - use updatePartyNPCs]
    - Using on NPCs that don't exist in location files [INVALID]
-   - Using without clear narrative reason [INVALID]
+    - Using without clear narrative reason [INVALID]
+
+"updateSceneFollower": Used for deterministic durable scene follower records. Do not require moveBackgroundNPC for follower location persistence; same-module party movement uses transitionLocation and Python synchronizes eligible traveling followers.
 
 ## CANONICAL ACTION PARAMETER CONTRACTS (COVERED SLICE)
 

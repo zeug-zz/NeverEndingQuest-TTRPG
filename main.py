@@ -137,6 +137,7 @@ from utils.character_creator import (
 )
 from utils import pc_manager
 from utils.save_roll_contract import calculate_concentration_dc
+from model_config import NARRATOR_API_TIMEOUT_SECONDS
 
 # Import new manager modules
 from core.managers import location_manager
@@ -429,6 +430,7 @@ def generate_arrival_narration(
     try:
         response = client.chat.completions.create(
             messages=narration_request_messages,
+            timeout=NARRATOR_API_TIMEOUT_SECONDS,
             **get_chat_completion_params(
                 "dm_main",
                 DM_MAIN_MODEL,  # Use the main model for high-quality narration
@@ -541,6 +543,7 @@ Now, provide the rewritten, seamless narration.
                 },
                 {"role": "user", "content": stitching_prompt},
             ],
+            timeout=NARRATOR_API_TIMEOUT_SECONDS,
             **get_chat_completion_params(
                 "dm_main",
                 DM_MAIN_MODEL,  # Use the main model for high-quality writing
@@ -2930,6 +2933,7 @@ def validate_ai_response(
     for attempt in range(max_validation_retries):
         validation_result = client.chat.completions.create(
             messages=validation_messages_to_send,
+            timeout=NARRATOR_API_TIMEOUT_SECONDS,
             **get_chat_completion_params(
                 "dm_validation",
                 DM_VALIDATION_MODEL,  # Use imported model name
@@ -3650,6 +3654,7 @@ Write a compelling chronicle of these actual events:"""
                             },
                             {"role": "user", "content": summary_prompt},
                         ],
+                        timeout=NARRATOR_API_TIMEOUT_SECONDS,
                         **get_chat_completion_params(
                             "summaries",
                             summary_model,
@@ -3670,6 +3675,7 @@ Write a compelling chronicle of these actual events:"""
                                 },
                                 {"role": "user", "content": summary_prompt},
                             ],
+                            timeout=NARRATOR_API_TIMEOUT_SECONDS,
                             **get_chat_completion_params(
                                 "summaries",
                                 DM_SUMMARIZATION_MODEL,
@@ -4034,6 +4040,29 @@ def process_ai_response(
         json_content = extract_json_from_codeblock(response)
         parsed_response = json.loads(json_content)
         actions = parsed_response.get("actions", [])
+
+        # TABLETOP MODE: Normalize final action authority before execution.
+        try:
+            from utils.action_normalization import normalize_action_list_for_authority
+
+            normalized_actions, normalization_events = normalize_action_list_for_authority(
+                actions,
+                party_tracker_data,
+            )
+            if normalized_actions != actions:
+                parsed_response["actions"] = normalized_actions
+                actions = normalized_actions
+                response = json.dumps(parsed_response, ensure_ascii=False)
+            for event in normalization_events:
+                debug(
+                    f"ACTION_NORMALIZATION: {event}",
+                    category="action_preprocessing",
+                )
+        except Exception as normalization_error:
+            warning(
+                f"ACTION_NORMALIZATION: Failed to normalize final actions: {normalization_error}",
+                category="action_preprocessing",
+            )
 
         # --- START OF FIX: Detect levelUp action before printing narration ---
         is_levelup_action = any(action.get("action") == "levelUp" for action in actions)
@@ -5256,6 +5285,7 @@ def get_ai_response(
         try:
             response = client.chat.completions.create(
                 messages=messages_to_send,  # Use potentially compressed messages
+                timeout=NARRATOR_API_TIMEOUT_SECONDS,
                 **get_chat_completion_params(
                     "dm_main",
                     selected_model,
@@ -5277,6 +5307,7 @@ def get_ai_response(
                 # Retry with fallback client using OpenAI model
                 response = fallback_client.chat.completions.create(
                     messages=messages_to_send,
+                    timeout=NARRATOR_API_TIMEOUT_SECONDS,
                     **get_chat_completion_params(
                         "dm_main",
                         GPT5_MINI_MODEL,
@@ -5320,6 +5351,7 @@ def get_ai_response(
         try:
             response = client.chat.completions.create(
                 messages=messages_to_send,  # Use potentially compressed messages
+                timeout=NARRATOR_API_TIMEOUT_SECONDS,
                 **get_chat_completion_params(
                     "dm_main",
                     actual_model,
@@ -5342,6 +5374,7 @@ def get_ai_response(
                 # Retry with fallback client using OpenAI model
                 response = fallback_client.chat.completions.create(
                     messages=messages_to_send,
+                    timeout=NARRATOR_API_TIMEOUT_SECONDS,
                     **get_chat_completion_params(
                         "dm_main",
                         selected_model,  # Use original selected_model for fallback
@@ -8126,10 +8159,12 @@ def main_game_loop():
                 transient_correction=retry_correction_note,
             )
 
-            # PRE-PROCESSING: Fix incorrect updatePartyTracker usage for within-module travel
-            # This must happen BEFORE any validation to prevent wrong action from being checked
+            # PRE-PROCESSING: Normalize final action authority before validation.
             try:
                 import json
+                from utils.action_normalization import (
+                    normalize_action_list_for_authority,
+                )
 
                 response_data = json.loads(ai_response_content)
                 actions = response_data.get("actions", [])
@@ -8144,51 +8179,15 @@ def main_game_loop():
                 else:
                     print(f"DEBUG: [AI RESPONSE] No actions in response")
 
-                current_module = party_tracker_data.get("module", "")
-                actions_modified = False
-
-                # Check for updatePartyTracker being used for within-module location changes
-                for i, action in enumerate(actions):
-                    if (
-                        isinstance(action, dict)
-                        and action.get("action") == "updatePartyTracker"
-                    ):
-                        params = action.get("parameters", {})
-
-                        # Check if this is a location transition (has currentLocationId) vs party composition change
-                        has_location_id = "currentLocationId" in params
-                        has_module = "module" in params
-
-                        if has_location_id and has_module:
-                            # Check if module is the SAME as current module (within-module travel)
-                            target_module = params.get("module", "")
-
-                            if target_module == current_module:
-                                # WRONG ACTION: Using updatePartyTracker for within-module travel
-                                # Convert to transitionLocation
-                                new_location_id = params.get("currentLocationId", "")
-
-                                print(
-                                    f"DEBUG: [ACTION FIX] Converting updatePartyTracker to transitionLocation({new_location_id}) - same module"
-                                )
-                                info(
-                                    f"ACTION FIX: Converted updatePartyTracker to transitionLocation for within-module travel",
-                                    category="action_preprocessing",
-                                )
-
-                                # Replace with transitionLocation
-                                actions[i] = {
-                                    "action": "transitionLocation",
-                                    "parameters": {"newLocation": new_location_id},
-                                }
-                                actions_modified = True
-
-                # Update response if we modified actions
-                if actions_modified:
-                    response_data["actions"] = actions
+                normalized_actions, normalization_events = (
+                    normalize_action_list_for_authority(actions, party_tracker_data)
+                )
+                if normalized_actions != actions:
+                    response_data["actions"] = normalized_actions
                     ai_response_content = json.dumps(response_data)
+                for event in normalization_events:
                     info(
-                        f"ACTION FIX: Updated response with corrected action types",
+                        f"ACTION_NORMALIZATION: {event}",
                         category="action_preprocessing",
                     )
 

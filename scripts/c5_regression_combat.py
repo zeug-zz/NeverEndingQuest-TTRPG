@@ -955,6 +955,38 @@ class TestFastLaneInitiationContract(unittest.TestCase):
             "initiative_order usage must be inside if not is_fast_lane bootstrap block")
 
 
+class TestCombatReplayAuthorityContracts(unittest.TestCase):
+    """Regression tests for combat replay markers and phase-aware prompt authority."""
+
+    def _read_source(self, relative_path):
+        file_path = os.path.join(PROJECT_ROOT, relative_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_phase_authority_cleanup_source_contract(self):
+        source = self._read_source("core/managers/multi_pc_combat.py")
+        self.assertIn('CURRENT_PHASE: {current_phase}', source)
+        self.assertIn('if not self._turns.pc_phase_complete:', source)
+        self.assertIn('elif not self._turns.pc_phase_complete and name == self._state.current_pc_name:', source)
+        self.assertNotIn('PROCESS ALL OF THESE IN ONE RESPONSE', source)
+
+    def test_deterministic_command_markers_source_contract(self):
+        source = self._read_source("core/managers/multi_pc_combat.py")
+        self.assertIn('[ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit!', source)
+        self.assertIn('[ALREADY_APPLIED] Dungeon Master: Damage applied (', source)
+        self.assertIn('Result HP:', source)
+        self.assertIn('[ALREADY_APPLIED] [System:', source)
+
+    def test_combat_validation_prompt_source_contracts(self):
+        sim_source = self._read_source("prompts/combat/combat_sim_prompt_multipc.txt")
+        validation_source = self._read_source("prompts/combat/combat_validation_prompt_multipc.txt")
+
+        self.assertIn('CURRENT_PHASE always wins over the `[>]` marker.', sim_source)
+        self.assertIn('If a combat history line contains `[ALREADY_APPLIED]`', sim_source)
+        self.assertIn('During ENEMY_PHASE, prompting any PC what they do is INVALID', validation_source)
+        self.assertIn('If a combat history line is marked [ALREADY_APPLIED]', validation_source)
+
+
 class TestInterpreterSafeSubprocessContracts(unittest.TestCase):
     """Regression tests for Windows-safe subprocess interpreter usage."""
 

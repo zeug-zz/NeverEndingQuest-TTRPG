@@ -13,12 +13,64 @@ parameters into party tracker data with special handling for:
 - Nested world conditions merge
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+
+_LOCATION_KEYS = {"currentLocationId", "currentLocation", "currentAreaId", "currentArea"}
+
+
+class PartyTrackerMergeError(ValueError):
+    """Raised when updatePartyTracker merge violates authority contracts."""
+
+    def __init__(self, message: str, reason: str = "unsafe_same_module_location_write"):
+        super().__init__(message)
+        self.reason = reason
+
+
+def _safe_str(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _has_unsafe_same_module_location_write(
+    current_party_data: Dict[str, Any],
+    parameters: Dict[str, Any],
+    current_module: Optional[str],
+    allow_same_module_location_write: bool,
+) -> bool:
+    """Return True when updatePartyTracker attempts unsafe same-module location write."""
+    if allow_same_module_location_write:
+        return False
+    if not isinstance(parameters, dict):
+        return False
+    if "currentLocationId" not in parameters:
+        return False
+
+    target_location_id = _safe_str(parameters.get("currentLocationId"))
+    if not target_location_id:
+        return False
+
+    world_conditions = current_party_data.get("worldConditions", {})
+    if not isinstance(world_conditions, dict):
+        world_conditions = {}
+
+    current_location_id = _safe_str(world_conditions.get("currentLocationId"))
+    if current_location_id and current_location_id == target_location_id:
+        return False
+
+    active_module = _safe_str(current_module or current_party_data.get("module"))
+    target_module = _safe_str(parameters.get("module"))
+    if target_module and active_module and target_module != active_module:
+        return False
+
+    return True
 
 
 def _merge_party_tracker_updates(
     current_party_data: Dict[str, Any],
-    parameters: Dict[str, Any]
+    parameters: Dict[str, Any],
+    *,
+    current_module: Optional[str] = None,
+    allow_same_module_location_write: bool = False,
 ) -> Dict[str, Any]:
     """
     Merge updatePartyTracker parameters into current party tracker data.
@@ -37,9 +89,22 @@ def _merge_party_tracker_updates(
     Returns:
         Updated party tracker dictionary
     """
+    # TABLETOP MODE: Fail-closed guard for unsafe same-module location writes.
+    if _has_unsafe_same_module_location_write(
+        current_party_data,
+        parameters,
+        current_module,
+        allow_same_module_location_write,
+    ):
+        raise PartyTrackerMergeError(
+            "Unsafe same-module location update detected in updatePartyTracker. "
+            "Use transitionLocation for same-module movement.",
+            reason="unsafe_same_module_location_write",
+        )
+
     # Update party tracker with all provided parameters
     for key, value in parameters.items():
-        if key in ["currentLocationId", "currentLocation", "currentAreaId", "currentArea"]:
+        if key in _LOCATION_KEYS:
             if "worldConditions" not in current_party_data:
                 current_party_data["worldConditions"] = {}
             current_party_data["worldConditions"][key] = value

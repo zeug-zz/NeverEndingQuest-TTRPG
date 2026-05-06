@@ -26,6 +26,12 @@ from utils.module_path_manager import ModulePathManager
 from utils.pc_manager import should_use_abstraction_layer
 from utils.authoritative_state_packet import build_authoritative_state_packet
 from utils.character_state_hygiene import get_supernatural_state_summary
+from utils.scene_follower_state import (
+    get_follower_records,
+    load_followers,
+    normalize_scene_follower_disposition,
+    normalize_scene_follower_record,
+)
 
 
 def _normalize_display_location_name(location_name: str) -> str:
@@ -401,6 +407,62 @@ def format_party_npcs(party_npcs: List[Dict[str, Any]]) -> str:
     return '; '.join(formatted)
 
 
+def format_present_scene_followers(
+    current_location_id: str,
+    *,
+    limit: int = 8,
+) -> List[str]:
+    """Return compact lines for present scene followers at location."""
+    location_id = str(current_location_id or "").strip().upper()
+    if not location_id:
+        return []
+
+    try:
+        store = load_followers()
+        records = get_follower_records(store)
+    except Exception as e:
+        warning(
+            f"Could not load scene followers for DM Note projection: {e}",
+            category="multi_pc_dm_note",
+        )
+        return []
+
+    if not records:
+        return []
+
+    lines: List[str] = []
+    for record in records:
+        normalized = normalize_scene_follower_record(record)
+        lifecycle_state = normalize_scene_follower_disposition(
+            normalized.get("lifecycle_state")
+        )
+        if lifecycle_state != "present":
+            continue
+
+        follower_location = str(
+            normalized.get("current_location") or ""
+        ).strip().upper()
+        if follower_location != location_id:
+            continue
+
+        display_name = str(
+            normalized.get("display_name")
+            or normalized.get("monster_type")
+            or normalized.get("entity_id")
+            or "Unknown"
+        ).strip()
+        entity_type = str(normalized.get("entity_type") or "unknown").strip().lower()
+        disposition = str(normalized.get("disposition") or "present").strip().lower()
+
+        lines.append(
+            f"{display_name} ({entity_type}, {disposition}, currentLocation={location_id}): present with party; not a PC."
+        )
+        if len(lines) >= max(1, int(limit)):
+            break
+
+    return lines
+
+
 def load_party_character_data(party_tracker_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
     Load all party member character data from files.
@@ -597,6 +659,13 @@ def build_multi_pc_dm_note(
     if party_npcs:
         dm_note_parts.append("--- PARTY NPCs (DM CONTROLLED) ---")
         dm_note_parts.append(party_npcs_str)
+        dm_note_parts.append("")
+
+    # --- SCENE FOLLOWERS SECTION ---
+    scene_follower_lines = format_present_scene_followers(effective_location_id)
+    if scene_follower_lines:
+        dm_note_parts.append("--- SCENE FOLLOWERS PRESENT HERE ---")
+        dm_note_parts.extend(scene_follower_lines)
         dm_note_parts.append("")
     
     # --- PLOT & QUESTS SECTION ---

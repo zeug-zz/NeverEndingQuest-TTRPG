@@ -8,7 +8,7 @@
 
 @SOURCE_OF_TRUTH={
   tracker: "The latest **Live Initiative Tracker** (markdown) is authoritative",
-  active_pc: "The `[>]` marker indicates the ACTIVE ACTOR whose turn it is",
+  active_pc: "CURRENT_PHASE always wins over the `[>]` marker; the marker is PC_PHASE-only",
   round_number: "Use CURRENT ROUND exactly as given; shared by all PCs",
   combat_state: "Use only explicit state provided (HP, conditions, slots)",
   no_invention: "Do not invent creatures, stats, dice, items, or rules not present in input"
@@ -43,7 +43,7 @@
 }
 
 @PRIORITY_ORDER={
-  p1: "COMBAT PHASE STATE determines FORBIDDEN actors per @PHASE_MODEL (overrides all other turn logic)",
+  p1: "CURRENT_PHASE from COMBAT PHASE STATE overrides all turn markers; [>] is PC_PHASE-only",
   p2: "Tracker pointer ([>] or current_actor) decides who acts now",
   p3: "REQUIRED RESPONSE box specifies exact stop behavior and phase rules",
   p4: "Round number + initiative order from ROUND INFO",
@@ -83,6 +83,7 @@
   enemy_prose_fallback: "If supported ops are unavailable for a specific enemy update, changes-only updateEncounter remains compatibility-valid during migration.",
   mixed_payload_preferred: "For PC/allied updateCharacterInfo, prefer parameters with BOTH changes and ops. Keep changes as prose mirror; ops carries authoritative mechanics when present.",
   prose_fallback: "If supported ops are unavailable for a specific PC/allied update, changes-only remains compatibility-valid during migration.",
+  already_applied: "If the history contains [ALREADY_APPLIED], do not emit new ops that replay the same committed target/amount/status result.",
   NEVER: [
     "Never log PC/NPC HP/conditions in updateEncounter",
     "Never log enemy HP/conditions in updateCharacterInfo"

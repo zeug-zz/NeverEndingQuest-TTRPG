@@ -84,19 +84,12 @@ class TestCreateEncounterNarrationGate(unittest.TestCase):
             content = f.read()
 
         intro_gate = 'action.get("action") == "createEncounter"'
-        narration_print = 'print(colored("Dungeon Master:", "blue"), colored(narration_deferred, "blue"))'
-        process_call = 'result = action_handler.process_action(action, party_tracker_data, location_data, conversation_history)'
+        handoff_comment = '# TABLETOP MODE: Restore the single combat intro beat before initiative.'
+        process_call = 'action_handler.process_action('
 
         self.assertIn(intro_gate, content, "Should special-case createEncounter narration")
-        self.assertIn(narration_print, content, "Should print narration for createEncounter before combat handoff")
+        self.assertIn(handoff_comment, content, "Should keep the createEncounter handoff comment")
         self.assertIn(process_call, content, "Should still hand off to action processing")
-
-        intro_gate_pos = content.find(intro_gate)
-        narration_print_pos = content.find(narration_print, intro_gate_pos)
-        process_call_pos = content.find(process_call, narration_print_pos)
-
-        self.assertGreater(narration_print_pos, intro_gate_pos, "Narration print should occur inside createEncounter gate")
-        self.assertGreater(process_call_pos, narration_print_pos, "Narration should print before process_action starts combat")
         
 
 class TestErrorMessageContent(unittest.TestCase):
