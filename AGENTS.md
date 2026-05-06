@@ -1152,6 +1152,46 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Combat/Narrator/GPT-5 Runtime Stabilization Archives (COMPLETED - 2026-05-06)
+
+**Status:** COMPLETED - Archived three completed OpenSpec changes for combat replay stability, narrator state authority, and GPT-5.4 Mini runtime/prompt parity. Left `tt-deterministic-combat-death-saves` active and unarchived.
+
+**Objective:**
+- Prevent deterministic combat command replay from duplicating already-applied mechanics.
+- Ensure combat phase authority and exit behavior remain coherent after same-response defeat resolution.
+- Normalize narrator action authority for party tracker and scene follower state updates.
+- Harden GPT-5-family chat parameter handling and narrator timeout protection.
+
+**Implementation Summary:**
+- `openspec/changes/archive/2026-05-06-combat-phase-replay-stabilization/` - Archived combat deterministic command replay guard, exit post-ops resolution, and phase authority cleanup.
+- `openspec/changes/archive/2026-05-06-narrator-state-authority-stabilization/` - Archived action authority normalization and scene follower transition sync.
+- `openspec/changes/archive/2026-05-06-gpt54-prompt-runtime-parity-audit/` - Archived GPT-5.4 Mini chat params and prompt/runtime parity audit.
+- Synced main specs:
+  - `openspec/specs/tt-combat-deterministic-command-replay-guard/spec.md`
+  - `openspec/specs/tt-combat-exit-post-ops-resolution/spec.md`
+  - `openspec/specs/tt-combat-phase-authority-cleanup/spec.md`
+  - `openspec/specs/tt-action-authority-normalization/spec.md`
+  - `openspec/specs/tt-scene-follower-transition-sync/spec.md`
+  - `openspec/specs/tt-gpt54-chat-params-contract/spec.md`
+  - `openspec/specs/tt-prompt-runtime-parity-audit/spec.md`
+
+**Key Runtime Changes:**
+- `main.py` - Narrator chat completion paths now use `NARRATOR_API_TIMEOUT_SECONDS`; action normalization integrates before action processing.
+- `model_config.py` - Added narrator API timeout constants.
+- `utils/action_normalization.py` - New deterministic action normalization helper.
+- `utils/party_tracker_merge.py`, `utils/scene_follower_state.py`, `utils/multi_pc_dm_note.py` - Hardened follower state and tracker authority handling.
+- `core/managers/combat_manager.py`, `core/managers/multi_pc_combat.py`, `utils/combat_phase_integrity_precheck.py` - Hardened combat phase/replay/exit contracts.
+- `prompts/system_prompt*.txt`, `prompts/validation/validation_prompt*.txt`, `prompts/combat/*multipc*.txt` - Aligned static prompt guidance with runtime authority boundaries.
+
+**Verification:**
+- `.venv/bin/python scripts/test_gpt54_chat_params_contract.py` -> PASS (10/10)
+- `.venv/bin/python scripts/test_gpt54_mini_chat_params_shim.py` -> PASS (6/6)
+- `.venv/bin/python scripts/test_validation_routing_telemetry.py` -> PASS (4/4)
+- `openspec validate combat-phase-replay-stabilization` -> VALID before archive
+- `openspec validate narrator-state-authority-stabilization` -> VALID before archive
+- `openspec validate gpt54-prompt-runtime-parity-audit` -> VALID before archive
+- Targeted ASCII compliance for modified GPT-5 audit Python files -> PASS
+
 ### MMG Creature Extraction NPC Authority Guard (COMPLETED - 2026-05-06)
 
 **Status:** COMPLETED - Implemented source-aware module-local MMG authority resolution for unified-assets endpoint and report generation. Separates explicit monster authority from weak creature-derived candidates so authored NPCs are not suppressed by prose `creatures` or `visibleHostiles` tokens.
