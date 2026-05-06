@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from utils.enhanced_logger import warning
 from utils.file_operations import safe_read_json, safe_write_json
+from utils.module_mmg_authority import canonicalize_module_mmg_asset_audits
 
 MODULE_MEDIA_GENERATOR_REPORT_CONTRACT_VERSION = "module_media_generator_report.v1"
 MODULE_MEDIA_GENERATOR_REPORT_SOURCE = "module_media_generator"
@@ -173,25 +174,9 @@ def build_module_media_generator_report(
         if audit is not None:
             asset_audits.append(audit)
 
-    # Canonical same-slug actor authority: if both monster and npc appear for
-    # the same slug, keep the monster audit row and drop the duplicate npc row.
-    canonical_audits: List[Dict[str, Any]] = []
-    grouped_by_slug: Dict[str, List[Dict[str, Any]]] = {}
-    for audit in asset_audits:
-        slug = str(audit.get("id") or "").strip()
-        grouped_by_slug.setdefault(slug, []).append(audit)
-
-    for slug, grouped_rows in grouped_by_slug.items():
-        if not slug:
-            canonical_audits.extend(grouped_rows)
-            continue
-        monster_rows = [row for row in grouped_rows if str(row.get("type") or "") == "monster"]
-        if monster_rows:
-            canonical_audits.append(monster_rows[0])
-        else:
-            canonical_audits.extend(grouped_rows)
-
-    asset_audits = canonical_audits
+    # Canonical same-slug actor authority: explicit monster rows win over NPC
+    # rows; NPC rows win over weak monster candidates.
+    asset_audits = canonicalize_module_mmg_asset_audits(asset_audits)
 
     missing_assets = [
         {

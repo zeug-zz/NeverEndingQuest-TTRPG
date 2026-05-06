@@ -2758,36 +2758,56 @@ def get_module_unified_assets(module_name):
                                             monster_id = normalize_character_name(monster_name)
                                             if monster_id not in monsters:
                                                 monsters[monster_id] = {'name': monster_name, 'type': 'monster'}
-        
-        # Build module monster authority once and use it to suppress same-slug
-        # NPC asset duplicates for monster-authoritative actors.
-        try:
-            from utils.module_monster_authority import build_module_monster_authority
 
-            authority_records = build_module_monster_authority(module_name)
-            monster_authority_slugs = set(authority_records.keys())
+                            # Extract monsters from location.creatures
+                            # (comma-separated string, may include parenthetical role qualifiers)
+                            if 'creatures' in location and location['creatures']:
+                                creatures_text = location['creatures']
+                                for token in creatures_text.split(','):
+                                    creature_name = token.strip().strip('. ')
+                                    if not creature_name:
+                                        continue
+                                    creature_name = re.sub(r'\s*\([^)]*\)', '', creature_name).strip()
+                                    if not creature_name:
+                                        continue
+                                    monster_id = normalize_character_name(creature_name)
+                                    if monster_id not in monsters:
+                                        monsters[monster_id] = {'name': creature_name, 'type': 'monster'}
+
+                            # Extract monsters from location.visibleHostiles
+                            if 'visibleHostiles' in location and location['visibleHostiles']:
+                                for hostile in location['visibleHostiles']:
+                                    if isinstance(hostile, dict):
+                                        hostile_name = str(hostile.get('name') or hostile.get('monsterType') or '').strip()
+                                        if hostile_name:
+                                            monster_id = normalize_character_name(hostile_name)
+                                            if monster_id not in monsters:
+                                                monsters[monster_id] = {'name': hostile_name, 'type': 'monster'}
+        
+        # Build module-local MMG authority once and use the resolved rows for
+        # same-slug NPC/monster collision handling.
+        try:
+            from utils.module_mmg_authority import build_module_mmg_assets
+
+            mmg_assets = build_module_mmg_assets(module_name)
+            npcs = mmg_assets.get('npcs', {})
+            monsters = mmg_assets.get('monsters', {})
+            suppressed_npc_slugs = list(mmg_assets.get('suppressed_npc_slugs', []))
+            explicit_monster_authority_slugs = set(
+                mmg_assets.get('explicit_monster_authority_slugs', set())
+            )
         except Exception as authority_error:
             warning(
-                f"TOOLKIT: Monster authority build degraded for {module_name}: {authority_error}",
+                f"TOOLKIT: MMG authority build degraded for {module_name}: {authority_error}",
                 category="module_ingest",
             )
-            monster_authority_slugs = set()
-
-        if monsters:
-            monster_authority_slugs.update(monsters.keys())
-
-        suppressed_npc_slugs = []
-        if npcs and monster_authority_slugs:
-            filtered_npcs = {}
-            for npc_id, npc_data in npcs.items():
-                if npc_id in monster_authority_slugs:
-                    suppressed_npc_slugs.append(npc_id)
-                    continue
-                filtered_npcs[npc_id] = npc_data
-            npcs = filtered_npcs
+            npcs = {}
+            monsters = {}
+            suppressed_npc_slugs = []
+            explicit_monster_authority_slugs = set()
 
         # Check for descriptions and media status
-        def check_asset_status(asset_id, asset_type, asset_name, media_authority=None):
+        def check_asset_status(asset_id, asset_type, asset_name, media_authority=None, asset_record=None):
             """Check the status of descriptions and media for an asset."""
             status = {
                 'id': asset_id,
@@ -2802,6 +2822,10 @@ def get_module_unified_assets(module_name):
                 'has_static_video': False,
                 'image_location': 'none',  # 'module', 'static', or 'none'
             }
+            if asset_record:
+                status['authority_role'] = asset_record.get('authority_role')
+                if asset_record.get('authority_sources'):
+                    status['authority_sources'] = list(asset_record.get('authority_sources') or [])
             # When an NPC row delegates media authority to a monster, report
             # media status from the monster folder.
             effective_type = asset_type
@@ -2959,14 +2983,22 @@ def get_module_unified_assets(module_name):
         # Process NPCs
         for npc_id, npc_data in npcs.items():
             asset_status = check_asset_status(
-                npc_id, 'npc', npc_data['name'],
-                media_authority=npc_data.get('media_authority')
+                npc_id,
+                'npc',
+                npc_data['name'],
+                media_authority=npc_data.get('media_authority'),
+                asset_record=npc_data,
             )
             unified_assets.append(asset_status)
-        
+
         # Process monsters
         for monster_id, monster_data in monsters.items():
-            asset_status = check_asset_status(monster_id, 'monster', monster_data['name'])
+            asset_status = check_asset_status(
+                monster_id,
+                'monster',
+                monster_data['name'],
+                asset_record=monster_data,
+            )
             unified_assets.append(asset_status)
         
         # Sort by type then name
@@ -5994,12 +6026,14 @@ def handle_generate_unified_assets(data):
                     'message': f"Generating images for {len(image_targets)} assets..."
                 })
 
-                # Build module monster authority once for this generation pass.
+                # Build module-local MMG authority once for this generation pass.
                 try:
-                    from utils.module_monster_authority import build_module_monster_authority
+                    from utils.module_mmg_authority import build_module_mmg_assets
 
                     generation_monster_authority = set(
-                        build_module_monster_authority(module_name).keys()
+                        build_module_mmg_assets(module_name).get(
+                            'explicit_monster_authority_slugs', set()
+                        )
                     )
                 except Exception as authority_error:
                     warning(

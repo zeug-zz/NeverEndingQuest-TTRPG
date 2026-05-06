@@ -1152,6 +1152,35 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### MMG Creature Extraction NPC Authority Guard (COMPLETED - 2026-05-06)
+
+**Status:** COMPLETED - Implemented source-aware module-local MMG authority resolution for unified-assets endpoint and report generation. Separates explicit monster authority from weak creature-derived candidates so authored NPCs are not suppressed by prose `creatures` or `visibleHostiles` tokens.
+
+**Objective:**
+- Stop weak `creatures` and `visibleHostiles` tokens from promoting themselves to monster authority and suppressing authored NPC rows
+- Preserve discovered extraction from those fields while applying source-aware conflict resolution
+- Keep toolkit MMG decisions module-local and independent of campaign runtime state
+
+**Implementation Summary:**
+- `utils/module_mmg_authority.py` (new) - Module-local MMG authority helper; builds explicit monster authority, weak monster candidates, and NPC authority from module-authored sources only
+- `web/web_interface.py` - Unified-assets endpoint uses `build_module_mmg_assets(...)` and `explicit_monster_authority_slugs` for MMG image generation path
+- `utils/module_media_generator_report.py` - Report canonicalization uses shared `canonicalize_module_mmg_asset_audits(...)` instead of globally preferring monster rows
+- `scripts/test_toolkit_mmg_authority_contract.py` - 11 contract tests for Night NPC preservation, Thornwood monster authority, aliases, report parity
+- `scripts/test_unified_assets_monster_extraction.py` - Thin smoke parity wrapper for helper vs endpoint
+- `openspec/changes/archive/2026-05-06-mmg-creature-extraction-npc-authority-guard/` - Archived change with synced spec
+
+**Authority Model:**
+- Explicit monster authority (module monster JSON, structured `location.monsters`) wins over NPC hint data
+- NPC authority (module context, area NPCs, safe aliases) wins over weak creature-derived candidates
+- Weak-only true monsters survive when no NPC authority conflicts
+- All authority built module-locally; no `party_tracker.json` dependency
+
+**Verification:**
+- `.venv/bin/python scripts/test_toolkit_mmg_authority_contract.py -v` -> PASS (11/11)
+- `.venv/bin/python scripts/test_unified_assets_monster_extraction.py` -> PASS
+- `openspec validate mmg-creature-extraction-npc-authority-guard` -> VALID
+- ASCII compliance: 0 new violations in change-specific files
+
 ### The Ancients Lab Lovecraftian Narrative Enrichment (COMPLETED - 2026-05-04)
 
 **Status:** COMPLETED - Enriched modules/The_Ancients_Lab with 5-playline Lovecraftian narrative depth across 9 NPCs, 13 plot points, 24 side quests, 12 locations, and continuity framing. All changes to existing JSON text fields only (no new fields/schemas). OpenSpec change validated and archived.
