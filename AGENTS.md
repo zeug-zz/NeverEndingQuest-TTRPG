@@ -1152,6 +1152,20 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Narrator/Combat Planning Archive Sweep (COMPLETED - 2026-05-07)
+
+**Status:** COMPLETED - Archived `plans/dm-narration-guard.md` and `plans/narrator-combat-stabilization.md` after the deterministic combat death-saves OpenSpec work superseded them. Active `combat-pc-phase-*` implementation files were left untouched.
+
+**Implementation Summary:**
+- `plans/archive/dm-narration-guard.md` - Archived narrow narrator state integrity guard plan as superseded.
+- `plans/archive/narrator-combat-stabilization.md` - Archived broader narrator/combat stabilization plan; references the narrower guard plan as its source.
+- `openspec/changes/archive/2026-05-07-tt-deterministic-combat-death-saves/` - Archived completed change that replaced the plan workstream.
+- `openspec/specs/tt-deterministic-combat-death-saves/spec.md` - Canonical main spec synced before archive.
+
+**Verification:**
+- Archived plan files present under `plans/archive/`.
+- No `combat-pc-phase-*` files were modified in this archive sweep.
+
 ### Combat/Narrator/GPT-5 Runtime Stabilization Archives (COMPLETED - 2026-05-06)
 
 **Status:** COMPLETED - Archived three completed OpenSpec changes for combat replay stability, narrator state authority, and GPT-5.4 Mini runtime/prompt parity. Left `tt-deterministic-combat-death-saves` active and unarchived.
