@@ -1,9 +1,9 @@
 Fix 1: prompts/combat/combat_validation_prompt_multipc_compressed.txt (Production)
 1a. Clarify consolidation rule (line 143)
 Current:
-  consolidation_rule: "EXACTLY ONE updateEncounter per response consolidating ALL enemy changes",
+  consolidation_rule: "At most one updateEncounter per response when enemy state changes exist; consolidate ALL enemy changes into that action",
 Proposed:
-  consolidation_rule: "EXACTLY ONE updateEncounter per response consolidating ALL enemy STATE changes (HP/status/conditions of enemies only). Multiple updateCharacterInfo actions for different PCs/NPCs damaged during the same enemy phase is VALID and REQUIRED.",
+  consolidation_rule: "At most one updateEncounter per response when enemy state changes exist, consolidating ALL enemy STATE changes (HP/status/conditions of enemies only). Multiple updateCharacterInfo actions for different PCs/NPCs damaged during the same enemy phase is VALID and REQUIRED.",
 1b. Add batch enemy phase routing example to @ROUTING_RULES (lines 152-154)
 Current:
 @ROUTING_RULES={

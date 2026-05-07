@@ -362,10 +362,67 @@ class TestCombatManagerEncounterSyncContracts(unittest.TestCase):
         self.assertIn('STATE_PERSIST: Fast-lane encounter state persisted', source)
         self.assertIn('safe_write_json(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)', source)
 
+    def test_fast_path_spoken_narration_contract(self):
+        source = self._load_combat_manager_source()
+        self.assertIn('mechanical_feedback, spoken_narration, log_msg, skip_llm = multi_pc_manager.handle_combat_command', source)
+        self.assertIn('if spoken_narration:', source)
+        self.assertIn('print(spoken_narration)', source)
+
     def test_update_encounter_branch_resyncs_non_pc_queue_state(self):
         source = self._load_combat_manager_source()
         self.assertIn('multi_pc_manager.sync_non_pc_queue_state(encounter_data)', source)
         self.assertIn('STATE_SYNC: Refreshed non-PC turn queue state from authoritative encounter data', source)
+
+
+class TestCombatFastPathConfigContract(unittest.TestCase):
+    """Regression tests for deterministic fast-path config and runtime wiring."""
+
+    def _load_model_config_source(self):
+        cfg_path = os.path.join(PROJECT_ROOT, "model_config.py")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_fast_path_flag_present_and_documented(self):
+        source = self._load_model_config_source()
+        self.assertIn('COMBAT_FAST_DETERMINISTIC_NARRATION = True', source)
+        self.assertIn('Fast-path local narration for deterministic PC_PHASE commands', source)
+
+
+class TestCombatNaturalLanguageParserContract(unittest.TestCase):
+    """Regression tests for NL parser config flag and hook presence."""
+
+    def _load_model_config_source(self):
+        cfg_path = os.path.join(PROJECT_ROOT, "model_config.py")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _load_combat_manager_source(self):
+        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
+        with open(cm_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_nl_parser_flag_present_and_documented(self):
+        source = self._load_model_config_source()
+        self.assertIn("COMBAT_PC_PHASE_NL_FAST_PATH = False", source)
+        self.assertIn("natural-language action parser", source)
+
+    def test_nl_parser_import_hook_present(self):
+        source = self._load_combat_manager_source()
+        self.assertIn("from utils.combat_pc_action_parser import", source)
+        self.assertIn("parse_pc_phase_action", source)
+        self.assertIn("and COMBAT_PC_PHASE_NL_FAST_PATH", source)
+        self.assertIn('multi_pc_manager.combat_phase == "PC_PHASE"', source)
+
+    def test_nl_parser_apply_order_source_contract(self):
+        source = self._load_combat_manager_source()
+        parser_start = source.find("parse_result = parse_pc_phase_action(")
+        parser_end = source.find("# Enhance player input with inventory context for combat", parser_start)
+        self.assertGreater(parser_start, 0)
+        self.assertGreater(parser_end, parser_start)
+        parser_block = source[parser_start:parser_end]
+        self.assertLess(parser_block.find("if apply_pc_phase_parse_result("), parser_block.find("if p_mech:"))
+        self.assertLess(parser_block.find("if p_mech:"), parser_block.find("if p_log:"))
+        self.assertLess(parser_block.find("if p_log:"), parser_block.find("continue"))
 
 
 class TestCombatSingleActiveSessionContracts(unittest.TestCase):
@@ -977,14 +1034,43 @@ class TestCombatReplayAuthorityContracts(unittest.TestCase):
         self.assertIn('Result HP:', source)
         self.assertIn('[ALREADY_APPLIED] [System:', source)
 
+    def test_pc_phase_ledger_source_contract(self):
+        source = self._read_source("core/managers/multi_pc_combat.py")
+        combat_manager_source = self._read_source("core/managers/combat_manager.py")
+        self.assertIn("pc_phase_event_ledger", source)
+        self.assertIn("record_pc_phase_event", source)
+        self.assertIn("clear_pc_phase_event_ledger", source)
+        self.assertIn("HISTORICAL ONLY; DO NOT REPLAY MECHANICS", source)
+        self.assertNotIn("PC PHASE RECAP FACTS (HISTORICAL ONLY; DO NOT REPLAY MECHANICS)", combat_manager_source)
+
     def test_combat_validation_prompt_source_contracts(self):
         sim_source = self._read_source("prompts/combat/combat_sim_prompt_multipc.txt")
         validation_source = self._read_source("prompts/combat/combat_validation_prompt_multipc.txt")
+        sim_compressed = self._read_source("prompts/combat/combat_sim_prompt_multipc_compressed.txt")
+        validation_compressed = self._read_source("prompts/combat/combat_validation_prompt_multipc_compressed.txt")
 
         self.assertIn('CURRENT_PHASE always wins over the `[>]` marker.', sim_source)
         self.assertIn('If a combat history line contains `[ALREADY_APPLIED]`', sim_source)
         self.assertIn('During ENEMY_PHASE, prompting any PC what they do is INVALID', validation_source)
         self.assertIn('If a combat history line is marked [ALREADY_APPLIED]', validation_source)
+        self.assertIn('Python owns the death-save roll and result', sim_compressed)
+        self.assertIn('Only the pending PC\'s active tab/input may supply that PC\'s death-save roll.', sim_compressed)
+        self.assertIn('Death-save rolls are Python-deterministic.', validation_compressed)
+        self.assertIn('already applied or marked [ALREADY_APPLIED]', validation_compressed)
+
+    def test_combat_prompt_closure_source_contracts(self):
+        combat_manager_source = self._read_source("core/managers/combat_manager.py")
+        sim_multipc_compressed = self._read_source("prompts/combat/combat_sim_prompt_multipc_compressed.txt")
+        sim_compressed = self._read_source("prompts/combat/combat_sim_prompt_compressed.txt")
+        validation_compressed = self._read_source("prompts/combat/combat_validation_prompt_compressed.txt")
+
+        self.assertIn("COMBAT_PC_PHASE_NL_FAST_PATH", combat_manager_source)
+        self.assertIn("and COMBAT_PC_PHASE_NL_FAST_PATH", combat_manager_source)
+        self.assertNotIn("continue processing remaining NPCs/monsters", sim_multipc_compressed)
+        self.assertNotIn("continue processing ALL remaining NPCs/monsters in initiative", sim_compressed)
+        self.assertNotIn("EXACTLY ONE updateEncounter per response consolidating ALL enemy changes", validation_compressed)
+        self.assertNotIn("System requires exactly ONE", validation_compressed)
+        self.assertIn("at most one updateEncounter when enemy state changes exist", validation_compressed)
 
 
 class TestInterpreterSafeSubprocessContracts(unittest.TestCase):

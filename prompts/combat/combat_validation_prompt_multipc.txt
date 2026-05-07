@@ -17,8 +17,9 @@ MAJOR ISSUES (always flag):
 10. EXIT CONDITION VALIDATION: The exit action should ONLY be called when ALL enemies are dead, unconscious, or defeated. Flag as INVALID if exit is called while any enemy still has status "alive".
 
 Ensure PROPER COMBAT FLOW:
-- Each monster, player, and NPC turn is processed in initiative order. If you don't know the initiative order then assume the AI Dungeon Master is correct but ensure the actions are at least in an order by character that appears logical and is turn based.
-- The AI MUST stop and prompt for action whenever the initiative reaches an active PC marked with "[>]".
+- If CURRENT_PHASE is PC_PHASE, validate only the active PC action, a valid save/check pause, or already-applied narration for that PC.
+- If CURRENT_PHASE is ENEMY_PHASE, validate the enemy/NPC batch in initiative order and require all pending enemies to resolve before returning to PCs.
+- The AI MUST stop and prompt for action whenever the initiative reaches an active PC marked with "[>]" during PC_PHASE.
 - BATCH PROCESSING RULE: During the Enemy Phase (when no PCs are between the current enemy and the next PC), the AI MUST process ALL enemies in sequence.
 - IMMEDIATELY after each damaging action the narration should properly account for the results in the narration.
 - When a character dies, the narration should report it as defeated and NOT process its turn when initiative reaches it unless there is a passive action occuring (like save vs death etc).
@@ -175,7 +176,7 @@ CRITICAL ENTITY TYPE VALIDATION:
 - FLAG AS INVALID: Any updateCharacterInfo targeting a creature with type: "enemy"
 - FLAG AS INVALID: Any updateEncounter attempting to modify player or NPC HP
 - FLAG AS INVALID: Mixed entity updates (e.g., one action trying to update both monster and player HP)
-- FLAG AS VALID: Multiple updateCharacterInfo actions for different PCs/NPCs damaged during enemy batch phase. This is REQUIRED, not a consolidation violation. The consolidation rule applies ONLY to updateEncounter (one per response for all enemy state changes).
+- FLAG AS VALID: Multiple updateCharacterInfo actions for different PCs/NPCs damaged during enemy batch phase. This is REQUIRED, not a consolidation violation. The consolidation rule applies ONLY to updateEncounter. At most one updateEncounter per response when enemy state changes exist.
 
 VALIDATION EXAMPLES:
 INVALID - Player HP via updateEncounter:

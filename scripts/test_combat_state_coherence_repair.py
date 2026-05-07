@@ -122,14 +122,16 @@ class TestCombatStateCoherenceRepair(unittest.TestCase):
         }
         manager._state.current_pc_name = "Lidda Underbough"
 
-        feedback, log_msg = manager.handle_combat_command(
+        feedback, spoken_narration, log_msg, skip_llm = manager.handle_combat_command(
             "/att cultist 20",
             {"creatures": []},
             actor_name="lidda_underbough",
         )
 
         self.assertIn("cannot use /att while at 0 HP", feedback)
+        self.assertIsNone(spoken_narration)
         self.assertIsNone(log_msg)
+        self.assertTrue(skip_llm)
 
     def test_player_phase_prompt_uses_selected_active_pc_not_stale_queue_actor(self):
         manager = MultiPCCombatManager()

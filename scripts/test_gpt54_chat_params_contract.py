@@ -137,6 +137,9 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
         self.assertIn("CURRENT_PHASE", self.combat_sim_prompt_compressed)
         self.assertIn("ENEMY_PHASE", self.combat_sim_prompt)
         self.assertIn("ENEMY_PHASE", self.combat_sim_prompt_compressed)
+        self.assertIn("resolve only the active PC marked with `[>]` and then STOP", self.combat_sim_prompt)
+        self.assertIn("resolve only the active PC marked with `[>]` and then STOP", self.combat_sim_prompt_compressed)
+        self.assertIn("Spirit Guardians damages Goblin -> updateEncounter", self.combat_sim_prompt_compressed)
         self.assertIn("[ALREADY_APPLIED]", self.combat_sim_prompt)
         self.assertIn("[ALREADY_APPLIED]", self.combat_sim_prompt_compressed)
 
@@ -151,6 +154,10 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
         )
         self.assertIn("If all enemies are defeated", self.combat_validation_prompt)
         self.assertIn("MUST call exit action immediately", self.combat_validation_prompt_compressed)
+        self.assertIn("pc_phase_branch", self.combat_validation_prompt_compressed)
+        self.assertIn("enemy_phase_branch", self.combat_validation_prompt_compressed)
+        self.assertIn("at most one updateEncounter when enemy state changes exist", self.combat_validation_prompt_compressed)
+        self.assertIn("At most one updateEncounter per response when enemy state changes exist", self.combat_validation_prompt)
 
 
 if __name__ == "__main__":

@@ -130,7 +130,7 @@
   updateCharacterInfo: "Players and allied/neutral NPCs ONLY (MUST use 'characterName' parameter, NOT 'character')",
   updateEncounter: "Monsters/enemies ONLY (uses changes text)",
   never_cross: "Do not use updateCharacterInfo for monsters; do not use updateEncounter for players/NPCs",
-  consolidation_rule: "EXACTLY ONE updateEncounter per response consolidating ALL enemy changes",
+  consolidation_rule: "At most one updateEncounter when enemy state changes exist; consolidate all enemy changes into that action",
   allied_npc_ammo: "If an allied NPC fires a ranged weapon, REQUIRE their updateCharacterInfo to include ammo expenditure in changes",
   parameter_validation: {
     updateCharacterInfo: "Invalid if uses 'character' instead of 'characterName' as parameter key",
@@ -170,7 +170,7 @@
   tracker_ignored: "Golden Rule Violation. You ignored the Live Initiative Tracker. The tracker showed '[>] [Character Name] - CURRENT TURN', so you must stop and prompt the player. Instead, you {what_went_wrong}. You MUST only process turns up to the creature marked with '[>]'.",
   pc_save_not_paused: "Player Interaction Violation. You failed to stop after requesting a player saving throw. You MUST end your response immediately after asking for the roll and wait for the player's input before continuing.",
   npc_save_no_pause: "NPC Saving Throw Violation. You failed to use the 'Dramatic Pause' protocol. First DECLARE the NPC's pre-rolled die, then INVITE a brief non-mechanical reaction (e.g., 'Do you shout a warning?'). You cannot resolve the entire save in one response.",
-  consolidation_error: "Update Consolidation Violation. You used multiple updateEncounter actions. ALL enemy changes must be consolidated into EXACTLY ONE updateEncounter action per response.",
+  consolidation_error: "Update Consolidation Violation. You used multiple updateEncounter actions. ALL enemy changes must be consolidated into at most one updateEncounter action per response when enemy state changes exist.",
   wrong_parameter_key: "Parameter Key Violation. You used 'character' instead of 'characterName' in updateCharacterInfo action. The correct format is: {\"action\":\"updateCharacterInfo\",\"parameters\":{\"characterName\":\"<name>\",\"changes\":\"<description>\"}}"
 }
 
@@ -290,7 +290,7 @@
     "valid": false,
     "feedback": {
       "positive": "Combat flow was correct.",
-      "negative": "Multiple updateEncounter actions used (2 found). System requires exactly ONE.",
+      "negative": "Multiple updateEncounter actions used (2 found). System requires at most one updateEncounter when enemy state changes exist.",
       "recommendation": "Consolidate into ONE updateEncounter: {\"action\":\"updateEncounter\",\"parameters\":{\"encounterId\":\"XXX\",\"changes\":\"Goblin-1 takes 8 damage (HP 15->7). Goblin-2 takes 12 damage and is now dead (HP 10->-2).\"}}"
     }
   }

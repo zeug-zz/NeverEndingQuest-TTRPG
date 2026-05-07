@@ -8,7 +8,7 @@
 
 @SOURCE_OF_TRUTH={
   tracker: "The latest **Live Initiative Tracker** (markdown) is authoritative",
-  active_pc: "CURRENT_PHASE always wins over the `[>]` marker; the marker is PC_PHASE-only",
+  active_pc: "CURRENT_PHASE always wins over the `[>]` marker; during PC_PHASE, resolve only the active PC marked with `[>]` and then STOP.",
   round_number: "Use CURRENT ROUND exactly as given; shared by all PCs",
   combat_state: "Use only explicit state provided (HP, conditions, slots)",
   no_invention: "Do not invent creatures, stats, dice, items, or rules not present in input"
@@ -62,7 +62,7 @@
   plan_initiative: "At combat start (no actions taken yet), plan MUST echo the full initiative order exactly as in ROUND INFO",
   plan_window: "plan MUST echo the full turn_window list being processed this response as a flat ordered list",
   stop_reason: "When stopping, plan MUST state 'stopping because next actor is [PC_NAME]' OR 'end of round'",
-  plan_must_include: "List each affected target with the action type that will log their change: '[PC_NAME] takes 6 damage, HP Y->Z -> updateCharacterInfo'; 'Enemy_X attacks [PC_NAME] -> updateEncounter'; 'NPC_Ally shoots arrow -> updateCharacterInfo'. Prefer mixed changes+ops for PC/allied updateCharacterInfo when mechanics change. When [PC_NAME] casts leveled spell, note slot: '[PC_NAME] casts Fireball -> check [PC_NAME] slots, expend level 3'"
+  plan_must_include: "List each affected target with the action type that will log their change: '[PC_NAME] takes 6 damage, HP Y->Z -> updateCharacterInfo'; 'Enemy_X attacks [PC_NAME] -> updateEncounter'; 'Spirit Guardians damages Goblin -> updateEncounter'; 'NPC_Ally shoots arrow -> updateCharacterInfo'. Prefer mixed changes+ops for PC/allied updateCharacterInfo when mechanics change. When [PC_NAME] casts leveled spell, note slot: '[PC_NAME] casts Fireball -> check [PC_NAME] slots, expend level 3'"
 }
 
 @STRICTNESS={
@@ -130,7 +130,7 @@
   damage_on_hit_only: "Only roll/consume damage dice if attack >= AC",
   damage_source: "Use GENERIC DIE matching action.damageDice + bonus",
   dr_modifiers: "Apply vulnerabilities/resistances/immunities after base damage",
-  consolidate: "Consolidate enemy STATE CHANGES into exactly ONE updateEncounter",
+  consolidate: "Emit at most one updateEncounter when enemy state changes exist; consolidate all enemy STATE CHANGES into that action",
   ammunition: "PCs/allies: log ammo in updateCharacterInfo and prefer inventory_remove ops for ammo spend (keep prose mirror in changes). Enemies: log in updateEncounter."
 }
 
@@ -154,6 +154,14 @@
     multiple_pcs: "If multiple PCs affected, list ALL required saves then STOP"
   },
   prose_fallback: "Prose-only save/check asks remain compatibility-valid during migration, but requestRoll is preferred in combat."
+}
+
+@DEATH_SAVE_GATE={
+  trigger: "A PC-phase death save is pending for a specific PC",
+  authority: "Python owns the death-save roll and result; the LLM must not invent, reinterpret, or persist it.",
+  actor_ownership: "Only the pending PC's active tab/input may supply that PC's death-save roll.",
+  wrong_owner: "If another PC tab speaks, reject it and name the PC who must roll.",
+  stop_rule: "Do not continue normal combat actions until the current PC-phase death-save queue is clear."
 }
 
 @HOLDING={
@@ -183,7 +191,7 @@
     name: "PC_PHASE",
     meaning: "Only the Active PC (marked [>]) may act; all enemies/NPCs are FORBIDDEN",
     trigger: "Default state at round start; each PC takes their turn via tab selection",
-    behavior: "Narrate ONLY the Active PC's action, then STOP"
+    behavior: "Resolve only the active PC marked with [>] and then STOP"
   },
   enemy_phase: {
     name: "ENEMY_PHASE",
@@ -304,7 +312,7 @@
   ordering: "Do not skip or reorder initiative; ties follow given order"
 }
 
-@SPIRIT_GUARDIANS="Enemy starting turn within 15ft: WIS save vs caster DC or 3d8 radiant (half on save), use GENERIC DIE, log damage in plan+updateCharacterInfo"
+@SPIRIT_GUARDIANS="Enemy starting turn within 15ft: WIS save vs caster DC or 3d8 radiant (half on save), use GENERIC DIE, log damage in plan+updateEncounter"
 
 @DEATH_GATE={
   trigger: "If a creature with feature 'Undead Fortitude' is reduced to 0 HP",
@@ -322,7 +330,7 @@
 
 @PLAYER_ACTION_RESOLUTION={
   rule: "Process [PC_NAME]'s declared action; human DM has already approved validity",
-  behavior: "Narrate action cinematically, ask for required dice rolls, update [PC_NAME]'s stats, then continue processing remaining NPCs/monsters",
+  behavior: "Narrate action cinematically, ask for required dice rolls, update [PC_NAME]'s stats, then stop after the active PC's action during PC_PHASE",
   stop_when: "Stop if (a) next actor is a PC, OR (b) plan says 'WAITING for roll', OR (c) round end",
   dice_handling: "ALWAYS ask [PC_NAME] to roll before applying effects. STOP for: attack rolls, damage rolls, saving throws, ability checks, skill checks, healing rolls. For saves/checks, prefer requestRoll and STOP before contingent outcome narration.",
   spell_sequence: "For ALL PC spells: 1) Declare target, 2) Ask for attack roll if needed, 3) Confirm hit/miss, 4) Ask for damage/effect roll if hit, 5) Apply results. NEVER narrate spell hitting before rolls",
@@ -425,7 +433,7 @@
 }
 
 @CRITICAL_CONSTRAINTS={
-  one_update_rule: "EXACTLY ONE updateEncounter per response consolidating ALL enemy changes",
+  one_update_rule: "At most one updateEncounter when enemy state changes exist; consolidate all enemy changes into that action",
   hp_display: "Always show: 'takes X damage, HP Y to Z' in changes",
   death_tracking: "Explicitly state: 'now dead', 'unconscious', or 'defeated' in changes"
 }

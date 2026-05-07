@@ -6404,3 +6404,46 @@ Validate and archive the three completed spatial OpenSpec changes, then mark and
 - `openspec/changes/archive/2026-04-28-spatial-constraint-solver-generalization/*`
 - `openspec/changes/archive/2026-04-28-spatial-solver-tier-contract-correction/*`
 - `openspec/changes/archive/2026-04-28-spatial-topology-normalization-failsafe/*`
+
+### Combat PC Phase Contract Closure & Archive (COMPLETED - 2026-05-08)
+
+**Status:** COMPLETED - Implemented combat PC phase contract closure, validated all 5 dependent changes, and archived the full combat-pc-phase workstream.
+
+**Objective:**
+Close the combat PC phase enhancement audit findings: runtime gate enforcement, four-value command return contract, parser apply ordering, spell/resource authority hardening, prompt contradiction cleanup, and negative source-contract tests.
+
+**Implementation Summary:**
+- Enforced `COMBAT_PC_PHASE_NL_FAST_PATH` flag gate at the parser hook in `core/managers/combat_manager.py`.
+- Fixed `handle_combat_command(...)` four-value tuple return for unhandled paths in `core/managers/multi_pc_combat.py`.
+- Added regression tests for unhandled command return shape in `scripts/test_multi_pc_combat.py`.
+- Hardened parser apply ordering: feedback/ledger/history emit only after deterministic mutation succeeds (`utils/combat_pc_action_parser.py`).
+- Added apply failure tests with mocked update helpers (`scripts/test_combat_pc_action_parser.py`).
+- Magic Missile and healing now use authoritative character state, slot availability checks, and dead-target rejection.
+- Removed stale `EXACTLY ONE updateEncounter` and PC_PHASE continuation wording from compressed/uncompressed combat prompts.
+- Added negative source-contract tests for legacy prompt strings in `scripts/c5_regression_combat.py`.
+- All 5 combat-pc-phase changes validated and archived to `openspec/changes/archive/2026-05-08-*/`.
+
+**Verification:**
+- `.venv/bin/python -m py_compile` -> PASS
+- `scripts/test_combat_pc_action_parser.py` -> PASS, 28/28
+- `scripts/test_multi_pc_combat.py` -> PASS, 73/73
+- `scripts/c5_regression_combat.py` -> PASS, 59/59
+- `scripts/test_combat_state_coherence_repair.py` -> PASS, 9/9
+- `scripts/test_gpt54_chat_params_contract.py` -> PASS, 10/10
+- `openspec validate combat-pc-phase-*` -> all VALID (5 changes + tt-deterministic-combat-death-saves)
+
+**Files Modified:**
+- `core/managers/combat_manager.py`
+- `core/managers/multi_pc_combat.py`
+- `utils/combat_pc_action_parser.py`
+- `prompts/combat/combat_sim_prompt_compressed.txt`
+- `prompts/combat/combat_sim_prompt_multipc_compressed.txt`
+- `prompts/combat/combat_sim_prompt_uncompressed.txt`
+- `prompts/combat/combat_validation_prompt_compressed.txt`
+- `prompts/combat/combat_validation_prompt_multipc_compressed.txt`
+- `prompts/combat/combat_validation_prompt_multipc.txt`
+- `scripts/test_combat_pc_action_parser.py`
+- `scripts/test_multi_pc_combat.py`
+- `scripts/c5_regression_combat.py`
+- `openspec/changes/combat-pc-phase-contract-closure/*`
+- `openspec/changes/archive/2026-05-08-combat-pc-phase-*/` (5 archived changes)

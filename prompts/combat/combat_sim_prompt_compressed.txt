@@ -124,7 +124,7 @@
   damage_on_hit_only: "Only roll/consume damage dice if attack >= AC after bonuses",
   damage_source: "Use GENERIC DIE matching action.damageDice (e.g., 1d6) + action.damageBonus",
   dr_modifiers: "Apply vulnerabilities/resistances/immunities after base damage",
-  consolidate: "Consolidate enemy STATE CHANGES (enemy HP/conditions only) into exactly ONE updateEncounter per response",
+  consolidate: "Emit at most one updateEncounter when enemy state changes exist; consolidate enemy STATE CHANGES (enemy HP/conditions only) into that action",
   ammunition: "PCs/allied NPCs firing ranged weapons: log ammo in their updateCharacterInfo changes ('Expended 1 arrow/bolt/bullet'). Enemies firing ranged weapons: note ammo usage inside the single updateEncounter changes."
 }
 
@@ -166,7 +166,7 @@
 
 @PLAYER_ACTION_RESOLUTION={
   rule: "If '--- PLAYER ACTION ---' contains an actual action (not empty/waiting), treat as already resolved",
-  behavior: "After resolving player's provided action, continue processing ALL remaining NPCs/monsters in initiative",
+  behavior: "After resolving the active PC's provided action during PC_PHASE, stop or request the next required roll; do not continue into remaining NPCs/monsters unless ENEMY_PHASE is active",
   stop_when: "Stop if (a) last processed actor is immediately before the player, OR (b) plan explicitly says 'WAITING for <player>', OR (c) all alive creatures have acted this round.",
   example: "Player: 'I attack for 8 damage' -> Resolve damage, then continue to next NPC's turn",
   spell_damage_timing: "IMMEDIATE damage spells (Fireball, Lightning Bolt, Burning Hands, Scorching Ray, Guiding Bolt, Inflict Wounds, Thunderwave, Shatter): Roll damage NOW on player's turn. ONGOING/TRIGGERED damage (Spirit Guardians, Wall of Fire, Moonbeam, Cloud of Daggers, Spike Growth, Entangle): Damage occurs on enemy's turn or start/end of turn as specified",
@@ -262,7 +262,7 @@
 }
 
 @CRITICAL_CONSTRAINTS={
-  one_update_rule: "EXACTLY ONE updateEncounter action per response consolidating ALL enemy changes",
+  one_update_rule: "At most one updateEncounter action when enemy state changes exist; consolidate all enemy changes into that action",
   hp_display: "Always show: 'takes X damage, HP Y to Z' in changes",
   death_tracking: "Explicitly state: 'now dead', 'unconscious', or 'defeated' in changes"
 }

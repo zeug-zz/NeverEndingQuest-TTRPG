@@ -25,6 +25,7 @@
 # - LLM combat agency: enemies target via LLM decision
 # ============================================================================
 
+import hashlib
 import random
 import json
 import re
@@ -39,6 +40,11 @@ try:
     from config import MULTIPLAYER_MODE
 except ImportError:
     MULTIPLAYER_MODE = False
+
+try:
+    from model_config import COMBAT_FAST_DETERMINISTIC_NARRATION
+except ImportError:
+    COMBAT_FAST_DETERMINISTIC_NARRATION = True
 
 # TABLETOP MODE: Internal imports - fail fast if missing
 from utils.encoding_utils import safe_json_load
@@ -69,6 +75,75 @@ def _normalize_combat_identity(name: Any) -> str:
     normalized = re.sub(r"[^a-z0-9_]", "_", normalized)
     normalized = re.sub(r"_+", "_", normalized)
     return normalized.strip("_")
+
+
+def _select_deterministic_template(seed_parts: List[Any], templates: List[str]) -> str:
+    """Pick a stable narration template from combat facts."""
+    if not templates:
+        return ""
+
+    seed = "|".join(str(part or "") for part in seed_parts)
+    digest = hashlib.sha1(seed.encode("utf-8")).digest()
+    return templates[digest[0] % len(templates)]
+
+
+def _build_fast_path_narration(
+    kind: str,
+    actor_name: str,
+    target_name: str,
+    weapon_name: Optional[str] = None,
+    roll: Optional[int] = None,
+    ac: Optional[int] = None,
+    amount: Optional[int] = None,
+    hp_before: Optional[int] = None,
+    hp_after: Optional[int] = None,
+    status_text: Optional[str] = None,
+    flavor_text: Optional[str] = None,
+) -> str:
+    """Build deterministic ASCII-only combat narration for local fast-path commands."""
+    attack_name = (weapon_name or flavor_text or "strike").strip()
+    if kind == "attack_miss":
+        templates = [
+            "{actor}'s {attack_name} cuts empty air as {target} slips just outside the strike.",
+            "{actor} commits to the blow, but {target} twists away before the {attack_name} lands.",
+            "{target} jerks aside, and {actor}'s {attack_name} scrapes harmlessly past.",
+            "{actor}'s {attack_name} whistles past {target} with no purchase.",
+        ]
+        return _select_deterministic_template([kind, actor_name, target_name, attack_name, roll, ac], templates).format(
+            actor=actor_name,
+            attack_name=attack_name,
+            target=target_name,
+        )
+
+    if kind == "damage":
+        defeated = str(status_text or "").lower() in {"dead", "defeated", "unconscious"} or (hp_after is not None and hp_after <= 0)
+        bloodied = bool(hp_before is not None and hp_after is not None and hp_before > 0 and hp_after > 0 and hp_after <= (hp_before / 2))
+        templates = (
+            [
+                "{actor}'s {attack_name} crashes through {target}, and it collapses in a broken heap.",
+                "{actor} drives the final blow home, and {target} drops out of the fight.",
+                "{target} buckles under {actor}'s {attack_name} and falls still.",
+            ]
+            if defeated
+            else [
+                "{actor}'s {attack_name} lands hard, driving {target} back with a sharp impact.",
+                "{actor} catches {target} cleanly with the {attack_name}, forcing it to stagger.",
+                "{actor}'s strike bites into {target}, leaving it reeling but still fighting.",
+            ]
+        )
+        if bloodied and not defeated:
+            templates = [
+                "{actor}'s {attack_name} tears into {target}, leaving it staggered and visibly weakened.",
+                "{target} reels under {actor}'s blow, its defense breaking for a dangerous moment.",
+                "{actor}'s strike drives {target} back, and the fight starts to turn.",
+            ]
+        return _select_deterministic_template([kind, actor_name, target_name, attack_name, amount, hp_before, hp_after, status_text], templates).format(
+            actor=actor_name,
+            attack_name=attack_name,
+            target=target_name,
+        )
+
+    return f"{actor_name} resolves the action against {target_name}."
 
 
 def _extract_death_save_counts(character_data: Dict[str, Any]) -> Tuple[int, int]:
@@ -784,6 +859,17 @@ class MultiPCCombatManager:
     # Tracks pending HP/status changes to be written at combat end
     # Format: {character_name: ["change string 1", "change string 2", ...]}
     pending_character_updates: Dict[str, List[str]] = field(default_factory=dict)
+
+    # TABLETOP MODE: Historical PC_PHASE event ledger (compact, replay-safe)
+    pc_phase_event_ledger: List[Dict[str, Any]] = field(default_factory=list)
+    pc_phase_event_keys: Dict[str, int] = field(default_factory=dict)
+    pc_phase_event_sequence: int = 0
+    
+    # TABLETOP MODE: Deterministic death-save tracking
+    # Maps PC name -> round number when death save was resolved this PC phase.
+    death_save_resolved_phases: Dict[str, int] = field(default_factory=dict)
+    # Maps PC name -> round number when death-save prompt was emitted.
+    death_save_prompted_phases: Dict[str, int] = field(default_factory=dict)
     
     def __post_init__(self):
         """Initialize sub-managers with default state."""
@@ -1042,7 +1128,201 @@ class MultiPCCombatManager:
         """
         return self._turns.find_target(partial_name, encounter_data)
 
-    def handle_combat_command(self, cmd: str, encounter_data: Dict[str, Any], actor_name: str = "Player") -> Tuple[Optional[str], Optional[str]]:
+    def _compact_ledger_text(self, value: Any) -> str:
+        """Return an ASCII-safe compact string for ledger storage."""
+        text = "" if value is None else str(value)
+        text = text.encode("ascii", "ignore").decode("ascii")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _normalize_ledger_value(self, value: Any) -> Any:
+        """Recursively normalize ledger values for compact ASCII-safe storage."""
+        if isinstance(value, dict):
+            return {
+                self._compact_ledger_text(key): self._normalize_ledger_value(subvalue)
+                for key, subvalue in value.items()
+            }
+        if isinstance(value, list):
+            return [self._normalize_ledger_value(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._normalize_ledger_value(item) for item in value]
+        if isinstance(value, bool) or isinstance(value, (int, float)):
+            return value
+        return self._compact_ledger_text(value)
+
+    def _build_pc_phase_ledger_source_key(
+        self,
+        *,
+        kind: str,
+        actor_name: str,
+        target_name: Optional[str],
+        facts: Dict[str, Any],
+        mechanics_already_applied: bool,
+        round_number: Optional[int] = None,
+    ) -> str:
+        payload = {
+            "round": round_number if round_number is not None else self._state.current_round,
+            "kind": self._compact_ledger_text(kind).lower(),
+            "actor": self._compact_ledger_text(actor_name).lower(),
+            "target": self._compact_ledger_text(target_name or "").lower(),
+            "facts": self._normalize_ledger_value(facts),
+            "mechanics_already_applied": mechanics_already_applied,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    def record_pc_phase_event(
+        self,
+        kind: str,
+        actor_name: str,
+        target_name: Optional[str] = None,
+        *,
+        facts: Optional[Dict[str, Any]] = None,
+        narration: Optional[str] = None,
+        mechanics_already_applied: bool = True,
+        source_key: Optional[str] = None,
+        round_number: Optional[int] = None,
+        phase: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Record a compact historical PC_PHASE event if it has not been seen."""
+        normalized_kind = self._compact_ledger_text(kind).lower()
+        allowed_kinds = {
+            "attack_miss",
+            "attack_hit_pending_damage",
+            "attack_damage",
+            "spell_damage",
+            "spell_healing",
+            "movement",
+            "death_save",
+            "manual_note",
+        }
+        if normalized_kind not in allowed_kinds:
+            return None
+
+        normalized_source_key = source_key or self._build_pc_phase_ledger_source_key(
+            kind=normalized_kind,
+            actor_name=actor_name,
+            target_name=target_name,
+            facts=facts or {},
+            mechanics_already_applied=mechanics_already_applied,
+        )
+        if normalized_source_key in self.pc_phase_event_keys:
+            return None
+
+        event = {
+            "round": round_number if round_number is not None else self._state.current_round,
+            "sequence": self.pc_phase_event_sequence + 1,
+            "phase": self._compact_ledger_text(phase or self.combat_phase),
+            "actor": self._compact_ledger_text(actor_name),
+            "kind": normalized_kind,
+            "target": self._compact_ledger_text(target_name) if target_name else "",
+            "facts": self._normalize_ledger_value(facts or {}),
+            "narration": self._compact_ledger_text(narration),
+            "mechanics_already_applied": bool(mechanics_already_applied),
+        }
+
+        self.pc_phase_event_sequence = event["sequence"]
+        self.pc_phase_event_ledger.append(event)
+        self.pc_phase_event_keys[normalized_source_key] = event["sequence"]
+
+        if len(self.pc_phase_event_ledger) > 64:
+            trimmed = self.pc_phase_event_ledger.pop(0)
+            for key, seq in list(self.pc_phase_event_keys.items()):
+                if seq == trimmed.get("sequence"):
+                    self.pc_phase_event_keys.pop(key, None)
+                    break
+
+        return event
+
+    def get_pc_phase_event_ledger(self, round_number: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return a shallow copy of ledger entries, optionally filtered by round."""
+        if round_number is None:
+            return list(self.pc_phase_event_ledger)
+        return [entry for entry in self.pc_phase_event_ledger if entry.get("round") == round_number]
+
+    def format_pc_phase_event_ledger_for_prompt(
+        self,
+        round_number: Optional[int] = None,
+        limit: int = 8,
+    ) -> str:
+        """Format historical ledger facts for optional prompt context."""
+        entries = self.get_pc_phase_event_ledger(round_number=round_number)
+        if not entries:
+            return ""
+
+        selected = entries[-max(1, limit):]
+        lines = ["=== PC PHASE RECAP FACTS (HISTORICAL ONLY; DO NOT REPLAY MECHANICS) ==="]
+        for entry in selected:
+            facts = entry.get("facts", {}) if isinstance(entry.get("facts"), dict) else {}
+            kind = entry.get("kind", "")
+            actor = entry.get("actor", "")
+            target = entry.get("target", "")
+            parts = [f"Round {entry.get('round', '?')}:" ]
+            if actor:
+                parts.append(actor)
+
+            if kind == "attack_miss":
+                detail = ["missed"]
+                if target:
+                    detail.append(target)
+                if facts.get("weapon"):
+                    detail.append(f"with {facts.get('weapon')}")
+                if facts.get("roll") is not None and facts.get("ac") is not None:
+                    detail.append(f"roll {facts.get('roll')} vs AC {facts.get('ac')}")
+                parts.append(" ".join(detail))
+            elif kind in ("attack_hit_pending_damage", "attack_damage", "spell_damage"):
+                detail = [kind.replace("_", " ")]
+                if target:
+                    detail.append(target)
+                damage = facts.get("damage") if facts.get("damage") is not None else facts.get("amount")
+                if damage is not None:
+                    detail.append(f"for {damage}")
+                if facts.get("hp_before") is not None and facts.get("hp_after") is not None:
+                    detail.append(f"HP {facts.get('hp_before')} -> {facts.get('hp_after')}")
+                if facts.get("status"):
+                    detail.append(f"status {facts.get('status')}")
+                parts.append(" ".join(detail))
+            elif kind == "spell_healing":
+                detail = ["healed"]
+                if target:
+                    detail.append(target)
+                healing = facts.get("healing") if facts.get("healing") is not None else facts.get("amount")
+                if healing is not None:
+                    detail.append(f"for {healing}")
+                if facts.get("hp_before") is not None and facts.get("hp_after") is not None:
+                    detail.append(f"HP {facts.get('hp_before')} -> {facts.get('hp_after')}")
+                parts.append(" ".join(detail))
+            elif kind == "death_save":
+                detail = ["death save"]
+                if target:
+                    detail.append(target)
+                if facts.get("roll") is not None:
+                    detail.append(f"roll {facts.get('roll')}")
+                if facts.get("result"):
+                    detail.append(self._compact_ledger_text(facts.get("result")))
+                parts.append(" ".join(detail))
+            elif kind == "movement":
+                detail = ["moved"]
+                if target:
+                    detail.append(target)
+                destination = facts.get("destination") if facts.get("destination") is not None else facts.get("location")
+                if destination:
+                    detail.append(f"to {destination}")
+                parts.append(" ".join(detail))
+            else:
+                note = entry.get("narration") or facts.get("note") or "manual note"
+                parts.append(self._compact_ledger_text(note))
+
+            lines.append("- " + " ".join(bit for bit in parts if bit))
+
+        return "\n".join(lines)
+
+    def clear_pc_phase_event_ledger(self) -> None:
+        """Clear the historical PC_PHASE ledger at combat completion."""
+        self.pc_phase_event_ledger.clear()
+        self.pc_phase_event_keys.clear()
+        self.pc_phase_event_sequence = 0
+
+    def handle_combat_command(self, cmd: str, encounter_data: Dict[str, Any], actor_name: str = "Player") -> Tuple[Optional[str], Optional[str], Optional[str], bool]:
         """
         Process a local combat command.
         
@@ -1052,9 +1332,11 @@ class MultiPCCombatManager:
             actor_name: Name of the character performing the action
             
         Returns:
-            Tuple(UserFeedback, SystemLogInjection)
-            - UserFeedback: String to show user immediately (or None)
+            Tuple(MechanicalFeedback, SpokenNarration, SystemLogInjection, SkipLLM)
+            - MechanicalFeedback: [skipTTS] string to show user immediately (or None)
+            - SpokenNarration: Deterministic DM narration spoken by TTS (or None)
             - SystemLogInjection: String to inject into LLM history (or None)
+            - SkipLLM: True when the combat loop should continue without a fresh combat LLM prompt
         """
         # TABLETOP MODE: Debug entry
         tt_debug = _get_tabletop_debug()
@@ -1067,10 +1349,11 @@ class MultiPCCombatManager:
         
         parts = cmd.strip().split()
         if not parts:
-            return None, None
+            return None, None, None, False
             
         command = parts[0].lower()
         args = parts[1:]
+        fast_path_enabled = COMBAT_FAST_DETERMINISTIC_NARRATION
 
         normalized_actor = _normalize_combat_identity(actor_name)
         acting_pc_state: Optional[PCCombatState] = None
@@ -1087,12 +1370,14 @@ class MultiPCCombatManager:
             return (
                 f"[skipTTS] Dungeon Master: [SYSTEM] {acting_pc_state.character_name} cannot use {command} while at 0 HP. Resolve the required death save first.",
                 None,
+                None,
+                True,
             )
         
         if command == "/att":
             # Syntax: /att [target] [roll] [optional: weapon]
             if len(args) < 2:
-                return "Dungeon Master: [SYSTEM] Usage: /att [target] [roll] [weapon]", None
+                return "Dungeon Master: [SYSTEM] Usage: /att [target] [roll] [weapon]", None, None, False
             
             # Check if optional weapon argument is present (last argument if not a number)
             # Standard args: target... roll
@@ -1113,7 +1398,7 @@ class MultiPCCombatManager:
                     weapon_parts.insert(0, args[i])
             
             if roll is None:
-                return "Dungeon Master: [SYSTEM] Invalid roll. Usage: /att [target] [roll] [weapon]", None
+                return "Dungeon Master: [SYSTEM] Invalid roll. Usage: /att [target] [roll] [weapon]", None, None, False
             
             # Target is everything before the roll
             target_name = " ".join(args[:roll_index])
@@ -1129,7 +1414,7 @@ class MultiPCCombatManager:
                 
             target = self.find_target(target_name, encounter_data)
             if not target:
-                return f"Dungeon Master: [SYSTEM] Target '{target_name}' not found.", None
+                return f"Dungeon Master: [SYSTEM] Target '{target_name}' not found.", None, None, False
             
             # Store as last target for /dmg command
             self.last_target = target
@@ -1155,11 +1440,44 @@ class MultiPCCombatManager:
                     }, verbose=tt_debug.is_tabletop_verbose())
                 
                 # TABLETOP MODE: Add prefill marker so UI auto-populates /dmg command
-                return f"[skipTTS][ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit! (Rolled {roll} vs AC {ac}). Roll damage.", None
+                self.record_pc_phase_event(
+                    kind="attack_hit_pending_damage",
+                    actor_name=actor_name,
+                    target_name=target.name,
+                    facts={
+                        "roll": roll,
+                        "ac": ac,
+                        "weapon": weapon_name or "",
+                        "damage_pending": True,
+                    },
+                    narration=f"{actor_name} hit {target.name}; damage pending.",
+                    mechanics_already_applied=True,
+                    source_key=self._build_pc_phase_ledger_source_key(
+                        kind="attack_hit_pending_damage",
+                        actor_name=actor_name,
+                        target_name=target.name,
+                        facts={"roll": roll, "ac": ac, "weapon": weapon_name or "", "damage_pending": True},
+                        mechanics_already_applied=True,
+                    ),
+                )
+                return (
+                    f"[skipTTS][ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit! (Rolled {roll} vs AC {ac}). Roll damage.",
+                    None,
+                    None,
+                    True,
+                )
             else:
                 # Miss logic - pass to LLM for narration
                 weapon_context = f" with {weapon_name}" if weapon_name else ""
                 log_msg = f"[ALREADY_APPLIED] [System: {actor_name} attacked {target.name}{weapon_context} with roll {roll} vs AC {ac} and MISSED.]"
+                narration = _build_fast_path_narration(
+                    kind="attack_miss",
+                    actor_name=actor_name,
+                    target_name=target.name,
+                    weapon_name=weapon_name,
+                    roll=roll,
+                    ac=ac,
+                )
                 
                 # TABLETOP MODE: Debug miss
                 if tt_debug:
@@ -1171,18 +1489,46 @@ class MultiPCCombatManager:
                         "has_log_msg": True,
                         "result": "continue_to_llm"
                     }, verbose=tt_debug.is_tabletop_verbose())
+
+                self.record_pc_phase_event(
+                    kind="attack_miss",
+                    actor_name=actor_name,
+                    target_name=target.name,
+                    facts={
+                        "roll": roll,
+                        "ac": ac,
+                        "weapon": weapon_name or "",
+                    },
+                    narration=narration,
+                    mechanics_already_applied=True,
+                    source_key=self._build_pc_phase_ledger_source_key(
+                        kind="attack_miss",
+                        actor_name=actor_name,
+                        target_name=target.name,
+                        facts={"roll": roll, "ac": ac, "weapon": weapon_name or ""},
+                        mechanics_already_applied=True,
+                    ),
+                )
                 
-                return f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Miss. (Rolled {roll} vs AC {ac}). Attack result committed.\nProcessing outcome...", log_msg
+                if fast_path_enabled:
+                    return (
+                        f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Miss. (Rolled {roll} vs AC {ac}). Attack result committed.",
+                        f"Dungeon Master: {narration}",
+                        log_msg,
+                        True,
+                    )
+
+                return (None, None, log_msg, False)
                 
         elif command == "/dmg":
             # Syntax: /dmg [amount] [flavor text...]
             if len(args) < 1:
-                return "[skipTTS] Dungeon Master: [SYSTEM] Usage: /dmg [amount] [optional flavor]", None
+                return "[skipTTS] Dungeon Master: [SYSTEM] Usage: /dmg [amount] [optional flavor]", None, None, False
                 
             try:
                 amount = int(args[0])
             except ValueError:
-                return "[skipTTS] Dungeon Master: [SYSTEM] Invalid amount. Usage: /dmg [amount] [flavor]", None
+                return "[skipTTS] Dungeon Master: [SYSTEM] Invalid amount. Usage: /dmg [amount] [flavor]", None, None, False
             
             # Determine flavor text
             if len(args) > 1:
@@ -1198,7 +1544,7 @@ class MultiPCCombatManager:
             target = getattr(self, 'last_target', None)
             
             if not target:
-                return "[skipTTS] Dungeon Master: [SYSTEM] No target selected. Use /att first or specify target.", None
+                return "[skipTTS] Dungeon Master: [SYSTEM] No target selected. Use /att first or specify target.", None, None, False
             
             # Apply Damage
             previous_hp = target.hp
@@ -1235,10 +1581,60 @@ class MultiPCCombatManager:
             
             result_hp_text = f"Result HP: {target.hp}/{target.max_hp}{status_update}."
             log_msg = f"[ALREADY_APPLIED] [System: {actor_name} dealt {amount} damage ({flavor_text}) to {target.name}. {result_hp_text}]"
+
+            narration = _build_fast_path_narration(
+                kind="damage",
+                actor_name=actor_name,
+                target_name=target.name,
+                weapon_name=self.last_attack_weapon,
+                amount=amount,
+                hp_before=previous_hp,
+                hp_after=target.hp,
+                status_text=status_text,
+                flavor_text=flavor_text,
+            )
+
+            self.record_pc_phase_event(
+                kind="attack_damage",
+                actor_name=actor_name,
+                target_name=target.name,
+                facts={
+                    "damage": amount,
+                    "hp_before": previous_hp,
+                    "hp_after": target.hp,
+                    "status": status_text or target.status,
+                    "weapon": self.last_attack_weapon or "",
+                    "flavor": flavor_text,
+                },
+                narration=narration,
+                mechanics_already_applied=True,
+                source_key=self._build_pc_phase_ledger_source_key(
+                    kind="attack_damage",
+                    actor_name=actor_name,
+                    target_name=target.name,
+                    facts={
+                        "damage": amount,
+                        "hp_before": previous_hp,
+                        "hp_after": target.hp,
+                        "status": status_text or target.status,
+                        "weapon": self.last_attack_weapon or "",
+                        "flavor": flavor_text,
+                    },
+                    mechanics_already_applied=True,
+                ),
+            )
+
+            if fast_path_enabled:
+                return (
+                    f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Damage applied ({amount}). {result_hp_text}",
+                    f"Dungeon Master: {narration}",
+                    log_msg,
+                    True,
+                )
+
+            return (None, None, log_msg, False)
             
-            return f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Damage applied ({amount}). {result_hp_text}\nProcessing outcome...", log_msg
-            
-        return None, None
+        return None, None, None, False
 
 
     
@@ -1421,6 +1817,10 @@ class MultiPCCombatManager:
             new_hp: New HP value
         """
         self._state.update_pc_hp(character_name, new_hp)
+        # TABLETOP MODE: Clear death-save tracking if healed above 0
+        if new_hp > 0:
+            self.death_save_resolved_phases.pop(character_name, None)
+            self.death_save_prompted_phases.pop(character_name, None)
     
     def _queue_character_update(self, character_name: str, change_description: str) -> None:
         """
@@ -1497,6 +1897,294 @@ class MultiPCCombatManager:
         self.pending_character_updates.clear()
         
         return results
+    
+    # ========================================================================
+    # TABLETOP MODE: Deterministic Death-Save Gate
+    # ========================================================================
+    
+    def get_pending_death_save_pcs_for_phase(self) -> List[str]:
+        """Get PCs that must resolve a death save in the current PC phase
+        but have not yet done so this phase.
+        
+        Returns:
+            List of PC names needing death saves, stable sort order
+        """
+        current_round = self._state.current_round
+        pending = []
+        seen = set()
+
+        if self._turns.turn_queue:
+            for combatant in self._turns.turn_queue:
+                if combatant.type != CombatantType.PC:
+                    continue
+
+                name = combatant.name
+                if not name or name in seen:
+                    continue
+
+                state = self._state.pc_states.get(name)
+                if not state or state.status != PCStatus.INCAPACITATED:
+                    continue
+                if self.death_save_resolved_phases.get(name) == current_round:
+                    continue
+
+                pending.append(name)
+                seen.add(name)
+
+        for name, state in self._state.pc_states.items():
+            if name in seen:
+                continue
+            if state.status != PCStatus.INCAPACITATED:
+                continue
+            if self.death_save_resolved_phases.get(name) == current_round:
+                continue
+            pending.append(name)
+        return pending
+    
+    def has_unresolved_death_save_obligations(self) -> bool:
+        """Return True if any PC has a pending unresolved death save for the current PC phase."""
+        return len(self.get_pending_death_save_pcs_for_phase()) > 0
+    
+    def get_next_pending_death_save_pc(self) -> Optional[str]:
+        """Get the first PC who must resolve a death save this phase.
+        
+        Returns:
+            PC name or None if no pending death saves
+        """
+        pending = self.get_pending_death_save_pcs_for_phase()
+        return pending[0] if pending else None
+    
+    def should_emit_death_save_prompt(self, pc_name: str) -> bool:
+        """Check if we should emit the initial death-save prompt for this PC.
+        
+        Only emits once per PC phase per PC. Subsequent loop iterations
+        after prompt but before resolution will not re-prompt.
+        """
+        current_round = self._state.current_round
+        if self.death_save_prompted_phases.get(pc_name) == current_round:
+            return False
+        self.death_save_prompted_phases[pc_name] = current_round
+        return True
+
+    def validate_death_save_input_actor(
+        self,
+        input_actor_name: Optional[str],
+        fallback_actor_name: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str], str]:
+        """Validate that the current input actor owns the pending death save.
+
+        Returns:
+            Tuple of (allowed, pending_pc_name_or_None, guidance_message)
+        """
+        pending_pc = self.get_next_pending_death_save_pc()
+        if not pending_pc:
+            return True, None, ""
+
+        source_actor = input_actor_name or fallback_actor_name
+        if not source_actor:
+            return False, pending_pc, (
+                f"{pending_pc} must roll this death saving throw. Select {pending_pc}'s tab and enter 1-20 or /death <1-20>."
+            )
+
+        if _normalize_combat_identity(source_actor) != _normalize_combat_identity(pending_pc):
+            return False, pending_pc, (
+                f"{pending_pc} must roll this death saving throw. Select {pending_pc}'s tab and enter 1-20 or /death <1-20>."
+            )
+
+        return True, pending_pc, ""
+
+    @staticmethod
+    def parse_death_save_roll_input(user_input: str, gate_active: bool) -> Tuple[bool, Optional[int], Optional[str]]:
+        """Parse death-save roll input.
+        
+        Args:
+            user_input: Raw user input string
+            gate_active: Whether the deterministic death-save gate is active.
+                         Bare integers are only accepted when gate is active.
+        
+        Returns:
+            Tuple of (valid, roll_or_None, error_or_empty_message)
+            When not a death-save input at all, returns (False, None, None).
+            When invalid roll value, returns (False, None, error_string).
+        """
+        if not isinstance(user_input, str):
+            return False, None, "Enter a death saving throw roll (1-20)." if gate_active else None
+
+        text = user_input.strip().lower()
+        if not text:
+            return False, None, "Enter a death saving throw roll (1-20)." if gate_active else None
+
+        # /death <roll> or /ds <roll> command syntax
+        command_match = re.fullmatch(r"/(?:death|ds)\s+(\d{1,2})", text)
+        if command_match:
+            try:
+                roll = int(command_match.group(1))
+                if 1 <= roll <= 20:
+                    return True, roll, ""
+                return False, None, "Death save roll must be 1-20."
+            except (ValueError, TypeError):
+                return False, None, "Death save roll must be a number 1-20."
+
+        # "roll 3", "i roll 3" — extract first number
+        natural_match = re.fullmatch(r"(?:i\s+)?roll\s+(\d{1,2})", text)
+        if natural_match:
+            try:
+                roll = int(natural_match.group(1))
+                if 1 <= roll <= 20:
+                    return True, roll, ""
+            except (ValueError, TypeError):
+                pass
+            return False, None, "Death save roll must be a number 1-20."
+
+        # Bare integer: only accept while death-save gate is active
+        if gate_active and text.isdigit():
+            try:
+                roll = int(text)
+                if 1 <= roll <= 20:
+                    return True, roll, ""
+                return False, None, "Death save roll must be 1-20."
+            except (ValueError, TypeError):
+                pass
+        
+        # Not a death-save input
+        if gate_active:
+            return False, None, "Enter a death saving throw roll (1-20)."
+        return False, None, None
+    
+    def resolve_death_save_roll(self, pc_name: str, roll: int) -> Tuple[bool, str]:
+        """Apply a death-save roll deterministically and persist the result.
+        
+        Args:
+            pc_name: Name of the PC making the save
+            roll: The d20 roll result (1-20)
+            
+        Returns:
+            Tuple of (success, user_message)
+        """
+        if pc_name not in self._state.pc_states:
+            return False, f"[SYSTEM] Unknown PC: {pc_name}"
+        
+        state = self._state.pc_states[pc_name]
+        
+        if state.status != PCStatus.INCAPACITATED:
+            return False, f"[skipTTS] Dungeon Master: [SYSTEM] {pc_name} does not need a death saving throw."
+        
+        # Snapshot for rollback on persistence failure
+        snapshot_successes = state.death_save_successes
+        snapshot_failures = state.death_save_failures
+        snapshot_status = state.status
+        snapshot_hp = state.current_hp
+        
+        # Apply the death save
+        combat_continues, result_message = state.apply_death_save(roll)
+        
+        try:
+            if roll == 20:
+                ops = [
+                    {"op": "death_saves_set", "successes": 0, "failures": 0},
+                    {"op": "set_hp", "value": 1},
+                ]
+            elif state.status == PCStatus.DEAD:
+                ops = [
+                    {"op": "death_saves_set", "successes": 0, "failures": 3},
+                    {"op": "set_hp", "value": 0},
+                ]
+            elif state.status == PCStatus.STABLE:
+                ops = [
+                    {"op": "death_saves_set", "successes": 3, "failures": 0},
+                    {"op": "set_hp", "value": 0},
+                ]
+            else:
+                ops = [
+                    {"op": "death_saves_set",
+                     "successes": state.death_save_successes,
+                     "failures": state.death_save_failures},
+                    {"op": "set_hp", "value": state.current_hp},
+                ]
+            
+            from updates.update_character_info import update_character_info
+            persist_ok = update_character_info(pc_name, "", ops=ops)
+            
+            if not persist_ok:
+                state.death_save_successes = snapshot_successes
+                state.death_save_failures = snapshot_failures
+                state.status = snapshot_status
+                state.current_hp = snapshot_hp
+                return False, f"[skipTTS] Dungeon Master: [SYSTEM] Failed to persist death save for {pc_name}. Try again."
+            
+            # Mark resolved for this phase
+            self.death_save_resolved_phases[pc_name] = self._state.current_round
+            
+            # Sync turn queue combatant
+            self._sync_pc_queue_actor_state(pc_name)
+
+            self.record_pc_phase_event(
+                kind="death_save",
+                actor_name=pc_name,
+                target_name=pc_name,
+                facts={
+                    "roll": roll,
+                    "successes": state.death_save_successes,
+                    "failures": state.death_save_failures,
+                    "hp_before": snapshot_hp,
+                    "hp_after": state.current_hp,
+                    "status": state.status.value,
+                    "result": result_message,
+                },
+                narration=result_message,
+                mechanics_already_applied=True,
+                source_key=self._build_pc_phase_ledger_source_key(
+                    kind="death_save",
+                    actor_name=pc_name,
+                    target_name=pc_name,
+                    facts={
+                        "roll": roll,
+                        "successes": state.death_save_successes,
+                        "failures": state.death_save_failures,
+                        "hp_before": snapshot_hp,
+                        "hp_after": state.current_hp,
+                        "status": state.status.value,
+                    },
+                    mechanics_already_applied=True,
+                ),
+            )
+            
+            # If natural 20 brought PC to READY, mark turn complete
+            if state.status == PCStatus.READY:
+                self._turns.complete_pc_turn(pc_name)
+            
+            return True, f"Dungeon Master: {result_message}"
+            
+        except Exception as e:
+            error(f"Death save persistence failed for {pc_name}: {e}", category="combat_persistence")
+            state.death_save_successes = snapshot_successes
+            state.death_save_failures = snapshot_failures
+            state.status = snapshot_status
+            state.current_hp = snapshot_hp
+            return False, f"[skipTTS] Dungeon Master: [SYSTEM] System error persisting death save for {pc_name}."
+    
+    def _sync_pc_queue_actor_state(self, pc_name: str) -> None:
+        """Sync turn queue combatant HP/status for a PC after death-save resolution."""
+        normalized_name = _normalize_combat_identity(pc_name)
+        state = self._state.pc_states.get(pc_name)
+        if not state:
+            return
+        for combatant in self._turns.turn_queue:
+            if combatant.type == CombatantType.PC and _normalize_combat_identity(combatant.name) == normalized_name:
+                combatant.hp = state.current_hp
+                combatant.status = state.status.value
+                break
+    
+    def mark_death_save_obligation_complete(self, pc_name: str) -> None:
+        """Mark a PC's death-save obligation as resolved for the current PC phase.
+        
+        If the PC regained consciousness (natural 20), they are also marked
+        as having acted this phase.
+        """
+        self.death_save_resolved_phases[pc_name] = self._state.current_round
+        state = self._state.pc_states.get(pc_name)
+        if state and state.status == PCStatus.READY:
+            self._turns.complete_pc_turn(pc_name)
     
     def get_combat_state_summary(self) -> Dict[str, Any]:
         """
@@ -1956,6 +2644,7 @@ def end_combat_session() -> None:
         success_count = sum(1 for success in results.values() if success)
         total_count = len(results)
         info(f"Persisted changes for {success_count}/{total_count} characters", category="combat_lifecycle")
+        _active_combat_manager.clear_pc_phase_event_ledger()
         
         emit_combat_event("combat_ended", {})
     _active_combat_manager = None

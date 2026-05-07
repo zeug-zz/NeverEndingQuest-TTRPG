@@ -129,6 +129,7 @@ from model_config import (
     COMBAT_API_TIMEOUT_SECONDS,
     COMPRESSION_ENABLED,
     VALIDATION_COMPRESSION_MIN_CHARS,
+    COMBAT_PC_PHASE_NL_FAST_PATH,
 )
 from datetime import datetime
 from utils.xp import main as calculate_xp
@@ -3773,10 +3774,21 @@ Player: {initial_prompt_text}"""
            if msg["role"] == "system" and "NPC Templates:" in msg["content"]:
                conversation_history[i]["content"] = f"NPC Templates:\n{json.dumps({k: filter_dynamic_fields(v) for k, v in npc_templates.items()}, indent=2)}"
                break
-       
+        
        # Save updated conversation history
        save_json_file(conversation_history_file, conversation_history)
-       
+        
+       # TABLETOP MODE: Deterministic death-save prompt at PC phase start
+       if multi_pc_manager and multi_pc_manager.combat_phase == "PC_PHASE":
+           _pending_death_pc = multi_pc_manager.get_next_pending_death_save_pc()
+           if _pending_death_pc and multi_pc_manager.should_emit_death_save_prompt(_pending_death_pc):
+               print(
+                   f"Dungeon Master: {_pending_death_pc} falls still, breath shallow. "
+                   f"{_pending_death_pc} needs to roll a death saving throw."
+               )
+               import sys
+               sys.stdout.flush()
+        
        # Display player stats and get input
        player_name_display = player_info["name"]
        current_hp = player_info.get("hitPoints", 0)
@@ -3784,9 +3796,9 @@ Player: {initial_prompt_text}"""
        current_xp = player_info.get("experience_points", 0)
        next_level_xp = player_info.get("exp_required_for_next_level", 0)
        current_time_str = party_tracker_data["worldConditions"].get("time", "Unknown")
-       
+        
        stats_display = f"[{current_time_str}][HP:{current_hp}/{max_hp}][XP:{current_xp}/{next_level_xp}]"
-       
+        
        print("DEBUG: [COMBAT_LOOP] About to request player input")
        debug("COMBAT_LOOP: Requesting player input", category="combat_events")
        try:
@@ -3807,13 +3819,27 @@ Player: {initial_prompt_text}"""
        raw_input = user_input_text.strip()
        clean_input = raw_input
        input_actor_name = None
-       
+
        if raw_input.startswith("[") and "]:" in raw_input:
            parts = raw_input.split("]:", 1)
            if len(parts) == 2:
-               input_actor_name = parts[0][1:].strip() # Extract name from [Name]
+               input_actor_name = parts[0][1:].strip()  # Extract name from [Name]
                clean_input = parts[1].strip()
-       
+
+       pending_death_pc = None
+       if multi_pc_manager and multi_pc_manager.combat_phase == "PC_PHASE":
+           pending_death_pc = multi_pc_manager.get_next_pending_death_save_pc()
+           if pending_death_pc:
+               owner_ok, _, owner_error = multi_pc_manager.validate_death_save_input_actor(
+                   input_actor_name,
+                   fallback_actor_name=multi_pc_manager.current_pc_name or party_tracker_data.get("active_character"),
+               )
+               if not owner_ok:
+                   print(f"[skipTTS] Dungeon Master: [SYSTEM] {owner_error}")
+                   import sys
+                   sys.stdout.flush()
+                   continue
+
        # TABLETOP MODE: Force context switch if input tag doesn't match current active PC
        # This fixes the bug where tab clicks might be missed, ensuring the correct PC acts.
        if multi_pc_manager and input_actor_name:
@@ -3828,13 +3854,13 @@ Player: {initial_prompt_text}"""
                    if pc_name.lower() == input_actor_name.lower():
                        target_pc = pc_name
                        break
-               
+
                if target_pc:
                    multi_pc_manager.set_current_pc(target_pc)
                    party_tracker_data["active_character"] = target_pc
                    safe_write_json("party_tracker.json", party_tracker_data)
                    debug(f"SWITCH: Force-switched active PC to {target_pc}", category="combat_events")
-                   
+
                    # We don't need to 'continue' loop here because we just fixed the state in-memory
                    # for the immediate command processing below.
        
@@ -3924,9 +3950,45 @@ Player: {initial_prompt_text}"""
            save_json_file(conversation_history_file, conversation_history)
            user_input_text = "Enemies turn."
         
-        # ----------------------------------------------------------------------
-        # TABLETOP MODE: Fast Lane Command Processing
-        # ----------------------------------------------------------------------
+       # ======================================================================
+       # TABLETOP MODE: Deterministic Death-Save Input Gate
+       # ======================================================================
+       # Any unresolved PC-phase death-save obligation must be resolved
+       # in Python before commands or LLM generation.
+       if multi_pc_manager and multi_pc_manager.combat_phase == "PC_PHASE":
+           _pending_pc = pending_death_pc or multi_pc_manager.get_next_pending_death_save_pc()
+           if _pending_pc:
+               _valid, _roll, _err_msg = MultiPCCombatManager.parse_death_save_roll_input(
+                   clean_input, gate_active=True
+               )
+               if not _valid:
+                   if _err_msg is not None:
+                       print(f"[skipTTS] Dungeon Master: [SYSTEM] {_err_msg}")
+                   else:
+                       print(f"[skipTTS] Dungeon Master: [SYSTEM] Resolve {_pending_pc}'s death saving throw first. Enter 1-20 or /death <1-20>.")
+                   import sys
+                   sys.stdout.flush()
+                   continue
+
+               _ok, _msg = multi_pc_manager.resolve_death_save_roll(_pending_pc, _roll)
+               print(_msg)
+               import sys
+               sys.stdout.flush()
+
+               if not _ok:
+                   continue
+
+               if multi_pc_manager.get_next_pending_death_save_pc():
+                   import sys
+                   sys.stdout.flush()
+                   continue
+
+               # All saves resolved; re-loop to emit refreshed prompt
+               continue
+       
+       # ----------------------------------------------------------------------
+       # TABLETOP MODE: Fast Lane Command Processing
+       # ----------------------------------------------------------------------
        # Handle PC Focus Switch (from UI Tab Click)
        if cmd == "/switch_pc_focus":
            debug("SWITCH: Detected PC switch command, refreshing loop", category="combat_events")
@@ -3975,84 +4037,82 @@ Player: {initial_prompt_text}"""
 
        # MOVED UP: Processing this BEFORE generating prompt state to ensure
        # the LLM sees the *result* of the command (e.g. updated HP)
-       
-       fast_lane_action_occurred = False # Track if a Fast Lane command implies an action
-       
+
+       fast_lane_action_occurred = False  # Track if a Fast Lane command implies an action
+
        if multi_pc_manager:
-           # Pass the actor name (either forced from tag or current active) to the handler
-           actor_for_log = input_actor_name if input_actor_name else (multi_pc_manager.current_pc_name or "Player")
-           feedback, log_msg = multi_pc_manager.handle_combat_command(clean_input, encounter_data, actor_name=actor_for_log)
-           
-           if feedback:
-               # Show feedback to user (e.g., "(DM): Hit! Roll damage.")
-               print(feedback)
-               import sys
-               sys.stdout.flush()
-               
-           if log_msg:
-               # Inject log message silently for the LLM
-               conversation_history.append({"role": "user", "content": log_msg})
-               save_json_file(conversation_history_file, conversation_history)
-               debug(f"[COMBAT_MANAGER] Injected system log: {log_msg}", category="combat_events")
+            # Pass the actor name (either forced from tag or current active) to the handler
+            actor_for_log = input_actor_name if input_actor_name else (multi_pc_manager.current_pc_name or "Player")
+            mechanical_feedback, spoken_narration, log_msg, skip_llm = multi_pc_manager.handle_combat_command(
+                clean_input,
+                encounter_data,
+                actor_name=actor_for_log,
+            )
 
-               # TABLETOP MODE: Persist latest encounter state after fast-lane command logs.
-               # This prevents stale on-disk encounter data from overwriting immediate
-               # /dmg HP/status changes before the next LLM updateEncounter call.
-               if encounter_id and encounter_data:
-                   if not safe_write_json(f"modules/encounters/encounter_{encounter_id}.json", encounter_data):
-                       warning(
-                           "STATE_PERSIST: Failed to persist fast-lane encounter state",
-                           category="combat_events"
-                       )
-                   else:
-                       debug(
-                           "STATE_PERSIST: Fast-lane encounter state persisted",
-                           category="combat_events"
-                       )
-               
-               # NOTE: We do NOT set fast_lane_action_occurred = True here anymore.
-               # Auto-advancing breaks Multiattack. The user must manually end turn or rely on LLM logic.
-               # fast_lane_action_occurred = True 
-               
-           # Control Flow:
-           # 1. Feedback ONLY (e.g. /att hit) -> Skip LLM, wait for next input
-           # 2. Log ONLY (e.g. /dmg or /att miss) -> Proceed to LLM (it needs to narrate)
-           # 3. Both -> Proceed to LLM
-           # 4. Neither -> Continue to standard handling
-           
-           if feedback and not log_msg:
-               # User needs to provide more input (e.g., damage roll)
-               continue
-               
-           # If log_msg exists, we fall through to the LLM call below
-           # The LLM will see the log_msg in the history and narrate accordingly.
-       
-       # ----------------------------------------------------------------------
+            if mechanical_feedback:
+                # Show mechanical feedback to user (skipTTS-marked, not spoken)
+                print(mechanical_feedback)
+                import sys
+                sys.stdout.flush()
 
-           if cmd in ["/help", "\\help"]:
-               help_msg = (
-                   "[skipTTS] Dungeon Master: [SYSTEM] Available Combat Commands:\n"
-                   "  /stats      - View full character stats\n"
-                   "  /hp [val]   - Combat Heal (positive) or damage (negative)\n"
-                   "  /att [target] [roll] [weapon] - Attack a target\n"
-                   "  /dmg [val]  - Apply damage\n"
-                   "  /init [1-20] - Set PC group initiative roll\n"
-                   "  /end        - End PC combat turn\n"
-                   "  /end_combat - Force end the current combat encounter\n"
-                   "  /save       - Save current game state\n"
-                   "  /quit       - Exit the game\n"
-                   "  /help       - Show this help message\n"
-                   "[SYSTEM] Reference Guides:\n"
-                   "  - NEQ Quick Reference Guide: /static/docs/NEQ_Quick_Reference_Guide.pdf\n"
-                   "  - 5e Cheat Sheet: /static/docs/5E_Actions_Cheat_Sheet.pdf\n"
-                   "  - 5e Rules on a Page: /static/docs/5E_Rules_On_A_Page.pdf\n"
-                   "  - 5e Basic Rules: https://www.dndbeyond.com/sources/dnd/basic-rules-2014"
-               )
-               print(help_msg)
-               # Force flush to ensure it reaches the web interface immediately
-               import sys
-               sys.stdout.flush()
-               continue
+            if spoken_narration:
+                # Speak the deterministic narrative separately from mechanics
+                print(spoken_narration)
+                import sys
+                sys.stdout.flush()
+
+            if log_msg:
+                # Inject log message silently for the LLM
+                conversation_history.append({"role": "user", "content": log_msg})
+                save_json_file(conversation_history_file, conversation_history)
+                debug(f"[COMBAT_MANAGER] Injected system log: {log_msg}", category="combat_events")
+
+                # TABLETOP MODE: Persist latest encounter state after fast-lane command logs.
+                # This prevents stale on-disk encounter data from overwriting immediate
+                # /dmg HP/status changes before the next LLM updateEncounter call.
+                if encounter_id and encounter_data:
+                    if not safe_write_json(f"modules/encounters/encounter_{encounter_id}.json", encounter_data):
+                        warning(
+                            "STATE_PERSIST: Failed to persist fast-lane encounter state",
+                            category="combat_events",
+                        )
+                    else:
+                        debug(
+                            "STATE_PERSIST: Fast-lane encounter state persisted",
+                            category="combat_events",
+                        )
+
+                # NOTE: We do NOT set fast_lane_action_occurred = True here anymore.
+                # Auto-advancing breaks Multiattack. The user must manually end turn or rely on LLM logic.
+                # fast_lane_action_occurred = True
+
+            if skip_llm:
+                continue
+
+            if cmd in ["/help", "\\help"]:
+                help_msg = (
+                    "[skipTTS] Dungeon Master: [SYSTEM] Available Combat Commands:\n"
+                    "  /stats      - View full character stats\n"
+                    "  /hp [val]   - Combat Heal (positive) or damage (negative)\n"
+                    "  /att [target] [roll] [weapon] - Attack a target\n"
+                    "  /dmg [val]  - Apply damage\n"
+                    "  /init [1-20] - Set PC group initiative roll\n"
+                    "  /end        - End PC combat turn\n"
+                    "  /end_combat - Force end the current combat encounter\n"
+                    "  /save       - Save current game state\n"
+                    "  /quit       - Exit the game\n"
+                    "  /help       - Show this help message\n"
+                    "[SYSTEM] Reference Guides:\n"
+                    "  - NEQ Quick Reference Guide: /static/docs/NEQ_Quick_Reference_Guide.pdf\n"
+                    "  - 5e Cheat Sheet: /static/docs/5E_Actions_Cheat_Sheet.pdf\n"
+                    "  - 5e Rules on a Page: /static/docs/5E_Rules_On_A_Page.pdf\n"
+                    "  - 5e Basic Rules: https://www.dndbeyond.com/sources/dnd/basic-rules-2014"
+                )
+                print(help_msg)
+                # Force flush to ensure it reaches the web interface immediately
+                import sys
+                sys.stdout.flush()
+                continue
 
        # --- Character Info Commands ---
        
@@ -4249,1065 +4309,1118 @@ Player: {initial_prompt_text}"""
 
            info("SUCCESS: Combat complete. Exiting simulation.", category="combat_events")
            return dialogue_summary_result, player_info
-       
-       # Enhance player input with inventory context for combat
-       try:
-           # Load fresh player data for inventory
-           player_file = path_manager.get_character_path(normalize_character_name(player_name_display))
-           fresh_player_data = safe_json_load(player_file)
-           
-           # Enhance the input with inventory context (combat mode)
-           user_input_text = enhance_player_input_with_inventory(
-               user_input_text,
-               fresh_player_data,  # character_data
-               party_tracker_data,  # party_tracker_data
-               None,  # characters_data not needed
-               in_combat=True  # This is combat context
-           )
-           debug(f"COMBAT_LOOP: Enhanced player input with inventory context", category="combat_events")
-       except Exception as e:
-           debug(f"COMBAT_LOOP: Failed to enhance input with inventory context: {e}", category="combat_events")
-           # Continue with unenhanced input if enhancement fails
-       
-       # Prepare dynamic state info for all creatures - compact format
-       dynamic_state_parts = []
-       user_controlled_parts = []
-       dm_controlled_parts = []
-       enemy_parts = []
-       
-       # Player info - ALWAYS reload from character file for current HP (source of truth)
-       player_file = path_manager.get_character_path(normalize_character_name(player_name_display))
-       try:
-           fresh_player_data = safe_json_load(player_file)
-           if fresh_player_data:
-               # Use fresh data from character file
-               current_hp = fresh_player_data.get("hitPoints", 0)
-               max_hp = fresh_player_data.get("maxHitPoints", 0)
-               player_status = fresh_player_data.get("status", "alive")
-               player_condition = fresh_player_data.get("condition", "none")
-               player_conditions = fresh_player_data.get("condition_affected", [])
-               # Also update spell slots from fresh data
-               player_info["spellcasting"] = fresh_player_data.get("spellcasting", {})
-           else:
-               # Fallback to stale data if load fails
-               player_status = player_info.get("status", "alive")
-               player_condition = player_info.get("condition", "none")
-               player_conditions = player_info.get("condition_affected", [])
-       except Exception as e:
-           error(f"Failed to reload player data for CREATURE STATES", exception=e, category="combat_events")
-           # Fallback to stale data
-           player_status = player_info.get("status", "alive")
-           player_condition = player_info.get("condition", "none")
-           player_conditions = player_info.get("condition_affected", [])
-       
-       # Extract class features from player
-       class_features_names = []
-       if fresh_player_data:
-           class_features = fresh_player_data.get("classFeatures", [])
-           class_features_names = [f.get("name", "") for f in class_features if f.get("name")]
-       
-       # Build compact state line
-       state_line = f"{player_name_display}: HP {current_hp}/{max_hp}, {player_status}"
-       if class_features_names:
-           state_line += f", Class Features: {', '.join(class_features_names)}"
-       if player_condition != "none":
-           state_line += f", {player_condition}"
-       if player_conditions:
-           state_line += f", conditions: {','.join(player_conditions)}"
-       
-       # Add spell slots inline if player has spellcasting
-       spellcasting = player_info.get("spellcasting", {})
-       if spellcasting and "spellSlots" in spellcasting:
-           spell_slots = spellcasting["spellSlots"]
-           slot_parts = []
-           for level in range(1, 10):  # Spell levels 1-9
-               level_key = f"level{level}"
-               if level_key in spell_slots:
-                   slot_data = spell_slots[level_key]
-                   current_slots = slot_data.get("current", 0)
-                   max_slots = slot_data.get("max", 0)
-                   if max_slots > 0:  # Only show levels with available slots
-                       slot_parts.append(f"L{level}:{current_slots}/{max_slots}")
-           if slot_parts:
-               state_line += f", Spell Slots: {' '.join(slot_parts)}"
-       
-       user_controlled_parts.append(state_line)
-       
-       # Creature info
-       for creature in encounter_data["creatures"]:
-           if creature["type"] != "player":
-               creature_name = creature.get("name", "Unknown Creature")
-               creature_hp = creature.get("currentHitPoints", "Unknown")
-               creature_status = creature.get("status", "alive")
-               creature_condition = creature.get("condition", "none")
-               
-               # Get the actual max HP from the correct source
-               npc_data = None
-               if creature["type"] == "npc":
-                   # For NPCs, look up their true max HP from their character file using fuzzy match
-                   npc_data, matched_filename = load_npc_with_fuzzy_match(creature_name, path_manager)
-                   if npc_data:
-                       creature_max_hp = npc_data["maxHitPoints"]
-                   else:
-                       error(f"FAILURE: Failed to get correct max HP for {creature_name}", category="combat_events")
-                       creature_max_hp = creature.get("maxHitPoints", "Unknown")
-               else:
-                   # For monsters, use the encounter data
-                   creature_max_hp = creature.get("maxHitPoints", "Unknown")
-               
-               # Build compact creature state line
-               creature_line = f"{creature_name}: HP {creature_hp}/{creature_max_hp}, {creature_status}"
-               
-               # Add class features for NPCs (party members might have important abilities)
-               if creature["type"] == "npc" and npc_data:
-                   npc_class_features = npc_data.get("classFeatures", [])
-                   if npc_class_features:
-                       npc_features_names = [f.get("name", "") for f in npc_class_features if f.get("name")]
-                       if npc_features_names:
-                           creature_line += f", Class Features: {', '.join(npc_features_names)}"
-               
-               if creature_condition != "none":
-                   creature_line += f", {creature_condition}"
-               
-               # Add spell slot information inline for NPCs if they have spellcasting
-               if creature["type"] == "npc" and npc_data:
-                   npc_spellcasting = npc_data.get("spellcasting", {})
-                   if npc_spellcasting and "spellSlots" in npc_spellcasting:
-                       npc_spell_slots = npc_spellcasting["spellSlots"]
-                       npc_slot_parts = []
-                       for level in range(1, 10):  # Spell levels 1-9
-                           level_key = f"level{level}"
-                           if level_key in npc_spell_slots:
-                               slot_data = npc_spell_slots[level_key]
-                               current_slots = slot_data.get("current", 0)
-                               max_slots = slot_data.get("max", 0)
-                               if max_slots > 0:  # Only show levels with available slots
-                                   npc_slot_parts.append(f"L{level}:{current_slots}/{max_slots}")
-                       if npc_slot_parts:
-                           creature_line += f", Spell Slots: {' '.join(npc_slot_parts)}"
-               
-               # Group by control type
-               if creature["type"] == "npc":
-                   dm_controlled_parts.append(creature_line)
-               elif creature["type"] == "enemy":
-                   enemy_parts.append(creature_line)
-               else:
-                   # Fallback for any other types
-                   dm_controlled_parts.append(creature_line)
-       
-       # Build the labeled sections
-       if user_controlled_parts:
-           dynamic_state_parts.append("Active Player Characters (User Controlled):")
-           dynamic_state_parts.extend([f"  {p}" for p in user_controlled_parts])
-       
-       if dm_controlled_parts:
-           dynamic_state_parts.append("Accompanied by Party NPCs (DM Controlled):")
-           dynamic_state_parts.extend([f"  {p}" for p in dm_controlled_parts])
-           
-       if enemy_parts:
-           dynamic_state_parts.append("Enemies (DM Controlled):")
-           dynamic_state_parts.extend([f"  {p}" for p in enemy_parts])
-       
-       all_dynamic_state = "\n".join(dynamic_state_parts)
-
-       # TABLETOP MODE: C4.2/C4.3 - Include active multi-PC roster so PCs are valid targets
-       roster_entries = _collect_authoritative_combat_roster(
-           encounter_data,
-           multi_pc_manager=multi_pc_manager,
-           party_tracker_data=party_tracker_data,
-       )
-       roster_list = [f"- {entry['name']} ({entry['type']})" for entry in roster_entries]
-       roster_str = "\n".join(roster_list) if roster_list else "- None"
-       all_dynamic_state += (
-           f"\n\n++ VALID TARGETS & ACTORS (IMMUTABLE) ++\n{roster_str}\n"
-           "RULES: This is the definitive list of all beings in the scene. "
-           "Do NOT narrate actions for anyone not on this list. "
-           "During ENEMY_PHASE, PCs remain forbidden as actors but are valid targets."
-       )
-       
-       # Check if we need new prerolls based on round progression
-       # Use combat_round as primary, fall back to current_round
-       current_round = encounter_data.get('combat_round', encounter_data.get('current_round', 1))
-       cached_round = encounter_data.get('preroll_cache', {}).get('round', 0)
-       
-       if current_round > cached_round:
-           # Generate fresh prerolls for new round
-           preroll_text = generate_prerolls(encounter_data, round_num=current_round)
-           encounter_data['preroll_cache'] = {
-               'round': current_round,
-               'rolls': preroll_text,
-               'preroll_id': f"{current_round}-{random.randint(1000,9999)}"
-           }
-           # Save the encounter data with preroll cache to disk
-           save_json_file(json_file_path, encounter_data)
-           debug(f"STATE_CHANGE: Generated new prerolls for round {current_round}", category="combat_events")
-       else:
-           # Use cached prerolls for current round
-           preroll_text = encounter_data.get('preroll_cache', {}).get('rolls', '')
-           if preroll_text:
-               preroll_id = encounter_data.get('preroll_cache', {}).get('preroll_id', 'unknown')
-               debug(f"STATE_CHANGE: Reusing cached prerolls for round {current_round} (ID: {preroll_id})", category="combat_events")
-           else:
-               # Fallback if cache missing
-               preroll_text = generate_prerolls(encounter_data, round_num=current_round)
-               encounter_data['preroll_cache'] = {
-                   'round': current_round,
-                   'rolls': preroll_text,
-                   'preroll_id': f"{current_round}-{random.randint(1000,9999)}"
-               }
-               # Save the encounter data with preroll cache to disk
-               save_json_file(json_file_path, encounter_data)
-               debug(f"STATE_CHANGE: Generated fallback prerolls for round {current_round}", category="combat_events")
-        
-       # Generate initiative order for validation context
-       # MULTI-PC MODE: Use deterministic multi_pc_manager tracker instead of AI tracker
-       live_tracker = None
-       turn_window_json = None
-       initiative_display = None
-
-       if multi_pc_manager:
-           # Use deterministic multi-PC tracker (bypasses AI tracker which has single-PC limitation)
-           debug("MULTI_PC_TRACKER: Using deterministic multi-PC initiative tracker", category="combat_events")
+       # TABLETOP MODE: Natural-language PC_PHASE action parser
+       if (
+           multi_pc_manager
+           and COMBAT_PC_PHASE_NL_FAST_PATH
+           and not clean_input.startswith("/")
+           and not cmd.startswith("\\")
+           and multi_pc_manager.combat_phase == "PC_PHASE"
+       ):
            try:
-               live_tracker = multi_pc_manager.format_initiative_tracker(encounter_data)
-               if live_tracker:
-                   debug("MULTI_PC_TRACKER: Successfully generated initiative tracker", category="combat_events")
-                   # Parse the tracker output for JSON metadata
-                   json_start = live_tracker.find("```json")
-                   if json_start != -1:
-                       initiative_display = live_tracker[:json_start].strip()
-                       json_end = live_tracker.find("```", json_start + 7)
-                       if json_end != -1:
-                           json_str = live_tracker[json_start + 7:json_end].strip()
-                           try:
-                               turn_window_json = json.loads(json_str)
-                               debug(f"MULTI_PC_TRACKER: Extracted turn window: {turn_window_json.get('turn_window', [])}", category="combat_events")
-                           except json.JSONDecodeError as e:
-                               debug(f"MULTI_PC_TRACKER: Failed to parse JSON metadata: {e}", category="combat_events")
-                   else:
-                       initiative_display = live_tracker
-           except Exception as e:
-               debug(f"MULTI_PC_TRACKER: Failed to generate tracker: {e}", category="combat_events")
-       
-       # FALLBACK: Use AI tracker only if multi-PC tracker not available or failed
-       if not live_tracker:
-           try:
-               from .initiative_tracker_ai import generate_live_initiative_tracker
-               # Get recent conversation for analysis (last 6 messages - enough for current round context)
-               recent_conversation = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
-               live_tracker = generate_live_initiative_tracker(encounter_data, recent_conversation, current_round)
-               if live_tracker:
-                   debug("AI_TRACKER: Successfully generated live initiative tracker", category="combat_events")
-                   # Parse the tracker output for both markdown and JSON
-                   json_start = live_tracker.find("```json")
-                   if json_start != -1:
-                       initiative_display = live_tracker[:json_start].strip()
-                       json_end = live_tracker.find("```", json_start + 7)
-                       if json_end != -1:
-                           json_str = live_tracker[json_start + 7:json_end].strip()
-                           try:
-                               turn_window_json = json.loads(json_str)
-                               debug(f"AI_TRACKER: Extracted turn window: {turn_window_json.get('turn_window', [])}", category="combat_events")
-                           except json.JSONDecodeError as e:
-                               debug(f"AI_TRACKER: Failed to parse JSON metadata: {e}", category="combat_events")
-                   else:
-                       initiative_display = live_tracker
-           except Exception as e:
-               debug(f"AI_TRACKER: Failed to generate live tracker: {e}", category="combat_events")
-       
-       # Validate that we have a tracker
-       if not live_tracker:
-           error("INITIATIVE_TRACKER: Failed to generate initiative tracker - combat cannot proceed properly", category="combat_events")
-           return None, None  # Exit early if tracker fails
-       
-       # Get the player's name from encounter data or turn_window JSON
-       player_character_name = None
-       if turn_window_json and "player_name" in turn_window_json:
-           player_character_name = turn_window_json["player_name"]
-       else:
-           for creature in encounter_data["creatures"]:
-               if creature["type"] == "player":
-                   player_character_name = creature["name"]
-                   break
-       
-       # Create a structured, machine-friendly prompt format
-       # DON'T add (player) markers - the tracker handles this properly now
-       marked_initiative_display = initiative_display
-       
-       # Extract current turn from initiative display if available
-       current_turn_marker = "[>]"
-       current_turn_line = ""
-       if current_turn_marker in marked_initiative_display:
-           for line in marked_initiative_display.split('\n'):
-               if current_turn_marker in line:
-                   current_turn_line = line.strip()
-                   break
-       
-       # Build turn window info if available
-       turn_window_text = ""
-       if turn_window_json:
-           turn_window_text = f"""
---- TURN WINDOW ---
-process_until: {turn_window_json.get('process_until', 'unknown')}
-turn_window: {json.dumps(turn_window_json.get('turn_window', []))}
-"""
-       
-       # Generate AC block from encounter data
-       ac_block = ""
-       ac_values = {}
-       
-       # First pass: Get AC from encounter data
-       for creature in encounter_data.get('creatures', []):
-           name = creature.get('name')
-           ac = creature.get('armorClass')
-           
-           if name and ac is not None:
-               ac_values[name] = ac
-           elif name and creature.get('type') == 'enemy':
-               # Try to get AC from monster file
-               monster_type = creature.get('monsterType', '').lower()
-               if monster_type:
-                   try:
-                       path_manager = ModulePathManager(party_tracker_data.get("module", "").replace(" ", "_"))
-                       monster_file = path_manager.get_monster_path(monster_type)
-                       
-                       if os.path.exists(monster_file):
-                           monster_data = safe_json_load(monster_file)
-                           if monster_data and 'armorClass' in monster_data:
-                               ac_values[name] = monster_data['armorClass']
-                   except:
-                       # Silently skip if we can't load the monster file
-                       pass
-       
-       # Build the AC block if we have values
-       if ac_values:
-           ac_block = "=== ARMOR CLASS (AC) ===\n"
-           # Sort creatures by initiative (highest first)
-           sorted_creatures = sorted(
-               encounter_data.get('creatures', []), 
-               key=lambda x: x.get('initiative', 0), 
-               reverse=True
-           )
-           
-           for creature in sorted_creatures:
-               name = creature.get('name')
-               if name in ac_values:
-                   ac_block += f"{name}: {ac_values[name]}\n"
-           ac_block += "\n"
-       
-       # BUG FIX: check_all_monsters_defeated() used wrong field names since
-       # upstream commit 9b77d91 ('combatants' vs 'creatures', 'hitPoints' vs
-       # 'currentHitPoints'). Encounter schema uses 'creatures'/'currentHitPoints'.
-       # This fix also adds status check for robustness (matches xp.py logic).
-       def check_all_monsters_defeated(encounter):
-           """Check if all enemies have 0 or negative HP or defeated status"""
-           if not encounter or 'creatures' not in encounter:
-               return False
-
-           has_enemies = False
-           all_defeated = True
-
-           for creature in encounter['creatures']:
-               # Check if this is an enemy (not player or allied NPC)
-               if creature.get('type') == 'enemy':
-                   has_enemies = True
-                   current_hp = creature.get('currentHitPoints', 0)
-                   status = creature.get('status', 'alive').lower()
-                   # Defeated if HP <= 0 OR status indicates defeat
-                   if current_hp > 0 and status not in ('dead', 'defeated', 'unconscious'):
-                       all_defeated = False
-                       break
-
-           # Only return True if there were enemies and all are defeated
-           return has_enemies and all_defeated
-       
-       # Determine the required response based on combat state
-       all_monsters_defeated = check_all_monsters_defeated(encounter_data)
-       if all_monsters_defeated:
-           debug("COMBAT_AUTO_EXIT: All monsters defeated, modifying required response", category="combat_events")
-           print("[COMBAT_MANAGER] Auto-detecting combat end: All enemies defeated")
-           required_response = """--- REQUIRED RESPONSE ---
-All monsters have been defeated. Pass the exit action to end combat:
-1. Return structured JSON with plan, narration, combat_round, and actions
-2. Include exit action with encounterId and reason: 'All enemies defeated'"""
-       elif multi_pc_manager:
-           # Get current actor from the authoritative turn queue
-           current_actor = multi_pc_manager.get_current_actor()
-           
-           # Use the dedicated MultiPC Prompt Generator (Plugin Architecture)
-           # This encapsulates the Strict Turn Isolation logic outside this file
-           required_response = multi_pc_manager.get_required_response_prompt()
-           debug(f"PROMPT_LOGIC: Generated Multi-PC response requirement for {current_actor.name if current_actor else 'Unknown'}", category="combat_events")
-
-       else:
-           required_response = """--- REQUIRED RESPONSE ---
-1. Narrate and resolve actions for all NPCs/monsters in initiative order until:
-   - The LAST creature in this round has acted, OR
-   - Initiative returns to the player
-2. Stop narration at that point
-3. Return structured JSON with plan, narration, combat_round, and actions"""
-       
-       # TABLETOP MODE: Inject multi-PC turn summary and active PC context
-       multi_pc_context = ""
-       if multi_pc_manager:
-           active_pc = multi_pc_manager.current_pc_name
-
-           initiative_mode = encounter_data.get("initiativeMode", "two_group_phase1")
-           initiative_rolls = encounter_data.get("initiativeRolls", {})
-           dm_group_roll = initiative_rolls.get("dmGroup", "pending")
-           pc_group_roll = initiative_rolls.get("pcGroup", "pending")
-           initiative_winner = encounter_data.get("initiativeWinner", "pending")
-           round_starts_with = encounter_data.get("roundStartsWith", initiative_winner)
-           
-           # Get explicit phase state
-           current_phase = multi_pc_manager.combat_phase
-           pending_enemies = multi_pc_manager.get_remaining_enemies_for_round()
-           pending_str = ", ".join(pending_enemies) if pending_enemies else "None"
-           
-           multi_pc_context = f"""
-=== INITIATIVE STATE ===
-MODE: {initiative_mode}
-DM_GROUP_ROLL: {dm_group_roll}
-PC_GROUP_ROLL: {pc_group_roll}
-WINNER: {initiative_winner}
-ROUND_STARTS_WITH: {round_starts_with}
-
-=== COMBAT PHASE STATE ===
-CURRENT_PHASE: {current_phase}
-PC_PHASE_COMPLETE: {multi_pc_manager.pc_phase_complete}
-PENDING_ENEMIES: [{pending_str}]
-DETERMINISM: In {current_phase}, ONLY the specified actors have authority to act.
-
---- MULTI-PC COMBAT STATUS ---
-{multi_pc_manager.format_party_turn_summary()}
-
-{multi_pc_manager.format_pc_context_for_prompt(active_pc)}
-"""
-
-       # The tracker now always provides properly formatted output with ROUND INFO
-       # Don't duplicate sections - use the tracker output as-is
-       user_input_with_note = f"""{marked_initiative_display}
-
---- CREATURE STATES ---
-{all_dynamic_state}
-
-{ac_block}
-{multi_pc_context}
---- DICE POOLS ---
-Rules:
-- Player characters always roll their own dice
-- NPCs/monsters use pre-rolled dice pools exactly
-- Do not reuse dice; consume in order
-- For NPC/Monster ATTACK: use CREATURE ATTACKS list
-- For NPC/Monster SAVES: use SAVING THROWS list  
-- For damage/spells/other: use GENERIC DICE pool
-
-{preroll_text}
-
---- RULES ---
-- Initiative must be followed strictly
-- Only increment combat_round after all alive creatures have acted
-- Status updates must be reflected in JSON "actions"
-- Do not narrate beyond current round
-
---- PLAYER ACTION ---
-{user_input_text}
-
-{required_response}"""
-       
-       # Clean old DM notes and combat state blocks before adding new user input
-       conversation_history = clean_old_dm_notes(conversation_history)
-       conversation_history = clean_combat_state_blocks(conversation_history)
-       
-       # Add user input to conversation history
-       conversation_history.append({"role": "user", "content": user_input_with_note})
-       save_json_file(conversation_history_file, conversation_history)
-       
-       # Get AI response with validation and retries
-       max_retries = 5
-       valid_response = False
-       ai_response = None
-       validation_attempts = []  # Store all validation attempts for logging
-       initial_conversation_length = len(conversation_history)  # Mark where validation started
-       retry_feedback_note = None
-
-       for attempt in range(max_retries):
-           try:
-               print(f"[COMBAT_MANAGER] Making AI call for player action (attempt {attempt + 1}/{max_retries})")
-               print(f"[COMBAT_MANAGER] Processing player input: {user_input_text[:50]}..." if len(user_input_text) > 50 else f"[COMBAT_MANAGER] Processing player input: {user_input_text}")
-
-               retry_request_history = list(conversation_history)
-               if retry_feedback_note:
-                   retry_request_history.append({
-                       "role": "user",
-                       "content": retry_feedback_note,
-                   })
-
-               # Update status to show AI is processing
-               try:
-                   from core.managers.status_manager import status_manager
-                   status_manager.update_status("Combat AI processing your action...", is_processing=True)
-               except Exception as e:
-                   debug(f"Could not update status: {e}", category="status")
-
-               # Import GPT-5 config
-               from config import USE_GPT5_MODELS, GPT5_MINI_MODEL, GPT5_USE_HIGH_REASONING_ON_RETRY
-
-               if USE_GPT5_MODELS:
-                   # GPT-5: Always use mini model, but increase reasoning effort after first failure
-                   combat_model = GPT5_MINI_MODEL
-
-                   # After first failure, use high reasoning effort
-                   if attempt >= 1 and GPT5_USE_HIGH_REASONING_ON_RETRY:
-                       print(f"DEBUG: [COMBAT] GPT-5 - Using HIGH reasoning effort after {attempt} attempts")
-                       messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
-
-                       # Export compressed conversation for review
-                       with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
-                           json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
-                       print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
-
-                       response = client.chat.completions.create(
-                           messages=messages_to_send,
-                           **get_chat_completion_params(
-                               "combat_main",
-                               combat_model,
-                               retry_tier="high",
-                           ),
-                       )
-                   else:
-                       # Default is medium reasoning (no need to specify)
-                       print(f"DEBUG: [COMBAT] Using GPT-5 model: {combat_model} (default medium reasoning)")
-                       messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
-
-                       # Export compressed conversation for review
-                       with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
-                           json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
-                       print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
-
-                       response = client.chat.completions.create(
-                           messages=messages_to_send,
-                           **get_chat_completion_params(
-                               "combat_main",
-                               combat_model,
-                           ),
-                       )
-               else:
-                   # GPT-4.1: Keep existing temperature escalation
-                   temperature_used = get_combat_temperature(encounter_data, validation_attempt=attempt)
-
-                   print(f"DEBUG: [COMBAT] Using GPT-4.1 model: {COMBAT_MAIN_MODEL} (temp: {temperature_used})")
-                   messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
-
-                   # Export compressed conversation for review
-                   with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
-                       json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
-                   print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
-
-                   response = client.chat.completions.create(
-                       messages=messages_to_send,
-                       timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
-                       **get_chat_completion_params(
-                           "combat_main",
-                           COMBAT_MAIN_MODEL,
-                           temperature_override=temperature_used,
-                       ),
-                   )
-
-               # Track usage
-               if USAGE_TRACKING_AVAILABLE:
-                   try:
-                       track_response(response)
-                   except Exception:
-                       pass  # Silently ignore tracking errors
-
-               ai_response = response.choices[0].message.content.strip()
-
-               print(f"[COMBAT_MANAGER] AI response received ({len(ai_response)} chars)")
-
-               # Write raw response to debug file
-               os.makedirs("debug", exist_ok=True)
-               with open("debug/debug_ai_response.json", "w") as debug_file:
-                   json.dump({"raw_ai_response": ai_response}, debug_file, indent=2)
-
-               # Keep retry context local (do not persist validation chatter in canonical history).
-               retry_validation_history = list(retry_request_history)
-               retry_validation_history.append({"role": "assistant", "content": ai_response})
-
-               # Check if the response is valid JSON
-               if not is_valid_json(ai_response):
-                   debug(f"VALIDATION: Invalid JSON response from AI (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
-                   if attempt < max_retries - 1:
-                       # Keep invalid JSON correction local to retry flow.
-                       error_msg = "Your previous response was not a valid JSON object with 'narration' and 'actions' fields. Please provide a valid JSON response."
-                       retry_feedback_note = error_msg
-                       validation_attempts.append({
-                           "attempt": attempt + 1,
-                           "assistant_response": ai_response,
-                           "validation_error": error_msg,
-                           "error_type": "json_format",
-                           "temperature_used": temperature_used
-                       })
-                       continue
-                   warning("VALIDATION: Max retries exceeded for JSON validation. Skipping this response.", category="combat_validation")
-                   break
-
-               # Parse the JSON response
-               parsed_response = json.loads(ai_response)
-               narration = parsed_response["narration"]
-               actions = parsed_response["actions"]
-
-               # Check for multiple updateEncounter actions
-               if check_multiple_update_encounter(actions):
-                   debug(f"VALIDATION: Multiple updateEncounter actions detected (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
-                   if attempt < max_retries - 1:
-                       # Keep requery correction local to retry flow.
-                       requery_msg = create_multiple_update_requery_prompt(parsed_response)
-                       retry_feedback_note = requery_msg
-                       validation_attempts.append({
-                           "attempt": attempt + 1,
-                           "assistant_response": ai_response,
-                           "validation_error": requery_msg,
-                           "error_type": "multiple_update_encounter",
-                           "temperature_used": temperature_used
-                       })
-                       continue
-                   warning("VALIDATION: Max retries exceeded for multiple updateEncounter correction. Using last response.", category="combat_validation")
-
-               # Validate the combat logic
-               print(f"[COMBAT_MANAGER] Validating combat response (Attempt {attempt + 1}/{max_retries})")
-
-               # Update status to show validation is happening
-               try:
-                   from core.managers.status_manager import status_manager
-                   status_manager.update_status("Validating combat actions...", is_processing=True)
-               except Exception as e:
-                   debug(f"Could not update status: {e}", category="status")
-
-               # ---------------------------------------------------------
-               # NEW VALIDATION STEP: Combatant Integrity Check
-               # ---------------------------------------------------------
-               # This catches hallucinations where the AI invents new creatures or acts for
-               # creatures that are not in the encounter.
-               integrity_check = validate_combatant_integrity(
-                   ai_response,
-                   encounter_data,
-                   multi_pc_manager=multi_pc_manager,
-                   party_tracker_data=party_tracker_data,
+               from utils.combat_pc_action_parser import (
+                   parse_pc_phase_action,
+                   apply_pc_phase_parse_result,
                )
-               if integrity_check is not True:
-                   debug(f"VALIDATION: Combatant Integrity Failed (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
-                   debug(f"INTEGRITY_FAIL: {integrity_check}", category="combat_validation")
-
-                   if attempt < max_retries - 1:
-                       # Keep integrity correction local to retry flow.
-                       retry_feedback_note = integrity_check
-                       validation_attempts.append({
-                           "attempt": attempt + 1,
-                           "assistant_response": ai_response,
-                           "validation_error": integrity_check,
-                           "error_type": "integrity_check",
-                           "temperature_used": temperature_used
-                       })
-                       continue
-                   warning("VALIDATION: Max retries exceeded for Integrity Check. Skipping.", category="combat_validation")
-                   break
-               # ---------------------------------------------------------
-
-               # PASS MULTI-PC MANAGER FOR VALIDATION GUARDRAIL
-               validation_result = validate_combat_response(
-                   ai_response,
-                   encounter_data,
-                   user_input_text,
-                   retry_validation_history,
-                   multi_pc_manager=multi_pc_manager,
+               parser_actor = (
+                   input_actor_name
+                   or multi_pc_manager.current_pc_name
+                   or party_tracker_data.get("active_character", "Player")
                )
+               parse_result = parse_pc_phase_action(
+                   clean_input,
+                   encounter_data,
+                   party_tracker_data,
+                   actor_name=parser_actor,
+               )
+               if parse_result.get("handled"):
+                   if apply_pc_phase_parse_result(
+                       parse_result,
+                       multi_pc_manager,
+                       encounter_data,
+                       encounter_id,
+                       parser_actor,
+                   ):
+                       p_mech = parse_result.get("mechanical_feedback")
+                       p_spoken = parse_result.get("spoken_narration")
+                       p_log = parse_result.get("log_msg")
 
-               if validation_result is True:
-                   valid_response = True
-                   retry_feedback_note = None
-                   print(f"[COMBAT_MANAGER] Combat response validation PASSED on attempt {attempt + 1}")
-                   debug(f"SUCCESS: Response validated successfully on attempt {attempt + 1}", category="combat_validation")
-                   break
-
-               debug(f"VALIDATION: Response validation failed (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
-               feedback = validation_result
-               debug(f"VALIDATION_ATTEMPT: {attempt + 1} failed", category="combat_validation")
-
-               if attempt < max_retries - 1:
-                   # Keep validation correction local to retry flow.
-                   retry_feedback_note = feedback
-                   validation_attempts.append({
-                       "attempt": attempt + 1,
-                       "assistant_response": ai_response,
-                       "validation_error": feedback,
-                       "error_type": "combat_logic",
-                       "temperature_used": temperature_used
-                   })
-                   continue
-
-               warning("VALIDATION: Max retries exceeded for combat validation. Using last response.", category="combat_validation")
-               break
-
-           except Exception as e:
-               error(f"FAILURE: Failed to get or validate AI response (Attempt {attempt + 1}/{max_retries})", exception=e, category="combat_events")
-               if attempt < max_retries - 1:
-                   continue
-               warning("VALIDATION: Max retries exceeded. Skipping this response.", category="combat_validation")
-               break
-       
-       # Clean up conversation history based on validation outcome
-       if valid_response or ai_response:
-           # Remove all validation attempts from conversation history
-           conversation_history = conversation_history[:initial_conversation_length]
-           
-           # Add only the final assistant response
-           if ai_response:
-               conversation_history.append({"role": "assistant", "content": ai_response})
-           
-           # Log successful validation if it occurred
-           if valid_response and validation_attempts:
-               validation_attempts.append({
-                   "attempt": "final",
-                   "assistant_response": ai_response,
-                   "validation_result": "success",
-                   "temperature_used": temperature_used
-               })
-       
-       # Write validation attempts to log file
-       if validation_attempts:
-           # Create debug/combat directory if it doesn't exist
-           debug_combat_dir = os.path.join("debug", "combat")
-           os.makedirs(debug_combat_dir, exist_ok=True)
-           
-           # Create timestamped filename
-           from datetime import datetime
-           timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Remove last 3 digits of microseconds
-           encounter_id = encounter_data.get("encounterId", "unknown").replace("/", "_")
-           validation_count = len(validation_attempts)
-           validation_filename = f"validation_session_{timestamp}_{encounter_id}_attempts{validation_count}.json"
-           validation_log_path = os.path.join(debug_combat_dir, validation_filename)
-           try:
-               # Create new validation log for this session
-               validation_log = []
-               
-               # Add current validation session
-               validation_log.append({
-                   "timestamp": datetime.now().isoformat(),
-                   "encounter_id": encounter_data.get("encounter_id", "unknown"),
-                   "user_input": user_input_text,
-                   "validation_attempts": validation_attempts,
-                   "final_outcome": "success" if valid_response else "failed_after_retries"
-               })
-               
-               # Write updated log
-               with open(validation_log_path, 'w') as f:
-                   json.dump(validation_log, f, indent=2)
-                   
-           except Exception as e:
-               warning(f"FAILURE: Failed to write validation log", category="file_operations")
-       
-       # Save the cleaned conversation history
-       save_json_file(conversation_history_file, conversation_history)
-       
-       if not ai_response:
-           error("FAILURE: Failed to get a valid AI response after multiple attempts", category="combat_events")
-           continue
-       
-       # Process the validated response
-       try:
-           parsed_response = json.loads(ai_response)
-           narration = parsed_response["narration"]
-           actions = parsed_response["actions"]
-           
-           print(f"[COMBAT_MANAGER] Processing {len(actions)} combat actions")
-           
-           # Update status to show actions are being processed
-           if len(actions) > 0:
-               try:
-                   from core.managers.status_manager import status_manager
-                   status_manager.update_status("Processing combat outcomes...", is_processing=True)
-               except Exception as e:
-                   debug(f"Could not update status: {e}", category="status")
-           
-           for i, action in enumerate(actions):
-               action_type = action.get('action', action.get('type', 'unknown'))
-               print(f"[COMBAT_MANAGER] Action {i+1}: {action_type}")
-           
-           # Extract and update combat round if provided
-           if 'combat_round' in parsed_response:
-               new_round = parsed_response['combat_round']
-               # Use combat_round from encounter data, not current_round
-               current_combat_round = encounter_data.get('combat_round', encounter_data.get('current_round', 1))
-               
-               debug(f"ROUND_TRACKING: parsed_response has combat_round={new_round}, encounter has combat_round={current_combat_round}", category="combat_events")
-               
-               # Only update if round advances (never go backward)
-               if isinstance(new_round, int) and new_round > current_combat_round:
-                   debug(f"STATE_CHANGE: Combat advancing from round {current_combat_round} to round {new_round}", category="combat_events")
-                   encounter_data['combat_round'] = new_round
-                   # Also update current_round for backwards compatibility
-                   encounter_data['current_round'] = new_round
-                   
-                   # TABLETOP MODE: Sync round state to manager
-                   if multi_pc_manager:
-                        debug(f"STATE_CHANGE: Syncing MultiPCManager to Round {new_round}", category="combat_events")
-                        multi_pc_manager.start_new_round()
-                        # Ensure manager round matches (start_new_round increments, but let's be safe)
-                        multi_pc_manager.current_round = new_round
-
-                        # TABLETOP MODE: Phase 1 deterministic round start.
-                        # Persisted roundStartsWith controls which phase opens each new round.
-                        round_starts_with = encounter_data.get("roundStartsWith", "pcGroup")
-                        if round_starts_with == "dmGroup":
-                            multi_pc_manager.pc_phase_complete = True
-                            # TABLETOP MODE: Set opening batch marker for dmGroup round starts
-                            if COMBAT_STATE_SYNC_AVAILABLE:
-                                apply_opening_batch_marker(encounter_data, "dmGroup")
-                            debug(
-                                "STATE_CHANGE: Applied roundStartsWith=dmGroup -> ENEMY_PHASE start",
-                                category="combat_events"
-                            )
-                            debug(
-                                "PHASE_MARKER: Set openingEnemyBatchPending=True via round-start dmGroup path",
-                                category="combat_events"
-                            )
-                        else:
-                            multi_pc_manager.pc_phase_complete = False
-                            # TABLETOP MODE: Clear opening batch marker for pcGroup round starts
-                            if COMBAT_STATE_SYNC_AVAILABLE:
-                                apply_opening_batch_marker(encounter_data, "pcGroup")
-                            debug(
-                                "STATE_CHANGE: Applied roundStartsWith=pcGroup -> PC_PHASE start",
-                                category="combat_events"
-                            )
-                            debug(
-                                "PHASE_MARKER: Cleared openingEnemyBatchPending via round-start pcGroup path",
-                                category="combat_events"
-                            )
-
-                   # Save the updated encounter data
-                   save_json_file(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)
-                   
-                   # Compress old combat rounds more aggressively - compress after each round
-                   # When we start round 3, compress round 1; when we start round 4, compress round 2, etc.
-                   if new_round >= 2:
-                       debug(f"COMPRESSION: Checking for round compression (current round: {new_round})", category="combat_events")
-                       debug(f"COMPRESSION: About to call compress_old_combat_rounds with round {new_round}", category="combat_events")
-                       compressed_history = compress_old_combat_rounds(
-                           conversation_history, 
-                           new_round, 
-                           keep_recent_rounds=1  # Changed from 2 to 1 for more aggressive compression
-                       )
-                       
-                       # Save compressed history
-                       if len(compressed_history) < len(conversation_history):
-                           debug(f"COMPRESSION: History compressed from {len(conversation_history)} to {len(compressed_history)} messages", category="combat_events")
-                           conversation_history = compressed_history
+                       if p_mech:
+                           print(p_mech)
+                           import sys
+                           sys.stdout.flush()
+                       if p_spoken:
+                           print(p_spoken)
+                           import sys
+                           sys.stdout.flush()
+                       if p_log:
+                           conversation_history.append(
+                               {"role": "user", "content": p_log}
+                           )
                            save_json_file(conversation_history_file, conversation_history)
-                           info(f"COMPRESSION: Combat history compressed and saved", category="combat_events")
-                       else:
-                           debug(f"COMPRESSION: No compression occurred (still {len(conversation_history)} messages)", category="combat_events")
+
+                       continue
+           except ImportError:
+               pass
+       if True:
+        # Enhance player input with inventory context for combat
+        try:
+            # Load fresh player data for inventory
+            player_file = path_manager.get_character_path(normalize_character_name(player_name_display))
+            fresh_player_data = safe_json_load(player_file)
+
+            # Enhance the input with inventory context (combat mode)
+            user_input_text = enhance_player_input_with_inventory(
+                user_input_text,
+                fresh_player_data,  # character_data
+                party_tracker_data,  # party_tracker_data
+                None,  # characters_data not needed
+                in_combat=True  # This is combat context
+            )
+            debug(f"COMBAT_LOOP: Enhanced player input with inventory context", category="combat_events")
+        except Exception as e:
+            debug(f"COMBAT_LOOP: Failed to enhance input with inventory context: {e}", category="combat_events")
+            # Continue with unenhanced input if enhancement fails
+
+         # Prepare dynamic state info for all creatures - compact format
+        dynamic_state_parts = []
+        user_controlled_parts = []
+        dm_controlled_parts = []
+        enemy_parts = []
+       
+        # Player info - ALWAYS reload from character file for current HP (source of truth)
+        player_file = path_manager.get_character_path(normalize_character_name(player_name_display))
+        try:
+            fresh_player_data = safe_json_load(player_file)
+            if fresh_player_data:
+                # Use fresh data from character file
+                current_hp = fresh_player_data.get("hitPoints", 0)
+                max_hp = fresh_player_data.get("maxHitPoints", 0)
+                player_status = fresh_player_data.get("status", "alive")
+                player_condition = fresh_player_data.get("condition", "none")
+                player_conditions = fresh_player_data.get("condition_affected", [])
+                # Also update spell slots from fresh data
+                player_info["spellcasting"] = fresh_player_data.get("spellcasting", {})
+            else:
+                # Fallback to stale data if load fails
+                player_status = player_info.get("status", "alive")
+                player_condition = player_info.get("condition", "none")
+                player_conditions = player_info.get("condition_affected", [])
+        except Exception as e:
+            error(f"Failed to reload player data for CREATURE STATES", exception=e, category="combat_events")
+            # Fallback to stale data
+            player_status = player_info.get("status", "alive")
+            player_condition = player_info.get("condition", "none")
+            player_conditions = player_info.get("condition_affected", [])
+       
+        # Extract class features from player
+        class_features_names = []
+        if fresh_player_data:
+            class_features = fresh_player_data.get("classFeatures", [])
+            class_features_names = [f.get("name", "") for f in class_features if f.get("name")]
+       
+        # Build compact state line
+        state_line = f"{player_name_display}: HP {current_hp}/{max_hp}, {player_status}"
+        if class_features_names:
+            state_line += f", Class Features: {', '.join(class_features_names)}"
+        if player_condition != "none":
+            state_line += f", {player_condition}"
+        if player_conditions:
+            state_line += f", conditions: {','.join(player_conditions)}"
+       
+        # Add spell slots inline if player has spellcasting
+        spellcasting = player_info.get("spellcasting", {})
+        if spellcasting and "spellSlots" in spellcasting:
+            spell_slots = spellcasting["spellSlots"]
+            slot_parts = []
+            for level in range(1, 10):  # Spell levels 1-9
+                level_key = f"level{level}"
+                if level_key in spell_slots:
+                    slot_data = spell_slots[level_key]
+                    current_slots = slot_data.get("current", 0)
+                    max_slots = slot_data.get("max", 0)
+                    if max_slots > 0:  # Only show levels with available slots
+                        slot_parts.append(f"L{level}:{current_slots}/{max_slots}")
+            if slot_parts:
+                state_line += f", Spell Slots: {' '.join(slot_parts)}"
+       
+        user_controlled_parts.append(state_line)
+       
+        # Creature info
+        for creature in encounter_data["creatures"]:
+            if creature["type"] != "player":
+                creature_name = creature.get("name", "Unknown Creature")
+                creature_hp = creature.get("currentHitPoints", "Unknown")
+                creature_status = creature.get("status", "alive")
+                creature_condition = creature.get("condition", "none")
+               
+                # Get the actual max HP from the correct source
+                npc_data = None
+                if creature["type"] == "npc":
+                    # For NPCs, look up their true max HP from their character file using fuzzy match
+                    npc_data, matched_filename = load_npc_with_fuzzy_match(creature_name, path_manager)
+                    if npc_data:
+                        creature_max_hp = npc_data["maxHitPoints"]
+                    else:
+                        error(f"FAILURE: Failed to get correct max HP for {creature_name}", category="combat_events")
+                        creature_max_hp = creature.get("maxHitPoints", "Unknown")
+                else:
+                    # For monsters, use the encounter data
+                    creature_max_hp = creature.get("maxHitPoints", "Unknown")
+               
+                # Build compact creature state line
+                creature_line = f"{creature_name}: HP {creature_hp}/{creature_max_hp}, {creature_status}"
+               
+                # Add class features for NPCs (party members might have important abilities)
+                if creature["type"] == "npc" and npc_data:
+                    npc_class_features = npc_data.get("classFeatures", [])
+                    if npc_class_features:
+                        npc_features_names = [f.get("name", "") for f in npc_class_features if f.get("name")]
+                        if npc_features_names:
+                            creature_line += f", Class Features: {', '.join(npc_features_names)}"
+               
+                if creature_condition != "none":
+                    creature_line += f", {creature_condition}"
+               
+                # Add spell slot information inline for NPCs if they have spellcasting
+                if creature["type"] == "npc" and npc_data:
+                    npc_spellcasting = npc_data.get("spellcasting", {})
+                    if npc_spellcasting and "spellSlots" in npc_spellcasting:
+                        npc_spell_slots = npc_spellcasting["spellSlots"]
+                        npc_slot_parts = []
+                        for level in range(1, 10):  # Spell levels 1-9
+                            level_key = f"level{level}"
+                            if level_key in npc_spell_slots:
+                                slot_data = npc_spell_slots[level_key]
+                                current_slots = slot_data.get("current", 0)
+                                max_slots = slot_data.get("max", 0)
+                                if max_slots > 0:  # Only show levels with available slots
+                                    npc_slot_parts.append(f"L{level}:{current_slots}/{max_slots}")
+                        if npc_slot_parts:
+                            creature_line += f", Spell Slots: {' '.join(npc_slot_parts)}"
+               
+                # Group by control type
+                if creature["type"] == "npc":
+                    dm_controlled_parts.append(creature_line)
+                elif creature["type"] == "enemy":
+                    enemy_parts.append(creature_line)
+                else:
+                    # Fallback for any other types
+                    dm_controlled_parts.append(creature_line)
+       
+        # Build the labeled sections
+        if user_controlled_parts:
+            dynamic_state_parts.append("Active Player Characters (User Controlled):")
+            dynamic_state_parts.extend([f"  {p}" for p in user_controlled_parts])
+       
+        if dm_controlled_parts:
+            dynamic_state_parts.append("Accompanied by Party NPCs (DM Controlled):")
+            dynamic_state_parts.extend([f"  {p}" for p in dm_controlled_parts])
+           
+        if enemy_parts:
+            dynamic_state_parts.append("Enemies (DM Controlled):")
+            dynamic_state_parts.extend([f"  {p}" for p in enemy_parts])
+       
+        all_dynamic_state = "\n".join(dynamic_state_parts)
+
+        # TABLETOP MODE: C4.2/C4.3 - Include active multi-PC roster so PCs are valid targets
+        roster_entries = _collect_authoritative_combat_roster(
+            encounter_data,
+            multi_pc_manager=multi_pc_manager,
+            party_tracker_data=party_tracker_data,
+        )
+        roster_list = [f"- {entry['name']} ({entry['type']})" for entry in roster_entries]
+        roster_str = "\n".join(roster_list) if roster_list else "- None"
+        all_dynamic_state += (
+            f"\n\n++ VALID TARGETS & ACTORS (IMMUTABLE) ++\n{roster_str}\n"
+            "RULES: This is the definitive list of all beings in the scene. "
+            "Do NOT narrate actions for anyone not on this list. "
+            "During ENEMY_PHASE, PCs remain forbidden as actors but are valid targets."
+        )
+       
+        # Check if we need new prerolls based on round progression
+        # Use combat_round as primary, fall back to current_round
+        current_round = encounter_data.get('combat_round', encounter_data.get('current_round', 1))
+        cached_round = encounter_data.get('preroll_cache', {}).get('round', 0)
+       
+        if current_round > cached_round:
+            # Generate fresh prerolls for new round
+            preroll_text = generate_prerolls(encounter_data, round_num=current_round)
+            encounter_data['preroll_cache'] = {
+                'round': current_round,
+                'rolls': preroll_text,
+                'preroll_id': f"{current_round}-{random.randint(1000,9999)}"
+            }
+            # Save the encounter data with preroll cache to disk
+            save_json_file(json_file_path, encounter_data)
+            debug(f"STATE_CHANGE: Generated new prerolls for round {current_round}", category="combat_events")
+        else:
+            # Use cached prerolls for current round
+            preroll_text = encounter_data.get('preroll_cache', {}).get('rolls', '')
+            if preroll_text:
+                preroll_id = encounter_data.get('preroll_cache', {}).get('preroll_id', 'unknown')
+                debug(f"STATE_CHANGE: Reusing cached prerolls for round {current_round} (ID: {preroll_id})", category="combat_events")
+            else:
+                # Fallback if cache missing
+                preroll_text = generate_prerolls(encounter_data, round_num=current_round)
+                encounter_data['preroll_cache'] = {
+                    'round': current_round,
+                    'rolls': preroll_text,
+                    'preroll_id': f"{current_round}-{random.randint(1000,9999)}"
+                }
+                # Save the encounter data with preroll cache to disk
+                save_json_file(json_file_path, encounter_data)
+                debug(f"STATE_CHANGE: Generated fallback prerolls for round {current_round}", category="combat_events")
+        
+        # Generate initiative order for validation context
+        # MULTI-PC MODE: Use deterministic multi_pc_manager tracker instead of AI tracker
+        live_tracker = None
+        turn_window_json = None
+        initiative_display = None
+
+        if multi_pc_manager:
+            # Use deterministic multi-PC tracker (bypasses AI tracker which has single-PC limitation)
+            debug("MULTI_PC_TRACKER: Using deterministic multi-PC initiative tracker", category="combat_events")
+            try:
+                live_tracker = multi_pc_manager.format_initiative_tracker(encounter_data)
+                if live_tracker:
+                    debug("MULTI_PC_TRACKER: Successfully generated initiative tracker", category="combat_events")
+                    # Parse the tracker output for JSON metadata
+                    json_start = live_tracker.find("```json")
+                    if json_start != -1:
+                        initiative_display = live_tracker[:json_start].strip()
+                        json_end = live_tracker.find("```", json_start + 7)
+                        if json_end != -1:
+                            json_str = live_tracker[json_start + 7:json_end].strip()
+                            try:
+                                turn_window_json = json.loads(json_str)
+                                debug(f"MULTI_PC_TRACKER: Extracted turn window: {turn_window_json.get('turn_window', [])}", category="combat_events")
+                            except json.JSONDecodeError as e:
+                                debug(f"MULTI_PC_TRACKER: Failed to parse JSON metadata: {e}", category="combat_events")
+                    else:
+                        initiative_display = live_tracker
+            except Exception as e:
+                debug(f"MULTI_PC_TRACKER: Failed to generate tracker: {e}", category="combat_events")
+       
+        # FALLBACK: Use AI tracker only if multi-PC tracker not available or failed
+        if not live_tracker:
+            try:
+                from .initiative_tracker_ai import generate_live_initiative_tracker
+                # Get recent conversation for analysis (last 6 messages - enough for current round context)
+                recent_conversation = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
+                live_tracker = generate_live_initiative_tracker(encounter_data, recent_conversation, current_round)
+                if live_tracker:
+                    debug("AI_TRACKER: Successfully generated live initiative tracker", category="combat_events")
+                    # Parse the tracker output for both markdown and JSON
+                    json_start = live_tracker.find("```json")
+                    if json_start != -1:
+                        initiative_display = live_tracker[:json_start].strip()
+                        json_end = live_tracker.find("```", json_start + 7)
+                        if json_end != -1:
+                            json_str = live_tracker[json_start + 7:json_end].strip()
+                            try:
+                                turn_window_json = json.loads(json_str)
+                                debug(f"AI_TRACKER: Extracted turn window: {turn_window_json.get('turn_window', [])}", category="combat_events")
+                            except json.JSONDecodeError as e:
+                                debug(f"AI_TRACKER: Failed to parse JSON metadata: {e}", category="combat_events")
+                    else:
+                        initiative_display = live_tracker
+            except Exception as e:
+                debug(f"AI_TRACKER: Failed to generate live tracker: {e}", category="combat_events")
+       
+        # Validate that we have a tracker
+        if not live_tracker:
+            error("INITIATIVE_TRACKER: Failed to generate initiative tracker - combat cannot proceed properly", category="combat_events")
+            return None, None  # Exit early if tracker fails
+       
+        # Get the player's name from encounter data or turn_window JSON
+        player_character_name = None
+        if turn_window_json and "player_name" in turn_window_json:
+            player_character_name = turn_window_json["player_name"]
+        else:
+            for creature in encounter_data["creatures"]:
+                if creature["type"] == "player":
+                    player_character_name = creature["name"]
+                    break
+       
+        # Create a structured, machine-friendly prompt format
+        # DON'T add (player) markers - the tracker handles this properly now
+        marked_initiative_display = initiative_display
+       
+        # Extract current turn from initiative display if available
+        current_turn_marker = "[>]"
+        current_turn_line = ""
+        if current_turn_marker in marked_initiative_display:
+            for line in marked_initiative_display.split('\n'):
+                if current_turn_marker in line:
+                    current_turn_line = line.strip()
+                    break
+       
+        # Build turn window info if available
+        turn_window_text = ""
+        if turn_window_json:
+            turn_window_text = f"""
+ --- TURN WINDOW ---
+ process_until: {turn_window_json.get('process_until', 'unknown')}
+ turn_window: {json.dumps(turn_window_json.get('turn_window', []))}
+ """
+       
+        # Generate AC block from encounter data
+        ac_block = ""
+        ac_values = {}
+       
+        # First pass: Get AC from encounter data
+        for creature in encounter_data.get('creatures', []):
+            name = creature.get('name')
+            ac = creature.get('armorClass')
+           
+            if name and ac is not None:
+                ac_values[name] = ac
+            elif name and creature.get('type') == 'enemy':
+                # Try to get AC from monster file
+                monster_type = creature.get('monsterType', '').lower()
+                if monster_type:
+                    try:
+                        path_manager = ModulePathManager(party_tracker_data.get("module", "").replace(" ", "_"))
+                        monster_file = path_manager.get_monster_path(monster_type)
+                       
+                        if os.path.exists(monster_file):
+                            monster_data = safe_json_load(monster_file)
+                            if monster_data and 'armorClass' in monster_data:
+                                ac_values[name] = monster_data['armorClass']
+                    except:
+                        # Silently skip if we can't load the monster file
+                        pass
+       
+        # Build the AC block if we have values
+        if ac_values:
+            ac_block = "=== ARMOR CLASS (AC) ===\n"
+            # Sort creatures by initiative (highest first)
+            sorted_creatures = sorted(
+                encounter_data.get('creatures', []), 
+                key=lambda x: x.get('initiative', 0), 
+                reverse=True
+            )
+           
+            for creature in sorted_creatures:
+                name = creature.get('name')
+                if name in ac_values:
+                    ac_block += f"{name}: {ac_values[name]}\n"
+            ac_block += "\n"
+       
+        # BUG FIX: check_all_monsters_defeated() used wrong field names since
+        # upstream commit 9b77d91 ('combatants' vs 'creatures', 'hitPoints' vs
+        # 'currentHitPoints'). Encounter schema uses 'creatures'/'currentHitPoints'.
+        # This fix also adds status check for robustness (matches xp.py logic).
+        def check_all_monsters_defeated(encounter):
+            """Check if all enemies have 0 or negative HP or defeated status"""
+            if not encounter or 'creatures' not in encounter:
+                return False
+
+            has_enemies = False
+            all_defeated = True
+
+            for creature in encounter['creatures']:
+                # Check if this is an enemy (not player or allied NPC)
+                if creature.get('type') == 'enemy':
+                    has_enemies = True
+                    current_hp = creature.get('currentHitPoints', 0)
+                    status = creature.get('status', 'alive').lower()
+                    # Defeated if HP <= 0 OR status indicates defeat
+                    if current_hp > 0 and status not in ('dead', 'defeated', 'unconscious'):
+                        all_defeated = False
+                        break
+
+            # Only return True if there were enemies and all are defeated
+            return has_enemies and all_defeated
+       
+        # Determine the required response based on combat state
+        all_monsters_defeated = check_all_monsters_defeated(encounter_data)
+        if all_monsters_defeated:
+            debug("COMBAT_AUTO_EXIT: All monsters defeated, modifying required response", category="combat_events")
+            print("[COMBAT_MANAGER] Auto-detecting combat end: All enemies defeated")
+            required_response = """--- REQUIRED RESPONSE ---
+ All monsters have been defeated. Pass the exit action to end combat:
+ 1. Return structured JSON with plan, narration, combat_round, and actions
+ 2. Include exit action with encounterId and reason: 'All enemies defeated'"""
+        elif multi_pc_manager:
+            # Get current actor from the authoritative turn queue
+            current_actor = multi_pc_manager.get_current_actor()
+           
+            # Use the dedicated MultiPC Prompt Generator (Plugin Architecture)
+            # This encapsulates the Strict Turn Isolation logic outside this file
+            required_response = multi_pc_manager.get_required_response_prompt()
+            debug(f"PROMPT_LOGIC: Generated Multi-PC response requirement for {current_actor.name if current_actor else 'Unknown'}", category="combat_events")
+
+        else:
+            required_response = """--- REQUIRED RESPONSE ---
+ 1. Narrate and resolve actions for all NPCs/monsters in initiative order until:
+    - The LAST creature in this round has acted, OR
+    - Initiative returns to the player
+ 2. Stop narration at that point
+ 3. Return structured JSON with plan, narration, combat_round, and actions"""
+       
+        # TABLETOP MODE: Inject multi-PC turn summary and active PC context
+        multi_pc_context = ""
+        if multi_pc_manager:
+            active_pc = multi_pc_manager.current_pc_name
+
+            initiative_mode = encounter_data.get("initiativeMode", "two_group_phase1")
+            initiative_rolls = encounter_data.get("initiativeRolls", {})
+            dm_group_roll = initiative_rolls.get("dmGroup", "pending")
+            pc_group_roll = initiative_rolls.get("pcGroup", "pending")
+            initiative_winner = encounter_data.get("initiativeWinner", "pending")
+            round_starts_with = encounter_data.get("roundStartsWith", initiative_winner)
+           
+            # Get explicit phase state
+            current_phase = multi_pc_manager.combat_phase
+            pending_enemies = multi_pc_manager.get_remaining_enemies_for_round()
+            pending_str = ", ".join(pending_enemies) if pending_enemies else "None"
+           
+            multi_pc_context = f"""
+ === INITIATIVE STATE ===
+ MODE: {initiative_mode}
+ DM_GROUP_ROLL: {dm_group_roll}
+ PC_GROUP_ROLL: {pc_group_roll}
+ WINNER: {initiative_winner}
+ ROUND_STARTS_WITH: {round_starts_with}
+
+ === COMBAT PHASE STATE ===
+ CURRENT_PHASE: {current_phase}
+ PC_PHASE_COMPLETE: {multi_pc_manager.pc_phase_complete}
+ PENDING_ENEMIES: [{pending_str}]
+ DETERMINISM: In {current_phase}, ONLY the specified actors have authority to act.
+
+ --- MULTI-PC COMBAT STATUS ---
+ {multi_pc_manager.format_party_turn_summary()}
+
+ {multi_pc_manager.format_pc_context_for_prompt(active_pc)}
+ """
+
+        # The tracker now always provides properly formatted output with ROUND INFO
+        # Don't duplicate sections - use the tracker output as-is
+        user_input_with_note = f"""{marked_initiative_display}
+
+ --- CREATURE STATES ---
+ {all_dynamic_state}
+
+ {ac_block}
+ {multi_pc_context}
+ --- DICE POOLS ---
+ Rules:
+ - Player characters always roll their own dice
+ - NPCs/monsters use pre-rolled dice pools exactly
+ - Do not reuse dice; consume in order
+ - For NPC/Monster ATTACK: use CREATURE ATTACKS list
+ - For NPC/Monster SAVES: use SAVING THROWS list  
+ - For damage/spells/other: use GENERIC DICE pool
+
+ {preroll_text}
+
+ --- RULES ---
+ - Initiative must be followed strictly
+ - Only increment combat_round after all alive creatures have acted
+ - Status updates must be reflected in JSON "actions"
+ - Do not narrate beyond current round
+
+ --- PLAYER ACTION ---
+ {user_input_text}
+
+ {required_response}"""
+       
+        # Clean old DM notes and combat state blocks before adding new user input
+        conversation_history = clean_old_dm_notes(conversation_history)
+        conversation_history = clean_combat_state_blocks(conversation_history)
+       
+        # Add user input to conversation history
+        conversation_history.append({"role": "user", "content": user_input_with_note})
+        save_json_file(conversation_history_file, conversation_history)
+       
+        # Get AI response with validation and retries
+        max_retries = 5
+        valid_response = False
+        ai_response = None
+        validation_attempts = []  # Store all validation attempts for logging
+        initial_conversation_length = len(conversation_history)  # Mark where validation started
+        retry_feedback_note = None
+
+        for attempt in range(max_retries):
+            try:
+                print(f"[COMBAT_MANAGER] Making AI call for player action (attempt {attempt + 1}/{max_retries})")
+                print(f"[COMBAT_MANAGER] Processing player input: {user_input_text[:50]}..." if len(user_input_text) > 50 else f"[COMBAT_MANAGER] Processing player input: {user_input_text}")
+
+                retry_request_history = list(conversation_history)
+                if retry_feedback_note:
+                    retry_request_history.append({
+                        "role": "user",
+                        "content": retry_feedback_note,
+                    })
+
+                # Update status to show AI is processing
+                try:
+                    from core.managers.status_manager import status_manager
+                    status_manager.update_status("Combat AI processing your action...", is_processing=True)
+                except Exception as e:
+                    debug(f"Could not update status: {e}", category="status")
+
+                # Import GPT-5 config
+                from config import USE_GPT5_MODELS, GPT5_MINI_MODEL, GPT5_USE_HIGH_REASONING_ON_RETRY
+
+                if USE_GPT5_MODELS:
+                    # GPT-5: Always use mini model, but increase reasoning effort after first failure
+                    combat_model = GPT5_MINI_MODEL
+
+                    # After first failure, use high reasoning effort
+                    if attempt >= 1 and GPT5_USE_HIGH_REASONING_ON_RETRY:
+                        print(f"DEBUG: [COMBAT] GPT-5 - Using HIGH reasoning effort after {attempt} attempts")
+                        messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
+
+                        # Export compressed conversation for review
+                        with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
+                            json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                        print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
+
+                        response = client.chat.completions.create(
+                            messages=messages_to_send,
+                            **get_chat_completion_params(
+                                "combat_main",
+                                combat_model,
+                                retry_tier="high",
+                            ),
+                        )
+                    else:
+                        # Default is medium reasoning (no need to specify)
+                        print(f"DEBUG: [COMBAT] Using GPT-5 model: {combat_model} (default medium reasoning)")
+                        messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
+
+                        # Export compressed conversation for review
+                        with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
+                            json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                        print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
+
+                        response = client.chat.completions.create(
+                            messages=messages_to_send,
+                            **get_chat_completion_params(
+                                "combat_main",
+                                combat_model,
+                            ),
+                        )
+                else:
+                    # GPT-4.1: Keep existing temperature escalation
+                    temperature_used = get_combat_temperature(encounter_data, validation_attempt=attempt)
+
+                    print(f"DEBUG: [COMBAT] Using GPT-4.1 model: {COMBAT_MAIN_MODEL} (temp: {temperature_used})")
+                    messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
+
+                    # Export compressed conversation for review
+                    with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
+                        json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                    print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
+
+                    response = client.chat.completions.create(
+                        messages=messages_to_send,
+                        timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
+                        **get_chat_completion_params(
+                            "combat_main",
+                            COMBAT_MAIN_MODEL,
+                            temperature_override=temperature_used,
+                        ),
+                    )
+
+                # Track usage
+                if USAGE_TRACKING_AVAILABLE:
+                    try:
+                        track_response(response)
+                    except Exception:
+                        pass  # Silently ignore tracking errors
+
+                ai_response = response.choices[0].message.content.strip()
+
+                print(f"[COMBAT_MANAGER] AI response received ({len(ai_response)} chars)")
+
+                # Write raw response to debug file
+                os.makedirs("debug", exist_ok=True)
+                with open("debug/debug_ai_response.json", "w") as debug_file:
+                    json.dump({"raw_ai_response": ai_response}, debug_file, indent=2)
+
+                # Keep retry context local (do not persist validation chatter in canonical history).
+                retry_validation_history = list(retry_request_history)
+                retry_validation_history.append({"role": "assistant", "content": ai_response})
+
+                # Check if the response is valid JSON
+                if not is_valid_json(ai_response):
+                    debug(f"VALIDATION: Invalid JSON response from AI (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
+                    if attempt < max_retries - 1:
+                        # Keep invalid JSON correction local to retry flow.
+                        error_msg = "Your previous response was not a valid JSON object with 'narration' and 'actions' fields. Please provide a valid JSON response."
+                        retry_feedback_note = error_msg
+                        validation_attempts.append({
+                            "attempt": attempt + 1,
+                            "assistant_response": ai_response,
+                            "validation_error": error_msg,
+                            "error_type": "json_format",
+                            "temperature_used": temperature_used
+                        })
+                        continue
+                    warning("VALIDATION: Max retries exceeded for JSON validation. Skipping this response.", category="combat_validation")
+                    break
+
+                # Parse the JSON response
+                parsed_response = json.loads(ai_response)
+                narration = parsed_response["narration"]
+                actions = parsed_response["actions"]
+
+                # Check for multiple updateEncounter actions
+                if check_multiple_update_encounter(actions):
+                    debug(f"VALIDATION: Multiple updateEncounter actions detected (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
+                    if attempt < max_retries - 1:
+                        # Keep requery correction local to retry flow.
+                        requery_msg = create_multiple_update_requery_prompt(parsed_response)
+                        retry_feedback_note = requery_msg
+                        validation_attempts.append({
+                            "attempt": attempt + 1,
+                            "assistant_response": ai_response,
+                            "validation_error": requery_msg,
+                            "error_type": "multiple_update_encounter",
+                            "temperature_used": temperature_used
+                        })
+                        continue
+                    warning("VALIDATION: Max retries exceeded for multiple updateEncounter correction. Using last response.", category="combat_validation")
+
+                # Validate the combat logic
+                print(f"[COMBAT_MANAGER] Validating combat response (Attempt {attempt + 1}/{max_retries})")
+
+                # Update status to show validation is happening
+                try:
+                    from core.managers.status_manager import status_manager
+                    status_manager.update_status("Validating combat actions...", is_processing=True)
+                except Exception as e:
+                    debug(f"Could not update status: {e}", category="status")
+
+                # ---------------------------------------------------------
+                # NEW VALIDATION STEP: Combatant Integrity Check
+                # ---------------------------------------------------------
+                # This catches hallucinations where the AI invents new creatures or acts for
+                # creatures that are not in the encounter.
+                integrity_check = validate_combatant_integrity(
+                    ai_response,
+                    encounter_data,
+                    multi_pc_manager=multi_pc_manager,
+                    party_tracker_data=party_tracker_data,
+                )
+                if integrity_check is not True:
+                    debug(f"VALIDATION: Combatant Integrity Failed (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
+                    debug(f"INTEGRITY_FAIL: {integrity_check}", category="combat_validation")
+
+                    if attempt < max_retries - 1:
+                        # Keep integrity correction local to retry flow.
+                        retry_feedback_note = integrity_check
+                        validation_attempts.append({
+                            "attempt": attempt + 1,
+                            "assistant_response": ai_response,
+                            "validation_error": integrity_check,
+                            "error_type": "integrity_check",
+                            "temperature_used": temperature_used
+                        })
+                        continue
+                    warning("VALIDATION: Max retries exceeded for Integrity Check. Skipping.", category="combat_validation")
+                    break
+                # ---------------------------------------------------------
+
+                # PASS MULTI-PC MANAGER FOR VALIDATION GUARDRAIL
+                validation_result = validate_combat_response(
+                    ai_response,
+                    encounter_data,
+                    user_input_text,
+                    retry_validation_history,
+                    multi_pc_manager=multi_pc_manager,
+                )
+
+                if validation_result is True:
+                    valid_response = True
+                    retry_feedback_note = None
+                    print(f"[COMBAT_MANAGER] Combat response validation PASSED on attempt {attempt + 1}")
+                    debug(f"SUCCESS: Response validated successfully on attempt {attempt + 1}", category="combat_validation")
+                    break
+
+                debug(f"VALIDATION: Response validation failed (Attempt {attempt + 1}/{max_retries})", category="combat_validation")
+                feedback = validation_result
+                debug(f"VALIDATION_ATTEMPT: {attempt + 1} failed", category="combat_validation")
+
+                if attempt < max_retries - 1:
+                    # Keep validation correction local to retry flow.
+                    retry_feedback_note = feedback
+                    validation_attempts.append({
+                        "attempt": attempt + 1,
+                        "assistant_response": ai_response,
+                        "validation_error": feedback,
+                        "error_type": "combat_logic",
+                        "temperature_used": temperature_used
+                    })
+                    continue
+
+                warning("VALIDATION: Max retries exceeded for combat validation. Using last response.", category="combat_validation")
+                break
+
+            except Exception as e:
+                error(f"FAILURE: Failed to get or validate AI response (Attempt {attempt + 1}/{max_retries})", exception=e, category="combat_events")
+                if attempt < max_retries - 1:
+                    continue
+                warning("VALIDATION: Max retries exceeded. Skipping this response.", category="combat_validation")
+                break
+       
+        # Clean up conversation history based on validation outcome
+        if valid_response or ai_response:
+            # Remove all validation attempts from conversation history
+            conversation_history = conversation_history[:initial_conversation_length]
+           
+            # Add only the final assistant response
+            if ai_response:
+                conversation_history.append({"role": "assistant", "content": ai_response})
+           
+            # Log successful validation if it occurred
+            if valid_response and validation_attempts:
+                validation_attempts.append({
+                    "attempt": "final",
+                    "assistant_response": ai_response,
+                    "validation_result": "success",
+                    "temperature_used": temperature_used
+                })
+       
+        # Write validation attempts to log file
+        if validation_attempts:
+            # Create debug/combat directory if it doesn't exist
+            debug_combat_dir = os.path.join("debug", "combat")
+            os.makedirs(debug_combat_dir, exist_ok=True)
+           
+            # Create timestamped filename
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Remove last 3 digits of microseconds
+            encounter_id = encounter_data.get("encounterId", "unknown").replace("/", "_")
+            validation_count = len(validation_attempts)
+            validation_filename = f"validation_session_{timestamp}_{encounter_id}_attempts{validation_count}.json"
+            validation_log_path = os.path.join(debug_combat_dir, validation_filename)
+            try:
+                # Create new validation log for this session
+                validation_log = []
+               
+                # Add current validation session
+                validation_log.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "encounter_id": encounter_data.get("encounter_id", "unknown"),
+                    "user_input": user_input_text,
+                    "validation_attempts": validation_attempts,
+                    "final_outcome": "success" if valid_response else "failed_after_retries"
+                })
+               
+                # Write updated log
+                with open(validation_log_path, 'w') as f:
+                    json.dump(validation_log, f, indent=2)
+                   
+            except Exception as e:
+                warning(f"FAILURE: Failed to write validation log", category="file_operations")
+       
+        # Save the cleaned conversation history
+        save_json_file(conversation_history_file, conversation_history)
+       
+        if not ai_response:
+            error("FAILURE: Failed to get a valid AI response after multiple attempts", category="combat_events")
+            continue
+       
+        # Process the validated response
+        try:
+            parsed_response = json.loads(ai_response)
+            narration = parsed_response["narration"]
+            actions = parsed_response["actions"]
+           
+            print(f"[COMBAT_MANAGER] Processing {len(actions)} combat actions")
+           
+            # Update status to show actions are being processed
+            if len(actions) > 0:
+                try:
+                    from core.managers.status_manager import status_manager
+                    status_manager.update_status("Processing combat outcomes...", is_processing=True)
+                except Exception as e:
+                    debug(f"Could not update status: {e}", category="status")
+           
+            for i, action in enumerate(actions):
+                action_type = action.get('action', action.get('type', 'unknown'))
+                print(f"[COMBAT_MANAGER] Action {i+1}: {action_type}")
+           
+            # Extract and update combat round if provided
+            if 'combat_round' in parsed_response:
+                new_round = parsed_response['combat_round']
+                # Use combat_round from encounter data, not current_round
+                current_combat_round = encounter_data.get('combat_round', encounter_data.get('current_round', 1))
+               
+                debug(f"ROUND_TRACKING: parsed_response has combat_round={new_round}, encounter has combat_round={current_combat_round}", category="combat_events")
+               
+                # Only update if round advances (never go backward)
+                if isinstance(new_round, int) and new_round > current_combat_round:
+                    debug(f"STATE_CHANGE: Combat advancing from round {current_combat_round} to round {new_round}", category="combat_events")
+                    encounter_data['combat_round'] = new_round
+                    # Also update current_round for backwards compatibility
+                    encounter_data['current_round'] = new_round
+                   
+                    # TABLETOP MODE: Sync round state to manager
+                    if multi_pc_manager:
+                         debug(f"STATE_CHANGE: Syncing MultiPCManager to Round {new_round}", category="combat_events")
+                         multi_pc_manager.start_new_round()
+                         # Ensure manager round matches (start_new_round increments, but let's be safe)
+                         multi_pc_manager.current_round = new_round
+
+                         # TABLETOP MODE: Phase 1 deterministic round start.
+                         # Persisted roundStartsWith controls which phase opens each new round.
+                         round_starts_with = encounter_data.get("roundStartsWith", "pcGroup")
+                         if round_starts_with == "dmGroup":
+                             multi_pc_manager.pc_phase_complete = True
+                             # TABLETOP MODE: Set opening batch marker for dmGroup round starts
+                             if COMBAT_STATE_SYNC_AVAILABLE:
+                                 apply_opening_batch_marker(encounter_data, "dmGroup")
+                             debug(
+                                 "STATE_CHANGE: Applied roundStartsWith=dmGroup -> ENEMY_PHASE start",
+                                 category="combat_events"
+                             )
+                             debug(
+                                 "PHASE_MARKER: Set openingEnemyBatchPending=True via round-start dmGroup path",
+                                 category="combat_events"
+                             )
+                         else:
+                             multi_pc_manager.pc_phase_complete = False
+                             # TABLETOP MODE: Clear opening batch marker for pcGroup round starts
+                             if COMBAT_STATE_SYNC_AVAILABLE:
+                                 apply_opening_batch_marker(encounter_data, "pcGroup")
+                             debug(
+                                 "STATE_CHANGE: Applied roundStartsWith=pcGroup -> PC_PHASE start",
+                                 category="combat_events"
+                             )
+                             debug(
+                                 "PHASE_MARKER: Cleared openingEnemyBatchPending via round-start pcGroup path",
+                                 category="combat_events"
+                             )
+
+                    # Save the updated encounter data
+                    save_json_file(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)
+                   
+                    # Compress old combat rounds more aggressively - compress after each round
+                    # When we start round 3, compress round 1; when we start round 4, compress round 2, etc.
+                    if new_round >= 2:
+                        debug(f"COMPRESSION: Checking for round compression (current round: {new_round})", category="combat_events")
+                        debug(f"COMPRESSION: About to call compress_old_combat_rounds with round {new_round}", category="combat_events")
+                        compressed_history = compress_old_combat_rounds(
+                            conversation_history, 
+                            new_round, 
+                            keep_recent_rounds=1  # Changed from 2 to 1 for more aggressive compression
+                        )
+                       
+                        # Save compressed history
+                        if len(compressed_history) < len(conversation_history):
+                            debug(f"COMPRESSION: History compressed from {len(conversation_history)} to {len(compressed_history)} messages", category="combat_events")
+                            conversation_history = compressed_history
+                            save_json_file(conversation_history_file, conversation_history)
+                            info(f"COMPRESSION: Combat history compressed and saved", category="combat_events")
+                        else:
+                            debug(f"COMPRESSION: No compression occurred (still {len(conversation_history)} messages)", category="combat_events")
                            
-               elif isinstance(new_round, int) and new_round < current_combat_round:
-                   warning(f"VALIDATION: Ignoring backward round progression from {current_combat_round} to {new_round}", category="combat_events")
+                elif isinstance(new_round, int) and new_round < current_combat_round:
+                    warning(f"VALIDATION: Ignoring backward round progression from {current_combat_round} to {new_round}", category="combat_events")
            
                
-       except json.JSONDecodeError as e:
-           debug(f"VALIDATION: JSON parsing error - {str(e)}", category="combat_events")
-           debug("VALIDATION: Raw AI response:", category="combat_events")
-           debug(ai_response, category="combat_events")
-           continue
+        except json.JSONDecodeError as e:
+            debug(f"VALIDATION: JSON parsing error - {str(e)}", category="combat_events")
+            debug("VALIDATION: Raw AI response:", category="combat_events")
+            debug(ai_response, category="combat_events")
+            continue
        
-       # --- ACTION PROCESSING: CONSOLIDATE AND EXECUTE ---
-       # This new block prevents race conditions by consolidating all character
-       # updates into a single, authoritative save at the end of combat.
+        # --- ACTION PROCESSING: CONSOLIDATE AND EXECUTE ---
+        # This new block prevents race conditions by consolidating all character
+        # updates into a single, authoritative save at the end of combat.
 
-       # A dictionary to hold queued character update payloads for each actor.
-       final_character_updates = {}
+        # A dictionary to hold queued character update payloads for each actor.
+        final_character_updates = {}
 
-       # Check if combat is ending in this turn.
-       is_combat_ending = any(a.get("action", "").lower() == "exit" for a in actions)
+        # Check if combat is ending in this turn.
+        is_combat_ending = any(a.get("action", "").lower() == "exit" for a in actions)
 
-       # Display narration immediately, as it describes the events of the turn.
-       print(f"Dungeon Master: {narration}")
-       import sys
-       sys.stdout.flush()
+        # Display narration immediately, as it describes the events of the turn.
+        print(f"Dungeon Master: {narration}")
+        import sys
+        sys.stdout.flush()
 
-       # STEP 1: GATHER all intended changes from the AI's actions.
-       for action in actions:
-           action_type = action.get("action", "").lower()
-           parameters = action.get("parameters", {})
+        # STEP 1: GATHER all intended changes from the AI's actions.
+        for action in actions:
+            action_type = action.get("action", "").lower()
+            parameters = action.get("parameters", {})
 
-           if action_type in ["updateplayerinfo", "updatecharacterinfo", "updatenpcinfo"]:
-               char_name_key = "characterName" if "characterName" in parameters else "npcName"
-               character_name = parameters.get(char_name_key)
-               changes = parameters.get("changes")
-               ops = parameters.get("ops")
+            if action_type in ["updateplayerinfo", "updatecharacterinfo", "updatenpcinfo"]:
+                char_name_key = "characterName" if "characterName" in parameters else "npcName"
+                character_name = parameters.get(char_name_key)
+                changes = parameters.get("changes")
+                ops = parameters.get("ops")
 
-               if character_name and (changes or ops):
-                   _queue_final_character_update(final_character_updates, character_name, changes, ops)
-                   if changes:
-                       info(f"CONSOLIDATING: Queued change for {character_name}: '{changes}'", category="combat_events")
+                if character_name and (changes or ops):
+                    _queue_final_character_update(final_character_updates, character_name, changes, ops)
+                    if changes:
+                        info(f"CONSOLIDATING: Queued change for {character_name}: '{changes}'", category="combat_events")
 
-                       if any(word in changes.lower() for word in ["arrow", "bolt", "ammunition", "ammo", "expended"]):
-                           debug(f"AMMO_DEBUG: Detected ammunition change for {character_name}", category="ammunition")
-                           debug(f"AMMO_DEBUG: Action type: {action_type}", category="ammunition")
-                           debug(f"AMMO_DEBUG: Changes text: '{changes}'", category="ammunition")
-                           debug(f"AMMO_DEBUG: Added to final_character_updates queue", category="ammunition")
-                   else:
-                       info(f"CONSOLIDATING: Queued deterministic ops for {character_name}", category="combat_events")
+                        if any(word in changes.lower() for word in ["arrow", "bolt", "ammunition", "ammo", "expended"]):
+                            debug(f"AMMO_DEBUG: Detected ammunition change for {character_name}", category="ammunition")
+                            debug(f"AMMO_DEBUG: Action type: {action_type}", category="ammunition")
+                            debug(f"AMMO_DEBUG: Changes text: '{changes}'", category="ammunition")
+                            debug(f"AMMO_DEBUG: Added to final_character_updates queue", category="ammunition")
+                    else:
+                        info(f"CONSOLIDATING: Queued deterministic ops for {character_name}", category="combat_events")
 
-           elif action_type == "updateencounter":
-               encounter_id_for_update = parameters.get("encounterId", encounter_id)
-               changes = parameters.get("changes", "")
-               ops = parameters.get("ops")
-               info(
-                   f"STATE_UPDATE: Processing immediate encounter update: {changes}",
-                   category="encounter_management",
-               )
-               try:
-                   updated_encounter_data = update_encounter.update_encounter(
-                       encounter_id_for_update,
-                       changes,
-                       ops=ops,
-                   )
-                   if updated_encounter_data:
-                       encounter_data = normalize_encounter_status(updated_encounter_data)
-                       if multi_pc_manager and multi_pc_manager.sync_non_pc_queue_state(encounter_data):
-                           debug(
-                               "STATE_SYNC: Refreshed non-PC turn queue state from authoritative encounter data",
-                               category="combat_events",
-                           )
-               except Exception as e:
-                   error(
-                       "FAILURE: Failed to update encounter",
-                       exception=e,
-                       category="encounter_management",
-                   )
+            elif action_type == "updateencounter":
+                encounter_id_for_update = parameters.get("encounterId", encounter_id)
+                changes = parameters.get("changes", "")
+                ops = parameters.get("ops")
+                info(
+                    f"STATE_UPDATE: Processing immediate encounter update: {changes}",
+                    category="encounter_management",
+                )
+                try:
+                    updated_encounter_data = update_encounter.update_encounter(
+                        encounter_id_for_update,
+                        changes,
+                        ops=ops,
+                    )
+                    if updated_encounter_data:
+                        encounter_data = normalize_encounter_status(updated_encounter_data)
+                        if multi_pc_manager and multi_pc_manager.sync_non_pc_queue_state(encounter_data):
+                            debug(
+                                "STATE_SYNC: Refreshed non-PC turn queue state from authoritative encounter data",
+                                category="combat_events",
+                            )
+                except Exception as e:
+                    error(
+                        "FAILURE: Failed to update encounter",
+                        exception=e,
+                        category="encounter_management",
+                    )
 
-           elif action_type == "exit" and is_combat_ending:
-               info("CONSOLIDATING: 'exit' action detected. Calculating final HP and XP.", category="combat_events")
-               xp_narrative, xp_awarded = calculate_xp()
-               info(f"XP_AWARD: Calculated {xp_awarded} XP per participant.", category="xp_tracking")
-               conversation_history.append({"role": "user", "content": f"XP Awarded: {xp_narrative}"})
-               save_json_file(conversation_history_file, conversation_history)
+            elif action_type == "exit" and is_combat_ending:
+                info("CONSOLIDATING: 'exit' action detected. Calculating final HP and XP.", category="combat_events")
+                xp_narrative, xp_awarded = calculate_xp()
+                info(f"XP_AWARD: Calculated {xp_awarded} XP per participant.", category="xp_tracking")
+                conversation_history.append({"role": "user", "content": f"XP Awarded: {xp_narrative}"})
+                save_json_file(conversation_history_file, conversation_history)
 
-               for creature in encounter_data.get("creatures", []):
-                   if creature.get("type") in ["player", "npc"]:
-                       character_name = creature.get("name")
-                       if xp_awarded > 0:
-                           _queue_final_character_update(
-                               final_character_updates,
-                               character_name,
-                               f"awarded {xp_awarded} experience points",
-                           )
+                for creature in encounter_data.get("creatures", []):
+                    if creature.get("type") in ["player", "npc"]:
+                        character_name = creature.get("name")
+                        if xp_awarded > 0:
+                            _queue_final_character_update(
+                                final_character_updates,
+                                character_name,
+                                f"awarded {xp_awarded} experience points",
+                            )
 
-           if not is_combat_ending and check_all_monsters_defeated(encounter_data):
-               info("AUTO_EXIT: All enemies defeated after action processing. LLM failed to call exit - forcing combat end.", category="combat_events")
-               is_combat_ending = True
+            if not is_combat_ending and check_all_monsters_defeated(encounter_data):
+                info("AUTO_EXIT: All enemies defeated after action processing. LLM failed to call exit - forcing combat end.", category="combat_events")
+                is_combat_ending = True
 
-               xp_narrative, xp_awarded = calculate_xp()
-               info(f"XP_AWARD: Auto-exit calculated {xp_awarded} XP per participant.", category="xp_tracking")
-               conversation_history.append({"role": "user", "content": f"XP Awarded: {xp_narrative}"})
-               save_json_file(conversation_history_file, conversation_history)
+                xp_narrative, xp_awarded = calculate_xp()
+                info(f"XP_AWARD: Auto-exit calculated {xp_awarded} XP per participant.", category="xp_tracking")
+                conversation_history.append({"role": "user", "content": f"XP Awarded: {xp_narrative}"})
+                save_json_file(conversation_history_file, conversation_history)
 
-               for creature in encounter_data.get("creatures", []):
-                   if creature.get("type") in ["player", "npc"]:
-                       character_name = creature.get("name")
-                       if xp_awarded > 0:
-                           _queue_final_character_update(
-                               final_character_updates,
-                               character_name,
-                               f"awarded {xp_awarded} experience points",
-                           )
+                for creature in encounter_data.get("creatures", []):
+                    if creature.get("type") in ["player", "npc"]:
+                        character_name = creature.get("name")
+                        if xp_awarded > 0:
+                            _queue_final_character_update(
+                                final_character_updates,
+                                character_name,
+                                f"awarded {xp_awarded} experience points",
+                            )
 
-           # TABLETOP MODE: Turn Queue Advancement
-           if multi_pc_manager and not is_combat_ending:
-               current_actor = multi_pc_manager.get_current_actor()
-               if current_actor and (current_actor.type == CombatantType.NPC):
-                   if actions:
-                       debug(f"[COMBAT_MANAGER] Auto-advancing turn for NPC {current_actor.name}", category="combat_events")
-                       next_actor = multi_pc_manager.advance_turn()
+            # TABLETOP MODE: Turn Queue Advancement
+            if multi_pc_manager and not is_combat_ending:
+                current_actor = multi_pc_manager.get_current_actor()
+                if current_actor and (current_actor.type == CombatantType.NPC):
+                    if actions:
+                        debug(f"[COMBAT_MANAGER] Auto-advancing turn for NPC {current_actor.name}", category="combat_events")
+                        next_actor = multi_pc_manager.advance_turn()
 
-                       if next_actor.type == CombatantType.PC:
-                           party_tracker_data["active_character"] = next_actor.name
-                           safe_write_json("party_tracker.json", party_tracker_data)
-                           if MULTI_PC_COMBAT_AVAILABLE:
-                               emit_combat_event("active_character_update", {"character": next_actor.name})
-                           debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
-                       else:
-                           debug(f"[COMBAT_MANAGER] Advanced turn to next enemy/NPC: {next_actor.name}", category="combat_events")
+                        if next_actor.type == CombatantType.PC:
+                            party_tracker_data["active_character"] = next_actor.name
+                            safe_write_json("party_tracker.json", party_tracker_data)
+                            if MULTI_PC_COMBAT_AVAILABLE:
+                                emit_combat_event("active_character_update", {"character": next_actor.name})
+                            debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
+                        else:
+                            debug(f"[COMBAT_MANAGER] Advanced turn to next enemy/NPC: {next_actor.name}", category="combat_events")
 
-               active_pc_name = multi_pc_manager.current_pc_name
-               if active_pc_name:
-                   active_state = multi_pc_manager.pc_states.get(active_pc_name)
+                active_pc_name = multi_pc_manager.current_pc_name
+                if active_pc_name:
+                    active_state = multi_pc_manager.pc_states.get(active_pc_name)
 
-                   if active_state and active_state.status == PCStatus.ACTED:
-                       debug(f"[COMBAT_MANAGER] Detected ACTED status for {active_pc_name}, advancing turn queue", category="combat_events")
-                       next_actor = multi_pc_manager.advance_turn()
+                    if active_state and active_state.status == PCStatus.ACTED:
+                        debug(f"[COMBAT_MANAGER] Detected ACTED status for {active_pc_name}, advancing turn queue", category="combat_events")
+                        next_actor = multi_pc_manager.advance_turn()
 
-                       if next_actor.type == CombatantType.PC:
-                           party_tracker_data["active_character"] = next_actor.name
-                           safe_write_json("party_tracker.json", party_tracker_data)
-                           if MULTI_PC_COMBAT_AVAILABLE:
-                               emit_combat_event("active_character_update", {"character": next_actor.name})
-                           debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
-                       else:
-                           debug(f"[COMBAT_MANAGER] Advanced turn to enemy/NPC: {next_actor.name}", category="combat_events")
+                        if next_actor.type == CombatantType.PC:
+                            party_tracker_data["active_character"] = next_actor.name
+                            safe_write_json("party_tracker.json", party_tracker_data)
+                            if MULTI_PC_COMBAT_AVAILABLE:
+                                emit_combat_event("active_character_update", {"character": next_actor.name})
+                            debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
+                        else:
+                            debug(f"[COMBAT_MANAGER] Advanced turn to enemy/NPC: {next_actor.name}", category="combat_events")
 
-       # TABLETOP MODE: Section 1.2 - Opening enemy batch completion transition
-       # If DM_GROUP opened the round, clear marker and return control to PC_PHASE after batch resolves.
-       if multi_pc_manager:
-           if encounter_data.get("openingEnemyBatchPending", False):
-               encounter_data["openingEnemyBatchPending"] = False
-               multi_pc_manager.pc_phase_complete = False
-               debug(
-                   "PHASE_MARKER: Cleared openingEnemyBatchPending after opening enemy batch resolution",
-                   category="combat_events"
-               )
-               debug(
-                   "STATE_CHANGE: Opening batch complete -> PC_PHASE",
-                   category="combat_events"
-               )
-               save_json_file(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)
+        # TABLETOP MODE: Section 1.2 - Opening enemy batch completion transition
+        # If DM_GROUP opened the round, clear marker and return control to PC_PHASE after batch resolves.
+        if multi_pc_manager:
+            if encounter_data.get("openingEnemyBatchPending", False):
+                encounter_data["openingEnemyBatchPending"] = False
+                multi_pc_manager.pc_phase_complete = False
+                debug(
+                    "PHASE_MARKER: Cleared openingEnemyBatchPending after opening enemy batch resolution",
+                    category="combat_events"
+                )
+                debug(
+                    "STATE_CHANGE: Opening batch complete -> PC_PHASE",
+                    category="combat_events"
+                )
+                save_json_file(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)
 
-       # STEP 2: EXECUTE the consolidated updates. This is the only place character files are saved.
-       _apply_final_character_updates(final_character_updates, multi_pc_manager)
+        # STEP 2: EXECUTE the consolidated updates. This is the only place character files are saved.
+        _apply_final_character_updates(final_character_updates, multi_pc_manager)
 
-       # STEP 3: If combat ended, perform final cleanup and exit the simulation.
-       if is_combat_ending:
-           # Store the encounter ID before clearing it
-           last_encounter_id = party_tracker_data.get("worldConditions", {}).get("activeCombatEncounter", "")
+        # STEP 3: If combat ended, perform final cleanup and exit the simulation.
+        if is_combat_ending:
+            # Store the encounter ID before clearing it
+            last_encounter_id = party_tracker_data.get("worldConditions", {}).get("activeCombatEncounter", "")
 
-           # IMPORTANT: Generate summary BEFORE clearing the active encounter ID
-           info("AI_CALL: Generating final combat summary...", category="ai_operations")
-           dialogue_summary_result = summarize_dialogue(conversation_history, location_info, party_tracker_data)
+            # IMPORTANT: Generate summary BEFORE clearing the active encounter ID
+            info("AI_CALL: Generating final combat summary...", category="ai_operations")
+            dialogue_summary_result = summarize_dialogue(conversation_history, location_info, party_tracker_data)
 
-           # NOW clear the active encounter after summary is generated
-           if 'worldConditions' in party_tracker_data and 'activeCombatEncounter' in party_tracker_data['worldConditions']:
-               if last_encounter_id:
-                   party_tracker_data["worldConditions"]["lastCompletedEncounter"] = last_encounter_id
-               party_tracker_data['worldConditions']['activeCombatEncounter'] = ""
-               debug(f"STATE_CHANGE: Cleared active combat encounter. Last completed is now {last_encounter_id}", category="combat_events")
-               safe_write_json("party_tracker.json", party_tracker_data)
+            # NOW clear the active encounter after summary is generated
+            if 'worldConditions' in party_tracker_data and 'activeCombatEncounter' in party_tracker_data['worldConditions']:
+                if last_encounter_id:
+                    party_tracker_data["worldConditions"]["lastCompletedEncounter"] = last_encounter_id
+                party_tracker_data['worldConditions']['activeCombatEncounter'] = ""
+                debug(f"STATE_CHANGE: Cleared active combat encounter. Last completed is now {last_encounter_id}", category="combat_events")
+                safe_write_json("party_tracker.json", party_tracker_data)
 
-           info("FILE_OP: Saving final combat chat history log...", category="combat_logs")
-           generate_chat_history(conversation_history, encounter_id)
+            info("FILE_OP: Saving final combat chat history log...", category="combat_logs")
+            generate_chat_history(conversation_history, encounter_id)
 
-           # Reload the player_info object from disk one last time before returning it.
-           # This ensures the main loop receives the fully updated state.
-           player_info = safe_json_load(player_file)
+            # Reload the player_info object from disk one last time before returning it.
+            # This ensures the main loop receives the fully updated state.
+            player_info = safe_json_load(player_file)
 
-           info("SUCCESS: Combat complete. Exiting simulation.", category="combat_events")
-           return dialogue_summary_result, player_info
+            info("SUCCESS: Combat complete. Exiting simulation.", category="combat_events")
+            return dialogue_summary_result, player_info
 
-       # Save updated conversation history after processing all actions
-       save_json_file(conversation_history_file, conversation_history)
+        # Save updated conversation history after processing all actions
+        save_json_file(conversation_history_file, conversation_history)
 
 def main():
     debug("INITIALIZATION: Starting main function in combat_manager", category="combat_events")
-    
+
     # Load party tracker
     try:
         party_tracker_data = safe_json_load("party_tracker.json")
@@ -5317,25 +5430,25 @@ def main():
     except Exception as e:
         error(f"FAILURE: Failed to load party tracker", exception=e, category="file_operations")
         return
-    
+
     # Get active combat encounter
     active_combat_encounter = party_tracker_data["worldConditions"].get("activeCombatEncounter")
-    
+
     if not active_combat_encounter:
         info("STATE_CHANGE: No active combat encounter located.", category="combat_events")
         return
-    
+
     # Get location data to pass to the simulation
     current_location_id = party_tracker_data["worldConditions"]["currentLocationId"]
     location_data = get_location_data(current_location_id)
-    
+
     if not location_data:
         error(f"FAILURE: Failed to find location {current_location_id}", category="location_transitions")
         return
-    
+
     # Run the combat simulation, passing the loaded location_data
     dialogue_summary, updated_player_info = run_combat_simulation(active_combat_encounter, party_tracker_data, location_data)
-    
+
     info("SUCCESS: Combat simulation completed.", category="combat_events")
     if dialogue_summary:
         info(f"SUMMARY: Dialogue Summary: {dialogue_summary}", category="combat_events")

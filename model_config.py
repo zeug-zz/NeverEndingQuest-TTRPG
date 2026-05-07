@@ -49,6 +49,8 @@ GPT5_USE_HIGH_REASONING_ON_RETRY = True                # Use high reasoning effo
 USE_COMPRESSED_COMBAT = True                            # Toggle for compressed combat AND validation prompts (False = original prompts)
 COMBAT_API_TIMEOUT_SECONDS = 120                        # Per-call timeout for combat LLM calls (prevents indefinite hangs)
 COMBAT_CONNECT_TIMEOUT_SECONDS = 10                     # TCP connection timeout for combat LLM calls
+COMBAT_FAST_DETERMINISTIC_NARRATION = True             # Fast-path local narration for deterministic PC_PHASE commands
+COMBAT_PC_PHASE_NL_FAST_PATH = False                   # Conservative PC_PHASE natural-language action parser (default OFF; enable after testing)
 
 # --- Narrator System Settings ---
 NARRATOR_API_TIMEOUT_SECONDS = 120                      # Per-call timeout for narrator LLM calls (prevents indefinite hangs)

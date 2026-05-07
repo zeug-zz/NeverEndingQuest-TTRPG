@@ -24,6 +24,7 @@ import sys
 import os
 import json
 import types
+from unittest import mock
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -699,16 +700,178 @@ class TestLLMPromptIntegration(unittest.TestCase):
         }
         self.manager.initialize_turn_queue(encounter)
 
-        feedback, log_msg = self.manager.handle_combat_command("/att Goblin 18", encounter, actor_name="Acheron")
+        feedback, spoken_narration, log_msg, skip_llm = self.manager.handle_combat_command("/att Goblin 18", encounter, actor_name="Acheron")
         self.assertIn("[ALREADY_APPLIED]", feedback)
         self.assertIn("[prefill:/dmg ]", feedback)
+        self.assertIsNone(spoken_narration)
         self.assertIsNone(log_msg)
+        self.assertTrue(skip_llm)
 
-        damage_feedback, damage_log = self.manager.handle_combat_command("/dmg 5", encounter, actor_name="Acheron")
+        damage_feedback, damage_spoken, damage_log, damage_skip_llm = self.manager.handle_combat_command("/dmg 5", encounter, actor_name="Acheron")
         self.assertIn("[ALREADY_APPLIED]", damage_feedback)
         self.assertIn("Result HP: 7/12", damage_feedback)
+        self.assertIsNotNone(damage_spoken)
+        self.assertNotIn("[skipTTS]", damage_spoken)
         self.assertIn("[ALREADY_APPLIED]", damage_log)
         self.assertIn("Result HP: 7/12", damage_log)
+        self.assertTrue(damage_skip_llm)
+
+    def test_unhandled_combat_command_returns_four_values(self):
+        """Unhandled combat commands must still return the full four-value tuple."""
+        self.manager.initialize_from_party(self.sample_party)
+
+        encounter = {"id": "CMD-UNHANDLED", "creatures": []}
+
+        result = self.manager.handle_combat_command("/dance", encounter, actor_name="Acheron")
+        self.assertEqual(result, (None, None, None, False))
+
+        empty_result = self.manager.handle_combat_command("   ", encounter, actor_name="Acheron")
+        self.assertEqual(empty_result, (None, None, None, False))
+
+    def test_pc_phase_event_ledger_records_fast_path_results(self):
+        """Fast-path combat commands should record compact historical ledger entries."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._state.pc_states["Acheron"].initiative_modifier = 2
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+
+        encounter = {
+            "id": "LEDGER-1",
+            "creatures": [
+                {
+                    "name": "Goblin",
+                    "type": "enemy",
+                    "initiative": 12,
+                    "armorClass": 15,
+                    "currentHitPoints": 12,
+                    "maxHitPoints": 12,
+                    "status": "alive",
+                }
+            ],
+        }
+        self.manager.initialize_turn_queue(encounter)
+
+        miss_feedback, miss_spoken, _, miss_skip = self.manager.handle_combat_command("/att Goblin 9", encounter, actor_name="Acheron")
+        self.assertTrue(miss_skip)
+        self.assertIn("Miss", miss_feedback)
+        self.assertIsNotNone(miss_spoken)
+        self.assertNotIn("[skipTTS]", miss_spoken)
+        self.assertEqual(len(self.manager.pc_phase_event_ledger), 1)
+        self.assertEqual(self.manager.pc_phase_event_ledger[0]["kind"], "attack_miss")
+        self.assertTrue(self.manager.pc_phase_event_ledger[0]["mechanics_already_applied"])
+
+        hit_feedback, hit_spoken, _, hit_skip = self.manager.handle_combat_command("/att Goblin 18", encounter, actor_name="Acheron")
+        self.assertTrue(hit_skip)
+        self.assertIn("prefill:/dmg", hit_feedback)
+        self.assertIsNone(hit_spoken)
+        self.assertEqual(len(self.manager.pc_phase_event_ledger), 2)
+        self.assertEqual(self.manager.pc_phase_event_ledger[1]["kind"], "attack_hit_pending_damage")
+
+        damage_feedback, damage_spoken, _, damage_skip = self.manager.handle_combat_command("/dmg 12", encounter, actor_name="Acheron")
+        self.assertTrue(damage_skip)
+        self.assertIn("Damage applied", damage_feedback)
+        self.assertIsNotNone(damage_spoken)
+        self.assertNotIn("[skipTTS]", damage_spoken)
+        self.assertEqual(len(self.manager.pc_phase_event_ledger), 3)
+        damage_entry = self.manager.pc_phase_event_ledger[2]
+        self.assertEqual(damage_entry["kind"], "attack_damage")
+        self.assertEqual(damage_entry["facts"]["damage"], 12)
+        self.assertEqual(damage_entry["facts"]["hp_before"], 12)
+        self.assertEqual(damage_entry["facts"]["hp_after"], 0)
+        self.assertIn("historical only", self.manager.format_pc_phase_event_ledger_for_prompt().lower())
+
+    def test_pc_phase_event_ledger_dedupes_same_source_key(self):
+        """The same deterministic result should not be recorded twice."""
+        source_key = "test-source-key"
+        first = self.manager.record_pc_phase_event(
+            kind="manual_note",
+            actor_name="Acheron",
+            target_name="Goblin",
+            facts={"note": "already applied"},
+            narration="Applied once.",
+            source_key=source_key,
+        )
+        second = self.manager.record_pc_phase_event(
+            kind="manual_note",
+            actor_name="Acheron",
+            target_name="Goblin",
+            facts={"note": "already applied"},
+            narration="Applied once.",
+            source_key=source_key,
+        )
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(len(self.manager.pc_phase_event_ledger), 1)
+        self.assertEqual(self.manager.pc_phase_event_ledger[0]["kind"], "manual_note")
+
+    def test_fast_path_flag_off_preserves_fallthrough_behavior(self):
+        """Disabling the fast path should restore LLM fall-through for miss and damage."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._state.pc_states["Acheron"].initiative_modifier = 2
+        self.manager._state.pc_states["Acheron"].current_hp = 20
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+
+        encounter = {
+            "id": "LEDGER-OFF-1",
+            "creatures": [
+                {
+                    "name": "Goblin",
+                    "type": "enemy",
+                    "initiative": 12,
+                    "armorClass": 15,
+                    "currentHitPoints": 12,
+                    "maxHitPoints": 12,
+                    "status": "alive",
+                }
+            ],
+        }
+        self.manager.initialize_turn_queue(encounter)
+
+        with mock.patch("core.managers.multi_pc_combat.COMBAT_FAST_DETERMINISTIC_NARRATION", False):
+            miss_feedback, miss_spoken, miss_log, miss_skip = self.manager.handle_combat_command(
+                "/att Goblin 9",
+                encounter,
+                actor_name="Acheron",
+            )
+            self.assertIsNone(miss_feedback)
+            self.assertIsNone(miss_spoken)
+            self.assertIn("[ALREADY_APPLIED]", miss_log)
+            self.assertFalse(miss_skip)
+
+            self.manager.last_target = self.manager.find_target("Goblin", encounter)
+            damage_feedback, damage_spoken, damage_log, damage_skip = self.manager.handle_combat_command(
+                "/dmg 4",
+                encounter,
+                actor_name="Acheron",
+            )
+            self.assertIsNone(damage_feedback)
+            self.assertIsNone(damage_spoken)
+            self.assertIn("[ALREADY_APPLIED]", damage_log)
+            self.assertFalse(damage_skip)
+
+    def test_end_combat_session_clears_pc_phase_ledger(self):
+        """Combat completion should clear historical ledger state."""
+        manager = MultiPCCombatManager()
+        manager.initialize_from_party({"partyMembers": ["Acheron"], "active_character": "Acheron"})
+        manager.record_pc_phase_event(
+            kind="manual_note",
+            actor_name="Acheron",
+            target_name="Goblin",
+            facts={"note": "temporary"},
+            narration="Temporary entry.",
+        )
+
+        with temporary_combat_manager(manager):
+            end_combat_session()
+
+        self.assertEqual(manager.pc_phase_event_ledger, [])
+        self.assertEqual(manager.pc_phase_event_keys, {})
+        self.assertEqual(manager.pc_phase_event_sequence, 0)
     
     def test_format_initiative_tracker(self):
         """Test initiative tracker formatting."""
@@ -1138,6 +1301,132 @@ class TestCombatIntegrityValidation(unittest.TestCase):
         self.assertIn("Phantom Knight", result)
 
 
+class TestDeathSaveDeterministic(unittest.TestCase):
+    """Tests for deterministic death-save helpers on MultiPCCombatManager."""
+
+    def setUp(self):
+        self.manager = MultiPCCombatManager()
+        self.sample_party = {
+            "partyMembers": ["Acheron", "Merisiel"],
+            "active_character": "Acheron"
+        }
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.pc_states["Acheron"].current_hp = 0
+        self.manager._state.pc_states["Acheron"].max_hp = 20
+        self.manager._state.pc_states["Acheron"].status = PCStatus.INCAPACITATED
+        self.manager._state.pc_states["Merisiel"].current_hp = 18
+        self.manager._state.pc_states["Merisiel"].max_hp = 18
+        self.manager._state.pc_states["Merisiel"].status = PCStatus.READY
+
+    def test_get_pending_death_save_pcs_identifies_incapacitated(self):
+        pending = self.manager.get_pending_death_save_pcs_for_phase()
+        self.assertIn("Acheron", pending)
+        self.assertNotIn("Merisiel", pending)
+        self.assertEqual(len(pending), 1)
+
+    def test_get_pending_death_save_pcs_uses_turn_queue_order(self):
+        self.manager._state.pc_states["Merisiel"].current_hp = 0
+        self.manager._state.pc_states["Merisiel"].status = PCStatus.INCAPACITATED
+        self.manager._turns.turn_queue = [
+            Combatant("Merisiel", CombatantType.PC, 12, 0, 18, 14, "unconscious"),
+            Combatant("Acheron", CombatantType.PC, 18, 0, 20, 16, "unconscious"),
+        ]
+
+        pending = self.manager.get_pending_death_save_pcs_for_phase()
+        self.assertEqual(pending[:2], ["Merisiel", "Acheron"])
+
+    def test_get_pending_death_save_pcs_resolved_excludes(self):
+        self.manager.death_save_resolved_phases["Acheron"] = self.manager.current_round
+        pending = self.manager.get_pending_death_save_pcs_for_phase()
+        self.assertEqual(len(pending), 0)
+
+    def test_get_pending_excludes_dead_and_stable(self):
+        self.manager._state.pc_states["Acheron"].status = PCStatus.DEAD
+        pending = self.manager.get_pending_death_save_pcs_for_phase()
+        self.assertEqual(len(pending), 0)
+        self.manager._state.pc_states["Acheron"].status = PCStatus.STABLE
+        pending = self.manager.get_pending_death_save_pcs_for_phase()
+        self.assertEqual(len(pending), 0)
+
+    def test_has_unresolved_obligations(self):
+        self.assertTrue(self.manager.has_unresolved_death_save_obligations())
+        self.manager.death_save_resolved_phases["Acheron"] = self.manager.current_round
+        self.assertFalse(self.manager.has_unresolved_death_save_obligations())
+
+    def test_get_next_pending_death_save_pc(self):
+        self.assertEqual(self.manager.get_next_pending_death_save_pc(), "Acheron")
+        self.manager.death_save_resolved_phases["Acheron"] = self.manager.current_round
+        self.assertIsNone(self.manager.get_next_pending_death_save_pc())
+
+    def test_should_emit_death_save_prompt_once_per_phase(self):
+        self.assertTrue(self.manager.should_emit_death_save_prompt("Acheron"))
+        self.assertFalse(self.manager.should_emit_death_save_prompt("Acheron"))
+
+    def test_should_emit_resets_on_new_round(self):
+        self.manager.should_emit_death_save_prompt("Acheron")
+        self.manager._state.current_round = 2
+        self.assertTrue(self.manager.should_emit_death_save_prompt("Acheron"))
+
+    def test_parse_death_save_gate_open_accepts(self):
+        valid, roll, err = MultiPCCombatManager.parse_death_save_roll_input("3", gate_active=True)
+        self.assertTrue(valid)
+        self.assertEqual(roll, 3)
+        self.assertEqual(err, "")
+        valid, roll, err = MultiPCCombatManager.parse_death_save_roll_input("3", gate_active=False)
+        self.assertFalse(valid)
+        self.assertIsNone(roll)
+        self.assertIsNone(err)
+
+    def test_parse_death_save_command_forms(self):
+        for prefix in ("/death 12", "/ds 12"):
+            valid, roll, err = MultiPCCombatManager.parse_death_save_roll_input(prefix, gate_active=True)
+            self.assertTrue(valid, f"Failed for {prefix}")
+            self.assertEqual(roll, 12)
+
+    def test_parse_death_save_natural_language(self):
+        for text in ("I roll 7", "roll 7"):
+            valid, roll, err = MultiPCCombatManager.parse_death_save_roll_input(text, gate_active=True)
+            self.assertTrue(valid, f"Failed for '{text}'")
+            self.assertEqual(roll, 7)
+
+    def test_parse_death_save_out_of_range_rejected(self):
+        for val in ("0", "21", "-1", "foo", "I attack troll 7", "troll 7", "roll 123", "", "  "):
+            valid, roll, err = MultiPCCombatManager.parse_death_save_roll_input(val, gate_active=True)
+            self.assertFalse(valid, f"Should reject '{val}'")
+            self.assertIsNone(roll)
+            self.assertIsNotNone(err)
+
+    def test_validate_death_save_input_actor_accepts_pending_tab(self):
+        allowed, pending, err = self.manager.validate_death_save_input_actor("Acheron", fallback_actor_name="Merisiel")
+        self.assertTrue(allowed)
+        self.assertEqual(pending, "Acheron")
+        self.assertEqual(err, "")
+
+    def test_validate_death_save_input_actor_rejects_wrong_tab(self):
+        allowed, pending, err = self.manager.validate_death_save_input_actor("Merisiel", fallback_actor_name="Merisiel")
+        self.assertFalse(allowed)
+        self.assertEqual(pending, "Acheron")
+        self.assertIn("Acheron must roll this death saving throw", err)
+
+    def test_update_pc_hp_clears_death_save_tracking(self):
+        self.manager.death_save_resolved_phases["Acheron"] = 1
+        self.manager.death_save_prompted_phases["Acheron"] = 1
+        self.manager.update_pc_hp("Acheron", 10)
+        self.assertNotIn("Acheron", self.manager.death_save_resolved_phases)
+        self.assertNotIn("Acheron", self.manager.death_save_prompted_phases)
+
+    def test_mark_death_save_obligation_complete(self):
+        self.manager.mark_death_save_obligation_complete("Acheron")
+        self.assertEqual(self.manager.death_save_resolved_phases.get("Acheron"), self.manager.current_round)
+        self.assertEqual(self.manager._state.pc_states["Acheron"].status, PCStatus.INCAPACITATED)
+
+    def test_natural_20_results_in_ready_and_marked(self):
+        self.manager._state.pc_states["Acheron"].apply_death_save(20)
+        self.assertEqual(self.manager._state.pc_states["Acheron"].status, PCStatus.READY)
+        self.manager.mark_death_save_obligation_complete("Acheron")
+        self.assertEqual(self.manager._state.pc_states["Acheron"].status, PCStatus.ACTED)
+
+
 def run_tests():
     """Run all tests and return results."""
     # Create test suite
@@ -1153,6 +1442,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestEdgeCases))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegrationScenarios))
     suite.addTests(loader.loadTestsFromTestCase(TestCombatIntegrityValidation))
+    suite.addTests(loader.loadTestsFromTestCase(TestDeathSaveDeterministic))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

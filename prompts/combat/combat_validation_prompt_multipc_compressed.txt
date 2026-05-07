@@ -41,7 +41,7 @@
     "7) Preroll usage is legal (correct pools, sequential, PCs never use prerolls)",
     "8) Action routing and parameter keys are correct",
     "9) Exit correctness (must exit when all enemies are resolved)",
-    "10) Exactly ONE updateEncounter consolidates enemy state changes"
+     "10) At most one updateEncounter when enemy state changes exist"
   ]
 }
 
@@ -62,7 +62,9 @@
 }
 
 @FLOW_RULES={
-  golden_rule_multipc: "Process ALL non-player turns in order before stopping at [>] marked PC; only stop at active PC's turn or for saves",
+  pc_phase_branch: "When CURRENT_PHASE is PC_PHASE, validate only the active PC action, a valid requestRoll pause, or already-applied narration for that PC.",
+  enemy_phase_branch: "When CURRENT_PHASE is ENEMY_PHASE, validate the full enemy/NPC batch and reject stopping mid-phase.",
+  golden_rule_multipc: "If CURRENT_PHASE is PC_PHASE, stop at the active PC marked with [>]. If CURRENT_PHASE is ENEMY_PHASE, process all non-player turns in order before stopping at the next [>] PC.",
   batch_processing: "During Enemy Phase (no PCs pending), process ALL enemies in sequence",
   initiative_dm_start_valid: "Valid: Enemy Phase may start at combat start (without /end) when initiative state indicates ROUND_STARTS_WITH=dmGroup or initiativeWinner=dmGroup.",
   turn_processing: "Immediately reflect results after each damaging action in narration",
@@ -93,7 +95,7 @@
   round_violation_multipc: "Round Tracking Violation. You incremented combat_round to X+1, but not all creatures in Round X have acted (including all PCs). Keep round at X until the cycle completes.",
   pc_save_not_paused: "Player Interaction Violation. You failed to stop after requesting a player saving throw. You MUST end your response immediately after asking for the roll and wait for the player's input before continuing.",
   npc_save_no_pause: "NPC Saving Throw Violation. You failed to use the 'Dramatic Pause' protocol. First DECLARE the NPC's pre-rolled die, then INVITE a brief non-mechanical reaction (e.g., 'Do you shout a warning?'). You cannot resolve the entire save in one response.",
-  consolidation_error: "Update Consolidation Violation. You used multiple updateEncounter actions. ALL enemy changes must be consolidated into EXACTLY ONE updateEncounter action per response.",
+  consolidation_error: "Update Consolidation Violation. You used multiple updateEncounter actions. ALL enemy changes must be consolidated into at most one updateEncounter action per response when enemy state changes exist.",
   wrong_parameter_key: "Parameter Key Violation. You used 'character' instead of 'characterName' in updateCharacterInfo action. The correct format is: {\"action\":\"updateCharacterInfo\",\"parameters\":{\"characterName\":\"<name>\",\"changes\":\"<description>\"}}"
 }
 
@@ -163,7 +165,7 @@
   updateEncounter: "Monsters/enemies ONLY. Prefer mixed payloads with BOTH changes and ops for supported enemy HP/status/condition mechanics; changes-only remains compatibility-valid during migration. If a combat history line is marked [ALREADY_APPLIED], do not replay the same committed target/amount/status result with new ops.",
   requestRoll: "Preferred for player-facing saving throws, ability checks, skill checks, and concentration saves. Response MUST stop after issuing requestRoll.",
   never_cross: "Do not use updateCharacterInfo for monsters; do not use updateEncounter for PCs/NPCs",
-  consolidation_rule: "EXACTLY ONE updateEncounter per response consolidating ALL enemy STATE changes (HP/status/conditions of enemies only). Multiple updateCharacterInfo actions for different PCs/NPCs damaged during the same enemy phase is VALID and REQUIRED.",
+  consolidation_rule: "At most one updateEncounter per response when enemy state changes exist, consolidating all enemy STATE changes (HP/status/conditions of enemies only). Multiple updateCharacterInfo actions for different PCs/NPCs damaged during the same enemy phase is VALID and REQUIRED.",
   allied_npc_ammo: "If an allied NPC fires a ranged weapon, prefer inventory_remove ops for ammo expenditure and keep a prose mirror in changes",
   ops_authority: "When supported ops are present on updateCharacterInfo, treat ops as authoritative mechanics payload and changes as readable mirror.",
   encounter_ops_authority: "When supported ops are present on updateEncounter, treat ops as authoritative mechanics payload and changes as readable mirror.",
@@ -179,7 +181,7 @@
 
 @ROUTING_RULES={
   valid_enemy_turn_pc_damage: "Enemy turn that only damages PCs/NPCs: updateEncounter may be housekeeping-only; PC/NPC HP MUST be in updateCharacterInfo.",
-  batch_enemy_phase: "When multiple enemies act in batch (after /end OR initiative-driven DM start), expect: ONE updateEncounter consolidating all enemy actions/state + SEPARATE updateCharacterInfo for EACH PC/NPC that took damage. During ENEMY_PHASE, asking a PC what they do is invalid, but PC-target damage updates remain valid via updateCharacterInfo. Multiple updateCharacterInfo is correct here, not a consolidation violation.",
+  batch_enemy_phase: "When multiple enemies act in batch (after /end OR initiative-driven DM start), expect: at most one updateEncounter when enemy state changes exist + SEPARATE updateCharacterInfo for EACH PC/NPC that took damage. During ENEMY_PHASE, asking a PC what they do is invalid, but PC-target damage updates remain valid via updateCharacterInfo. Multiple updateCharacterInfo is correct here, not a consolidation violation.",
   enemy_mixed_payload_preferred: "For enemy updateEncounter, prefer payloads that include both changes and supported ops.",
   enemy_boundary_strict: "updateEncounter prose mirrors and ops MUST remain enemy-only. If a player or allied NPC appears as the mutated target, the response is INVALID.",
   enemy_prose_fallback: "If supported ops are absent for an enemy update, changes-only updateEncounter remains compatibility-valid during migration.",
@@ -189,7 +191,8 @@
   request_roll_preferred: "For player-facing saves/checks/concentration pauses, prefer requestRoll over prose-only asks during combat.",
   request_roll_pause_required: "If requestRoll is emitted, response must stop and wait for player input before contingent resolution.",
   concentration_dc_rule: "Concentration requestRoll DC should follow max(10, floor(damage / 2)).",
-  prose_save_fallback: "Prose-only save/check/concentration asks remain compatibility-valid during migration."
+  prose_save_fallback: "Prose-only save/check/concentration asks remain compatibility-valid during migration.",
+  death_save_python_authority: "Death-save rolls are Python-deterministic. If a death-save result is already applied or marked [ALREADY_APPLIED], do not duplicate it with new ops or narration."
 }
 
 @ENTITY_TYPE_VALIDATION={
@@ -326,7 +329,7 @@
     "valid": false,
     "feedback": {
       "positive": "Combat flow was correct.",
-      "negative": "Multiple updateEncounter actions used (2 found). System requires exactly ONE.",
+      "negative": "Multiple updateEncounter actions used (2 found). System requires at most one updateEncounter when enemy state changes exist.",
       "recommendation": "Consolidate into ONE updateEncounter: {\"action\":\"updateEncounter\",\"parameters\":{\"encounterId\":\"XXX\",\"changes\":\"Goblin-1 takes 8 damage (HP 15->7). Goblin-2 takes 12 damage and is now dead (HP 10->-2).\"}}"
     }
   },

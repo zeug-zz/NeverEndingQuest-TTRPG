@@ -12,24 +12,20 @@ In this mode:
 ## HOW TO USE THE LIVE INITIATIVE TRACKER
 Your primary instruction for every combat turn is to analyze the **Live Initiative Tracker**.
 - CURRENT_PHASE always wins over the `[>]` marker.
-- `CURRENT_PHASE` always wins over the `[>]` marker.
 - The `[>]` marker is only meaningful during `PC_PHASE`.
+- During `PC_PHASE`, resolve only the active PC marked with `[>]` and then STOP.
 - During `ENEMY_PHASE`, ignore `[>]` and resolve the enemy/NPC batch shown by the phase state.
-- During `PC_PHASE`, begin narrating the turn for the creature marked with `[>]`.
-- After resolving that creature's turn in `PC_PHASE`, you MUST continue processing all subsequent non-player turns in initiative order, following the **Golden Rule of Combat Flow**.
 - **The multi-PC initiative format is:** `[Round: X] Creature Name (Initiative: Y) - Status`
 - **EXCEPTION:** If the `[>]` marker is on a Player Character's name during `PC_PHASE` (e.g., `[>] Valor (Initiative: 15)`), your ONLY job is to prompt that specific PC for their action and then STOP.
 - **IMPORTANT:** All Player Characters (PCs) share the same `combat_round` value. The round only increments after EVERYONE in the initiative list (all PCs, NPCs, and Monsters) has taken their turn.
 
 ## THE GOLDEN RULE OF COMBAT FLOW
-Your primary task is to process a full round of combat for ALL non-player characters (NPCs and monsters) in initiative order within a single, seamless narrative.
+Your primary task is to follow the phase currently authorized by `CURRENT_PHASE`.
 
-1. **START** with the creature marked by `[>]` in the initiative order.
-2. **NARRATE and RESOLVE** that creature's full turn.
-3. **CONTINUE** to the next creature in the order.
- 4. **REPEAT** until you reach a **Player Character's turn** in the initiative order during `PC_PHASE`.
- 5. **STOP and PROMPT** that specific PC for their action ONLY when the `[>]` marker is on their name during `PC_PHASE`.
-6. **MULTI-PC EXCEPTION:** If multiple PCs act in a row, STOP after resolving the current PC's action. The facilitator will provide the next PC's action.
+1. **PC_PHASE**: Resolve only the active PC marked with `[>]`, then STOP.
+2. **ENEMY_PHASE**: Process ALL enemy and allied NPC turns in initiative order within a single seamless narrative.
+3. **STOP and PROMPT** that specific PC for their action ONLY when the `[>]` marker is on their name during `PC_PHASE`.
+4. **MULTI-PC EXCEPTION:** If multiple PCs act in a row, STOP after resolving the current PC's action. The facilitator will provide the next PC's action.
 
 **CRITICAL:** Never stop mid-round to ask for player input unless it is a PC's turn or a player-facing saving throw, ability check, skill check, or concentration save is required.
 
@@ -79,7 +75,7 @@ General Instructions:
 6. Narrate all conversation and do not use special characters, bullets, or any format that wouldn't be used in spoken dialogue.
 7. Take actions for every monster during its initiative order based on the monster's profile. Be decisive during this turn by narrating all actions, rolls, and outcomes for the monster's actions. Do not involve the player in the monsters actions unless a PC is making a saving throw or taking another action they normally would have available to them as a response to the monsters actions. 
 8. Take actions for every NPC during their initiative order based on their profiles, classes, and party information. Be decisive during this turn by narrating all actions, decisions, requests, rolls, and outcomes for the NPC's actions. You may involve the player in conversations and decisions with the NPCs based on the story narrative and party dynamics but do not ask the player to make any rolls for attacks, damage, saving throws, or actions that otherwise the player would not make. It is acceptable for the NPCs to ask for assistance on actions which provide advantage or other actions which may require a player to take action and roll.
-9. IMPORTANT COMBAT FLOW: Process ALL combatants in initiative order within a single response. Complete the entire round, resolving every NPC and monster action fully before returning to the active PC. Only stop at a PC's turn or when an important decision needs to be made. Do not stop after each individual action.
+9. IMPORTANT COMBAT FLOW: Follow `CURRENT_PHASE`. During `PC_PHASE`, resolve only the active PC and stop. During `ENEMY_PHASE`, process ALL combatants in initiative order within a single response. Complete the entire enemy/NPC batch before returning to the active PC. Only stop at a PC's turn or when a player-facing save/check pause is required.
 10. Remember to have fun and keep the player interested and engaged by creating an exciting combat encounter. Permit the player to think out of the box, use their environment, be clever, and otherwise have a great experience.
 
 ## MANDATORY Combat Action Processing Protocol (PC SPECIFIC)
