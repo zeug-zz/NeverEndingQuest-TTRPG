@@ -1152,6 +1152,23 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Accurate Ingest Source Graph Archive Prep (COMPLETED - 2026-05-08)
+
+**Status:** COMPLETED - Updated `plans/accurate-ingest.md` to mark Phase 1 complete, archived `toolkit-accurate-ingest-source-graph`, and preserved the broader accurate-ingest roadmap for later phases.
+
+**Implementation Summary:**
+- `plans/accurate-ingest.md` - Status updated to reflect Phase 1 completion via `toolkit-accurate-ingest-source-graph` while keeping the remaining roadmap active.
+- `openspec/changes/archive/2026-05-07-toolkit-accurate-ingest-source-graph/` - Archived the source-graph foundation change after full task completion and validation.
+- `utils/toolkit_source_manifest.py`, `utils/toolkit_homebrew_normalizer.py`, `scripts/test_accurate_ingest_source_graph.py`, `scripts/test_toolkit_homebrew_normalizer.py` - Source graph and normalizer fix set verified before archive.
+
+**Verification:**
+- `openspec validate toolkit-accurate-ingest-source-graph` -> VALID
+- `scripts/test_accurate_ingest_source_graph.py` -> PASS
+- `scripts/test_toolkit_homebrew_normalizer.py` -> PASS
+
+**Notes:**
+- No new accurate-ingest OpenSpec change was created; Phase 2 remains a future planning item only.
+
 ### Narrator/Combat Planning Archive Sweep (COMPLETED - 2026-05-07)
 
 **Status:** COMPLETED - Archived `plans/dm-narration-guard.md` and `plans/narrator-combat-stabilization.md` after the deterministic combat death-saves OpenSpec work superseded them. Active `combat-pc-phase-*` implementation files were left untouched.

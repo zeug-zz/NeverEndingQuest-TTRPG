@@ -128,9 +128,52 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertEqual(result.get("status"), "failed")
         self.assertEqual(result.get("stage"), "normalizing")
         self.assertIn("invalid_json", str(result.get("error")))
+        self.assertIn("source_graph_degraded", result)
+        self.assertIn("source_graph", result)
 
         report = json.loads((self.workspace / "normalization_report.json").read_text(encoding="utf-8"))
         self.assertEqual(report.get("status"), "failed")
+        self.assertIn("source_graph_degraded", report)
+        self.assertIn("source_graph", report)
+
+    @patch("utils.toolkit_homebrew_normalizer.get_model_config")
+    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    def test_provider_failure_keeps_source_graph_status(self, mock_client_factory, mock_model_config):
+        class _BoomClient:
+            class _BoomChat:
+                class _BoomCompletions:
+                    @staticmethod
+                    def create(**kwargs):
+                        raise RuntimeError("provider boom")
+
+                def __init__(self):
+                    self.completions = self._BoomCompletions()
+
+            def __init__(self):
+                self.chat = self._BoomChat()
+
+        mock_client_factory.return_value = _BoomClient()
+        mock_model_config.return_value = {
+            "model": "fake-model",
+            "temperature": 0.3,
+            "extra_body": {},
+        }
+
+        result = normalize_homebrew_upload(
+            source_path=self.source_path,
+            workspace=self.workspace,
+            preflight=self.preflight,
+            source_rights_class="user_authored",
+        )
+
+        self.assertEqual(result.get("status"), "failed")
+        self.assertIn("source_graph_degraded", result)
+        self.assertIn("source_graph", result)
+
+        report = json.loads((self.workspace / "normalization_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report.get("status"), "failed")
+        self.assertIn("source_graph_degraded", report)
+        self.assertIn("source_graph", report)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
     @patch("utils.toolkit_homebrew_normalizer.create_chat_client")

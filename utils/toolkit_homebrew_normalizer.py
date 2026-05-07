@@ -28,7 +28,10 @@ from utils.toolkit_homebrew_upload_contract import (
     persist_builder_narrative_artifact,
     persist_normalization_report_artifact,
     persist_normalized_packet_artifact,
+    persist_source_graph_artifact,
+    persist_source_manifest_artifact,
 )
+from utils.toolkit_source_manifest import build_source_graph, build_source_manifest
 
 
 NORMALIZATION_PROMPT_PATH = Path("prompts") / "toolkit" / "homebrew_upload_normalization_prompt.txt"
@@ -125,6 +128,7 @@ def _build_builder_narrative(packet: Dict[str, Any], model_payload: Dict[str, An
 
 def _build_normalized_packet(
     source_path: Path,
+    source_hash: str,
     preflight: Dict[str, Any],
     source_rights_class: str,
     model_payload: Dict[str, Any],
@@ -133,7 +137,7 @@ def _build_normalized_packet(
     """Build normalized packet by merging model payload onto canonical placeholder."""
     base_packet = build_normalized_packet_placeholder(
         source_path=source_path,
-        source_hash=compute_sha256(source_path),
+        source_hash=source_hash or compute_sha256(source_path),
         preflight=preflight,
         source_rights_class=source_rights_class,
     )
@@ -215,6 +219,33 @@ def normalize_homebrew_upload(
         normalized_source_text = normalized_source_text[:MAX_NORMALIZATION_SOURCE_CHARS]
         source_was_truncated = True
 
+    source_hash = compute_sha256(source_path)
+
+    # Build deterministic source manifest and source graph before LLM call
+    source_graph_degraded = False
+    source_graph = None
+    source_graph_summary = None
+    try:
+        source_graph = build_source_graph(
+            source_text=source_text,
+            source_path=str(source_path),
+            source_hash=source_hash,
+        )
+        source_graph_summary = source_graph.get("summary", {}) if source_graph else None
+        if workspace:
+            manifest_ok = persist_source_manifest_artifact(
+                workspace, build_source_manifest(source_text, str(source_path), source_hash)
+            )
+            graph_ok = persist_source_graph_artifact(workspace, source_graph)
+            if not (manifest_ok and graph_ok):
+                warning("TOOLKIT_HOMEBREW: Source graph artifact persistence failed",
+                        category="web_interface")
+                source_graph_degraded = True
+    except Exception as graph_error:
+        warning(f"TOOLKIT_HOMEBREW: Source graph generation failed: {graph_error}",
+                category="web_interface")
+        source_graph_degraded = True
+
     prompt_template = _load_prompt()
     model_config = get_model_config("builders", DM_MAIN_MODEL)
     model_name = model_config.get("model", DM_MAIN_MODEL)
@@ -249,7 +280,10 @@ def normalize_homebrew_upload(
             "stage": "normalizing",
             "error": f"normalizer_provider_failed: {provider_error}",
             "model": model_name,
+            "source_graph_degraded": source_graph_degraded,
         }
+        if source_graph_summary:
+            report["source_graph"] = source_graph_summary
         persist_normalization_report_artifact(workspace, report)
         return report
 
@@ -261,12 +295,16 @@ def normalize_homebrew_upload(
             "error": parse_error,
             "model": model_name,
             "response_preview": model_text[:1000],
+            "source_graph_degraded": source_graph_degraded,
         }
+        if source_graph_summary:
+            report["source_graph"] = source_graph_summary
         persist_normalization_report_artifact(workspace, report)
         return report
 
     packet = _build_normalized_packet(
         source_path=source_path,
+        source_hash=source_hash,
         preflight=preflight,
         source_rights_class=source_rights_class,
         model_payload=model_payload or {},
@@ -284,7 +322,11 @@ def normalize_homebrew_upload(
         "assumptions_count": len(_as_list(packet.get("assumptions"))),
         "warnings_count": len(_as_list(packet.get("warnings"))),
         "grounded_facts_count": len(_as_list(packet.get("confidence_notes", {}).get("grounded_facts"))),
+        "source_graph_degraded": source_graph_degraded,
     }
+
+    if source_graph_summary:
+        report["source_graph"] = source_graph_summary
 
     packet_ok = persist_normalized_packet_artifact(workspace, packet)
     report_ok = persist_normalization_report_artifact(workspace, report)

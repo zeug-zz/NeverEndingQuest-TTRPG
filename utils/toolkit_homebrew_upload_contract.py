@@ -69,6 +69,8 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "repair_report": workspace / "repair_report.json",
         "finishing_report": workspace / "finishing_report.json",
         "ui_review_snapshot": workspace / "ui_review_snapshot.json",
+        "source_manifest": workspace / "source_manifest.json",
+        "source_graph": workspace / "source_graph.json",
     }
 
 
@@ -281,6 +283,42 @@ def persist_repair_report_artifact(workspace: Path, repair_report: Dict[str, Any
     """Persist repair report artifact using atomic JSON helper."""
     files = get_workspace_files(workspace)
     return safe_write_json(str(files["repair_report"]), repair_report)
+
+
+def persist_source_manifest_artifact(workspace: Path, manifest: Dict[str, Any]) -> bool:
+    """Persist source manifest artifact using atomic JSON helper."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["source_manifest"]), manifest)
+
+
+def persist_source_graph_artifact(workspace: Path, graph: Dict[str, Any]) -> bool:
+    """Persist source graph artifact using atomic JSON helper."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["source_graph"]), graph)
+
+
+def load_source_manifest_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load source manifest artifact if present. Returns None for
+    backward-compatible workspaces that lack this artifact."""
+    files = get_workspace_files(workspace)
+    path = files.get("source_manifest")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def load_source_graph_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load source graph artifact if present. Returns None for
+    backward-compatible workspaces that lack this artifact."""
+    files = get_workspace_files(workspace)
+    path = files.get("source_graph")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
 
 
 def load_normalized_packet_artifact(workspace: Path) -> Dict[str, Any]:
