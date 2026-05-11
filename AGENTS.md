@@ -6469,6 +6469,47 @@ Validate and archive the three completed spatial OpenSpec changes, then mark and
 - `openspec/changes/archive/2026-04-28-spatial-solver-tier-contract-correction/*`
 - `openspec/changes/archive/2026-04-28-spatial-topology-normalization-failsafe/*`
 
+### Homebrewery Module Builder Toolkit (COMPLETED - 2026-05-11)
+
+**Status:** COMPLETED - Three OpenSpec changes implemented: V3 Homebrewery style definitions, adventure MD generator pipeline, data-hygiene fixes, and LLM-narrative enhancement.
+
+**Files Created:**
+- `utils/homebrewery_style.py` — V3 template module (metadata, cover, stat blocks, items, images, TOC, wide, footnotes, `COVER_IMAGE_URL`, `MONSTER_PORTRAIT_URL`, `NPC_PORTRAIT_URL`)
+- `utils/homebrewery_adventure_writer.py` — Full V3 adventure generator with 9 section builders, LLM narrative intro + plot hook with deterministic fallback
+- `data/homebrewery_style_reference.md` — Human-readable style guide with exemplar examples
+- `scripts/analyze_homebrewery_exemplars.py` — Analysis script (33 local brews → 5 V3, 28 legacy)
+- `scripts/test_homebrewery_style_definitions.py` — 37 contract tests
+- `scripts/test_homebrewery_adventure_writer.py` — 41 contract tests
+- `modules/The_Ancients_Lab/MODULE_SUMMARY.md` — Generated Homebrewery V3 brew (26,676 chars)
+- `modules/The_Thornwood_Watch/MODULE_SUMMARY.md` — Generated Homebrewery V3 brew (28,009 chars)
+
+**Key Format Features:**
+- Metadata: HTML comment `<!-- metadata ... -->` format
+- Cover: `{{frontCover}}` + `# Title` (H1) + `## Subtitle` (H2) + background image + `{{banner HOMEBREW}}`
+- Sections: `# Section` (H1 wide-block) for main sections
+- Stat blocks: `> ### Name` (H3 underlined) with `> #### Actions` (H4) and `:` spacers
+- Stat block abilities: comma-separated bold names (no description spam)
+- Credits: `{{credits}}` + `{{wide}}` block with `# Credits`, NEQ-TTRPG builder link, author/source/license as `[URL](URL)`, SRD attribution
+- NPC gallery: H3 heading, portrait image (G Drive placeholder), bold Roles/Faction, `>___` separators
+- Monsters/NPCs: Portrait images via `{width:100px,margin-right:0.5cm,wrapRight}`
+
+**LLM Integration:**
+- `_llm_intro_narrative()` — Generates `### Module Overview`, `### The Story So Far`, `### Running the Adventure` sections
+- `_llm_plot_hook()` — Generates colourful fantasy blur style plot lead-in
+- Model: `DM_SUMMARIZATION_MODEL`, `max_completion_tokens` (GPT-5 compatible)
+- Fallback: deterministic concatenation on LLM failure
+
+**Data Loading Fixes (from cleanup change):**
+- BU→live narrative merge for NPC descriptions, roles, factions
+- Area deduplication by `areaId`
+- `areaName` field reading (not `locationName`)
+- Author/license fallback from live file
+
+**Archived OpenSpec Changes:**
+- `toolkit-homebrewery-style-definitions` — Style module + style reference
+- `toolkit-homebrewery-adventure-md-cleanup` — Data hygiene, format corrections, plot abstract
+- `toolkit-homebrewery-adventure-md-narrative-llm` — LLM narrative, H4 actions, credits format
+
 ### Combat PC Phase Contract Closure & Archive (COMPLETED - 2026-05-08)
 
 **Status:** COMPLETED - Implemented combat PC phase contract closure, validated all 5 dependent changes, and archived the full combat-pc-phase workstream.
