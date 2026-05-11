@@ -1152,7 +1152,33 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
-### Accurate Ingest Source Graph Archive Prep (COMPLETED - 2026-05-08)
+### Travel Sync Cross-Area Topology Fix (COMPLETED - 2026-05-10)
+
+**Status:** COMPLETED - Extended reconcile-first travel validation to recognize authored cross-area same-module routes through the module connectivity graph.
+
+**Objective:**
+Fix a live Thornwood gameplay blocker where the travel_state_sync_guard rejected a valid return from Blighted Thornbriar Grove (NC02) toward Bandit Stronghold (TW05) as "not topology-safe" even though an authored cross-area path exists (NC02 -> NC01 -> TW05). The guard only checked direct adjacency and current-area membership; `areaConnectivityId` edges were invisible to the reconcile-first path.
+
+**Implementation Summary:**
+- `utils/authoritative_state_packet.py` - `_extract_adjacent_location_ids()` now reads `areaConnectivityId` for cross-area edges alongside existing `connectivity` and `connectedLocations`.
+- `utils/travel_state_sync_guard.py` - Added `_is_module_graph_reachable()` (BFS over `known_locations` connectivity graph) and extended `_is_topology_safe_destination()` with a third-pass graph check after direct-adjacent and same-area passes.
+- `utils/travel_state_sync_guard.py` - Both call sites in `evaluate_travel_state_sync_decision()` now pass `known_locations` to the topology check.
+- `scripts/test_travel_state_sync_guard.py` - Added `TestCrossAreaTopology` class with 10 tests covering: explicit transition cross-area path, inferred arrival cross-area path, unreachable catalog destinations, BFS reachability rejections, all-catalog-entry verification (no false positives), and scene follower guided travel regression.
+- `openspec/changes/travel-sync-cross-area-topology/` - Proposal, design, tasks, and delta spec artifacts.
+
+**Verification:**
+- `.venv/bin/python -m py_compile utils/travel_state_sync_guard.py utils/authoritative_state_packet.py main.py` -> PASS
+- `.venv/bin/python scripts/test_travel_state_sync_guard.py` -> PASS (27/27)
+- `.venv/bin/python scripts/test_scene_location_sync.py` -> PASS (23/23)
+- `openspec validate travel-sync-cross-area-topology` -> VALID
+
+**Files Modified:**
+- `utils/authoritative_state_packet.py`
+- `utils/travel_state_sync_guard.py`
+- `scripts/test_travel_state_sync_guard.py`
+- `AGENTS.md`
+
+---
 
 **Status:** COMPLETED - Updated `plans/accurate-ingest.md` to mark Phase 1 complete, archived `toolkit-accurate-ingest-source-graph`, and preserved the broader accurate-ingest roadmap for later phases.
 

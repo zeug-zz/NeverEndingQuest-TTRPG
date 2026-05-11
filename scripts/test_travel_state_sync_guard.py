@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.travel_state_sync_guard import (
     evaluate_travel_state_sync_decision,
     evaluate_travel_state_sync_guard,
+    _is_topology_safe_destination,
+    _is_module_graph_reachable,
 )
 
 
@@ -397,6 +399,225 @@ class TestTravelStateSyncGuardSourceContracts(unittest.TestCase):
             content,
             "main.py should treat travel_state_sync as deterministic domain",
         )
+
+
+class TestCrossAreaTopology(unittest.TestCase):
+    """Regression tests for cross-area same-module topology reachability."""
+
+    def _thornwood_known_locations(self):
+        """Return a minimal Thornwood location catalog with cross-area edges."""
+        return [
+            {
+                "id": "NC02",
+                "name": "Blighted Thornbriar Grove",
+                "area_id": "NCW001",
+                "connectivity": ["NC01", "NC04", "NC05"],
+            },
+            {
+                "id": "NC01",
+                "name": "Corrupted Entry Cave",
+                "area_id": "NCW001",
+                "connectivity": ["NC02", "TW05"],
+            },
+            {
+                "id": "NC04",
+                "name": "Doomed Explorer's Camp",
+                "area_id": "NCW001",
+                "connectivity": ["NC02"],
+            },
+            {
+                "id": "NC05",
+                "name": "The Corrupted Nexus",
+                "area_id": "NCW001",
+                "connectivity": ["NC02"],
+            },
+            {
+                "id": "TW05",
+                "name": "Bandit Stronghold",
+                "area_id": "TWW001",
+                "connectivity": ["NC01", "TW02", "TW04"],
+            },
+            {
+                "id": "TW02",
+                "name": "Bandit Trail",
+                "area_id": "TWW001",
+                "connectivity": ["TW05"],
+            },
+            {
+                "id": "RO06",
+                "name": "North Tower Overlook",
+                "area_id": "RO0001",
+                "connectivity": [],
+            },
+        ]
+
+    def test_cross_area_path_accepted_for_explicit_transition(self):
+        """NC02 -> TW05 via NC01 is topology-safe for explicit transitionLocation."""
+        response = {
+            "narration": "Thane leads the party toward the bandit stronghold.",
+            "actions": [
+                {"action": "transitionLocation", "parameters": {"newLocation": "TW05"}}
+            ],
+        }
+        decision = evaluate_travel_state_sync_decision(
+            response_json=response,
+            is_travel_intent=True,
+            current_location_name="Blighted Thornbriar Grove",
+            current_location_id="NC02",
+            known_location_names=["Blighted Thornbriar Grove"],
+            known_locations=self._thornwood_known_locations(),
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+        )
+        self.assertTrue(decision.get("valid"), f"Expected valid, got: {decision.get('reason')}")
+        self.assertEqual(decision.get("reconciliation"), "explicit_transition")
+
+    def test_cross_area_path_accepted_for_arrival_narration(self):
+        """NC02 -> TW05 is topology-safe for narrator-claimed arrival."""
+        response = {
+            "narration": "Thane leads the stretcher bearers through the grove's outer edge and you arrive at the Bandit Stronghold just as dusk settles.",
+            "actions": [],
+        }
+        decision = evaluate_travel_state_sync_decision(
+            response_json=response,
+            is_travel_intent=True,
+            current_location_name="Blighted Thornbriar Grove",
+            current_location_id="NC02",
+            known_location_names=[
+                "Blighted Thornbriar Grove",
+                "Bandit Stronghold",
+                "Corrupted Entry Cave",
+                "Doomed Explorer's Camp",
+                "The Corrupted Nexus",
+                "Bandit Trail",
+            ],
+            known_locations=self._thornwood_known_locations(),
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+        )
+        self.assertTrue(decision.get("valid"), f"Expected valid, got: {decision.get('reason')}")
+
+    def test_unreachable_destination_blocked(self):
+        """RO06 is in the module catalog but no graph path exists from NC02."""
+        response = {
+            "narration": "You arrive at North Tower Overlook.",
+            "actions": [
+                {"action": "transitionLocation", "parameters": {"newLocation": "RO06"}}
+            ],
+        }
+        decision = evaluate_travel_state_sync_decision(
+            response_json=response,
+            is_travel_intent=True,
+            current_location_name="Blighted Thornbriar Grove",
+            current_location_id="NC02",
+            known_location_names=["Blighted Thornbriar Grove", "North Tower Overlook"],
+            known_locations=self._thornwood_known_locations(),
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+        )
+        self.assertFalse(decision.get("valid"))
+        self.assertIn("not topology-safe", decision.get("reason", ""))
+
+    def test_graph_reachability_caches_nothing(self):
+        """BFS reachability returns True for a valid multi-hop path."""
+        locs = self._thornwood_known_locations()
+        result = _is_module_graph_reachable(
+            destination_id="TW05",
+            current_location_id="NC02",
+            known_locations=locs,
+        )
+        self.assertTrue(result)
+
+    def test_graph_reachability_rejects_unreachable(self):
+        """BFS reachability returns False when no path exists."""
+        locs = self._thornwood_known_locations()
+        result = _is_module_graph_reachable(
+            destination_id="RO06",
+            current_location_id="NC02",
+            known_locations=locs,
+        )
+        self.assertFalse(result)
+
+    def test_graph_reachability_rejects_missing_destination(self):
+        """BFS reachability returns False for unknown destination ID."""
+        locs = self._thornwood_known_locations()
+        result = _is_module_graph_reachable(
+            destination_id="ZZ99",
+            current_location_id="NC02",
+            known_locations=locs,
+        )
+        self.assertFalse(result)
+
+    def test_graph_reachability_no_false_positives_on_all_entries(self):
+        """BFS does not accept destinations just because they exist in the catalog."""
+        locs = self._thornwood_known_locations()
+        for loc in locs:
+            loc_id = loc["id"]
+            reachable = _is_module_graph_reachable(
+                destination_id=loc_id,
+                current_location_id="NC02",
+                known_locations=locs,
+            )
+            if loc_id in ("NC01", "NC02", "NC04", "NC05", "TW05", "TW02"):
+                self.assertTrue(
+                    reachable,
+                    f"Expected {loc_id} to be reachable from NC02 via graph",
+                )
+            else:
+                self.assertFalse(
+                    reachable,
+                    f"Expected {loc_id} to be unreachable from NC02",
+                )
+
+    def test_topology_safe_falls_back_to_graph(self):
+        """_is_topology_safe_destination uses graph reachability as third pass."""
+        locs = self._thornwood_known_locations()
+        safe = _is_topology_safe_destination(
+            destination_id="TW05",
+            current_location_id="NC02",
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+            known_locations=locs,
+        )
+        self.assertTrue(safe)
+
+    def test_topology_safe_rejects_no_path(self):
+        """_is_topology_safe_destination rejects unreachable catalog entries."""
+        locs = self._thornwood_known_locations()
+        safe = _is_topology_safe_destination(
+            destination_id="RO06",
+            current_location_id="NC02",
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+            known_locations=locs,
+        )
+        self.assertFalse(safe)
+
+    def test_scene_follower_guided_travel_to_cross_area_destination(self):
+        """Present follower Thane at NC02 guiding toward TW05 is valid."""
+        response = {
+            "narration": "Thane gives no speech at first -- just a sharp turn of the head and a crooked hand pointing away from the cave mouth, toward the thinner briars along the grove's outer edge. He seems to favor a safer line that skirts the corrupted caves entirely, likely angling you toward the Doomed Explorer's Camp before you try to circle back toward the bandit stronghold. If you follow him, it should be the long way, but the cleaner one.",
+            "actions": [],
+        }
+        decision = evaluate_travel_state_sync_decision(
+            response_json=response,
+            is_travel_intent=True,
+            current_location_name="Blighted Thornbriar Grove",
+            current_location_id="NC02",
+            user_utterance="I lash Thane to the stretcher... Mush! Lead the way back to sanctuary at my old mate Gorvek's bandit stronghold!",
+            known_location_names=[
+                "Blighted Thornbriar Grove",
+                "Bandit Stronghold",
+                "Corrupted Entry Cave",
+                "Doomed Explorer's Camp",
+                "The Corrupted Nexus",
+                "Bandit Trail",
+            ],
+            known_locations=self._thornwood_known_locations(),
+            adjacent_location_ids=["NC01", "NC04", "NC05"],
+            reachable_location_ids=["NC01", "NC02", "NC04", "NC05"],
+        )
+        self.assertTrue(decision.get("valid"), f"Expected valid, got: {decision.get('reason')}")
 
 
 if __name__ == "__main__":

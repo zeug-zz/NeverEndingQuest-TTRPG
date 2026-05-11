@@ -164,6 +164,10 @@ def _extract_adjacent_location_ids(location_data: Optional[Dict[str, Any]]) -> L
                 if location_id:
                     adjacent.append(location_id)
 
+    area_connectivity_id = location_data.get("areaConnectivityId", [])
+    if isinstance(area_connectivity_id, list):
+        adjacent.extend(_safe_list_of_strings(area_connectivity_id))
+
     # De-duplicate while preserving order
     deduped: List[str] = []
     seen = set()
@@ -254,6 +258,48 @@ def build_authoritative_state_packet(
     location_description = _safe_string((resolved_location_data or {}).get("description", ""))
     location_dm_instructions = _safe_string((resolved_location_data or {}).get("dmInstructions", ""))
 
+    # Collect present scene followers at current location for context truth.
+    scene_followers: List[Dict[str, Any]] = []
+    try:
+        from utils.scene_follower_state import (
+            get_follower_records,
+            load_followers,
+            follower_is_scene_present,
+        )
+
+        follower_limit = 8
+        follower_store = load_followers()
+        for record in get_follower_records(follower_store):
+            normalized = dict(record)
+            if not follower_is_scene_present(normalized):
+                continue
+            follower_location = str(
+                normalized.get("current_location", "") or ""
+            ).strip().upper()
+            if follower_location != current_location_id:
+                continue
+            entry = {
+                k: v
+                for k, v in normalized.items()
+                if k in {
+                    "entity_id",
+                    "display_name",
+                    "entity_type",
+                    "monster_type",
+                    "lifecycle_state",
+                    "disposition",
+                    "current_location",
+                    "source_module",
+                    "source_npc_name",
+                    "source_entity_slug",
+                }
+            }
+            scene_followers.append(entry)
+            if len(scene_followers) >= follower_limit:
+                break
+    except Exception:
+        pass  # fail-open
+
     return {
         "version": "v1",
         "module": {
@@ -282,4 +328,5 @@ def build_authoritative_state_packet(
             "known_location_names": known_locations.get("names", []),
             "module_locations": module_locations,
         },
+        "scene_followers": scene_followers,
     }

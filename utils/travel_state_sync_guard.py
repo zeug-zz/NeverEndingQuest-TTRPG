@@ -342,6 +342,7 @@ def _is_topology_safe_destination(
     current_location_id: str,
     adjacent_location_ids: Optional[List[str]],
     reachable_location_ids: Optional[List[str]],
+    known_locations: Optional[List[Dict[str, Any]]] = None,
 ) -> bool:
     """Return True when destination is resolvable and topology-safe."""
     if not destination_id:
@@ -357,6 +358,52 @@ def _is_topology_safe_destination(
     reachable_ids = set(reachable_location_ids or [])
     if reachable_ids and destination_id in reachable_ids:
         return True
+
+    if known_locations and _is_module_graph_reachable(
+        destination_id=destination_id,
+        current_location_id=current_location_id,
+        known_locations=known_locations,
+    ):
+        return True
+
+    return False
+
+
+def _is_module_graph_reachable(
+    destination_id: str,
+    current_location_id: str,
+    known_locations: List[Dict[str, Any]],
+) -> bool:
+    """Return True when destination is reachable via authored module topology graph."""
+    if not destination_id or not current_location_id or not known_locations:
+        return False
+
+    adjacency: Dict[str, List[str]] = {}
+    for loc in known_locations:
+        if not isinstance(loc, dict):
+            continue
+        loc_id = str(loc.get("id", "") or "").strip()
+        if not loc_id:
+            continue
+        neighbors = loc.get("connectivity", [])
+        if isinstance(neighbors, list):
+            adjacency[loc_id] = [str(n or "").strip() for n in neighbors if str(n or "").strip()]
+        else:
+            adjacency[loc_id] = []
+
+    if current_location_id not in adjacency or destination_id not in adjacency:
+        return False
+
+    visited: Set[str] = {current_location_id}
+    queue: List[str] = [current_location_id]
+    while queue:
+        current = queue.pop(0)
+        if current == destination_id:
+            return True
+        for neighbor in adjacency.get(current, []):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
 
     return False
 
@@ -593,6 +640,7 @@ def evaluate_travel_state_sync_decision(
             current_location_id=current_location_id,
             adjacent_location_ids=adjacent_location_ids,
             reachable_location_ids=reachable_location_ids,
+            known_locations=known_locations,
         ):
             return {
                 "valid": False,
@@ -695,6 +743,7 @@ def evaluate_travel_state_sync_decision(
         current_location_id=current_location_id,
         adjacent_location_ids=adjacent_location_ids,
         reachable_location_ids=reachable_location_ids,
+        known_locations=known_locations,
     ):
         return {
             "valid": False,
