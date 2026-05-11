@@ -1180,6 +1180,44 @@ Fix a live Thornwood gameplay blocker where the travel_state_sync_guard rejected
 
 ---
 
+### Scene Follower Captive Lifecycle Sync (COMPLETED - 2026-05-11)
+
+**Status:** COMPLETED - Fixed scene follower continuity failure where restrained/captive followers (Corrupted Ranger Thane) vanished from DM Note, transition sync, and thumbnail strip UI.
+
+**Objective:**
+Resolve three-way lifecycle vocabulary mismatch where `lifecycle_state: "restrained"` was treated as absent by transition sync, DM Note projection, and strip visibility, even though the follower record existed with `visible_in_strip: true`.
+
+**Root Cause:**
+Three separate code paths used strict `lifecycle_state == "present"` checks or hardcoded lifecycle sets that excluded `restrained`, `captive`, and similar travel-capable captive states:
+
+- `_is_traveling_follower_record()` checked `lifecycle_state != "present"`
+- `format_present_scene_followers()` checked `lifecycle_state != "present"`
+- `follower_visible_in_strip()` had hardcoded set excluding `restrained`
+
+**Implementation Summary:**
+- `utils/scene_follower_state.py` - Added `_FOLLOWER_PRESENT_LIFECYCLE_STATES` constant, `follower_is_scene_present()` shared helper, expanded `_FOLLOWER_DISPOSITION_VALUES` and `_FOLLOWER_TRAVEL_DISPOSITIONS` to include `restrained`, rewrote `_is_traveling_follower_record()` and `follower_visible_in_strip()` to use new helper.
+- `utils/multi_pc_dm_note.py` - `format_present_scene_followers()` uses `follower_is_scene_present()` instead of strict lifecycle check; includes lifecycle state in output line.
+- `utils/authoritative_state_packet.py` - `build_authoritative_state_packet()` emits `scene_followers` array with current-location present followers for validator/narrator context.
+- `main.py` - `follower_records` builder filters out non-scene-present records before location exclusivity guard.
+- `scripts/test_scene_follower_transition_sync.py` - 6 new tests: restrained captive moves on transition, restrained captive in DM Note, cleanup state exclusion (both move + DM Note), authoritative packet includes/excludes followers.
+
+**Verification:**
+- `.venv/bin/python -m py_compile utils/scene_follower_state.py utils/multi_pc_dm_note.py utils/authoritative_state_packet.py main.py scripts/test_scene_follower_transition_sync.py` -> PASS
+- `.venv/bin/python scripts/test_scene_follower_transition_sync.py` -> PASS (13/13)
+- `.venv/bin/python scripts/test_travel_state_sync_guard.py` -> PASS (27/27)
+- Live follower sanity: `follower_is_scene_present()` and `follower_visible_in_strip()` both return True for Thane
+
+**Files Modified:**
+- `utils/scene_follower_state.py`
+- `utils/multi_pc_dm_note.py`
+- `utils/authoritative_state_packet.py`
+- `main.py`
+- `scripts/test_scene_follower_transition_sync.py`
+- `data/runtime/scene_followers.json`
+- `AGENTS.md`
+
+---
+
 **Status:** COMPLETED - Updated `plans/accurate-ingest.md` to mark Phase 1 complete, archived `toolkit-accurate-ingest-source-graph`, and preserved the broader accurate-ingest roadmap for later phases.
 
 **Implementation Summary:**

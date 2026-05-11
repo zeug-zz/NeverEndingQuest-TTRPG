@@ -2249,6 +2249,7 @@ def validate_ai_response(
             from utils.scene_follower_state import (
                 get_follower_records,
                 load_followers,
+                follower_is_scene_present,
             )
 
             # Build canonical party member names for location exclusivity collision
@@ -2271,6 +2272,8 @@ def validate_ai_response(
             if follower_list:
                 follower_records = {}
                 for r in follower_list:
+                    if not follower_is_scene_present(r):
+                        continue
                     entity_id = str(r.get("entity_id", "") or "").strip()
                     location_id = str(r.get("current_location", "") or "").strip()
                     if not entity_id or not location_id:

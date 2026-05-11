@@ -31,6 +31,7 @@ from utils.scene_follower_state import (
     load_followers,
     normalize_scene_follower_disposition,
     normalize_scene_follower_record,
+    follower_is_scene_present,
 )
 
 
@@ -433,10 +434,7 @@ def format_present_scene_followers(
     lines: List[str] = []
     for record in records:
         normalized = normalize_scene_follower_record(record)
-        lifecycle_state = normalize_scene_follower_disposition(
-            normalized.get("lifecycle_state")
-        )
-        if lifecycle_state != "present":
+        if not follower_is_scene_present(normalized):
             continue
 
         follower_location = str(
@@ -445,6 +443,9 @@ def format_present_scene_followers(
         if follower_location != location_id:
             continue
 
+        lifecycle_state = normalize_scene_follower_disposition(
+            normalized.get("lifecycle_state")
+        )
         display_name = str(
             normalized.get("display_name")
             or normalized.get("monster_type")
@@ -454,8 +455,10 @@ def format_present_scene_followers(
         entity_type = str(normalized.get("entity_type") or "unknown").strip().lower()
         disposition = str(normalized.get("disposition") or "present").strip().lower()
 
+        # Build compact info: include lifecycle when not simple "present"
+        lifecycle_info = f", {lifecycle_state}" if lifecycle_state and lifecycle_state != "present" else ""
         lines.append(
-            f"{display_name} ({entity_type}, {disposition}, currentLocation={location_id}): present with party; not a PC."
+            f"{display_name} ({entity_type}, {disposition}{lifecycle_info}, currentLocation={location_id}): present with party; not a PC."
         )
         if len(lines) >= max(1, int(limit)):
             break

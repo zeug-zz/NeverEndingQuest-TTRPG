@@ -49,12 +49,31 @@ _FOLLOWER_HIDDEN_STATES = {
     "joined_party",
     "combat_started",
 }
-_FOLLOWER_DISPOSITION_VALUES = _FOLLOWER_VISIBLE_STATES | _FOLLOWER_HIDDEN_STATES | {
-    "hostile",
-    "neutral",
-    "friendly",
+_FOLLOWER_PRESENT_LIFECYCLE_STATES = {
+    "present",
+    "following",
+    "held",
+    "captive",
+    "restrained",
+    "parleying",
     "guarded_guide",
+    "escorted",
 }
+_FOLLOWER_DISPOSITION_VALUES = (
+    _FOLLOWER_VISIBLE_STATES
+    | _FOLLOWER_HIDDEN_STATES
+    | _FOLLOWER_PRESENT_LIFECYCLE_STATES
+    | {
+        "hostile",
+        "neutral",
+        "friendly",
+        "guarded_guide",
+        "captive",
+        "restrained",
+        "companion",
+        "escorted",
+    }
+)
 _FOLLOWER_TRAVEL_DISPOSITIONS = {
     "guarded_guide",
     "following",
@@ -63,6 +82,7 @@ _FOLLOWER_TRAVEL_DISPOSITIONS = {
     "parleying",
     "companion",
     "escorted",
+    "restrained",
 }
 
 
@@ -226,15 +246,8 @@ def follower_visible_in_strip(record: Dict[str, Any]) -> bool:
     if not isinstance(record, dict):
         return False
 
-    lifecycle_state = normalize_scene_follower_disposition(
-        record.get("lifecycle_state") or record.get("state")
-    )
-    if lifecycle_state in _FOLLOWER_HIDDEN_STATES:
+    if not follower_is_scene_present(record):
         return False
-
-    if lifecycle_state and lifecycle_state not in _FOLLOWER_VISIBLE_STATES:
-        if lifecycle_state not in {"hostile", "neutral", "friendly", "guarded_guide"}:
-            return False
 
     visible_in_strip = record.get("visible_in_strip")
     if visible_in_strip is not None:
@@ -259,6 +272,40 @@ def follower_is_cleanup_state(record: Dict[str, Any]) -> bool:
         record.get("lifecycle_state") or record.get("state")
     )
     return lifecycle_state in _FOLLOWER_HIDDEN_STATES
+
+
+def follower_is_scene_present(record: Dict[str, Any]) -> bool:
+    """Return True when a follower counts as physically present in scene truth.
+
+    Captives, restrained guides, held prisoners, escorted entities, and
+    guarded guides continue to travel and appear in DM Note when their
+    record says they are visible with the party at the current location.
+    """
+    if not isinstance(record, dict):
+        return False
+
+    lifecycle_state = normalize_scene_follower_disposition(
+        record.get("lifecycle_state") or record.get("state")
+    )
+    disposition = normalize_scene_follower_disposition(record.get("disposition"))
+
+    if lifecycle_state in _FOLLOWER_HIDDEN_STATES:
+        return False
+    if disposition in _FOLLOWER_HIDDEN_STATES:
+        return False
+
+    if lifecycle_state in _FOLLOWER_PRESENT_LIFECYCLE_STATES:
+        return True
+    if disposition in _FOLLOWER_TRAVEL_DISPOSITIONS:
+        return True
+    if follower_visible_in_strip(record) and disposition in {
+        "friendly",
+        "neutral",
+        "hostile",
+        "guarded_guide",
+    }:
+        return True
+    return False
 
 
 def load_followers() -> Dict[str, Any]:
@@ -363,10 +410,7 @@ def _is_traveling_follower_record(
     if not isinstance(record, dict):
         return False
 
-    lifecycle_state = normalize_scene_follower_disposition(
-        record.get("lifecycle_state") or record.get("state")
-    )
-    if lifecycle_state != "present":
+    if not follower_is_scene_present(record):
         return False
 
     current_location = str(record.get("current_location", "") or "").strip().upper()
