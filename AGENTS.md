@@ -6580,3 +6580,20 @@ Replace the flat-field "Room descriptions not yet authored" stub in the Location
 - Sections: Locations (903 lines), Monster Gallery, NPC Gallery, Appendix A: Treasures (35+ items)
 - Document: 1521 lines / 89KB
 - ASCII compliance: PASS
+
+### Toolkit Adventure Download Performance Fix (COMPLETED - 2026-05-12)
+
+**Status:** COMPLETED - Download Adventure button now serves pre-generated MODULE_SUMMARY.md from disk instead of regenerating on every request.
+
+**Objective:**
+Eliminate 20-35 second hangs when downloading adventure markdown for modules with multiple areas (Thornwood Watch, Xhalruun's Masquerade). The endpoint was calling `generate_homebrewery_adventure()` on every request, triggering serial LLM calls for each area's overview. The post-build finisher already writes MODULE_SUMMARY.md to disk during stage 12 — the endpoint now reads it directly.
+
+**Implementation Summary:**
+- `web/web_interface.py` — `get_module_adventure_markdown()` now checks `modules/<slug>/MODULE_SUMMARY.md` first; if exists and >500 bytes, returns instantly. Falls back to one-time generation + disk cache for legacy modules.
+- `web/templates/module_toolkit.html` — Download button shows "Generating..." + disabled state during fetch, restored on completion or error.
+
+**Verification:**
+- `python3 -m py_compile` -> PASS
+- `.venv/bin/python -m unittest scripts.test_homebrewery_adventure_writer -v` -> PASS (52/52)
+- `openspec validate toolkit-adventure-download-performance-fix` -> VALID
+- Module summaries regenerated: Into_the_Deepvault, The_Pumpkin_Kings_Curse, Xhalruuns_Masquerade, Night_of_the_Restless_Dead
