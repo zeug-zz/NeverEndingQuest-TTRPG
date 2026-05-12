@@ -58,8 +58,6 @@ COVER_PAGE_TEMPLATE = """{front_cover}
 ![background image]({cover_image_url}) {{position:absolute,bottom:0,left:0,height:100%}}
 
 {{{{banner HOMEBREW}}}}
-
-{{{{pageNumber,auto}}}}
 """
 
 FRONT_COVER_SNIPPET = "{{frontCover}}"

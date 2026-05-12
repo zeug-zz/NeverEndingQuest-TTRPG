@@ -6552,3 +6552,31 @@ Close the combat PC phase enhancement audit findings: runtime gate enforcement, 
 - `scripts/c5_regression_combat.py`
 - `openspec/changes/combat-pc-phase-contract-closure/*`
 - `openspec/changes/archive/2026-05-08-combat-pc-phase-*/` (5 archived changes)
+
+### Homebrewery Location Enrichment (COMPLETED - 2026-05-12)
+
+**Status:** COMPLETED - Extended Homebrewery `MODULE_SUMMARY.md` generator with rich location rendering, LLM area overviews, cross-area connectivity, and treasure index aggregation.
+
+**Objective:**
+Replace the flat-field "Room descriptions not yet authored" stub in the Locations section with full authored content from nested `area.locations[]` structure. Add DM-facing area overview prose, cross-area connectivity, and a consolidated treasure index.
+
+**Implementation Summary:**
+- `utils/homebrewery_adventure_writer.py` — Rewrote `_build_locations_section()` to traverse `area.locations[]` per area, rendering 15 field categories (description, danger level, accessibility, adventure summary, features, DC checks, plot hooks, traps, doors, loot, encounters, NPCs, monsters, connectivity, DM guidance) with flat-schema fallback. Added `_llm_area_overview()` with 4 summarization-model calls (atmosphere, plot, NPCs/monsters, cross-area). Added `_build_treasure_index()` aggregating 35–55 deduplicated items per module. Built `_cross_area_edges` index during data load with area name resolution.
+- `utils/homebrewery_style.py` — Fixed `{{banner HOMEBREW}}` indentation and removed extra `{{pageNumber,auto}}` from cover page.
+- `scripts/test_homebrewery_adventure_writer.py` — 7 new tests: room names, DM guidance sections, NPCs, monsters, plot hooks, area overview prose, treasure index. Total: 48 tests.
+
+**New Capability Specs:**
+- `homebrewery-location-nested-traversal` — Traverse area.locations[] and build cross-area edge index
+- `homebrewery-location-deterministic-rendering` — Per-location markdown with all 15 authored field categories
+- `homebrewery-location-llm-area-overview` — LLM area overview prose with deterministic fallback
+- `homebrewery-cross-area-connectivity` — Cross-area edge index for LLM context and connectivity lines
+- `homebrewery-treasure-index-aggregation` — Aggregated, deduplicated treasure index from location lootTable
+
+**Verification:**
+- `.venv/bin/python -m py_compile` -> PASS
+- `.venv/bin/python -m unittest scripts.test_homebrewery_adventure_writer -v` -> PASS (48/48)
+- `openspec validate toolkit-homebrewery-location-enrichment` -> VALID
+- `openspec validate --specs` -> 280/280 PASS
+- Sections: Locations (903 lines), Monster Gallery, NPC Gallery, Appendix A: Treasures (35+ items)
+- Document: 1521 lines / 89KB
+- ASCII compliance: PASS

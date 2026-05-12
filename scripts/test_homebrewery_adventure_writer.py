@@ -58,9 +58,8 @@ class TestGenerateHomebreweryAdventure(unittest.TestCase):
     def test_contains_location_section(self):
         self.assertIn("# Locations", self.md)
 
-    def test_contains_monster_appendix(self):
-        self.assertIn("Appendix A", self.md)
-        self.assertIn("Creatures", self.md)
+    def test_contains_monster_gallery(self):
+        self.assertIn("# Monster Gallery", self.md)
 
     def test_contains_credits(self):
         self.assertIn("{{credits}}", self.md)
@@ -219,17 +218,84 @@ class TestGeneratedSections(unittest.TestCase):
         self.assertIn("# Locations", self.md)
 
     def test_items_appendix(self):
-        self.assertIn("Appendix B", self.md)
+        self.assertIn("# Appendix A: Treasures", self.md)
+
+    def test_treasure_index_present(self):
+        """Verify treasure index has at least 10 items for a module with 35+ loot entries."""
+        treasure_section = self.md.split("# Appendix A: Treasures")[1].split("\n# ")[0]
+        bullet_count = treasure_section.count("\n- **")
+        self.assertGreaterEqual(bullet_count, 10,
+                                "Expected >=10 treasure items, got {}".format(bullet_count))
 
     def test_location_section_exists(self):
         loc_section = self.md.split("# Locations")[1].split("\n# ")[0]
-        # Section exists; area data may be sparse but contains content
         self.assertIsInstance(loc_section, str)
         self.assertGreater(len(loc_section.strip()), 0)
+        self.assertIn("Warped Sentinel Vestibule", loc_section,
+                      "Location section should contain actual room names, not placeholder text")
+
+    def test_locations_contain_room_names(self):
+        """Verify all 12 room names appear in the output."""
+        rooms = [
+            "Warped Sentinel Vestibule",
+            "Fleshforged Observation Nook",
+            "Huskbound Termination Cell",
+            "Shattered Forge Approach",
+            "Abyssal Fracture",
+            "Forsaken Outrider Encampment",
+            "Fused Iron Antechamber",
+            "Throne of Twisted Lineage",
+            "Forgotten Splice Vault",
+            "Twisted Forge Atrium",
+            "Bygone Mutation Vault",
+            "Runebound Isolation Cell",
+        ]
+        for room in rooms:
+            self.assertIn(room, self.md, "Missing room: {}".format(room))
+
+    def test_locations_contain_dm_guidance(self):
+        """Verify DM Guidance appears at least once per room (12+)."""
+        count = self.md.count("**DM Guidance:**")
+        self.assertGreaterEqual(count, 12,
+                                "Expected >=12 DM Guidance sections, got {}".format(count))
+
+    def test_locations_contain_npcs(self):
+        """Verify location NPCS appear in output."""
+        self.assertIn("Rambling Dwarven Survivor", self.md)
+        self.assertIn("Damaged Security Overseer", self.md)
+        self.assertIn("Archivist Automaton", self.md)
+
+    def test_locations_contain_monsters(self):
+        """Verify monster names appear in location sections."""
+        self.assertIn("Aberrant Creeper", self.md)
+        self.assertIn("Fleshforged Aberrant", self.md)
+        self.assertIn("Huskbound Wretch", self.md)
+
+    def test_locations_contain_plot_hooks(self):
+        """Verify Plot Hooks headers appear."""
+        self.assertIn("**Plot Hooks:**", self.md)
+
+    def test_locations_have_area_overview(self):
+        """Verify area-level prose exists between area heading and first location."""
+        loc_section = self.md.split("# Locations")[1].split("\n# ")[0]
+        area_blocks = loc_section.split("## ")
+        # Each area block except the first (empty) should have content between
+        # the ## heading and the first ### location heading
+        for block in area_blocks[1:]:
+            # Content between area header and first location header
+            if "### " in block:
+                area_prose = block.split("### ")[0].strip()
+                self.assertGreater(len(area_prose), 50,
+                                   "Area overview prose too short for block starting: {}".format(
+                                       block[:60]
+                                   ))
+            else:
+                # Flat-schema area with no locations
+                self.assertGreater(len(block.strip()), 0)
 
     def test_monster_has_statblock(self):
-        app_start = self.md.find("Appendix A")
-        self.assertIn("Armor Class", self.md[app_start:])
+        mg_start = self.md.find("# Monster Gallery")
+        self.assertIn("Armor Class", self.md[mg_start:])
 
     def test_cover_has_right_snippets(self):
         cover_section = self.md[: self.md.find("\\page")]

@@ -64,6 +64,7 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
         "areas": [],
         "monsters": [],
         "maps": [],
+        "_cross_area_edges": [],
     }
 
     # Module context - prefer BU for structure, merge live for narrative
@@ -160,6 +161,37 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
                                         data["areas"][i]["dmInstructions"] = live_area["dmInstructions"]
                                 break
 
+        # Cross-area connectivity edges
+        for area in data["areas"]:
+            from_aid = area.get("areaId", "")
+            for loc in area.get("locations", []):
+                conn_names = loc.get("areaConnectivity", [])
+                conn_ids = loc.get("areaConnectivityId", [])
+                if not conn_names and not conn_ids:
+                    continue
+                from_lid = loc.get("locationId", "")
+                max_pairs = min(len(conn_names), len(conn_ids))
+                for i in range(max_pairs):
+                    to_name = conn_names[i]
+                    to_lid = conn_ids[i]
+                    to_aid = _resolve_area_name_to_id(data["areas"], to_name)
+                    if to_aid:
+                        data["_cross_area_edges"].append(
+                            (from_aid, from_lid, to_aid, to_lid)
+                        )
+                    else:
+                        print(
+                            "WARNING: Could not resolve cross-area name "
+                            "'{}' for {}/{}".format(to_name, from_aid, from_lid)
+                        )
+                if len(conn_names) != len(conn_ids):
+                    print(
+                        "WARNING: Mismatched areaConnectivity ({} items) "
+                        "and areaConnectivityId ({} items) in {}/{}".format(
+                            len(conn_names), len(conn_ids), from_aid, from_lid
+                        )
+                    )
+
     # Monsters
     monsters_dir = module_dir / "monsters"
     if monsters_dir.is_dir():
@@ -196,8 +228,8 @@ def generate_homebrewery_adventure(module_slug: str) -> str:
     parts.append(PAGE_BREAK)
     parts.append(_build_intro_section(data))
     parts.append(_build_plot_overview(data))
-    parts.append(_build_npc_gallery(data))
     parts.append(_build_locations_section(data))
+    parts.append(_build_npc_gallery(data))
     parts.append(_build_monster_appendix(data))
     parts.append(_build_items_appendix(data))
     parts.append(_build_credits(data))
@@ -502,8 +534,162 @@ def _build_npc_gallery(data: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
+def _append_edge_name(
+    parts: List[str],
+    target_aid: str,
+    target_lid: str,
+    areas: List[Dict[str, Any]],
+) -> None:
+    """Append a cross-area edge display name, resolving areaId to areaName."""
+    for area in areas:
+        if area.get("areaId") == target_aid:
+            parts.append("{} ({})".format(
+                area.get("areaName", target_aid), target_lid
+            ))
+            return
+    parts.append("{} ({})".format(target_aid, target_lid))
+
+
+def _llm_area_overview(area: Dict[str, Any], data: Dict[str, Any]) -> Optional[str]:
+    """Generate 2-3 paragraph DM overview prose for an area.
+
+    Builds a prompt with area metadata, per-location summaries (names,
+    truncated descriptions, NPC/monster names), relevant plot points
+    (matched by area ID), and cross-area edges. Calls DM_SUMMARIZATION_MODEL.
+    Returns None on failure for deterministic fallback to areaDescription.
+    """
+    area_name = area.get("areaName", "")
+    area_id = area.get("areaId", "")
+    area_desc = area.get("areaDescription", "")
+    area_type = area.get("areaType", "")
+    locations = area.get("locations", [])
+    if not locations:
+        return None
+
+    # Per-location summaries for LLM
+    loc_lines: List[str] = []
+    for loc in locations:
+        name = loc.get("name", "")
+        desc = loc.get("description", "")[:200]
+        npcs = [
+            n.get("name", "")
+            for n in loc.get("npcs", [])
+            if isinstance(n, dict) and n.get("name")
+        ]
+        monsters = [
+            m.get("name", "")
+            for m in loc.get("monsters", [])
+            if isinstance(m, dict) and m.get("name")
+        ]
+        conn = loc.get("connectivity", [])
+        area_conn = loc.get("areaConnectivity", [])
+
+        parts: List[str] = ["### {}".format(name)]
+        if desc:
+            parts.append(desc)
+        if npcs:
+            parts.append("NPCs: " + ", ".join(npcs))
+        if monsters:
+            parts.append("Monsters: " + ", ".join(monsters))
+        if conn:
+            parts.append("Connects to: " + ", ".join(conn))
+        if area_conn:
+            parts.append("Cross-area: " + ", ".join(area_conn))
+        loc_lines.append("\n".join(parts))
+
+    location_text = "\n\n".join(loc_lines)
+    if not location_text.strip():
+        return None
+
+    # Relevant plot points (match area ID in description)
+    plot_points = data.get("plot_points", [])
+    relevant_plots: List[str] = []
+    for pp in plot_points:
+        pp_desc = pp.get("description", "")
+        if area_id and area_id in pp_desc:
+            relevant_plots.append(
+                "{} - {}".format(pp.get("id", ""), pp.get("title", ""))
+            )
+    plot_context = ""
+    if relevant_plots:
+        plot_context = "Relevant plot points: " + ", ".join(relevant_plots[:4])
+
+    # Cross-area edges (incoming and outgoing)
+    cross_edges = data.get("_cross_area_edges", [])
+    from_edges: List[str] = []
+    to_edges: List[str] = []
+    for edge in cross_edges:
+        if len(edge) >= 4:
+            f_a, f_l, t_a, t_l = edge[0], edge[1], edge[2], edge[3]
+            if f_a == area_id:
+                _append_edge_name(from_edges, t_a, t_l, data.get("areas", []))
+            if t_a == area_id:
+                _append_edge_name(to_edges, f_a, f_l, data.get("areas", []))
+
+    cross_text = ""
+    if from_edges:
+        cross_text += "Leads to: " + ", ".join(from_edges) + ". "
+    if to_edges:
+        cross_text += "Reachable from: " + ", ".join(to_edges) + "."
+    cross_text = cross_text.strip()
+
+    prompt = (
+        "You are writing a D&D 5e adventure module location guide "
+        "for a Dungeon Master. "
+        "Write 2-3 paragraphs of colourful fantasy prose giving a DM "
+        "an overview of this area. "
+        "Cover: (1) the area's atmosphere and what makes it distinctive, "
+        "(2) how its rooms connect to the adventure's plot, "
+        "(3) the key NPCs and monsters that dwell here, "
+        "and (4) how this area connects to other areas of the adventure. "
+        "Write in third-person present tense. "
+        "Do NOT list individual room names.\n\n"
+        "AREA: {} ({})\n"
+        "Type: {}\n"
+        "Area Description: {}\n"
+        "{}\n"
+        "{}\n\n"
+        "LOCATIONS:\n{}"
+    ).format(
+        area_name,
+        area_id,
+        area_type.title() if area_type else "Unknown",
+        area_desc[:300] if area_desc else "(none)",
+        plot_context,
+        cross_text,
+        location_text,
+    )
+
+    try:
+        from utils.ai_client_factory import create_chat_client
+        from model_config import DM_SUMMARIZATION_MODEL
+
+        client = create_chat_client()
+        response = client.chat.completions.create(
+            model=DM_SUMMARIZATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6,
+            max_completion_tokens=500,
+        )
+        result = response.choices[0].message.content.strip()
+        if result:
+            return sanitize_markdown_text(result)
+    except Exception:
+        pass
+    return None
+
+
 def _build_locations_section(data: Dict[str, Any]) -> str:
-    """Build location entries."""
+    """Build location entries from area.locations[] structure.
+
+    Each area renders with:
+      - `## AreaName (AreaCode)` heading
+      - LLM overview prose (or areaDescription fallback)
+      - Metadata line (area type, recommended level)
+      - Per-location `### LocationId -- LocationName` with all authored fields
+
+    Falls back to flat-schema rendering when area.locations[] is absent.
+    """
     areas = data.get("areas", [])
     lines: List[str] = []
 
@@ -516,54 +702,300 @@ def _build_locations_section(data: Dict[str, Any]) -> str:
 
     for area in areas:
         area_id = area.get("areaId", "")
-        loc_name = area.get("areaName", area.get("locationName", area_id))
-        description = area.get("description", "")
-        dm_instructions = area.get("dmInstructions", "")
-        connected = area.get("connectedLocations", [])
-        monsters = area.get("monsters", [])
-        npcs = area.get("npcs", [])
+        area_name = area.get("areaName", area_id)
+        area_desc = area.get("areaDescription", "")
+        area_type = area.get("areaType", "")
+        rec_level = area.get("recommendedLevel", "")
+        locations = area.get("locations", [])
 
-        lines.append("### {} -- {}\n\n".format(
-            area_id, sanitize_markdown_text(loc_name)
+        # -- Area header --
+        lines.append("## {} -- {}\n\n".format(
+            area_id, sanitize_markdown_text(area_name)
         ))
 
-        if description:
-            lines.append(sanitize_markdown_text(description))
+        # -- Area overview (LLM or fallback) --
+        overview = _llm_area_overview(area, data)
+        if overview:
+            lines.append(overview)
             lines.append("\n\n")
+        elif area_desc:
+            lines.append(sanitize_markdown_text(area_desc))
+            lines.append("\n\n")
+
+        # -- Metadata line --
+        meta_parts: List[str] = []
+        if area_type:
+            meta_parts.append("**Area Type:** {}".format(area_type.title() if area_type else ""))
         else:
-            lines.append("*Room descriptions not yet authored.*\n\n")
+            meta_parts.append("**Area Type:** Unknown")
+        if rec_level:
+            meta_parts.append("**Recommended Level:** {}".format(rec_level))
+        lines.append(" | ".join(meta_parts) + "\n\n")
 
-        if dm_instructions:
-            lines.append("**DM Guidance:** {}\n\n".format(
-                sanitize_markdown_text(dm_instructions)
+        # -- Flat-schema fallback --
+        if not locations:
+            _render_flat_location(lines, area, area_id, area_name)
+            continue
+
+        # -- Per-location rendering --
+        for loc in locations:
+            loc_id = loc.get("locationId", "")
+            loc_name = loc.get("name", loc_id)
+            desc = loc.get("description", "")
+            danger = loc.get("dangerLevel", "")
+            accessibility = loc.get("accessibility", "")
+            adv_summary = loc.get("adventureSummary", "")
+            features = loc.get("features", [])
+            dc_checks = loc.get("dcChecks", [])
+            plot_hooks = loc.get("plotHooks", [])
+            traps = loc.get("traps", [])
+            doors = loc.get("doors", [])
+            loot = loc.get("lootTable", [])
+            encounters = loc.get("encounters", [])
+            npcs = loc.get("npcs", [])
+            monsters = loc.get("monsters", [])
+            connectivity = loc.get("connectivity", [])
+            area_conn_names = loc.get("areaConnectivity", [])
+            area_conn_ids = loc.get("areaConnectivityId", [])
+            dm = loc.get("dmInstructions", "")
+
+            lines.append("### {} -- {}\n\n".format(
+                loc_id, sanitize_markdown_text(loc_name)
             ))
 
-        if connected:
-            lines.append("*Connected to: {}*\n\n".format(
-                ", ".join(sanitize_markdown_text(c) for c in connected)
-            ))
+            # Description
+            if desc:
+                lines.append(sanitize_markdown_text(desc))
+                lines.append("\n\n")
 
-        if monsters:
-            monster_names = [
-                m.get("name", m) if isinstance(m, dict) else m
-                for m in monsters
-            ]
-            lines.append("*Monsters: {}*\n\n".format(
-                ", ".join(sanitize_markdown_text(str(m)) for m in monster_names)
-            ))
+            # Danger Level / Accessibility / Adventure Summary
+            if danger:
+                lines.append("*Danger Level: {}*\n\n".format(danger))
+            if accessibility:
+                lines.append("*Accessibility: {}*\n\n".format(
+                    sanitize_markdown_text(accessibility)
+                ))
+            if adv_summary:
+                lines.append(">{}\n\n".format(sanitize_markdown_text(adv_summary)))
 
-        if npcs:
-            npc_names = [
-                n.get("name", n) if isinstance(n, dict) else n
-                for n in npcs
-            ]
-            lines.append("*NPCs: {}*\n\n".format(
-                ", ".join(sanitize_markdown_text(str(n)) for n in npc_names)
-            ))
+            # Features
+            if features:
+                lines.append("**Features:**\n\n")
+                for f in features:
+                    if isinstance(f, dict):
+                        fname = f.get("name", "")
+                        fdesc = f.get("description", "")
+                        line = "- **{}**".format(sanitize_markdown_text(fname))
+                        if fdesc:
+                            line += ": {}".format(sanitize_markdown_text(fdesc))
+                        lines.append(line + "\n")
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(f))))
+                lines.append("\n")
 
-        lines.append("---\n\n")
+            # DC Checks
+            if dc_checks:
+                lines.append("**DC Checks:**\n\n")
+                for dc in dc_checks:
+                    lines.append("- {}\n".format(sanitize_markdown_text(str(dc))))
+                lines.append("\n")
+
+            # Plot Hooks
+            if plot_hooks:
+                lines.append("**Plot Hooks:**\n\n")
+                for ph in plot_hooks:
+                    lines.append("- {}\n".format(sanitize_markdown_text(str(ph))))
+                lines.append("\n")
+
+            # Traps
+            if traps:
+                lines.append("**Traps:**\n\n")
+                for t in traps:
+                    if isinstance(t, dict):
+                        parts: List[str] = []
+                        if t.get("detectDC"):
+                            parts.append("Detect DC {}".format(t["detectDC"]))
+                        if t.get("disableDC"):
+                            parts.append("Disable DC {}".format(t["disableDC"]))
+                        if t.get("triggerDC"):
+                            parts.append("Trigger DC {}".format(t["triggerDC"]))
+                        if t.get("damage"):
+                            parts.append("Damage: {}".format(t["damage"]))
+                        lines.append("- {}\n".format(
+                            sanitize_markdown_text(" | ".join(parts))
+                        ))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(t))))
+                lines.append("\n")
+
+            # Doors
+            if doors:
+                lines.append("**Doors:**\n\n")
+                for d in doors:
+                    if isinstance(d, dict):
+                        dname = d.get("name", "")
+                        ddesc = d.get("description", "")
+                        locked = d.get("locked", False)
+                        lock_dc = d.get("lockDC", "")
+                        is_trapped = d.get("trapped", False)
+                        keyname = d.get("keyname", "")
+                        door_parts: List[str] = []
+                        if dname:
+                            door_parts.append(sanitize_markdown_text(dname))
+                        if ddesc:
+                            door_parts.append(sanitize_markdown_text(ddesc))
+                        if locked:
+                            lock_str = "Locked (DC {})".format(lock_dc) if lock_dc else "Locked"
+                            door_parts.append(lock_str)
+                        if is_trapped:
+                            door_parts.append("Trapped")
+                        if keyname:
+                            door_parts.append("Key: {}".format(
+                                sanitize_markdown_text(keyname)
+                            ))
+                        lines.append("- {}\n".format(" -- ".join(door_parts)))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(d))))
+                lines.append("\n")
+
+            # Loot
+            if loot:
+                lines.append("**Loot:**\n\n")
+                for lt in loot:
+                    if isinstance(lt, dict):
+                        item_name = lt.get("item", lt.get("name", str(lt)))
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(item_name))))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(lt))))
+                lines.append("\n")
+
+            # Encounters
+            if encounters:
+                lines.append("**Encounters:**\n\n")
+                for enc in encounters:
+                    if isinstance(enc, dict):
+                        etype = enc.get("type", "")
+                        edesc = enc.get("description", "")
+                        enc_part = ""
+                        if etype:
+                            enc_part += "*{}*: ".format(etype)
+                        if edesc:
+                            enc_part += sanitize_markdown_text(edesc)
+                        lines.append("- {}\n".format(enc_part))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(enc))))
+                lines.append("\n")
+
+            # NPCs
+            if npcs:
+                lines.append("**NPCs:**\n\n")
+                for n in npcs:
+                    if isinstance(n, dict):
+                        nname = n.get("name", "")
+                        natt = n.get("attitude", "")
+                        npart = sanitize_markdown_text(nname)
+                        if natt:
+                            npart += " ({})".format(sanitize_markdown_text(natt))
+                        lines.append("- {}\n".format(npart))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(n))))
+                lines.append("\n")
+
+            # Monsters
+            if monsters:
+                lines.append("**Monsters:**\n\n")
+                for m in monsters:
+                    if isinstance(m, dict):
+                        mname = m.get("name", "")
+                        mdesc = m.get("description", "")
+                        mpart = sanitize_markdown_text(mname)
+                        if mdesc:
+                            mpart += " -- {}".format(sanitize_markdown_text(mdesc))
+                        lines.append("- {}\n".format(mpart))
+                    else:
+                        lines.append("- {}\n".format(sanitize_markdown_text(str(m))))
+                lines.append("\n")
+
+            # Connectivity
+            conn_parts: List[str] = []
+            if connectivity:
+                conn_list = [sanitize_markdown_text(str(c)) for c in connectivity]
+                conn_parts.append("Within area: {}".format(", ".join(conn_list)))
+            for i in range(min(len(area_conn_names), len(area_conn_ids))):
+                conn_parts.append("{} / {}".format(
+                    sanitize_markdown_text(area_conn_names[i]),
+                    sanitize_markdown_text(area_conn_ids[i]),
+                ))
+            if conn_parts:
+                lines.append("*Connected to: {}*\n\n".format("; ".join(conn_parts)))
+
+            # DM Guidance (full, always last)
+            if dm:
+                lines.append("**DM Guidance:**\n\n")
+                lines.append(sanitize_markdown_text(dm))
+                lines.append("\n\n")
+
+            lines.append("---\n\n")
+
+        lines.append("\n")
 
     return "".join(lines)
+
+
+def _render_flat_location(
+    lines: List[str],
+    area: Dict[str, Any],
+    area_id: str,
+    area_name: str,
+) -> None:
+    """Render a single location from flat (non-nested) area data."""
+    desc = area.get("description", "")
+    dm = area.get("dmInstructions", "")
+    npcs = area.get("npcs", [])
+    monsters = area.get("monsters", [])
+    connected = area.get("connectedLocations", [])
+
+    lines.append("### {} -- {}\n\n".format(
+        area_id, sanitize_markdown_text(area_name)
+    ))
+
+    if desc:
+        lines.append(sanitize_markdown_text(desc))
+        lines.append("\n\n")
+    else:
+        lines.append("*Room descriptions not yet authored.*\n\n")
+
+    if npcs:
+        npc_names = [
+            n.get("name", n) if isinstance(n, dict) else n
+            for n in npcs
+        ]
+        lines.append("**NPCs:**\n\n")
+        for nn in npc_names:
+            lines.append("- {}\n".format(sanitize_markdown_text(str(nn))))
+        lines.append("\n")
+
+    if monsters:
+        monster_names = [
+            m.get("name", m) if isinstance(m, dict) else m
+            for m in monsters
+        ]
+        lines.append("**Monsters:**\n\n")
+        for mn in monster_names:
+            lines.append("- {}\n".format(sanitize_markdown_text(str(mn))))
+        lines.append("\n")
+
+    if connected:
+        lines.append("*Connected to: {}*\n\n".format(
+            ", ".join(sanitize_markdown_text(str(c)) for c in connected)
+        ))
+
+    if dm:
+        lines.append("**DM Guidance:**\n\n")
+        lines.append(sanitize_markdown_text(dm))
+        lines.append("\n\n")
+
+    lines.append("---\n\n")
 
 
 def _build_monster_appendix(data: Dict[str, Any]) -> str:
@@ -572,7 +1004,7 @@ def _build_monster_appendix(data: Dict[str, Any]) -> str:
     lines: List[str] = []
 
     lines.append(PAGE_BREAK)
-    lines.append("# Appendix A: Creatures\n\n")
+    lines.append("# Monster Gallery\n\n")
 
     if not monsters:
         lines.append("*No monster data available for this module.*\n")
@@ -693,13 +1125,88 @@ def _build_monster_appendix(data: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
+def _build_treasure_index(data: Dict[str, Any]) -> str:
+    """Aggregate all lootTable entries into a deduplicated markdown bullet list.
+
+    Walks every area.locations[].lootTable, deduplicates by normalized name
+    (lowercase, whitespace-collapsed), and formats as a quick-reference index
+    with source location IDs.
+    """
+    areas = data.get("areas", [])
+    if not areas:
+        return ""
+
+    items: Dict[str, List[str]] = {}  # normalized name -> full text for dedup
+
+    for area in areas:
+        aid = area.get("areaId", "")
+        for loc in area.get("locations", []):
+            lid = loc.get("locationId", "")
+            for entry in loc.get("lootTable", []):
+                text = str(entry).strip()
+                if not text:
+                    continue
+                norm = " ".join(text.lower().split())
+                if norm not in items:
+                    items[norm] = []
+                items[norm].append("{}/{}".format(aid, lid))
+
+    if not items:
+        return ""
+
+    lines: List[str] = []
+    for norm in sorted(items.keys()):
+        source_text = None  # find the original text
+        for area in areas:
+            for loc in area.get("locations", []):
+                for entry in loc.get("lootTable", []):
+                    etext = str(entry).strip()
+                    if " ".join(etext.lower().split()) == norm:
+                        source_text = etext
+                        break
+                if source_text:
+                    break
+            if source_text:
+                break
+
+        if source_text is None:
+            source_text = norm
+
+        loc_str = ", ".join(items[norm])
+        match = re.match(r'^(.+?)\s*\((.+)\)\s*$', source_text)
+        if match:
+            name = match.group(1).strip()
+            details = match.group(2).strip()
+            line = "- **{}** -- {} ({})".format(
+                sanitize_markdown_text(name),
+                sanitize_markdown_text(details),
+                loc_str,
+            )
+        else:
+            line = "- **{}** ({})".format(
+                sanitize_markdown_text(source_text), loc_str
+            )
+        lines.append(line)
+
+    return "\n".join(lines) + "\n"
+
+
 def _build_items_appendix(data: Dict[str, Any]) -> str:
-    """Build items/treasures appendix stub."""
+    """Build items/treasures appendix with aggregated loot index."""
     lines: List[str] = []
     lines.append(PAGE_BREAK)
-    lines.append("# Appendix B: Treasures\n\n")
-    lines.append("*Item and treasure data is generated during gameplay.\n")
-    lines.append("Refer to the module tool kit for curated treasure tables.*\n\n")
+    lines.append("# Appendix A: Treasures\n\n")
+
+    treasure_content = _build_treasure_index(data)
+    if treasure_content:
+        lines.append(treasure_content)
+        lines.append("\n")
+    else:
+        lines.append(
+            "*No curated treasure data is available for this module. "
+            "Treasures are listed in their locations above.*\n\n"
+        )
+
     return "".join(lines)
 
 
@@ -772,6 +1279,21 @@ def _parse_author_field(author_str: str) -> Tuple[str, str]:
     display_name = name_parts[0].strip()
 
     return display_name, source_url
+
+
+def _resolve_area_name_to_id(areas: List[Dict[str, Any]], name: str) -> str:
+    """Resolve a human-readable area name to its areaId.
+
+    Matches by exact string comparison against each area's areaName field.
+    Returns empty string if no match is found.
+    """
+    name = name.strip()
+    if not name:
+        return ""
+    for area in areas:
+        if area.get("areaName") == name:
+            return area.get("areaId", "")
+    return ""
 
 
 def _npc_display_name(npc_key: str) -> str:
