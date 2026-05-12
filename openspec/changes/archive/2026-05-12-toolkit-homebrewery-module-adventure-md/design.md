@@ -28,11 +28,11 @@ This change reads from (1), formats using (2), and exposes through (3).
 
 **Rationale:** Homebrewery expects a single markdown document with `\page` breaks. Splitting into multiple files would require user assembly. A single file can be pasted directly into the Homebrewery editor or downloaded as one `.md` file.
 
-### Decision 2: Deterministic generation, no LLM
+### Decision 2: LLM-enhanced generation with deterministic fallback
 
-**Rationale:** The module data is already authored and enriched. Regenerating prose through an LLM would be slow, expensive, and non-deterministic. The writer assembles existing text into Homebrewery format - it does not create new prose.
+**Rationale:** The writer uses LLM calls for narrative prose in three sections (`_llm_intro_narrative()` for the introduction, `_llm_plot_hook()` for the plot overview lead-in, and `_llm_area_overview()` for per-area DM overviews). Each LLM call has a deterministic fallback: concatenated plot text for the intro, a one-liner for the plot hook, and `areaDescription` text for area overviews. This ensures the document generation never fails on provider unavailability.
 
-**Exception:** If a section has no data at all (e.g., empty area descriptions), the writer inserts a deterministic placeholder note like `*No authored room descriptions are available for this area.*` rather than attempting LLM generation.
+**Cost:** 6 summarization-model calls per document (~10,000 tokens total). Acceptable for an offline tool triggered on-demand.
 
 ### Decision 3: Read from `_BU` (backup/canonical) files, not live runtime files
 
@@ -45,17 +45,9 @@ This change reads from (1), formats using (2), and exposes through (3).
 - `monsters/*.json` (static, no runtime variant)
 - `map_*_BU.json` (or `map_*.json` if no BU exists)
 
-### Decision 4: Handle The Ancients Lab sparse areas gracefully
+### Decision 4: Button placement in Toolkit Existing Modules sidebar
 
-**Observation:** The Ancients Lab area `_BU` files have empty descriptions and dmInstructions. The writer handles this by:
-- Listing location names and connectivity from area files (this data exists)
-- Noting "room descriptions not yet authored" for empty description fields
-- Using plot point descriptions as the primary narrative source (these are rich)
-- Using NPC descriptions from module_context as character content (these are rich)
-
-### Decision 5: Button placement in Toolkit sidebar
-
-**Rationale:** The user chose sidebar placement. The button appears in the Module Builder page sidebar alongside existing action buttons (Validate, Build, Publish). It should be available only when a module is selected and has passed basic validation (to avoid serving broken documents).
+**Rationale:** The Download Adventure button appears in the Existing Modules panel sidebar. It is visible whenever a module is selected and has a valid `modules/<slug>/` directory. Users can browse their installed modules and download adventure markdown for any of them without needing to generate a new module.
 
 ## Architecture
 

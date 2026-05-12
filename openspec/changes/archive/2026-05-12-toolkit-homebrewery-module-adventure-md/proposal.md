@@ -23,8 +23,8 @@ A Homebrewery V3 adventure markdown generator would make module content accessib
 | Plot Overview | module_plot_BU | Plot chain summary, playline framing, ending matrix |
 | NPC Gallery | module_context.npcs | All NPCs with descriptions, roles, factions |
 | Locations | areas + maps | Location entries with map references |
-| Appendix A: Monsters | monsters/*.json | Stat blocks in Homebrewery format |
-| Appendix B: Items | areas (creatures loot) | Magic items and treasures |
+| Monster Gallery | monsters/*.json | Stat blocks in Homebrewery format |
+| Appendix A: Treasures | areas (locations lootTable) | Magic items and treasures |
 | Credits | module_context | Attribution, SRD notice |
 
 ## Capabilities
@@ -47,11 +47,11 @@ A Homebrewery V3 adventure markdown generator would make module content accessib
 ## Impact
 
 - **New files:** `utils/homebrewery_adventure_writer.py`, `scripts/test_homebrewery_adventure_writer.py`
-- **Modified files:** `modules/The_Ancients_Lab/MODULE_SUMMARY.md` (rewritten), `web/web_interface.py` (endpoint), `web/templates/module_toolkit.html` (button)
+- **Modified files:** `web/extensions/toolkit_module_finisher.py` (post-build hook), `web/web_interface.py` (endpoint), `web/templates/module_toolkit.html` (button)
 - **Dependencies:** Requires `toolkit-homebrewery-style-definitions` (imports `utils/homebrewery_style.py`).
 - **Backward compatibility:** Zero impact on runtime gameplay. Toolkit-only change.
 - **SP/MP compatibility:** Not applicable.
 
 ## Review Notes
 
-The Ancients Lab area data is sparse (scaffolding only, room descriptions empty). The generator must handle this gracefully - sections sourced from areas should note "No authored room descriptions available" rather than producing empty placeholder pages. The NPC data and plot data are rich enough to carry the document even with thin area data.
+The Ancients Lab area data is rich after the `toolkit-homebrewery-location-enrichment` change: 4 areas with 3 locations each (12 total), full dmInstructions, NPCs, monsters, plot hooks, features, DC checks, and cross-area connectivity. The writer renders all of this deterministically. Section builders with LLM assistance (`_llm_intro_narrative()`, `_llm_plot_hook()`, `_llm_area_overview()`) enhance the prose quality for the introduction, plot overview, and area overviews while keeping deterministic fallbacks for all LLM-reliant sections.

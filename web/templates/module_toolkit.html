@@ -6102,11 +6102,36 @@
                         <div class="module-detail-item"><span>Plot Points:</span><span>${module.plotPointCount || 'N/A'}</span></div>
                         ${module.brief_failure ? `<div class="module-sidebar-failure">${module.brief_failure}</div>` : ''}
                         ${module.media_generator_needed ? `<div class="module-sidebar-handoff">Needs Module Media Generator</div>` : ''}
+                        <button class="btn btn-small btn-secondary" style="margin-top: 8px; width: 100%;" onclick="downloadAdventure('${module.moduleName}')">Download Adventure</button>
                     </div>
                 `;
                 modulesListContainer.appendChild(moduleItem);
             });
         });
+
+        // Download Adventure Markdown button handler
+        async function downloadAdventure(moduleName) {
+            try {
+                const response = await fetch(`/api/toolkit/modules/${moduleName}/adventure.md`);
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({ error: 'Download failed' }));
+                    alert(`Failed to download adventure for ${moduleName}: ${err.error || response.statusText}`);
+                    return;
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${moduleName}_adventure.md`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error('Download adventure failed:', err);
+                alert(`Download failed: ${err.message}`);
+            }
+        }
 
         socket.on('build_started', (data) => {
             if (statusMessage) statusMessage.textContent = data.message;

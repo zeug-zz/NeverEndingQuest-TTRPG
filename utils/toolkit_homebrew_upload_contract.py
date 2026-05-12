@@ -71,6 +71,13 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "ui_review_snapshot": workspace / "ui_review_snapshot.json",
         "source_manifest": workspace / "source_manifest.json",
         "source_graph": workspace / "source_graph.json",
+        "section_extractions_index": workspace / "section_extractions/index.json",
+        "identity_resolution_report": workspace / "identity_resolution_report.json",
+        "plot_topology_report": workspace / "plot_topology_report.json",
+        "source_graph_synthesis_report": workspace / "source_graph_synthesis_report.json",
+        "normalization_fidelity_report": workspace / "normalization_fidelity_report.json",
+        "normalization_repair_report": workspace / "normalization_repair_report.json",
+        "packet_repair_attempts_index": workspace / "packet_repair_attempts/index.json",
     }
 
 
@@ -438,3 +445,127 @@ def load_json_artifact(file_path: Path) -> Dict[str, Any]:
         return json.loads(file_path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def persist_section_extraction_artifact(
+    workspace: Path,
+    section_id: str,
+    payload: Dict[str, Any],
+) -> bool:
+    """Persist a per-section extraction artifact using atomic JSON helper."""
+    from utils.file_operations import safe_write_json
+
+    section_dir = workspace / "section_extractions"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    target = section_dir / f"{section_id}.json"
+    return safe_write_json(str(target), payload)
+
+
+def persist_section_extractions_index(
+    workspace: Path,
+    index_payload: Dict[str, Any],
+) -> bool:
+    """Persist the section_extractions/index.json registry."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    index_path = files["section_extractions_index"]
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    return safe_write_json(str(index_path), index_payload)
+
+
+def persist_identity_resolution_artifact(
+    workspace: Path,
+    report: Dict[str, Any],
+) -> bool:
+    """Persist identity_resolution_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["identity_resolution_report"]), report)
+
+
+def persist_plot_topology_artifact(
+    workspace: Path,
+    report: Dict[str, Any],
+) -> bool:
+    """Persist plot_topology_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["plot_topology_report"]), report)
+
+
+def persist_source_graph_synthesis_artifact(
+    workspace: Path,
+    report: Dict[str, Any],
+) -> bool:
+    """Persist source_graph_synthesis_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["source_graph_synthesis_report"]), report)
+
+
+def load_section_extraction_artifact(
+    workspace: Path,
+    section_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Load a per-section extraction artifact if present. Returns None if missing."""
+    section_dir = workspace / "section_extractions"
+    target = section_dir / f"{section_id}.json"
+    if target.exists():
+        try:
+            return json.loads(target.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+
+def persist_normalization_fidelity_artifact(
+    workspace: Path,
+    report: Dict[str, Any],
+) -> bool:
+    """Persist normalization_fidelity_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["normalization_fidelity_report"]), report)
+
+
+def persist_normalization_repair_artifact(
+    workspace: Path,
+    report: Dict[str, Any],
+) -> bool:
+    """Persist normalization_repair_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["normalization_repair_report"]), report)
+
+
+def persist_packet_repair_attempt_artifact(
+    workspace: Path,
+    attempt: int,
+    payload: Dict[str, Any],
+) -> bool:
+    """Persist a packet_repair_attempts/attempt_<n>.json artifact."""
+    from utils.file_operations import safe_write_json
+
+    attempts_dir = workspace / "packet_repair_attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    target = attempts_dir / f"attempt_{attempt}.json"
+    return safe_write_json(str(target), payload)
+
+
+def persist_packet_repair_attempts_index(
+    workspace: Path,
+    index_payload: Dict[str, Any],
+) -> bool:
+    """Persist the packet_repair_attempts/index.json registry."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    index_path = files["packet_repair_attempts_index"]
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    return safe_write_json(str(index_path), index_payload)

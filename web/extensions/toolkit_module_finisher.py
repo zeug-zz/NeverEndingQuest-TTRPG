@@ -634,6 +634,38 @@ def run_toolkit_module_postbuild_finishing(
     ):
         overall_status = "degraded"
 
+    # Generate Homebrewery module adventure summary
+    try:
+        from utils.homebrewery_adventure_writer import generate_homebrewery_adventure
+        md = generate_homebrewery_adventure(module_slug)
+        if md and len(md) > 100:
+            md_path = module_dir / "MODULE_SUMMARY.md"
+            with open(str(md_path), "w", encoding="utf-8") as f:
+                f.write(md)
+            stages["module_summary"] = {
+                "status": "success",
+                "path": str(md_path),
+                "bytes": len(md),
+            }
+        else:
+            stages["module_summary"] = {
+                "status": "degraded",
+                "reason": "generated_content_too_short",
+                "bytes": len(md) if md else 0,
+            }
+            overall_status = "degraded"
+    except Exception as exc:
+        error(
+            f"TOOLKIT_FINISHER: Failed to generate module summary for {module_slug}: {exc}",
+            category="module_ingest",
+        )
+        stages["module_summary"] = {
+            "status": "degraded",
+            "reason": "generation_exception",
+            "exception": str(exc),
+        }
+        overall_status = "degraded"
+
     report_path = module_dir / "toolkit_build_report.json"
 
     def _build_report(

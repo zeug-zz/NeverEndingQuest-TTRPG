@@ -73,6 +73,15 @@ ENABLE_TTS_ESTIMATED_TIMING = False                    # Estimated timing sync f
 ENABLE_SESSION_DIARY_LLM = True                       # Use LLM prompt path for diary checkpoints; fallback remains deterministic
 ENABLE_PLAYERS_DIARY_APPEND_LLM = True                # Use LLM append/rebuild path for players diary markdown artifact
 
+# --- Accurate Ingest Settings ---
+# TABLETOP MODE: Enable multipass section extraction, identity adjudication,
+# plot topology synthesis, and source-graph packet synthesis before the legacy
+# one-shot normalizer. Set to False to use only legacy one-shot normalization.
+ENABLE_ACCURATE_INGEST_MULTI_PASS = True              # Multi-pass source-faithful normalization for readable Homebrew uploads
+ENABLE_NORMALIZATION_FIDELITY_AUDIT = True            # Compare normalized packet against source artifacts
+ENABLE_NORMALIZATION_FIDELITY_REPAIR = True           # Run bounded repair loop for repairable fidelity gaps
+NORMALIZATION_FIDELITY_MAX_REPAIR_ATTEMPTS = 3        # Max repair attempts before giving up
+
 # --- Conversation Compression Settings ---
 # Enable/disable compression types before API calls
 COMPRESSION_ENABLED = True                              # Master switch for all compression

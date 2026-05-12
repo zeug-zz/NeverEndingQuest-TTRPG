@@ -3027,6 +3027,49 @@ def get_module_unified_assets(module_name):
         error(f"TOOLKIT: Failed to get unified assets for module {module_name}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/toolkit/modules/<module_name>/adventure.md')
+def get_module_adventure_markdown(module_name):
+    """Return generated Homebrewery V3 adventure markdown for a module.
+
+    Generates the adventure document on-demand (it is also written to
+    MODULE_SUMMARY.md during post-build finishing). Returns as a downloadable
+    .md file with Content-Type text/markdown.
+    """
+    try:
+        from utils.homebrewery_adventure_writer import generate_homebrewery_adventure
+
+        md = generate_homebrewery_adventure(module_name)
+        if not md or len(md) < 100:
+            return jsonify({
+                'error': 'Generated adventure markdown is empty or too short',
+                'module': module_name,
+            }), 500
+
+        response = app.make_response(md)
+        response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
+        response.headers['Content-Disposition'] = (
+            f'attachment; filename="{module_name}_adventure.md"'
+        )
+        return response
+
+    except FileNotFoundError:
+        return jsonify({
+            'error': 'Module not found',
+            'module': module_name,
+        }), 404
+    except Exception as e:
+        error(
+            f"TOOLKIT: Failed to generate adventure markdown for {module_name}: {e}",
+            category="module_ingest",
+        )
+        return jsonify({
+            'error': 'Failed to generate adventure markdown',
+            'module': module_name,
+            'detail': str(e),
+        }), 500
+
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""

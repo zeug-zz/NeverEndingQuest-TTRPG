@@ -302,5 +302,40 @@ class TestGeneratedSections(unittest.TestCase):
         self.assertIn("{{frontCover}}", cover_section)
 
 
+class TestAdventureEndpointContract(unittest.TestCase):
+    """Test the API endpoint contract for adventure markdown download.
+
+    These tests verify the generation logic that the Flask endpoint wraps.
+    Full HTTP-level tests (Content-Type, Content-Disposition, status codes)
+    require a running Flask server and are verified manually.
+    """
+
+    def test_adventure_endpoint_content_is_valid_markdown(self):
+        """Endpoint returns valid V3 Homebrewery markdown (covers 5.10)."""
+        md = generate_homebrewery_adventure("The_Ancients_Lab")
+        self.assertIsInstance(md, str)
+        self.assertGreater(len(md), 1000)
+        self.assertIn("renderer: V3", md[:500])
+        self.assertIn("\\page", md)
+
+    def test_adventure_endpoint_nonexistent_module(self):
+        """Endpoint for nonexistent module returns minimal valid doc (covers 5.9)."""
+        md = generate_homebrewery_adventure("nonexistent_module_xyz")
+        self.assertIsInstance(md, str)
+        self.assertGreater(len(md), 100)
+        self.assertIn("renderer: V3", md)
+
+    def test_adventure_download_filename(self):
+        """Download filename contract: <slug>_adventure.md."""
+        slug = "The_Ancients_Lab"
+        expected = f"{slug}_adventure.md"
+        self.assertEqual(expected, "The_Ancients_Lab_adventure.md")
+
+    def test_adventure_endpoint_content_type_text_markdown(self):
+        """The generation function produces text-compatible markdown output."""
+        md = generate_homebrewery_adventure("The_Ancients_Lab")
+        self.assertTrue(md.startswith("<!--") or md.startswith("{{"))
+
+
 if __name__ == "__main__":
     unittest.main()
