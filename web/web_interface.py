@@ -3032,10 +3032,28 @@ def get_module_unified_assets(module_name):
 def get_module_adventure_markdown(module_name):
     """Return generated Homebrewery V3 adventure markdown for a module.
 
-    Generates the adventure document on-demand (it is also written to
-    MODULE_SUMMARY.md during post-build finishing). Returns as a downloadable
-    .md file with Content-Type text/markdown.
+    Serves the pre-generated MODULE_SUMMARY.md file when it exists (written
+    during post-build finishing). Falls back to one-time generation for
+    legacy modules that predate the builder hook. The generated result is
+    cached to disk for subsequent requests.
     """
+    from pathlib import Path
+
+    module_dir = Path("modules") / module_name
+    summary_path = module_dir / "MODULE_SUMMARY.md"
+
+    # Try serving pre-generated file first
+    if summary_path.exists():
+        md = summary_path.read_text(encoding="utf-8")
+        if len(md) > 500:
+            response = app.make_response(md)
+            response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
+            response.headers['Content-Disposition'] = (
+                f'attachment; filename="{module_name}_adventure.md"'
+            )
+            return response
+
+    # Fall back to one-time generation for legacy modules
     try:
         from utils.homebrewery_adventure_writer import generate_homebrewery_adventure
 
@@ -3045,6 +3063,13 @@ def get_module_adventure_markdown(module_name):
                 'error': 'Generated adventure markdown is empty or too short',
                 'module': module_name,
             }), 500
+
+        # Cache to disk for future requests
+        try:
+            module_dir.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(md, encoding="utf-8")
+        except OSError:
+            pass  # Non-blocking — file is optional cache
 
         response = app.make_response(md)
         response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
