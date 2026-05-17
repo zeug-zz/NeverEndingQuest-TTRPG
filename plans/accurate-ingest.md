@@ -1,7 +1,7 @@
 # Accurate Homebrew Ingest: Source-Faithful Multi-Pass Pipeline
 
-**Status:** Active roadmap - Phase 1 complete; Phase 2-3 prerequisite changes defined; Phase 4 blueprint handoff next
-**Updated:** 2026-05-15
+**Status:** Active roadmap - source graph through build-fidelity gates complete/archived; narrative enrichment placeholder complete/archived
+**Updated:** 2026-05-18
 **Target:** Fix the 95% fidelity loss between original adventure markdown/PDF sources and ingested NEQ modules, as observed with `The_Hidden_City_of_Numillian`.
 
 ---
@@ -98,11 +98,15 @@ The roadmap is split into independently reviewable OpenSpec changes:
 | Phase | OpenSpec Change | Status | Notes |
 |---|---|---|---|
 | Phase 1 | `toolkit-accurate-ingest-source-graph` | Complete/archived | Deterministic `source_manifest.json` and `source_graph.json` foundation. |
-| Phase 2 | `toolkit-accurate-ingest-multipass-normalization` | Prerequisite scope defined | Section extraction, identity adjudication, topology synthesis, and source-backed packet synthesis. |
-| Phase 3 | `toolkit-accurate-ingest-fidelity-verifier-repair-loop` | Prerequisite scope defined | Normalization fidelity audit, additive repair loop, and compact fidelity/repair rollups. |
-| Phase 4 | `toolkit-accurate-ingest-blueprint-builder-handoff` | Next | Builder blueprint generation and source-locked builder handoff. |
+| Phase 2 | `toolkit-accurate-ingest-multipass-normalization` | Complete/archived | Section extraction, identity adjudication, topology synthesis, and source-backed packet synthesis. |
+| Phase 3 | `toolkit-accurate-ingest-fidelity-verifier-repair-loop` | Complete/archived | Normalization fidelity audit, additive repair loop, and compact fidelity/repair rollups. |
+| Phase 4 | `toolkit-accurate-ingest-blueprint-builder-handoff` | Complete/archived | Builder blueprint generation and source-locked builder handoff. |
+| Phase 4 hardening | `toolkit-accurate-ingest-blueprint-handoff-hardening` | Complete/archived | Source-lock handoff hardening after initial blueprint integration. |
+| Phase 6 | `toolkit-accurate-ingest-review-ui-fidelity-panel` | Complete/archived | Pre-build fidelity review payload, approval gate, and toolkit UI surfacing. |
+| Phase 8 | `toolkit-accurate-ingest-build-fidelity-gates` | Complete/archived | Build-time fidelity report, final rollup, blocking behavior, and status surfacing. |
+| Phase 9 | `toolkit-accurate-ingest-narrative-enrichment-placeholder` | Complete/archived | Artifact-only enrichment profile and plan placeholder; no auto-apply. |
 
-Phase 4 should assume Phases 2-3 provide final source-backed packet and fidelity artifacts, and should not re-own packet synthesis, repair, review UI, build-time fidelity gates, or enrichment.
+Phase 9 should assume source extraction, normalization, repair, review approval, blueprint handoff, and build-time fidelity gates are already reliable. It should not re-own source extraction, packet repair, builder handoff, review UI blocker handling, or build-fidelity scoring.
 
 ### Canonical Artifact Chain
 
@@ -969,6 +973,85 @@ Suggested tests:
 
 - `scripts/test_narrative_enrichment_plan_contract.py`
 - `scripts/test_narrative_enrichment_source_lock.py`
+
+#### OpenSpec Plan-To-Builder Prompt Draft: Phase 9
+
+**Step Identifier:** Phase 9.0 - OpenSpec scaffold for `toolkit-accurate-ingest-narrative-enrichment-placeholder`
+**Verbosity Tier:** full
+
+```text
+Implement OpenSpec planning artifacts for the next accurate-ingest slice only.
+
+Goal:
+Create a reviewable OpenSpec change named `toolkit-accurate-ingest-narrative-enrichment-placeholder` that reserves a post-build narrative enrichment extension point without applying enrichment or weakening source fidelity.
+
+Allowed files:
+- `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/proposal.md`
+- `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/design.md`
+- `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/tasks.md`
+- `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/executor_prompts.md`
+- `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/specs/*/spec.md`
+
+Forbidden changes:
+- MUST NOT edit runtime Python, HTML, prompts, model config, schemas, module data, or tests in this planning step.
+- MUST NOT create `utils/toolkit_narrative_enrichment_plan.py` yet.
+- MUST NOT create `narrative_enrichment_plan.json` in any workspace or module.
+- MUST NOT call LLM providers or generate enrichment text.
+- MUST NOT alter `ModuleBuilder`, `ModuleGenerator`, build-fidelity gates, review UI approval logic, or packet normalization.
+- MUST NOT include auto-commit, auto-push, destructive git, or archive instructions.
+
+Contract layer (MUST):
+1. The proposal MUST state the problem: source-faithful accurate ingest now preserves source structure, but future enrichment needs an explicit boundary so Ancients Lab / Deepvault-style expansion cannot accidentally replace source truth.
+2. The proposal MUST define non-goals: no auto-apply, no field mutation, no provider calls, no source-fidelity scoring changes, no runtime builder changes in this slice.
+3. The design MUST define an artifact-only future contract for `narrative_enrichment_plan.json` with default profile `none`.
+4. The design MUST define source-lock rules: enrichment can only be planned after build/source fidelity is pass or degraded-without-blockers; enrichment MUST NOT reduce source fidelity, rename required source NPCs/locations, replace plot topology, alter puzzle rules, or remove source evidence.
+5. The design MUST define eligible future profile scaffolds:
+   - `none` - no enrichment; default.
+   - `three_stance_single_turn` - Deepvault-style single-turn interpretive stance enrichment.
+   - `five_playline_stateful` - Ancients Lab-style multi-playline stateful enrichment.
+   - `custom` - future user-authored enrichment profile, review-gated.
+6. The specs MUST include testable requirements and scenarios for:
+   - enrichment profile selection defaulting to `none`;
+   - artifact-only `narrative_enrichment_plan.json` generation after source fidelity pass/degraded without blockers;
+   - source-lock preservation and blocker behavior when enrichment would rewrite required source truth;
+   - no auto-apply behavior in the first implementation;
+   - final source-fidelity report compatibility.
+7. The tasks MUST be small, ordered, and verifiable, with implementation deferred to a later apply step.
+8. The executor prompts MUST be builder-ready and must split implementation into safe future sections: helper artifact model, report integration, UI/status surfacing, tests, verification.
+
+Guidance layer (SHOULD):
+- SHOULD keep this change mostly planning-oriented and defer runtime edits until the reviewed OpenSpec is accepted.
+- SHOULD use spec names such as:
+  - `toolkit-narrative-enrichment-profile-selection`
+  - `toolkit-narrative-enrichment-plan-artifact`
+  - `toolkit-narrative-enrichment-source-lock`
+  - `toolkit-narrative-enrichment-no-auto-apply`
+  - `toolkit-narrative-enrichment-report-surfacing`
+- SHOULD reference existing lessons from `modules/The_Ancients_Lab` and `modules/Into_the_Deepvault` as motivation, not as data to mutate in this slice.
+- SHOULD explicitly preserve legacy/non-accurate-ingest behavior.
+- SHOULD keep terminology ASCII-only and use MUST/SHALL for normative requirements.
+
+Acceptance criteria:
+- `openspec validate toolkit-accurate-ingest-narrative-enrichment-placeholder` passes.
+- `git status --short` shows only the new OpenSpec change directory for this planning step unless the reviewer explicitly approved plan file updates.
+- No runtime/code/test files are modified.
+- All tasks in the new change are unchecked until implementation begins.
+
+Report back with:
+- Files created.
+- Spec names created.
+- Validation command and result.
+- Any open design questions for reviewer approval.
+```
+
+**Verification Gate (after builder reports):**
+
+- `openspec validate toolkit-accurate-ingest-narrative-enrichment-placeholder`
+- `git status --short`
+- Confirm no runtime files changed outside `openspec/changes/toolkit-accurate-ingest-narrative-enrichment-placeholder/`
+- Confirm the OpenSpec tasks are unchecked and implementation has not started.
+
+**Next Step Ready:** Phase 9.1 implementation complete. Archived 2026-05-17.
 
 ---
 

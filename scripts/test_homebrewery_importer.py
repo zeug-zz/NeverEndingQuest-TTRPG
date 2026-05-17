@@ -542,5 +542,109 @@ class TestMapCoordinateSchemaContract(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
 
+class TestContentBlockParser(unittest.TestCase):
+    """Phase 10: Generalized content-block parser."""
+
+    def test_parse_room_colon_heading(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "## Room 1: The Entrance\n\nYou enter a dark room.\n\n### Puzzle\nSolve the riddle."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["_source_block_kind"], "room")
+        self.assertEqual(blocks[0]["_source_number"], 1)
+        self.assertEqual(blocks[0]["_source_title"], "The Entrance")
+
+    def test_parse_map_key_dot_heading(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "# Map Key\n\n### 1. Brooksteps Inn\nA cozy inn with a warm fireplace."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["_source_block_kind"], "map_key_location")
+        self.assertEqual(blocks[0]["_source_number"], 1)
+        self.assertEqual(blocks[0]["_source_title"], "Brooksteps Inn")
+
+    def test_parse_map_key_dash_heading(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "# Locations\n\n### 1 - Brooksteps Inn\nA cozy inn with a warm fireplace."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["_source_block_kind"], "map_key_location")
+        self.assertEqual(blocks[0]["_source_title"], "Brooksteps Inn")
+
+    def test_parse_sub_location_dot_heading(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "# Map Key\n\n### 2. Brooksteps Inn\nMain floor.\n\n#### 1. Cellar\nDamp and dark."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["_source_block_kind"], "map_key_location")
+        self.assertEqual(blocks[1]["_source_block_kind"], "sub_location")
+        self.assertEqual(blocks[1]["_source_title"], "Cellar")
+        self.assertEqual(blocks[1]["_source_parent_title"], "Brooksteps Inn")
+
+    def test_source_order_preserved(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "### 1. First\nDesc.\n\n### 4. Fourth\nDesc.\n\n### 2. Second\nDesc."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 3)
+        self.assertEqual(blocks[0]["_source_title"], "First")
+        self.assertEqual(blocks[1]["_source_title"], "Fourth")
+        self.assertEqual(blocks[2]["_source_title"], "Second")
+
+    def test_numbered_list_not_promoted(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "# Map Key\n\n### 1. Tavern\n\nItems:\n1. A rusty sword\n2. A leather pouch"
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["_source_title"], "Tavern")
+
+    def test_parse_content_blocks_empty(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        self.assertEqual(_parse_content_blocks("Just prose."), [])
+        self.assertEqual(_parse_content_blocks(""), [])
+
+    def test_room_block_backward_compatible(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks, _parse_room_blocks
+        text = "## Room 1: The Entrance\n\nDesc.\n\n### Puzzle\nSolve it."
+        blocks = _parse_content_blocks(text)
+        rooms = _parse_room_blocks(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(len(rooms), 1)
+        self.assertEqual(blocks[0]["source_room_number"], rooms[0]["source_room_number"])
+        self.assertEqual(blocks[0]["source_room_title"], rooms[0]["source_room_title"])
+
+    def test_mixed_room_and_map_key_source_order(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks
+        text = "## Room 1: Entrance\nDesc.\n\n# Locations\n\n### 2. Library\nBooks.\n\n### 3 - Armory\nWeapons."
+        blocks = _parse_content_blocks(text)
+        self.assertEqual(len(blocks), 3)
+        self.assertEqual(blocks[0]["_source_block_kind"], "room")
+        self.assertEqual(blocks[0]["_source_title"], "Entrance")
+        self.assertEqual(blocks[1]["_source_block_kind"], "map_key_location")
+        self.assertEqual(blocks[2]["_source_block_style"], "map_key_dash")
+
+
+class TestContentBlockConversion(unittest.TestCase):
+    """Phase 10: Content block to room record conversion."""
+
+    def test_conversion_preserves_room_keys(self):
+        from core.importers.homebrewery_importer import _parse_content_blocks, _content_block_to_room_record
+        text = "# Map Key\n\n### 1. Brooksteps Inn\nA warm inn."
+        blocks = _parse_content_blocks(text)
+        record = _content_block_to_room_record(blocks[0], 1)
+        self.assertEqual(record["source_room_number"], 1)
+        self.assertEqual(record["source_room_title"], "Brooksteps Inn")
+        self.assertEqual(record["name"], "Brooksteps Inn")
+        self.assertIn("warm inn", record["description"])
+        self.assertIn("raw_content", record)
+
+    def test_ordinal_fallback_when_source_number_missing(self):
+        from core.importers.homebrewery_importer import _content_block_to_room_record
+        block = {"_source_number": None, "_source_title": "Test", "name": "Test",
+                 "description": "", "puzzle": "", "solution": "", "creatures": "",
+                 "exit_comment": "", "other_sections": {}, "tables": [], "raw_content": ""}
+        record = _content_block_to_room_record(block, 5)
+        self.assertEqual(record["source_room_number"], 5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

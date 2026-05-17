@@ -82,6 +82,7 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "builder_blueprint_report": workspace / "builder_blueprint_report.json",
         "build_fidelity_report": workspace / "build_fidelity_report.json",
         "source_fidelity_report": workspace / "source_fidelity_report.json",
+        "narrative_enrichment_plan": workspace / "narrative_enrichment_plan.json",
     }
 
 
@@ -638,6 +639,27 @@ def load_source_fidelity_report_artifact(workspace: Path) -> Optional[Dict[str, 
     """Load source_fidelity_report.json if present."""
     files = get_workspace_files(workspace)
     path = files.get("source_fidelity_report")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def persist_narrative_enrichment_plan_artifact(
+    workspace: Path, plan: Dict[str, Any]
+) -> bool:
+    """Persist narrative enrichment plan artifact."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["narrative_enrichment_plan"]), plan)
+
+
+def load_narrative_enrichment_plan_artifact(
+    workspace: Path,
+) -> Optional[Dict[str, Any]]:
+    """Load narrative enrichment plan artifact if present."""
+    files = get_workspace_files(workspace)
+    path = files.get("narrative_enrichment_plan")
     if path and path.exists():
         return load_json_artifact(path)
     return None

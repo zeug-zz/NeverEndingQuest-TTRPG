@@ -19,12 +19,13 @@ from utils.enhanced_logger import error, info, warning
 from utils.toolkit_homebrew_upload_contract import (
     REVIEW_DECISION_APPROVE,
     get_workspace_files,
-    load_json_artifact,
     load_builder_blueprint_artifact,
     load_builder_blueprint_report_artifact,
+    load_json_artifact,
     persist_build_result_artifact,
     persist_builder_input_artifact,
     persist_build_fidelity_report_artifact,
+    persist_narrative_enrichment_plan_artifact,
     persist_source_fidelity_report_artifact,
     validate_review_packet,
 )
@@ -513,6 +514,29 @@ def run_toolkit_homebrew_packet_build(
                 f"TOOLKIT_HOMEBREW: Build fidelity audit failed for job={job_id}: {build_fidelity_error}",
                 category="web_interface",
             )
+
+    # TABLETOP MODE: Generate narrative enrichment plan artifact (default profile "none")
+    try:
+        from utils.toolkit_narrative_enrichment_plan import build_enrichment_plan
+
+        enrichment_plan = build_enrichment_plan(
+            build_result=build_result,
+            profile="none",
+            report_path=files.get("build_fidelity_report"),
+            rollup_path=files.get("source_fidelity_report"),
+        )
+        persist_narrative_enrichment_plan_artifact(workspace, enrichment_plan)
+        build_result["narrative_enrichment_plan"] = {
+            "status": enrichment_plan.get("status"),
+            "profile": enrichment_plan.get("profile"),
+            "blocker_count": len(enrichment_plan.get("blockers") or []),
+            "warning_count": len(enrichment_plan.get("warnings") or []),
+        }
+    except Exception as enrichment_error:
+        warning(
+            f"TOOLKIT_HOMEBREW: Narrative enrichment plan generation failed with default profile: {enrichment_error}",
+            category="web_interface",
+        )
 
     build_result["build_result_persisted"] = persist_build_result_artifact(workspace, build_result)
     if not build_result["build_result_persisted"]:

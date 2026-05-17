@@ -494,5 +494,36 @@ class TestBuildExecutionBlueprintHandoff(unittest.TestCase):
                 _cleanup_module_dir(captured)
 
 
+    def test_build_success_includes_enrichment_plan(self):
+        """Successful build includes narrative enrichment plan metadata."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _setup_workspace(tmp)
+            _write_packet(ws)
+            _write_review_snapshot(ws)
+            captured: Dict[str, Any] = {}
+            mock_executor = _make_mock_executor(ws, captured)
+            try:
+                result = run_toolkit_homebrew_packet_build(
+                    ws, "test_job", builder_executor=mock_executor,
+                )
+                self.assertEqual(result["status"], "success")
+                nep = result.get("narrative_enrichment_plan") or {}
+                self.assertEqual(nep.get("profile"), "none")
+                self.assertEqual(nep.get("status"), "skipped")
+                self.assertIn("blocker_count", nep)
+                self.assertIn("warning_count", nep)
+                # Verify plan artifact was persisted
+                files = get_workspace_files(ws)
+                nep_path = files.get("narrative_enrichment_plan")
+                self.assertTrue(nep_path.exists(), "narrative_enrichment_plan.json should exist")
+                import json
+                persisted = json.loads(nep_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted.get("profile"), "none")
+                self.assertEqual(persisted.get("can_apply"), False)
+                self.assertEqual(persisted.get("auto_apply"), False)
+            finally:
+                _cleanup_module_dir(captured)
+
+
 if __name__ == "__main__":
     unittest.main()

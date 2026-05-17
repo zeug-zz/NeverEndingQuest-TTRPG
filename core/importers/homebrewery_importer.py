@@ -156,6 +156,240 @@ def _build_import_narrative(title: str, source_path: str, semantic_text: str) ->
     )
 
 
+# ---- Phase 10: Generalized content-block parser ----
+
+_BLOCK_KIND_ROOM = "room"
+_BLOCK_KIND_MAP_KEY = "map_key_location"
+_BLOCK_KIND_SUB_LOCATION = "sub_location"
+
+_HEADING_STYLE_ROOM_COLON = "room_colon"
+_HEADING_STYLE_MAP_KEY_DOT = "map_key_dot"
+_HEADING_STYLE_MAP_KEY_DASH = "map_key_dash"
+_HEADING_STYLE_SUB_DOT = "sub_location_dot"
+
+# Heading patterns in priority order: most specific first.
+_CONTENT_HEADING_PATTERNS = [
+    # ## Room N: Title
+    (_HEADING_STYLE_ROOM_COLON, re.compile(r"^##\s+Room\s+(\d+):\s*(.+)$", re.MULTILINE | re.IGNORECASE)),
+    # ### N. Location Name
+    (_HEADING_STYLE_MAP_KEY_DOT, re.compile(r"^###\s+(\d+)\.\s+(.+)$", re.MULTILINE)),
+    # ### N - Location Name
+    (_HEADING_STYLE_MAP_KEY_DASH, re.compile(r"^###\s+(\d+)\s*-\s+(.+)$", re.MULTILINE)),
+    # #### N. Sub-location
+    (_HEADING_STYLE_SUB_DOT, re.compile(r"^####\s+(\d+)\.\s+(.+)$", re.MULTILINE)),
+]
+
+# Parent heading terms that signal a map-key/location section.
+# Used to accept isolated ### N. Title headings (under these parents)
+# without requiring a dense run.
+_MAP_KEY_PARENT_TERMS = frozenset({
+    "map", "map key", "map keys", "locations", "location", "areas", "area",
+    "district", "districts", "city", "town", "village", "dungeon",
+    "region", "regions", "settlement", "settlements", "sites",
+    "points of interest", "point of interest", "key", "legend",
+})
+
+# Pattern to match non-content # or ## headings for section context.
+_SECTION_HEADING_PATTERN = re.compile(r"^(#{1,2})\s+(.+)$", re.MULTILINE)
+# Pattern to check for any ### N. map-key candidate (for ambiguity detection).
+_MAP_KEY_CANDIDATE_PATTERN = re.compile(r"^###\s+\d+\s*[-.]\s+.+$", re.MULTILINE)
+
+
+def _text_contains_keyword(text: str, term: str) -> bool:
+    """Check if text contains term as a whole word, case-insensitive."""
+    return bool(re.search(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE))
+
+
+def _find_map_key_section_ranges(semantic_text: str) -> List[Tuple[int, int]]:
+    """Find (start, end) offsets of sections under map-key parent headings.
+
+    Returns ranges where ### N. map-key headings are accepted without
+    requiring a dense run, because the parent section signals locations.
+    """
+    all_heads = list(_SECTION_HEADING_PATTERN.finditer(semantic_text))
+    ranges: List[Tuple[int, int]] = []
+    for i, h in enumerate(all_heads):
+        heading_text = h.group(2).strip().lower()
+        # Skip content-block headings (## Room N:)
+        if re.match(r"room\s+\d+:", heading_text, re.IGNORECASE):
+            continue
+        if any(
+            _text_contains_keyword(heading_text, term)
+            for term in _MAP_KEY_PARENT_TERMS
+        ):
+            start = h.end()
+            end = all_heads[i + 1].start() if i + 1 < len(all_heads) else len(semantic_text)
+            ranges.append((start, end))
+    return ranges
+
+
+def _is_in_map_key_section(match_start: int, section_ranges: List[Tuple[int, int]]) -> bool:
+    """Check if a position falls within any map-key parent section range."""
+    for start, end in section_ranges:
+        if start <= match_start < end:
+            return True
+    return False
+
+
+def _compute_dense_map_key_indices(sorted_matches: List[Dict[str, Any]]) -> set:
+    """Return set of match-list indices that are in a dense run of 3+
+    consecutive map-key headings."""
+    runs: set = set()
+    i = 0
+    while i < len(sorted_matches):
+        if sorted_matches[i]["kind"] == _BLOCK_KIND_MAP_KEY:
+            run_start = i
+            while i < len(sorted_matches) and sorted_matches[i]["kind"] == _BLOCK_KIND_MAP_KEY:
+                i += 1
+            if i - run_start >= 3:
+                runs.update(range(run_start, i))
+        else:
+            i += 1
+    return runs
+
+
+def _detect_content_headings(semantic_text: str) -> List[Dict[str, Any]]:
+    """Detect all supported content-block headings in source order.
+
+    Applies conservative map-key heading classification:
+      - ## Room N: Title is always accepted (room style).
+      - #### N. Sub-location is always accepted when preceded by a non-sub parent.
+      - ### N. Title / ### N - Title map-key headings are accepted ONLY when:
+        - They fall under a map-key parent section (e.g. # Map Key), OR
+        - They are part of a dense run of 3+ consecutive map-key headings.
+
+    Returns a list of heading match dicts with:
+      kind, style, number, title, heading_text, start/end, and parent metadata.
+    """
+    raw_matches: List[Dict[str, Any]] = []
+
+    for style_key, pattern in _CONTENT_HEADING_PATTERNS:
+        for m in pattern.finditer(semantic_text):
+            number = int(m.group(1))
+            title = m.group(2).strip()
+            raw_matches.append(
+                {
+                    "kind": _BLOCK_KIND_MAP_KEY
+                    if style_key in (_HEADING_STYLE_MAP_KEY_DOT, _HEADING_STYLE_MAP_KEY_DASH)
+                    else _BLOCK_KIND_SUB_LOCATION
+                    if style_key == _HEADING_STYLE_SUB_DOT
+                    else _BLOCK_KIND_ROOM,
+                    "style": style_key,
+                    "number": number,
+                    "title": title,
+                    "heading_text": m.group(0).strip(),
+                    "match_start": m.start(),
+                    "match_end": m.end(),
+                }
+            )
+
+    sorted_matches = sorted(raw_matches, key=lambda x: x["match_start"])
+
+    # Pre-scan for map-key parent section markers
+    map_key_ranges = _find_map_key_section_ranges(semantic_text)
+    # Compute dense run indices
+    dense_run_indices = _compute_dense_map_key_indices(sorted_matches)
+
+    cleaned: List[Dict[str, Any]] = []
+    for idx, candidate in enumerate(sorted_matches):
+        kind = candidate["kind"]
+
+        # Conservative map-key heading acceptance
+        if kind == _BLOCK_KIND_MAP_KEY:
+            in_section = _is_in_map_key_section(candidate["match_start"], map_key_ranges)
+            in_run = idx in dense_run_indices
+            if not in_section and not in_run:
+                continue  # Reject: isolated/weak map-key heading
+
+        # Sub-location parent metadata attachment
+        if kind == _BLOCK_KIND_SUB_LOCATION:
+            parent_found = False
+            for prev in reversed(cleaned):
+                if prev["match_start"] < candidate["match_start"]:
+                    if prev["kind"] != _BLOCK_KIND_SUB_LOCATION:
+                        candidate["parent_number"] = prev.get("number")
+                        candidate["parent_title"] = prev.get("title")
+                        parent_found = True
+                    break
+            if not parent_found:
+                continue
+
+        cleaned.append(candidate)
+
+    return cleaned
+
+
+def _parse_content_blocks(semantic_text: str) -> List[Dict[str, Any]]:
+    """Parse supported heading styles into content-block records.
+
+    Returns blocks in source order with full content, subsections, and tables.
+    Each block includes additive metadata keys and the existing room-record shape.
+    """
+    headings = _detect_content_headings(semantic_text)
+    if not headings:
+        return []
+
+    blocks: List[Dict[str, Any]] = []
+    for i, h in enumerate(headings):
+        start = h["match_end"]
+        end = headings[i + 1]["match_start"] if i + 1 < len(headings) else len(semantic_text)
+        raw_content = semantic_text[start:end].strip()
+
+        subsections = _extract_subsections(raw_content)
+        tables = _extract_markdown_tables(raw_content)
+
+        block = {
+            # Existing room-record keys (compatible with emitters)
+            "source_room_number": h["number"],
+            "source_room_title": h["title"],
+            "name": f"{h['title']}",
+            "description": subsections.get("description", ""),
+            "puzzle": subsections.get("puzzle", ""),
+            "solution": subsections.get("solution", ""),
+            "creatures": subsections.get("creatures", ""),
+            "exit_comment": subsections.get("exit_comment", ""),
+            "other_sections": subsections.get("other", {}),
+            "tables": tables,
+            "raw_content": raw_content,
+            # Additive metadata keys
+            "_source_block_kind": h["kind"],
+            "_source_block_style": h["style"],
+            "_source_heading_level": len(h["heading_text"]) - len(h["heading_text"].lstrip("#")),
+            "_source_heading_text": h["heading_text"],
+            "_source_number": h["number"],
+            "_source_title": h["title"],
+            "_source_parent_title": h.get("parent_title"),
+            "_source_parent_number": h.get("parent_number"),
+        }
+        blocks.append(block)
+
+    return blocks
+
+
+def _content_block_to_room_record(block: Dict[str, Any], ordinal: int) -> Dict[str, Any]:
+    """Convert a content block to the exact room-record shape expected by emitters.
+
+    The ordinal parameter provides the 1-based sequential position for display.
+    """
+    src_num = block.get("_source_number")
+    return {
+        "source_room_number": src_num if src_num is not None else ordinal,
+        "source_room_title": block.get("_source_title", ""),
+        "name": block.get("name", ""),
+        "description": block.get("description", ""),
+        "puzzle": block.get("puzzle", ""),
+        "solution": block.get("solution", ""),
+        "creatures": block.get("creatures", ""),
+        "exit_comment": block.get("exit_comment", ""),
+        "other_sections": block.get("other_sections", {}),
+        "tables": block.get("tables", []),
+        "raw_content": block.get("raw_content", ""),
+    }
+
+
+# ---- End Phase 10 ----
+
+
 def _parse_room_blocks(semantic_text: str) -> List[Dict[str, Any]]:
     """
     Extract room blocks from semantic text using ## Room N: pattern.
@@ -1134,24 +1368,64 @@ def import_homebrewery_adventure_to_module(
         )
 
         if use_deterministic:
-            # Deterministic path: parse rooms and emit NEQ artifacts with sequential IDs
-            rooms = _parse_room_blocks(semantic_text)
-            if not rooms:
+            # Deterministic path: parse content blocks and emit NEQ artifacts
+            content_blocks = _parse_content_blocks(semantic_text)
+            if not content_blocks:
+                # Check for ambiguous structure: map-key candidates exist
+                # but were rejected by conservative classification.
+                has_map_key_candidates = bool(
+                    _MAP_KEY_CANDIDATE_PATTERN.search(semantic_text)
+                )
+                if has_map_key_candidates:
+                    return {
+                        "status": "error",
+                        "module_slug": effective_slug,
+                        "artifacts": [],
+                        "validation": {
+                            "passed": False,
+                            "errors": [
+                                "Ambiguous heading structure: "
+                                "map-key locations require a map/location section "
+                                "parent or a dense run of 3+ consecutive headings"
+                            ],
+                        },
+                        "quarantine_reason": "deterministic_ambiguous_structure",
+                    }
                 return {
                     "status": "error",
                     "module_slug": effective_slug,
                     "artifacts": [],
                     "validation": {
                         "passed": False,
-                        "errors": ["No rooms found in source"],
+                        "errors": ["No structured content blocks found in source"],
                     },
-                    "quarantine_reason": "no_rooms_found",
+                    "quarantine_reason": "deterministic_insufficient_structure",
                 }
+
+            # Convert content blocks to emitter-compatible room records
+            rooms = [
+                _content_block_to_room_record(b, i + 1)
+                for i, b in enumerate(content_blocks)
+            ]
 
             intermediate = _build_intermediate_adventure(
                 source_title, str(source_file), rooms
             )
             intermediate["module_seed"]["module_name"] = effective_slug
+            # Preserve source block metadata for source graph/fidelity stages
+            intermediate["_source_block_metadata"] = [
+                {
+                    "kind": b.get("_source_block_kind"),
+                    "style": b.get("_source_block_style"),
+                    "number": b.get("_source_number"),
+                    "title": b.get("_source_title"),
+                    "heading_level": b.get("_source_heading_level"),
+                    "heading_text": b.get("_source_heading_text"),
+                    "parent_title": b.get("_source_parent_title"),
+                    "parent_number": b.get("_source_parent_number"),
+                }
+                for b in content_blocks
+            ]
 
             module_path = Path(output_root) / effective_slug
 
@@ -1165,7 +1439,7 @@ def import_homebrewery_adventure_to_module(
                     str(module_path / f"map_{area_id}.json"),
                 ]
                 info(
-                    f"MODULE_INGEST: Dry-run preview slug={effective_slug} rooms={len(rooms)} area={area_id}",
+                    f"MODULE_INGEST: Dry-run preview slug={effective_slug} blocks={len(content_blocks)} area={area_id}",
                     category="module_ingest",
                 )
                 return {
@@ -1175,6 +1449,7 @@ def import_homebrewery_adventure_to_module(
                     "validation": {"passed": True, "errors": [], "dry_run": True},
                     "quarantine_reason": None,
                     "preview": {
+                        "block_count": len(content_blocks),
                         "room_count": len(rooms),
                         "area_id": area_id,
                         "location_ids": location_ids[:5]
