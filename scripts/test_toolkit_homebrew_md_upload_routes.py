@@ -420,6 +420,168 @@ class TestToolkitHomebrewUploadRoutes(unittest.TestCase):
         self.assertFalse(review.get("can_approve"))
         self.assertFalse(review.get("can_reject"))
 
+    def test_review_get_returns_fidelity_panel_for_accurate_ingest(self) -> None:
+        workspace = Path(self.temp_dir.name) / "accurate-review"
+        workspace.mkdir(parents=True, exist_ok=True)
+        self._write_reviewable_packet(str(workspace))
+        (workspace / "ui_review_snapshot.json").write_text(
+            json.dumps({"status": "ready", "stage": "review"}, indent=2),
+            encoding="utf-8",
+        )
+
+        job_id = "accurate-review-job"
+        with toolkit_homebrew_routes._jobs_lock:
+            toolkit_homebrew_routes._jobs[job_id] = {
+                "job_id": job_id,
+                "status": "awaiting_review",
+                "stage": "review",
+                "pipeline_status": "pending",
+                "artifact_workspace": str(workspace),
+                "review_decision": None,
+                "review_snapshot_path": str(workspace / "ui_review_snapshot.json"),
+            }
+
+        fidelity_review = {
+            "mode": "accurate_ingest",
+            "status": "blocked",
+            "review_status": "blocked",
+            "can_approve": False,
+            "can_reject": True,
+            "can_start_build": False,
+            "refusal_reason": "Workspace fidelity blockers remain",
+            "signature": "fidelity-sig-1",
+            "blocker_signature": "blocker-sig-1",
+            "coverage": {
+                "workspace": {"done": 4, "total": 5},
+                "builder": {"done": 2, "total": 4},
+            },
+            "blockers": [
+                {
+                    "category": "fidelity",
+                    "message": "Blueprint mismatch",
+                    "path": "workspace/blueprint.json",
+                }
+            ],
+            "warnings": ["Review needs another pass"],
+            "repair_attempts": [{"type": "normalize", "status": "complete"}],
+            "artifacts": [{"type": "snapshot", "path": "workspace/ui_review_snapshot.json"}],
+        }
+
+        with mock.patch.object(toolkit_homebrew_routes, "_should_use_fidelity_review", return_value=True), \
+             mock.patch.object(toolkit_homebrew_routes, "_build_fidelity_review_or_error", return_value=fidelity_review):
+            response = self.client.get(f"/api/toolkit/homebrew/jobs/{job_id}/review")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        review = payload.get("review") or {}
+        self.assertEqual(review.get("job_status"), "awaiting_review")
+        self.assertFalse(review.get("can_approve"))
+        self.assertFalse(review.get("can_start_build"))
+        self.assertEqual((review.get("fidelity_review") or {}).get("signature"), "fidelity-sig-1")
+        self.assertEqual((review.get("fidelity_review") or {}).get("blocker_signature"), "blocker-sig-1")
+
+    def test_review_post_rejects_approvals_when_fidelity_blocked(self) -> None:
+        job_id = "accurate-reject-job"
+        workspace = Path(self.temp_dir.name) / "reject-workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        self._write_reviewable_packet(str(workspace))
+        (workspace / "ui_review_snapshot.json").write_text(
+            json.dumps({"status": "ready", "stage": "review"}, indent=2),
+            encoding="utf-8",
+        )
+        with toolkit_homebrew_routes._jobs_lock:
+            toolkit_homebrew_routes._jobs[job_id] = {
+                "job_id": job_id,
+                "status": "awaiting_review",
+                "stage": "review",
+                "pipeline_status": "pending",
+                "artifact_workspace": str(workspace),
+                "review_decision": None,
+                "review_snapshot_path": str(workspace / "ui_review_snapshot.json"),
+            }
+
+        blocked_review = {
+            "mode": "accurate_ingest",
+            "status": "blocked",
+            "review_status": "blocked",
+            "can_approve": False,
+            "can_reject": True,
+            "can_start_build": False,
+            "refusal_reason": "Missing fidelity artifacts",
+            "signature": "fidelity-sig-2",
+            "blocker_signature": "blocker-sig-2",
+            "blockers": [{"message": "Missing fidelity artifacts"}],
+        }
+
+        with mock.patch.object(toolkit_homebrew_routes, "_should_use_fidelity_review", return_value=True), \
+             mock.patch.object(toolkit_homebrew_routes, "_build_fidelity_review_or_error", return_value=blocked_review):
+            response = self.client.post(
+                f"/api/toolkit/homebrew/jobs/{job_id}/review",
+                json={
+                    "decision": "approve",
+                    "fidelity_signature": "fidelity-sig-2",
+                    "fidelity_blocker_signature": "blocker-sig-2",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.get_json() or {}
+        self.assertEqual(payload.get("reason"), "fidelity_review_not_approvable")
+        self.assertEqual((payload.get("fidelity_review") or {}).get("signature"), "fidelity-sig-2")
+
+    def test_build_start_rechecks_fidelity_review_before_build(self) -> None:
+        job_id = "build-recheck-job"
+        with toolkit_homebrew_routes._jobs_lock:
+            toolkit_homebrew_routes._jobs[job_id] = {
+                "job_id": job_id,
+                "status": "approved_for_build",
+                "stage": "review",
+                "pipeline_status": "success",
+                "artifact_workspace": str(Path(self.temp_dir.name) / "build-recheck-workspace"),
+                "review_decision": "approve",
+                "review_snapshot": {
+                    "fidelity_review": {
+                        "mode": "accurate_ingest",
+                        "signature": "fidelity-sig-3",
+                        "blocker_signature": "blocker-sig-3",
+                    }
+                },
+            }
+
+        blocked_review = {
+            "mode": "accurate_ingest",
+            "status": "blocked",
+            "review_status": "blocked",
+            "can_approve": False,
+            "can_reject": True,
+            "can_start_build": False,
+            "refusal_reason": "Workspace changed before build",
+            "signature": "fidelity-sig-3",
+            "blocker_signature": "blocker-sig-3",
+            "blockers": [{"message": "Workspace changed before build"}],
+        }
+
+        build_called = {"value": False}
+
+        def _build_should_not_run(*args, **kwargs):
+            build_called["value"] = True
+            raise AssertionError("build should not start when fidelity review blocks")
+
+        with mock.patch.object(toolkit_homebrew_routes, "_should_use_fidelity_review", return_value=True), \
+             mock.patch.object(toolkit_homebrew_routes, "_build_fidelity_review_or_error", return_value=blocked_review), \
+             mock.patch.object(toolkit_homebrew_routes, "_resolve_homebrew_build_target") as mock_resolve_target, \
+             mock.patch.object(toolkit_homebrew_routes, "_run_homebrew_packet_build", side_effect=_build_should_not_run):
+            mock_resolve_target.side_effect = AssertionError("resolve target should not run when fidelity review blocks")
+            response = self.client.post(
+                f"/api/toolkit/homebrew/jobs/{job_id}/build",
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.get_json() or {}
+        self.assertEqual(payload.get("reason"), "fidelity_review_not_approvable")
+        self.assertFalse(build_called["value"])
+
     def test_review_post_rejects_when_job_not_awaiting_review(self) -> None:
         def _normalization_runner(
             _source_path,

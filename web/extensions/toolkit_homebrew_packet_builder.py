@@ -15,7 +15,7 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from utils.enhanced_logger import error, info
+from utils.enhanced_logger import error, info, warning
 from utils.toolkit_homebrew_upload_contract import (
     REVIEW_DECISION_APPROVE,
     get_workspace_files,
@@ -24,6 +24,8 @@ from utils.toolkit_homebrew_upload_contract import (
     load_builder_blueprint_report_artifact,
     persist_build_result_artifact,
     persist_builder_input_artifact,
+    persist_build_fidelity_report_artifact,
+    persist_source_fidelity_report_artifact,
     validate_review_packet,
 )
 
@@ -417,9 +419,105 @@ def run_toolkit_homebrew_packet_build(
             "error": str(build_error),
         }
 
+    # TABLETOP MODE: Run build fidelity gates before finishing/publication
+    _fidelity_required = False
+    _fidelity_inputs_present = bool(
+        (files.get("source_graph") and files["source_graph"].exists())
+        or (files.get("builder_blueprint") and files["builder_blueprint"].exists())
+    )
+    try:
+        from utils.toolkit_build_fidelity import (
+            is_build_fidelity_required,
+            build_build_fidelity_report,
+            can_continue_after_build_fidelity,
+            build_source_fidelity_rollup,
+        )
+
+        _fidelity_required = is_build_fidelity_required(workspace)
+        if _fidelity_required:
+            module_dir = Path(params["output_directory"]).resolve()
+            fidelity_report = build_build_fidelity_report(workspace, module_dir)
+            persist_build_fidelity_report_artifact(workspace, fidelity_report)
+            rollup = build_source_fidelity_rollup(workspace, fidelity_report)
+            persist_source_fidelity_report_artifact(workspace, rollup)
+
+            can_continue, refusal = can_continue_after_build_fidelity(fidelity_report)
+            build_result["build_fidelity"] = {
+                "status": fidelity_report.get("status"),
+                "blocker_count": len(fidelity_report.get("blockers") or []),
+                "warning_count": len(fidelity_report.get("warnings") or []),
+                "can_continue": can_continue,
+                "refusal_reason": refusal,
+                "report_path": str(files["build_fidelity_report"]),
+                "rollup_path": str(files["source_fidelity_report"]),
+                "coverage": fidelity_report.get("coverage"),
+            }
+            if not can_continue:
+                build_result["status"] = "blocked"
+                build_result["stage"] = "build_fidelity"
+                build_result["error"] = f"build_fidelity_blocked:{refusal}"
+                info(
+                    (
+                        f"TOOLKIT_HOMEBREW: Build fidelity blocked job={job_id} "
+                        f"module={params['module_name']} reason={refusal}"
+                    ),
+                    category="web_interface",
+                )
+    except Exception as build_fidelity_error:
+        if _fidelity_required or _fidelity_inputs_present:
+            module_dir = Path(params["output_directory"]).resolve()
+            error(
+                f"TOOLKIT_HOMEBREW: Build fidelity audit failed for job={job_id}: {build_fidelity_error}",
+                exception=build_fidelity_error,
+                category="web_interface",
+            )
+            _fallback_report = {
+                "version": 1,
+                "status": "failed",
+                "module_path": str(module_dir),
+                "source_artifacts": {
+                    "source_graph": str(files.get("source_graph", "")),
+                    "builder_blueprint": str(files.get("builder_blueprint", "")),
+                    "builder_blueprint_report": str(files.get("builder_blueprint_report", "")),
+                    "normalized_packet": str(files.get("normalized_packet", "")),
+                    "module_dir": str(module_dir),
+                },
+                "blockers": [
+                    {
+                        "category": "build_fidelity",
+                        "message": f"Build fidelity audit failed: {build_fidelity_error}",
+                    }
+                ],
+                "warnings": [],
+                "can_continue": False,
+                "refusal_reason": f"build_fidelity_audit_error:{build_fidelity_error}",
+                "coverage": {},
+                "stage_results": {},
+            }
+            persist_build_fidelity_report_artifact(workspace, _fallback_report)
+            build_result["build_fidelity"] = {
+                "status": "failed",
+                "blocker_count": len(_fallback_report.get("blockers") or []),
+                "warning_count": 0,
+                "can_continue": False,
+                "refusal_reason": str(build_fidelity_error),
+                "report_path": str(files["build_fidelity_report"]),
+                "rollup_path": str(files["source_fidelity_report"]),
+                "coverage": _fallback_report.get("coverage"),
+            }
+            build_result["status"] = "blocked"
+            build_result["stage"] = "build_fidelity"
+            build_result["error"] = f"build_fidelity_audit_error:{build_fidelity_error}"
+        else:
+            warning(
+                f"TOOLKIT_HOMEBREW: Build fidelity audit failed for job={job_id}: {build_fidelity_error}",
+                category="web_interface",
+            )
+
     build_result["build_result_persisted"] = persist_build_result_artifact(workspace, build_result)
     if not build_result["build_result_persisted"]:
         build_result["status"] = "failed"
         build_result["error"] = "build_result_persist_failed"
+        return build_result
 
     return build_result

@@ -96,6 +96,75 @@ def _write_blueprint_narrative(ws: Path) -> None:
     )
 
 
+def _cleanup_module_dir(captured: Dict[str, Any]) -> None:
+    """Remove module dir created by mock executors inside the repo."""
+    output_dir = str(captured.get("input", {}).get("derived_builder_parameters", {}).get("output_directory", ""))
+    if output_dir:
+        md = Path(output_dir).resolve()
+        if md.exists():
+            import shutil
+            shutil.rmtree(str(md))
+
+
+def _write_source_graph_with_atoms(ws: Path) -> None:
+    """Write source_graph.json with required atoms for build fidelity tests."""
+    from utils.file_operations import safe_write_json
+    files = get_workspace_files(ws)
+    safe_write_json(str(files["source_graph"]), {
+        "source_graph_version": "test.v1",
+        "atoms": [
+            {
+                "type": "npc",
+                "name": "Required NPC One",
+                "source_atom_id": "npc_001",
+                "criticality": "required",
+            },
+            {
+                "type": "location",
+                "name": "required_location",
+                "source_atom_id": "loc_001",
+                "criticality": "required",
+            },
+            {
+                "type": "plot_beat",
+                "name": "Required Plot Beat",
+                "source_atom_id": "beat_001",
+                "criticality": "required",
+            },
+        ],
+    })
+
+
+def _make_executor_with_minimal_module(ws: Path, captured: Dict[str, Any]) -> Any:
+    """Create a mock executor that also creates a minimal module dir at the expected path.
+
+    The module dir content is deliberately incomplete (missing required NPCs/locations
+    declared in _write_source_graph_with_atoms), so the build fidelity gate will block.
+    """
+    def _executor(builder_input, **kwargs):
+        captured["input"] = builder_input
+        from utils.file_operations import safe_write_json
+        files = get_workspace_files(ws)
+        safe_write_json(str(files["build_result"]), {
+            "status": "success",
+            "build_mode": "packet_workspace_v1",
+        })
+        output_dir_str = str(builder_input.get("derived_builder_parameters", {}).get("output_directory", ""))
+        if output_dir_str:
+            module_dir = Path(output_dir_str).resolve()
+            module_dir.mkdir(parents=True, exist_ok=True)
+            areas_dir = module_dir / "areas"
+            areas_dir.mkdir(exist_ok=True)
+            safe_write_json(str(areas_dir / "TA001.json"), {
+                "areaId": "TA001",
+                "areaName": "Test Area",
+                "locations": [
+                    {"locationId": "TL01", "name": "Unrelated Room"},
+                ],
+            })
+    return _executor
+
+
 def _write_accurate_ingest_evidence(ws: Path) -> None:
     """Write source_graph.json as accurate-ingest evidence for blueprint-required tests."""
     from utils.file_operations import safe_write_json
@@ -107,7 +176,11 @@ def _write_accurate_ingest_evidence(ws: Path) -> None:
 
 
 def _make_mock_executor(ws: Path, captured: Dict[str, Any]) -> Any:
-    """Create a mock executor that captures builder_input and writes a success build_result."""
+    """Create a mock executor that captures builder_input and writes a success build_result.
+    
+    Also creates a minimal module dir so the build fidelity gate (if active) does not
+    block on a missing directory when blueprint rosters are empty.
+    """
     def mock_executor(builder_input, **kwargs):
         captured["input"] = builder_input
         from utils.file_operations import safe_write_json
@@ -116,6 +189,11 @@ def _make_mock_executor(ws: Path, captured: Dict[str, Any]) -> Any:
             "status": "success",
             "build_mode": "packet_workspace_v1",
         })
+        output_dir_str = str(builder_input.get("derived_builder_parameters", {}).get("output_directory", ""))
+        if output_dir_str:
+            module_dir = Path(output_dir_str).resolve()
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "areas").mkdir(exist_ok=True)
     return mock_executor
 
 
@@ -313,13 +391,15 @@ class TestBuildExecutionBlueprintHandoff(unittest.TestCase):
 
             captured = {}
             mock_executor = _make_mock_executor(ws, captured)
-
-            result = run_toolkit_homebrew_packet_build(
-                ws, "test_job", builder_executor=mock_executor,
-            )
-            self.assertEqual(result["status"], "success")
-            self.assertIn("handoff_mode", captured.get("input", {}))
-            self.assertEqual(captured["input"]["handoff_mode"], "source_blueprint")
+            try:
+                result = run_toolkit_homebrew_packet_build(
+                    ws, "test_job", builder_executor=mock_executor,
+                )
+                self.assertEqual(result["status"], "success")
+                self.assertIn("handoff_mode", captured.get("input", {}))
+                self.assertEqual(captured["input"]["handoff_mode"], "source_blueprint")
+            finally:
+                _cleanup_module_dir(captured)
 
     def test_builder_input_includes_source_lock_in_blueprint_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -331,12 +411,14 @@ class TestBuildExecutionBlueprintHandoff(unittest.TestCase):
 
             captured = {}
             mock_executor = _make_mock_executor(ws, captured)
-
-            run_toolkit_homebrew_packet_build(ws, "test_job", builder_executor=mock_executor)
-            bp_meta = captured["input"].get("blueprint", {})
-            source_lock = bp_meta.get("source_lock", {})
-            self.assertTrue(source_lock.get("canonical_names_locked"))
-            self.assertTrue(source_lock.get("invented_major_entities_forbidden"))
+            try:
+                run_toolkit_homebrew_packet_build(ws, "test_job", builder_executor=mock_executor)
+                bp_meta = captured["input"].get("blueprint", {})
+                source_lock = bp_meta.get("source_lock", {})
+                self.assertTrue(source_lock.get("canonical_names_locked"))
+                self.assertTrue(source_lock.get("invented_major_entities_forbidden"))
+            finally:
+                _cleanup_module_dir(captured)
 
     def test_legacy_workspace_without_blueprint_succeeds(self):
         """Legacy workspace without blueprint or accurate-ingest evidence succeeds via legacy path."""
@@ -349,11 +431,13 @@ class TestBuildExecutionBlueprintHandoff(unittest.TestCase):
 
             captured = {}
             mock_executor = _make_mock_executor(ws, captured)
-
-            result = run_toolkit_homebrew_packet_build(
-                ws, "test_job", builder_executor=mock_executor,
-            )
-            self.assertEqual(result["status"], "success")
+            try:
+                result = run_toolkit_homebrew_packet_build(
+                    ws, "test_job", builder_executor=mock_executor,
+                )
+                self.assertEqual(result["status"], "success")
+            finally:
+                _cleanup_module_dir(captured)
 
     def test_blueprint_ready_does_not_set_false_handoff_in_legacy_mode(self):
         """Legacy workspace should not get source-blueprint handoff metadata."""
@@ -366,11 +450,48 @@ class TestBuildExecutionBlueprintHandoff(unittest.TestCase):
 
             captured = {}
             mock_executor = _make_mock_executor(ws, captured)
+            try:
+                run_toolkit_homebrew_packet_build(ws, "test_job", builder_executor=mock_executor)
+                builder_input = captured.get("input", {})
+                bp_meta = builder_input.get("blueprint", {})
+                self.assertFalse(bp_meta, "Legacy workspace must not contain blueprint metadata")
+            finally:
+                _cleanup_module_dir(captured)
 
-            run_toolkit_homebrew_packet_build(ws, "test_job", builder_executor=mock_executor)
-            builder_input = captured.get("input", {})
-            bp_meta = builder_input.get("blueprint", {})
-            self.assertFalse(bp_meta, "Legacy workspace must not contain blueprint metadata")
+
+    def test_build_fidelity_blocked_persists_result(self):
+        """Blocked build fidelity produces persisted build_result.json."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _setup_workspace(tmp)
+            _write_packet(ws)
+            _write_review_snapshot(ws)
+            # Need a ready blueprint so blueprint handoff does not block before fidelity.
+            _write_blueprint(ws, status="ready")
+            _write_blueprint_narrative(ws)
+            _write_source_graph_with_atoms(ws)
+
+            captured: Dict[str, Any] = {}
+            executor = _make_executor_with_minimal_module(ws, captured)
+            try:
+                result = run_toolkit_homebrew_packet_build(
+                    ws, "test_job", builder_executor=executor,
+                )
+
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(result["stage"], "build_fidelity")
+                self.assertIn("build_fidelity", result)
+                self.assertFalse(result["build_fidelity"]["can_continue"])
+                self.assertIn("refusal_reason", result["build_fidelity"])
+
+                # Persisted build_result.json
+                files = get_workspace_files(ws)
+                persisted = json.loads(files["build_result"].read_text(encoding="utf-8"))
+                self.assertEqual(persisted["status"], "blocked")
+                self.assertEqual(persisted["stage"], "build_fidelity")
+                self.assertIn("build_fidelity", persisted)
+                self.assertFalse(persisted["build_fidelity"]["can_continue"])
+            finally:
+                _cleanup_module_dir(captured)
 
 
 if __name__ == "__main__":

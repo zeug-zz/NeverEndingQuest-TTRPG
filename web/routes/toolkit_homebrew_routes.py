@@ -42,6 +42,13 @@ from utils.toolkit_homebrew_upload_contract import (
     validate_review_packet,
     validate_normalization_artifacts,
 )
+from model_config import ENABLE_ACCURATE_INGEST_FIDELITY_REVIEW_PANEL
+
+from web.extensions.toolkit_homebrew_fidelity_review import (
+    build_fidelity_review_payload,
+    can_approve_fidelity_review,
+    is_accurate_ingest_workspace,
+)
 
 from web.extensions.toolkit_homebrew_rebuild_guard import (
     detect_module_collision,
@@ -583,6 +590,77 @@ def _prepare_homebrew_rebuild_target(
     )
 
 
+def _should_use_fidelity_review(workspace: Path) -> bool:
+    """Return True when this workspace should pause for accurate-ingest review."""
+    return bool(
+        ENABLE_ACCURATE_INGEST_FIDELITY_REVIEW_PANEL
+        and is_accurate_ingest_workspace(Path(workspace))
+    )
+
+
+def _build_fidelity_review_or_error(workspace: Path) -> Dict[str, Any]:
+    """Build fidelity review payload or a fail-closed reviewable error payload."""
+    try:
+        return build_fidelity_review_payload(Path(workspace))
+    except Exception as exc:
+        warning(
+            f"TOOLKIT_HOMEBREW: Fidelity review payload failed for {workspace}: {exc}",
+            category="web_interface",
+        )
+        return {
+            "mode": "accurate_ingest",
+            "status": "failed",
+            "refusal_reason": "fidelity_review_payload_failed",
+            "can_approve": False,
+            "can_reject": True,
+            "blockers": [
+                {
+                    "severity": "blocking",
+                    "category": "review_payload",
+                    "message": "Fidelity review payload could not be assembled.",
+                    "artifact_path": str(Path(workspace)),
+                }
+            ],
+            "warnings": [],
+            "coverage": {
+                "required": {"covered_required": 0, "total_required": 0},
+                "source_atoms": {},
+                "blueprint": {},
+            },
+            "repair": {
+                "attempt_count": 0,
+                "latest_status": "failed",
+                "latest_attempt_path": "",
+                "report_path": "",
+                "index_path": "",
+                "attempts": [],
+            },
+            "blueprint": {
+                "status": "missing",
+                "fidelity_status": "unknown",
+                "refusal_reason": "fidelity_review_payload_failed",
+                "ready": False,
+                "artifact_path": "",
+                "blueprint_path": "",
+                "source_coverage": {
+                    "location_candidates": 0,
+                    "npc_candidates": 0,
+                    "canonical_identities": 0,
+                    "plot_beats": 0,
+                    "puzzle_chains": 0,
+                },
+                "blueprint_coverage": {
+                    "locations_in_blueprint": 0,
+                    "npcs_in_blueprint": 0,
+                },
+                "warnings": [],
+            },
+            "artifacts": {},
+            "signature": "",
+            "blocker_signature": "",
+        }
+
+
 def _run_homebrew_ingest_job(
     job_id: str,
     source_path: Path,
@@ -668,6 +746,29 @@ def _run_homebrew_ingest_job(
             routing_outcome = str(
                 result.get("routing_outcome") or "normalization_required"
             )
+            fidelity_review = None
+
+            if _should_use_fidelity_review(artifact_workspace):
+                fidelity_review = _build_fidelity_review_or_error(artifact_workspace)
+                review_result = {
+                    **auto_build_result,
+                    "fidelity_review": fidelity_review,
+                }
+                _set_job_state(
+                    job_id,
+                    "awaiting_review",
+                    stage="review",
+                    pipeline_status="awaiting_review",
+                    routing_outcome=routing_outcome,
+                    review_decision=None,
+                    quarantine_reason=None,
+                    result=review_result,
+                )
+                info(
+                    f"TOOLKIT_HOMEBREW: Accurate-ingest job {job_id} paused for fidelity review",
+                    category="web_interface",
+                )
+                return
 
             # TABLETOP MODE: Preserve review snapshot artifact compatibility even though
             # upload now auto-approves and auto-starts packet build.
@@ -1122,6 +1223,18 @@ def _run_homebrew_build_job(
         build_status = str(build_result.get("status") or "failed").lower()
         if rebuild_prep_result:
             build_result["rebuild"] = rebuild_prep_result
+
+        if build_status == "blocked":
+            _set_job_state(
+                job_id,
+                "blocked",
+                stage="build_fidelity",
+                pipeline_status="blocked",
+                result=build_result,
+                error=str(build_result.get("error") or "build_fidelity_blocked"),
+                build_result_path=str(workspace_files["build_result"]),
+            )
+            return
 
         if build_status == "success":
             _set_job_state(
@@ -1654,10 +1767,26 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
 
         workspace_files = get_workspace_files(workspace)
         review_snapshot = load_json_artifact(workspace_files["ui_review_snapshot"])
+        fidelity_review = None
+        if _should_use_fidelity_review(workspace):
+            fidelity_review = _build_fidelity_review_or_error(workspace)
 
         artifact_manifest = _build_artifact_manifest(
             workspace, str(job_copy.get("status") or "")
         )
+
+        review_can_approve = job_copy.get("status") == "awaiting_review"
+        review_can_reject = job_copy.get("status") == "awaiting_review"
+        review_can_start_build = job_copy.get("status") in {
+            "approved_for_build",
+            "awaiting_overwrite_confirmation",
+        }
+        if fidelity_review and str(fidelity_review.get("mode") or "").lower() == "accurate_ingest":
+            review_can_approve = bool(review_can_approve and fidelity_review.get("can_approve"))
+            review_can_reject = bool(review_can_reject and fidelity_review.get("can_reject", True))
+            review_can_start_build = bool(
+                review_can_start_build and fidelity_review.get("can_approve")
+            )
 
         review_data = {
             "job_id": job_id,
@@ -1668,13 +1797,12 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             "review_summary": build_review_summary(packet),
             "normalized_packet": packet,
             "review_snapshot": review_snapshot,
-            "can_approve": job_copy.get("status") == "awaiting_review",
-            "can_reject": job_copy.get("status") == "awaiting_review",
-            "can_start_build": job_copy.get("status")
-            in {
-                "approved_for_build",
-                "awaiting_overwrite_confirmation",
-            },
+            "fidelity_review": fidelity_review,
+            "fidelity_review_signature": (fidelity_review or {}).get("signature") if fidelity_review else "",
+            "fidelity_review_blocker_signature": (fidelity_review or {}).get("blocker_signature") if fidelity_review else "",
+            "can_approve": review_can_approve,
+            "can_reject": review_can_reject,
+            "can_start_build": review_can_start_build,
         }
 
         return jsonify(
@@ -1737,12 +1865,62 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 }
             ), 409
 
+        fidelity_review = None
+        if _should_use_fidelity_review(workspace):
+            fidelity_review = _build_fidelity_review_or_error(workspace)
+
+        if decision == REVIEW_DECISION_APPROVE and fidelity_review:
+            requested_signature = str(payload.get("fidelity_signature") or "").strip()
+            requested_blocker_signature = str(
+                payload.get("fidelity_blocker_signature") or ""
+            ).strip()
+            current_blocker_signature = str(
+                fidelity_review.get("blocker_signature") or ""
+            ).strip()
+
+            if not requested_signature or not requested_blocker_signature:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "reason": "fidelity_review_state_missing",
+                        "message": "Fidelity review state is required for accurate-ingest approval",
+                        "fidelity_review": fidelity_review,
+                    }
+                ), 409
+
+            if requested_blocker_signature != current_blocker_signature:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "reason": "fidelity_review_stale",
+                        "message": "Fidelity review artifacts changed before approval could be applied",
+                        "fidelity_review": fidelity_review,
+                    }
+                ), 409
+
+            can_approve, refusal_reason = can_approve_fidelity_review(fidelity_review)
+            if not can_approve:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "reason": "fidelity_review_not_approvable",
+                        "message": refusal_reason or "Fidelity review is not approvable",
+                        "fidelity_review": fidelity_review,
+                    }
+                ), 409
+
         snapshot = build_review_snapshot(
             job_id=job_id,
             decision=decision,
             packet=packet,
             source_rights_class=source_rights_class,
         )
+        if fidelity_review:
+            snapshot["fidelity_review"] = fidelity_review
+            snapshot["fidelity_review_signature"] = fidelity_review.get("signature") or ""
+            snapshot["fidelity_review_blocker_signature"] = (
+                fidelity_review.get("blocker_signature") or ""
+            )
         if not persist_review_snapshot_artifact(workspace, snapshot):
             return jsonify(
                 {
@@ -1775,6 +1953,16 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             job["review_snapshot_path"] = str(
                 get_workspace_files(Path(workspace_raw))["ui_review_snapshot"]
             )
+            if fidelity_review:
+                result_payload = dict(job.get("result") or {})
+                result_payload["fidelity_review"] = fidelity_review
+                result_payload["fidelity_review_signature"] = (
+                    fidelity_review.get("signature") or ""
+                )
+                result_payload["fidelity_review_blocker_signature"] = (
+                    fidelity_review.get("blocker_signature") or ""
+                )
+                job["result"] = result_payload
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -1806,6 +1994,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         workspace_raw = ""
         current_status = ""
         job_copy: Dict[str, Any] = {}
+        fidelity_review = None
 
         with _jobs_lock:
             if _active_job_id is not None:
@@ -1844,6 +2033,23 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     }
                 ), 409
 
+        workspace_path = Path(workspace_raw)
+        if current_status != "ready_for_finishing" and _should_use_fidelity_review(workspace_path):
+            fidelity_review = _build_fidelity_review_or_error(workspace_path)
+            if not bool(fidelity_review.get("can_approve")):
+                return jsonify(
+                    {
+                        "status": "error",
+                        "reason": "fidelity_review_not_approvable",
+                        "message": str(
+                            fidelity_review.get("refusal_reason")
+                            or "Fidelity review is not approvable"
+                        ),
+                        "fidelity_review": fidelity_review,
+                        "job": job_copy,
+                    }
+                ), 409
+
         module_name = ""
         collision: Dict[str, Any] = {}
         module_dir_exists = False
@@ -1878,7 +2084,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "overwrite_policy": overwrite_policy,
             }
         else:
-            target_info = _resolve_homebrew_build_target(Path(workspace_raw))
+            target_info = _resolve_homebrew_build_target(workspace_path)
             if target_info.get("status") != "success":
                 return jsonify(
                     {

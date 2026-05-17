@@ -2640,6 +2640,14 @@
                                 <div id="homebrew-review-panel" style="display: none; margin-top: 12px; padding: 12px; background: #121212; border: 1px solid #666;">
                                     <div id="homebrew-review-title" style="margin-bottom: 8px; color: #ffcc66; font-weight: bold;">Advanced Diagnostics</div>
                                     <pre id="homebrew-review-summary" style="max-height: 260px; overflow: auto; color: #bbb; font-size: 0.9em; white-space: pre-wrap;"></pre>
+                                    <div id="homebrew-fidelity-review-panel" style="display: none; margin-top: 10px; padding: 10px; background: #181818; border: 1px solid #555; border-radius: 4px;">
+                                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                                            <div style="color: #ffcc66; font-weight: bold; font-size: 0.95em;">Accurate Ingest Fidelity Review</div>
+                                            <div id="homebrew-fidelity-review-status" style="color: #bbb; font-size: 0.85em;"></div>
+                                        </div>
+                                        <div id="homebrew-fidelity-review-summary" style="color: #d7d7d7; font-size: 0.85em;"></div>
+                                        <div id="homebrew-fidelity-review-actions" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;"></div>
+                                    </div>
                                     <div style="margin-top: 10px; color: #9aa7b8; font-size: 0.9em;">
                                         Advanced diagnostics view. Default flow uses the single console window above.
                                     </div>
@@ -5890,12 +5898,19 @@
         let homebrewReviewPanel = null;
         let homebrewReviewTitle = null;
         let homebrewReviewSummary = null;
+        let homebrewFidelityReviewPanel = null;
+        let homebrewFidelityReviewSummary = null;
+        let homebrewFidelityReviewActions = null;
         let homebrewArtifactManifestPanel = null;
         let homebrewArtifactChecklist = null;
         let homebrewArtifactActions = null;
         let homebrewRetryFromPacketButton = null;
         let homebrewRetryFromFinishingButton = null;
         let homebrewCleanupButton = null;
+        let homebrewReviewApproveButton = null;
+        let homebrewReviewRejectButton = null;
+        let homebrewReviewStartBuildButton = null;
+        let homebrewActiveReviewData = null;
         let homebrewUploadPollTimer = null;
         let homebrewActiveReviewJobId = null;
         let homebrewConsoleIsWorking = false;
@@ -5923,6 +5938,9 @@
             homebrewReviewPanel = document.getElementById('homebrew-review-panel');
             homebrewReviewTitle = document.getElementById('homebrew-review-title');
             homebrewReviewSummary = document.getElementById('homebrew-review-summary');
+            homebrewFidelityReviewPanel = document.getElementById('homebrew-fidelity-review-panel');
+            homebrewFidelityReviewSummary = document.getElementById('homebrew-fidelity-review-summary');
+            homebrewFidelityReviewActions = document.getElementById('homebrew-fidelity-review-actions');
             homebrewArtifactManifestPanel = document.getElementById('homebrew-artifact-manifest-panel');
             homebrewArtifactChecklist = document.getElementById('homebrew-artifact-checklist');
             homebrewArtifactActions = document.getElementById('homebrew-artifact-actions');
@@ -6715,7 +6733,224 @@
                 '',
                 'Assumptions:',
                 formatReviewList(summary.assumptions || []),
+                ..._homebrewFidelitySummaryLines(reviewPayload),
             ].join('\n');
+        }
+
+        function escapeToolkitHtml(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function _homebrewFidelityStatusLabel(value) {
+            const status = String(value || '').toLowerCase();
+            if (status === 'ready' || status === 'pass') { return 'Ready'; }
+            if (status === 'blocked' || status === 'fail') { return 'Blocked'; }
+            if (status === 'pending') { return 'Pending'; }
+            if (status === 'approved') { return 'Approved'; }
+            return status || 'Unknown';
+        }
+
+        function _homebrewFidelityStatusColor(value) {
+            const status = String(value || '').toLowerCase();
+            if (status === 'ready' || status === 'pass' || status === 'approved') { return '#4caf50'; }
+            if (status === 'blocked' || status === 'fail') { return '#f44336'; }
+            if (status === 'pending') { return '#ffb74d'; }
+            return '#888';
+        }
+
+        function _homebrewFidelityEntryText(entry) {
+            if (entry === null || entry === undefined) {
+                return '';
+            }
+            if (typeof entry === 'string') {
+                return entry;
+            }
+            const category = entry.category || entry.kind || entry.type || entry.rule || '';
+            const message = entry.message || entry.reason || entry.detail || entry.description || entry.label || entry.path || '';
+            const path = entry.path || entry.file || entry.workspace_path || entry.target || '';
+            const severity = entry.severity || entry.level || '';
+            const parts = [];
+            if (category) { parts.push(`${category}:`); }
+            if (message) { parts.push(message); }
+            if (path && path !== message) { parts.push(`(${path})`); }
+            if (severity) { parts.push(`[${severity}]`); }
+            return parts.join(' ').trim();
+        }
+
+        function _homebrewFidelityListHtml(title, entries, emptyText) {
+            const list = Array.isArray(entries) ? entries : [];
+            if (list.length === 0) {
+                return '<div style="margin-top: 8px; color: #8b8b8b; font-size: 0.85em;">' +
+                    escapeToolkitHtml(title) + ': ' + escapeToolkitHtml(emptyText) + '</div>';
+            }
+
+            const rows = list.map(function(entry) {
+                return '<li style="margin-bottom: 4px;">' + escapeToolkitHtml(_homebrewFidelityEntryText(entry)) + '</li>';
+            }).join('');
+            return '<div style="margin-top: 8px;">' +
+                '<div style="color: #ffcc66; font-weight: bold; margin-bottom: 4px;">' + escapeToolkitHtml(title) + '</div>' +
+                '<ul style="margin: 0 0 0 18px; padding: 0; color: #d7d7d7; font-size: 0.85em;">' + rows + '</ul>' +
+                '</div>';
+        }
+
+        function _homebrewFidelityKeyValueHtml(title, rows) {
+            const entries = Array.isArray(rows) ? rows.filter(Boolean) : [];
+            if (entries.length === 0) {
+                return '';
+            }
+            const tableRows = entries.map(function(row) {
+                return '<tr style="border-bottom: 1px solid #333;">' +
+                    '<td style="padding: 3px 6px; width: 34%; color: #bbb;">' + escapeToolkitHtml(row[0]) + '</td>' +
+                    '<td style="padding: 3px 6px; color: #ddd;">' + escapeToolkitHtml(row[1]) + '</td>' +
+                    '</tr>';
+            }).join('');
+            return '<div style="margin-top: 8px;">' +
+                '<div style="color: #ffcc66; font-weight: bold; margin-bottom: 4px;">' + escapeToolkitHtml(title) + '</div>' +
+                '<table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">' +
+                '<tbody>' + tableRows + '</tbody></table>' +
+                '</div>';
+        }
+
+        function _homebrewFidelityCoverageRows(coverage) {
+            const rows = [];
+            const keys = Object.keys(coverage || {});
+            keys.forEach(function(key) {
+                const value = coverage[key];
+                if (value === null || value === undefined) { return; }
+                if (typeof value === 'object' && !Array.isArray(value)) {
+                    const done = value.done !== undefined ? value.done : value.completed;
+                    const total = value.total !== undefined ? value.total : value.count;
+                    rows.push([key, `${done !== undefined ? done : '?'} / ${total !== undefined ? total : '?'}`]);
+                    return;
+                }
+                rows.push([key, String(value)]);
+            });
+            return rows;
+        }
+
+        function _homebrewFidelitySummaryLines(reviewPayload) {
+            const fidelity = reviewPayload.fidelity_review || {};
+            const summaryLines = [];
+            if (String(fidelity.mode || '').toLowerCase() !== 'accurate_ingest') {
+                return summaryLines;
+            }
+
+            const blockerCount = Array.isArray(fidelity.blockers) ? fidelity.blockers.length : 0;
+            const warningCount = Array.isArray(fidelity.warnings) ? fidelity.warnings.length : 0;
+            const refusalReason = String(fidelity.refusal_reason || '').trim();
+            const canStartBuild = Boolean(reviewPayload && reviewPayload.can_start_build);
+            summaryLines.push('');
+            summaryLines.push('Fidelity Review Mode: ' + (fidelity.mode || 'accurate_ingest'));
+            summaryLines.push('Fidelity Review Status: ' + _homebrewFidelityStatusLabel(fidelity.status || fidelity.review_status));
+            summaryLines.push('Fidelity Review Ready: ' + (fidelity.can_approve ? 'yes' : 'no'));
+            summaryLines.push('Fidelity Review Can Start Build: ' + (canStartBuild ? 'yes' : 'no'));
+            summaryLines.push('Fidelity Review Blockers: ' + String(blockerCount));
+            summaryLines.push('Fidelity Review Warnings: ' + String(warningCount));
+            if (refusalReason) {
+                summaryLines.push('Fidelity Review Refusal: ' + refusalReason);
+            }
+            return summaryLines;
+        }
+
+        function renderToolkitHomebrewFidelityReview(reviewPayload) {
+            const panel = homebrewFidelityReviewPanel;
+            const summaryEl = homebrewFidelityReviewSummary;
+            const actionsEl = homebrewFidelityReviewActions;
+            const statusEl = document.getElementById('homebrew-fidelity-review-status');
+            const review = reviewPayload && reviewPayload.fidelity_review ? reviewPayload.fidelity_review : null;
+            if (!panel || !summaryEl || !actionsEl || !review || String(review.mode || '').toLowerCase() !== 'accurate_ingest') {
+                if (panel) { panel.style.display = 'none'; }
+                if (summaryEl) { summaryEl.innerHTML = ''; }
+                if (actionsEl) { actionsEl.innerHTML = ''; }
+                if (statusEl) { statusEl.textContent = ''; }
+                homebrewReviewApproveButton = null;
+                homebrewReviewRejectButton = null;
+                homebrewReviewStartBuildButton = null;
+                return;
+            }
+
+            const status = String(review.status || review.review_status || '').toLowerCase();
+            const statusLabel = _homebrewFidelityStatusLabel(status);
+            const statusColor = _homebrewFidelityStatusColor(status);
+            const canStartBuild = Boolean(reviewPayload && reviewPayload.can_start_build);
+            if (statusEl) {
+                statusEl.textContent = `Status: ${statusLabel}`;
+                statusEl.style.color = statusColor;
+            }
+            const coverageHtml = _homebrewFidelityKeyValueHtml('Coverage', _homebrewFidelityCoverageRows(review.coverage || {}));
+            const blueprintRows = [
+                ['Mode', String(review.mode || 'accurate_ingest')],
+                ['State', String(review.review_status || review.status || 'unknown')],
+                ['Can Approve', review.can_approve ? 'yes' : 'no'],
+                ['Can Reject', review.can_reject ? 'yes' : 'no'],
+                ['Can Start Build', canStartBuild ? 'yes' : 'no'],
+            ];
+            const refusalReason = String(review.refusal_reason || '').trim();
+            if (refusalReason) {
+                blueprintRows.push(['Refusal', refusalReason]);
+            }
+            const signatureRows = [
+                ['Signature', String(review.signature || '')],
+                ['Blocker Signature', String(review.blocker_signature || '')],
+            ];
+
+            const blockerHtml = _homebrewFidelityListHtml('Blockers', review.blockers || [], 'No blockers recorded.');
+            const warningHtml = _homebrewFidelityListHtml('Warnings', review.warnings || [], 'No warnings recorded.');
+            const repairHtml = _homebrewFidelityListHtml('Repair Attempts', review.repair_attempts || [], 'No repair attempts recorded.');
+            const artifactHtml = _homebrewFidelityListHtml('Artifacts', review.artifacts || review.repair_artifacts || [], 'No fidelity artifacts recorded.');
+
+            summaryEl.innerHTML = [
+                '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">',
+                '<span style="display:inline-block; padding:2px 8px; border-radius:3px; background:' + statusColor + '; color:#000; font-weight:bold;">' + escapeToolkitHtml(statusLabel) + '</span>',
+                '<span style="color:#bbb; font-size:0.85em;">' + escapeToolkitHtml(review.signature || 'no signature') + '</span>',
+                '</div>',
+                _homebrewFidelityKeyValueHtml('Review State', blueprintRows),
+                coverageHtml,
+                _homebrewFidelityKeyValueHtml('Review Signatures', signatureRows),
+                blockerHtml,
+                warningHtml,
+                repairHtml,
+                artifactHtml,
+            ].join('');
+
+            const buttons = [];
+            if (review.can_approve) {
+                buttons.push('<button type="button" id="homebrew-fidelity-approve-btn" style="background-color:#2a5a2a; border:1px solid #4a8a4a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Approve Fidelity Review</button>');
+            }
+            if (review.can_reject !== false) {
+                buttons.push('<button type="button" id="homebrew-fidelity-reject-btn" style="background-color:#6b4c1f; border:1px solid #a67a32; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Reject Review</button>');
+            }
+            if (canStartBuild) {
+                buttons.push('<button type="button" id="homebrew-fidelity-start-build-btn" style="background-color:#214e6b; border:1px solid #3f74a0; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Start Build</button>');
+            }
+            actionsEl.innerHTML = buttons.join('');
+
+            homebrewReviewApproveButton = document.getElementById('homebrew-fidelity-approve-btn');
+            homebrewReviewRejectButton = document.getElementById('homebrew-fidelity-reject-btn');
+            homebrewReviewStartBuildButton = document.getElementById('homebrew-fidelity-start-build-btn');
+
+            if (homebrewReviewApproveButton) {
+                homebrewReviewApproveButton.addEventListener('click', function() {
+                    submitToolkitHomebrewReviewDecision(homebrewActiveReviewJobId, 'approve');
+                });
+            }
+            if (homebrewReviewRejectButton) {
+                homebrewReviewRejectButton.addEventListener('click', function() {
+                    submitToolkitHomebrewReviewDecision(homebrewActiveReviewJobId, 'reject');
+                });
+            }
+            if (homebrewReviewStartBuildButton) {
+                homebrewReviewStartBuildButton.addEventListener('click', function() {
+                    submitToolkitHomebrewStartBuild();
+                });
+            }
+
+            panel.style.display = 'block';
         }
 
         // LLM Classification Review
@@ -6842,14 +7077,23 @@
 
                 const review = payload.review;
                 homebrewActiveReviewJobId = jobId;
+                homebrewActiveReviewData = review;
                 if (homebrewReviewTitle) {
                     const reviewStatus = String(review.job_status || '').toLowerCase();
-                    if (reviewStatus === 'awaiting_overwrite_confirmation') {
+                    const fidelityReview = review.fidelity_review || {};
+                    const fidelityMode = String(fidelityReview.mode || '').toLowerCase();
+                    if (reviewStatus === 'awaiting_review' && fidelityMode === 'accurate_ingest') {
+                        if (fidelityReview.can_approve) {
+                            homebrewReviewTitle.textContent = `Accurate Ingest Review Pending [job: ${jobId}]`;
+                        } else {
+                            homebrewReviewTitle.textContent = `Accurate Ingest Review Blocked [job: ${jobId}]`;
+                        }
+                    } else if (reviewStatus === 'awaiting_overwrite_confirmation') {
                         homebrewReviewTitle.textContent = `Overwrite Confirmation Required [job: ${jobId}]`;
                     } else if (reviewStatus === 'building') {
                         homebrewReviewTitle.textContent = `Build Running [job: ${jobId}]`;
                     } else if (reviewStatus === 'approved_for_build') {
-                        homebrewReviewTitle.textContent = `Auto-Approved - Build Pending [job: ${jobId}]`;
+                        homebrewReviewTitle.textContent = `Approved - Build Pending [job: ${jobId}]`;
                     } else {
                         homebrewReviewTitle.textContent = `Upload Status [job: ${jobId}]`;
                     }
@@ -6857,6 +7101,7 @@
                 if (homebrewReviewSummary) {
                     homebrewReviewSummary.textContent = buildToolkitHomebrewReviewSummary(review);
                 }
+                renderToolkitHomebrewFidelityReview(review);
 
                 setHomebrewReviewPanelVisible(true);
 
@@ -7018,6 +7263,52 @@
                 await pollToolkitHomebrewJob(activeJobId);
             } catch (buildError) {
                 renderHomebrewUploadStatus('error', `Homebrew overwrite confirmation request failed: ${buildError.message}`);
+                await loadToolkitHomebrewReview(activeJobId);
+            }
+        }
+
+        async function submitToolkitHomebrewReviewDecision(jobId, decision) {
+            const activeJobId = String(jobId || homebrewActiveReviewJobId || '').trim();
+            const normalizedDecision = String(decision || '').trim().toLowerCase();
+            if (!activeJobId) {
+                renderHomebrewUploadStatus('error', 'No Homebrew job selected for review decision.');
+                return;
+            }
+            if (normalizedDecision !== 'approve' && normalizedDecision !== 'reject') {
+                renderHomebrewUploadStatus('error', 'Invalid review decision.');
+                return;
+            }
+
+            const fidelityReview = (homebrewActiveReviewData && homebrewActiveReviewData.fidelity_review) || {};
+            try {
+                const response = await fetch(`/api/toolkit/homebrew/jobs/${activeJobId}/review`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        decision: normalizedDecision,
+                        fidelity_signature: fidelityReview.signature || '',
+                        fidelity_blocker_signature: fidelityReview.blocker_signature || '',
+                    }),
+                });
+                const payload = await response.json();
+                if (!response.ok || payload.status !== 'success' || !payload.job) {
+                    renderHomebrewUploadStatus(
+                        'error',
+                        'Homebrew review decision failed.',
+                        JSON.stringify(payload, null, 2)
+                    );
+                    await loadToolkitHomebrewReview(activeJobId);
+                    return;
+                }
+
+                const nextStatus = String((payload.job || {}).status || '').toLowerCase();
+                const message = nextStatus === 'approved_for_build'
+                    ? 'Fidelity review approved. Build is now unlocked.'
+                    : 'Fidelity review rejected.';
+                renderHomebrewUploadStatus('success', message, JSON.stringify(payload.job, null, 2));
+                await loadToolkitHomebrewReview(activeJobId);
+            } catch (reviewError) {
+                renderHomebrewUploadStatus('error', `Homebrew review decision failed: ${reviewError.message}`);
                 await loadToolkitHomebrewReview(activeJobId);
             }
         }
@@ -7251,16 +7542,25 @@
                     if (job.status === 'approved_for_build' || job.status === 'rejected') {
                         setHomebrewConsoleWorking(false);
                         const reviewSnapshot = job.review_snapshot || {};
+                        const fidelityReview = reviewSnapshot.fidelity_review || {};
+                        const fidelityMode = String(fidelityReview.mode || '').toLowerCase();
                         renderHomebrewUploadStatus(
                             job.status === 'approved_for_build' ? 'success' : 'warning',
                             job.status === 'approved_for_build'
-                                ? 'Legacy approved state detected; auto-starting packet build.'
+                                ? (fidelityMode === 'accurate_ingest'
+                                    ? 'Accurate ingest review approved. Build remains paused until you press Start Build.'
+                                    : 'Legacy approved state detected; auto-starting packet build.')
                                 : `Legacy review state detected [status: ${job.status}]`,
                             JSON.stringify(reviewSnapshot, null, 2)
                         );
                         await loadToolkitHomebrewReview(jobId);
-                        if (job.status === 'approved_for_build') {
+                        if (job.status === 'approved_for_build' && fidelityMode !== 'accurate_ingest') {
                             await submitToolkitHomebrewStartBuild();
+                        } else if (job.status === 'approved_for_build' && fidelityMode === 'accurate_ingest') {
+                            stopHomebrewUploadPolling();
+                            if (homebrewUploadButton) {
+                                homebrewUploadButton.disabled = false;
+                            }
                         }
                         stopHomebrewUploadPolling();
                         if (homebrewUploadButton) {
@@ -7340,11 +7640,30 @@
                         return;
                     }
 
+                    if (job.status === 'blocked') {
+                        const blockedResult = job.result || {};
+                        const bf = blockedResult.build_fidelity || {};
+                        renderHomebrewUploadStatus(
+                            'error',
+                            `Build fidelity blocked: ${bf.refusal_reason || blockedResult.error || 'unknown'}`,
+                            JSON.stringify(blockedResult, null, 2)
+                        );
+                        if (homebrewReviewTitle) {
+                            homebrewReviewTitle.textContent = `Build Blocked - Fidelity Check Failed [job: ${jobId}]`;
+                        }
+                        return;
+                    }
+
                     if (job.status === 'build_completed') {
                         const buildResult = job.result || {};
+                        const bf = buildResult.build_fidelity || {};
+                        let statusText = 'Packet-driven Homebrew build completed. Entering shared finishing/publication stages.';
+                        if (bf && bf.warning_count > 0) {
+                            statusText = `Build completed with ${bf.warning_count} source-fidelity warnings (${bf.blocker_count} blockers). Entering finishing.`;
+                        }
                         renderHomebrewUploadStatus(
                             'success',
-                            'Packet-driven Homebrew build completed. Entering shared finishing/publication stages.',
+                            statusText,
                             JSON.stringify(buildResult, null, 2)
                         );
                         if (homebrewReviewTitle) {

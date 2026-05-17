@@ -627,6 +627,22 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("Hydration Summary:", source)
         self.assertIn("buildHomebrewHydrationAwareDetails", source)
 
+    def test_toolkit_template_exposes_fidelity_review_panel(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("homebrew-fidelity-review-panel", source)
+        self.assertIn("homebrew-fidelity-review-summary", source)
+        self.assertIn("homebrew-fidelity-review-actions", source)
+        self.assertIn("homebrew-fidelity-approve-btn", source)
+        self.assertIn("homebrew-fidelity-reject-btn", source)
+        self.assertIn("homebrew-fidelity-start-build-btn", source)
+        self.assertIn("renderToolkitHomebrewFidelityReview", source)
+        self.assertIn("submitToolkitHomebrewReviewDecision", source)
+        self.assertIn("const canStartBuild = Boolean(reviewPayload && reviewPayload.can_start_build);", source)
+        self.assertIn("Fidelity Review Can Start Build: ' + (canStartBuild ? 'yes' : 'no')", source)
+        self.assertIn("['Can Start Build', canStartBuild ? 'yes' : 'no']", source)
+        self.assertIn("if (canStartBuild) {", source)
+
     def test_toolkit_template_exposes_semantic_remediation_lane(self) -> None:
         source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
 
@@ -710,6 +726,14 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("ready_for_finishing", source)
         self.assertIn("readiness_failed", source)
 
+    def test_homebrew_routes_recheck_fidelity_before_build(self) -> None:
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+
+        self.assertIn("fidelity_review_not_approvable", source)
+        self.assertIn("_build_fidelity_review_or_error(workspace_path)", source)
+        self.assertIn("can_approve", source)
+        self.assertIn("can_start_build", source)
+
     def test_uploader_readiness_gate_function_signature_preserved(self) -> None:
         source = Path("web/extensions/toolkit_homebrew_readiness_gate.py").read_text(encoding="utf-8")
 
@@ -755,6 +779,31 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
 
         self.assertIn("readiness_adapter_exception", source)
         self.assertIn("readiness_system_failure", source)
+
+    def test_build_fidelity_workspace_paths_exist(self) -> None:
+        source = Path("utils/toolkit_homebrew_upload_contract.py").read_text(encoding="utf-8")
+
+        self.assertIn("build_fidelity_report.json", source)
+        self.assertIn("source_fidelity_report.json", source)
+        self.assertIn("persist_build_fidelity_report_artifact", source)
+        self.assertIn("load_build_fidelity_report_artifact", source)
+        self.assertIn("persist_source_fidelity_report_artifact", source)
+        self.assertIn("load_source_fidelity_report_artifact", source)
+
+    def test_build_fidelity_does_not_touch_builder_generator(self) -> None:
+        source_py_files = [
+            Path("utils/toolkit_build_fidelity.py"),
+        ]
+        for path in source_py_files:
+            if path.exists():
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("ModuleBuilder", text, f"{path} references ModuleBuilder")
+                self.assertNotIn("ModuleGenerator", text, f"{path} references ModuleGenerator")
+
+    def test_build_fidelity_flag_exists(self) -> None:
+        source = Path("model_config.py").read_text(encoding="utf-8")
+
+        self.assertIn("ENABLE_ACCURATE_INGEST_BUILD_FIDELITY_GATES", source)
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "packet_repair_attempts_index": workspace / "packet_repair_attempts/index.json",
         "builder_blueprint": workspace / "builder_blueprint.json",
         "builder_blueprint_report": workspace / "builder_blueprint_report.json",
+        "build_fidelity_report": workspace / "build_fidelity_report.json",
+        "source_fidelity_report": workspace / "source_fidelity_report.json",
     }
 
 
@@ -602,6 +604,40 @@ def load_builder_blueprint_report_artifact(workspace: Path) -> Optional[Dict[str
     """Load builder_blueprint_report.json if present."""
     files = get_workspace_files(workspace)
     path = files.get("builder_blueprint_report")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def persist_build_fidelity_report_artifact(workspace: Path, report: Dict[str, Any]) -> bool:
+    """Persist build_fidelity_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["build_fidelity_report"]), report)
+
+
+def load_build_fidelity_report_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load build_fidelity_report.json if present."""
+    files = get_workspace_files(workspace)
+    path = files.get("build_fidelity_report")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def persist_source_fidelity_report_artifact(workspace: Path, report: Dict[str, Any]) -> bool:
+    """Persist source_fidelity_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["source_fidelity_report"]), report)
+
+
+def load_source_fidelity_report_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load source_fidelity_report.json if present."""
+    files = get_workspace_files(workspace)
+    path = files.get("source_fidelity_report")
     if path and path.exists():
         return load_json_artifact(path)
     return None
