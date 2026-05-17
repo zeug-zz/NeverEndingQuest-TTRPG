@@ -78,6 +78,8 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "normalization_fidelity_report": workspace / "normalization_fidelity_report.json",
         "normalization_repair_report": workspace / "normalization_repair_report.json",
         "packet_repair_attempts_index": workspace / "packet_repair_attempts/index.json",
+        "builder_blueprint": workspace / "builder_blueprint.json",
+        "builder_blueprint_report": workspace / "builder_blueprint_report.json",
     }
 
 
@@ -569,3 +571,37 @@ def persist_packet_repair_attempts_index(
     index_path = files["packet_repair_attempts_index"]
     index_path.parent.mkdir(parents=True, exist_ok=True)
     return safe_write_json(str(index_path), index_payload)
+
+
+def persist_builder_blueprint_artifact(workspace: Path, blueprint: Dict[str, Any]) -> bool:
+    """Persist builder_blueprint.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["builder_blueprint"]), blueprint)
+
+
+def persist_builder_blueprint_report_artifact(workspace: Path, report: Dict[str, Any]) -> bool:
+    """Persist builder_blueprint_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["builder_blueprint_report"]), report)
+
+
+def load_builder_blueprint_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load builder_blueprint.json if present.  Returns None for legacy workspaces."""
+    files = get_workspace_files(workspace)
+    path = files.get("builder_blueprint")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def load_builder_blueprint_report_artifact(workspace: Path) -> Optional[Dict[str, Any]]:
+    """Load builder_blueprint_report.json if present."""
+    files = get_workspace_files(workspace)
+    path = files.get("builder_blueprint_report")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None

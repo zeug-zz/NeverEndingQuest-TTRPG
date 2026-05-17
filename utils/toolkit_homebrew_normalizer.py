@@ -40,6 +40,8 @@ from utils.toolkit_homebrew_upload_contract import (
     persist_packet_repair_attempt_artifact,
     persist_packet_repair_attempts_index,
     load_section_extraction_artifact,
+    persist_builder_blueprint_artifact,
+    persist_builder_blueprint_report_artifact,
 )
 from utils.toolkit_source_extraction import (
     build_extraction_index,
@@ -78,6 +80,18 @@ from utils.toolkit_normalization_fidelity import (
     validate_repair_operations,
 )
 
+try:
+    from model_config import ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF
+except Exception:
+    ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
+
+from utils.toolkit_builder_blueprint import (
+    build_builder_blueprint_report,
+    evaluate_blueprint_fidelity_precheck,
+    generate_builder_blueprint,
+    load_phase2_artifacts,
+    serialize_builder_blueprint_to_narrative,
+)
 
 NORMALIZATION_PROMPT_PATH = Path("prompts") / "toolkit" / "homebrew_upload_normalization_prompt.txt"
 MAX_NORMALIZATION_SOURCE_CHARS = 120000
@@ -922,7 +936,92 @@ def normalize_homebrew_upload(
                     {"repair_report_version": "normalization_repair.v1", "summary": repair_summary},
                 )
 
-    builder_narrative = _build_builder_narrative(packet, model_payload or {})
+    # -----------------------------------------------------------------
+    #  Phase 4: Builder blueprint generation and source-locked narrative
+    # -----------------------------------------------------------------
+    blueprint_summary: Dict[str, Any] = {}
+    blueprint_ready = False
+    blueprint_narrative_text = ""
+    blueprint_enabled = bool(ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF)
+    if blueprint_enabled and workspace:
+        bp_artifacts = load_phase2_artifacts({
+            "source_graph": workspace / "source_graph.json",
+            "identity_resolution_report": workspace / "identity_resolution_report.json",
+            "plot_topology_report": workspace / "plot_topology_report.json",
+            "source_graph_synthesis_report": workspace / "source_graph_synthesis_report.json",
+            "normalized_packet": workspace / "normalized_packet.json",
+            "normalization_fidelity_report": workspace / "normalization_fidelity_report.json",
+            "normalization_report": workspace / "normalization_report.json",
+        })
+        # Override with in-memory artifacts when available (prefer live state)
+        bp_artifacts["source_graph"] = bp_artifacts["source_graph"] or source_graph
+        bp_artifacts["normalized_packet"] = bp_artifacts["normalized_packet"] or packet
+        bp_artifacts["normalization_fidelity_report"] = bp_artifacts["normalization_fidelity_report"] or (fidelity_report if fidelity_report else None)
+
+        precheck = evaluate_blueprint_fidelity_precheck(
+            source_graph=bp_artifacts["source_graph"],
+            normalized_packet=bp_artifacts["normalized_packet"],
+            fidelity_report=bp_artifacts["normalization_fidelity_report"],
+            normalization_report=bp_artifacts["normalization_report"],
+        )
+
+        if precheck.get("precheck_status") == "allowed":
+            try:
+                bp = generate_builder_blueprint(
+                    source_graph=bp_artifacts["source_graph"],
+                    identity_report=identity_report,
+                    plot_topology=plot_topology,
+                    synthesis_report=synthesis_report,
+                    normalized_packet=bp_artifacts["normalized_packet"],
+                    fidelity_report=bp_artifacts["normalization_fidelity_report"],
+                )
+                bp_report = build_builder_blueprint_report(
+                    blueprint_status="ready",
+                    artifacts=bp_artifacts,
+                    precheck_result=precheck,
+                    blueprint=bp,
+                )
+                blueprint_narrative_text = serialize_builder_blueprint_to_narrative(bp)
+                bp_ok = persist_builder_blueprint_artifact(workspace, bp)
+                bp_report_ok = persist_builder_blueprint_report_artifact(workspace, bp_report)
+                if bp_ok and bp_report_ok:
+                    blueprint_ready = True
+                    blueprint_summary = {
+                        "blueprint_status": "ready",
+                        "npc_count": len(bp.get("npc_roster") or []),
+                        "location_count": len(bp.get("location_roster") or []),
+                        "blueprint_persisted": bp_ok,
+                    }
+            except Exception as bp_error:
+                err_report = build_builder_blueprint_report(
+                    blueprint_status="generation_failed",
+                    artifacts=bp_artifacts,
+                    precheck_result=precheck,
+                )
+                persist_builder_blueprint_report_artifact(workspace, err_report)
+                blueprint_summary = {
+                    "blueprint_status": "generation_failed",
+                    "error": str(bp_error),
+                }
+        else:
+            err_report = build_builder_blueprint_report(
+                blueprint_status=precheck.get("refusal_reason", "blocked_by_fidelity"),
+                artifacts=bp_artifacts,
+                precheck_result=precheck,
+            )
+            persist_builder_blueprint_report_artifact(workspace, err_report)
+            blueprint_summary = {
+                "blueprint_status": precheck.get("refusal_reason", "blocked_by_fidelity"),
+                "refusal_reason": precheck.get("detail", ""),
+            }
+
+    # Select narrative: blueprint-derived when ready, legacy otherwise
+    if blueprint_ready and blueprint_narrative_text:
+        builder_narrative = blueprint_narrative_text
+        builder_narrative_source = "blueprint"
+    else:
+        builder_narrative = _build_builder_narrative(packet, model_payload or {})
+        builder_narrative_source = "legacy"
 
     report = {
         "status": "success",
@@ -938,6 +1037,7 @@ def normalize_homebrew_upload(
         "multipass": multipass_summary,
         "fidelity": build_fidelity_summary_for_report(fidelity_report),
         "repair": repair_summary,
+        "blueprint": blueprint_summary if blueprint_summary else None,
     }
 
     if source_graph_summary:
@@ -978,5 +1078,6 @@ def normalize_homebrew_upload(
         "normalized_packet": packet,
         "normalization_report": report,
         "builder_narrative": builder_narrative,
+        "builder_narrative_source": builder_narrative_source,
         "source_truncated": source_was_truncated,
     }

@@ -20,10 +20,17 @@ from utils.toolkit_homebrew_upload_contract import (
     REVIEW_DECISION_APPROVE,
     get_workspace_files,
     load_json_artifact,
+    load_builder_blueprint_artifact,
+    load_builder_blueprint_report_artifact,
     persist_build_result_artifact,
     persist_builder_input_artifact,
     validate_review_packet,
 )
+
+try:
+    from model_config import ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF
+except Exception:
+    ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
 
 
 def _utc_now_iso() -> str:
@@ -76,12 +83,32 @@ def derive_packet_module_name(packet: Dict[str, Any]) -> str:
     return str(params.get("module_name") or "").strip()
 
 
-def _read_builder_narrative(files: Dict[str, Path], packet: Dict[str, Any]) -> Dict[str, str]:
-    """Resolve builder narrative text with packet fallback."""
-    narrative_path = files["builder_narrative"]
+def _read_builder_narrative(
+    files: Dict[str, Path],
+    packet: Dict[str, Any],
+    blueprint: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    """Resolve builder narrative text with blueprint preference then packet fallback."""
+    blueprint_enabled = bool(ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF)
     narrative_text = ""
     source = "packet_fallback"
 
+    # Prefer blueprint-derived narrative when blueprint is ready
+    if blueprint_enabled and blueprint and blueprint.get("blueprint_status") == "ready":
+        narrative_path = files["builder_narrative"]
+        try:
+            narrative_text = narrative_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            narrative_text = ""
+        if narrative_text:
+            source = "blueprint_narrative"
+            return {
+                "narrative": narrative_text,
+                "source": source,
+            }
+
+    # Fallback: workspace narrative file
+    narrative_path = files["builder_narrative"]
     try:
         narrative_text = narrative_path.read_text(encoding="utf-8").strip()
     except Exception:
@@ -159,6 +186,77 @@ def _execute_module_builder(
     builder.build_module(builder_input["builder_narrative"])
 
 
+_ACCURATE_INGEST_EVIDENCE_PATHS = [
+    "source_graph",
+    "normalization_fidelity_report",
+    "identity_resolution_report",
+    "plot_topology_report",
+]
+
+
+def _classify_blueprint_handoff(
+    files: Dict[str, Path],
+    blueprint_artifact: Optional[Dict[str, Any]],
+    blueprint_report_artifact: Optional[Dict[str, Any]],
+) -> str:
+    """Classify handoff mode for this workspace.
+
+    Returns one of:
+        `source_blueprint_ready` -- blueprint artifacts exist and status is ready.
+        `blueprint_required_not_ready` -- blueprint is required but not ready.
+        `legacy_allowed` -- workspace has no accurate-ingest evidence or blueprint handoff.
+    """
+    blueprint_enabled = bool(ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF)
+    if not blueprint_enabled:
+        return "legacy_allowed"
+
+    blueprint_status = str((blueprint_artifact or {}).get("blueprint_status") or "").strip().lower()
+    report_status = str((blueprint_report_artifact or {}).get("blueprint_status") or "").strip().lower()
+
+    # Source-blueprint mode requires both artifacts to be present and ready.
+    if blueprint_status == "ready" and report_status == "ready":
+        return "source_blueprint_ready"
+
+    # If either artifact exists, blueprint mode has been attempted and must fail closed.
+    if blueprint_artifact or blueprint_report_artifact:
+        return "blueprint_required_not_ready"
+
+    # Blueprint report missing but accurate-ingest evidence exists
+    has_evidence = any(
+        files.get(p) and files[p].exists()
+        for p in _ACCURATE_INGEST_EVIDENCE_PATHS
+    )
+    if has_evidence:
+        return "blueprint_required_not_ready"
+
+    # No blueprint artifacts and no accurate-ingest evidence = legacy workspace
+    return "legacy_allowed"
+
+
+def _describe_blueprint_not_ready(
+    blueprint_artifact: Optional[Dict[str, Any]],
+    blueprint_report_artifact: Optional[Dict[str, Any]],
+) -> str:
+    """Return a deterministic failure reason for non-ready blueprint handoff."""
+    blueprint_status = str((blueprint_artifact or {}).get("blueprint_status") or "").strip().lower()
+    report_status = str((blueprint_report_artifact or {}).get("blueprint_status") or "").strip().lower()
+
+    if blueprint_status == "ready" and not report_status:
+        return "missing_blueprint_report"
+    if report_status == "ready" and not blueprint_status:
+        return "missing_blueprint"
+    if blueprint_status and not report_status:
+        return f"blueprint_{blueprint_status}"
+    if report_status and not blueprint_status:
+        return f"report_{report_status}"
+    if blueprint_status and report_status:
+        if blueprint_status != "ready":
+            return f"blueprint_{blueprint_status}"
+        if report_status != "ready":
+            return f"report_{report_status}"
+    return "missing_artifacts"
+
+
 def run_toolkit_homebrew_packet_build(
     workspace: Path,
     job_id: str,
@@ -188,7 +286,47 @@ def run_toolkit_homebrew_packet_build(
         }
 
     params = _derive_builder_shape(packet)
-    narrative_bundle = _read_builder_narrative(files, packet)
+    blueprint_artifact = load_builder_blueprint_artifact(workspace)
+    blueprint_report_artifact = load_builder_blueprint_report_artifact(workspace)
+    handoff_class = _classify_blueprint_handoff(files, blueprint_artifact, blueprint_report_artifact)
+
+    # Handle blueprint required but not ready -- fail closed before executor
+    if handoff_class == "blueprint_required_not_ready":
+        bp_status = _describe_blueprint_not_ready(
+            blueprint_artifact,
+            blueprint_report_artifact,
+        )
+        return {
+            "status": "failed",
+            "stage": "build",
+            "error": f"blueprint_not_ready:{bp_status}",
+            "job_id": job_id,
+            "blueprint_status": bp_status,
+        }
+
+    blueprint_metadata: Dict[str, Any] = {}
+
+    if handoff_class == "source_blueprint_ready" and blueprint_report_artifact:
+        blueprint_metadata = {
+            "handoff_mode": "source_blueprint",
+            "blueprint_path": str(files.get("builder_blueprint", "")),
+            "blueprint_status": "ready",
+            "fidelity_status": str(blueprint_report_artifact.get("fidelity_status") or ""),
+            "source_lock": {
+                "canonical_names_locked": True,
+                "invented_major_entities_forbidden": True,
+                "replacement_plotlines_forbidden": True,
+                "puzzle_rule_rewrite_forbidden": True,
+            },
+            "source_artifacts": {
+                "source_graph": str(files.get("source_graph", "")),
+                "identity_resolution_report": str(files.get("identity_resolution_report", "")),
+                "plot_topology_report": str(files.get("plot_topology_report", "")),
+                "normalization_fidelity_report": str(files.get("normalization_fidelity_report", "")),
+            },
+        }
+
+    narrative_bundle = _read_builder_narrative(files, packet, blueprint=blueprint_artifact)
 
     builder_input = {
         "status": "ready",
@@ -211,6 +349,9 @@ def run_toolkit_homebrew_packet_build(
         "builder_narrative_source": narrative_bundle["source"],
         "builder_narrative": narrative_bundle["narrative"],
     }
+    if blueprint_metadata:
+        builder_input["handoff_mode"] = "source_blueprint"
+        builder_input["blueprint"] = blueprint_metadata
 
     if not persist_builder_input_artifact(workspace, builder_input):
         return {

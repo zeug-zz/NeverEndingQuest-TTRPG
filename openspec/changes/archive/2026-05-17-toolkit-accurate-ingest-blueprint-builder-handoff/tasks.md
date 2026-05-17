@@ -1,0 +1,45 @@
+## 1. Blueprint Utility Foundation
+
+- [x] 1.1 Add `utils/toolkit_builder_blueprint.py` with SPDX/header and public helpers for artifact loading, fidelity precheck, blueprint generation, and narrative serialization.
+- [x] 1.2 Define stable constants for blueprint version, handoff mode, source lock defaults, and refusal statuses.
+- [x] 1.3 Implement artifact loading helpers that accept a workspace path and read Phase 2-3 artifacts without mutating them.
+- [x] 1.4 Implement blueprint report helper that returns compact status, input artifact availability, fidelity status, coverage counts, warnings, and refusal reasons.
+- [x] 2.1 Implement `evaluate_blueprint_fidelity_precheck(...)` that reads final fidelity status from `normalization_fidelity_report.json` and/or `normalization_report.json` rollups.
+- [x] 2.2 Refuse blueprint generation for `blocked`, `failed`, missing packet, missing source graph, or invalid required artifact states.
+- [x] 2.3 Allow blueprint generation for clean/repaired states and degraded states only when no required source blockers remain.
+- [x] 2.4 Persist refusal status in `builder_blueprint_report.json` when a workspace is available.
+- [x] 2.5 Add tests proving blocked/failed fidelity cannot enter blueprint handoff by default.
+- [x] 3.1 Generate `builder_blueprint.json` from source graph, identity report, plot topology report, synthesis report, and final normalized packet.
+- [x] 3.2 Populate `module`, `source_lock`, `area_plan`, `location_roster`, `npc_roster`, `plot_graph`, `puzzle_graph`, `clue_graph`, `encounter_plan`, `item_roster`, `tone_requirements`, `source_refs`, and `warnings` sections.
+- [x] 3.3 Preserve source atom IDs, original display names, aliases, criticality, source refs, and confidence where available.
+- [x] 3.4 Ensure required source NPCs and locations appear in blueprint rosters or produce a blocking blueprint report finding.
+- [x] 3.5 Ensure source-defined puzzle/trial chains from topology artifacts appear in `puzzle_graph` and `clue_graph`.
+- [x] 3.6 Ensure unsupported replacement plotline warnings from fidelity artifacts are carried into blueprint warnings/forbidden replacements.
+- [x] 4.1 Implement `serialize_builder_blueprint_to_narrative(...)` with deterministic section ordering.
+- [x] 4.2 Include `SOURCE-FAITHFUL BUILD LOCK` with explicit constraints for canonical names, required atoms, forbidden replacements, puzzle rules, and unsupported inventions.
+- [x] 4.3 Include exact location roster, NPC roster, plot topology, puzzle/trial rules, clue graph, encounter/monster plan, item/treasure plan, tone profile, and allowed compression notes.
+- [x] 4.4 Keep narrative ASCII-safe and deterministic enough for regression testing.
+- [x] 4.5 Replace or augment legacy `builder_narrative.md` persistence with blueprint-derived content when blueprint handoff is enabled and ready.
+- [x] 5.1 Extend `utils/toolkit_homebrew_upload_contract.py` workspace helpers for `builder_blueprint.json` and `builder_blueprint_report.json`.
+- [x] 5.2 Add atomic persistence helpers for builder blueprint and report artifacts.
+- [x] 5.3 Add load helpers that preserve compatibility for workspaces without blueprint artifacts.
+- [x] 5.4 Ensure existing `builder_narrative.md` and `builder_input.json` artifact helpers remain backward compatible.
+- [x] 6.1 Integrate blueprint generation after Phase 3 fidelity audit/repair and before builder handoff artifact persistence.
+- [x] 6.2 Add feature flag support, for example `ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF`.
+- [x] 6.3 Persist compact blueprint status in `normalization_report.json` or the nearest existing build-prep report without duplicating full blueprint content.
+- [x] 6.4 Preserve legacy behavior when blueprint mode is disabled, source artifacts are unavailable in legacy mode, or accurate-ingest mode is not active.
+- [x] 6.5 Ensure blueprint generation failure returns a reviewable report instead of silently falling back to lossy build behavior in accurate-ingest mode.
+- [x] 7.1 Update `web/extensions/toolkit_homebrew_packet_builder.py` to read `builder_blueprint.json` and `builder_blueprint_report.json` when present.
+- [x] 7.2 Update `builder_input.json` to include `handoff_mode`, blueprint path, blueprint status, fidelity status, source lock settings, and source artifact paths.
+- [x] 7.3 Ensure `_read_builder_narrative(...)` prefers blueprint-derived narrative when `handoff_mode` is `source_blueprint` and blueprint status is ready.
+- [x] 7.4 Refuse build execution when blueprint mode is required but blueprint status is not ready.
+- [x] 7.5 Keep legacy packet builder behavior unchanged for old workspaces and disabled blueprint mode.
+- [x] 8.1 Run `.venv/bin/python -m py_compile utils/toolkit_builder_blueprint.py utils/toolkit_homebrew_upload_contract.py utils/toolkit_homebrew_normalizer.py web/extensions/toolkit_homebrew_packet_builder.py`.
+- [x] 8.2 Run new blueprint generation, narrative, fidelity gate, and packet builder handoff tests.
+- [x] 8.3 Run existing accurate-ingest source graph, multipass, fidelity, normalizer, and upload contract regression tests impacted by artifact helpers.
+- [x] 8.4 Run `openspec validate toolkit-accurate-ingest-blueprint-builder-handoff`.
+- [x] 9.1 Add source-contract tests proving this change does not add review UI fidelity panel behavior.
+- [x] 9.2 Add source-contract tests proving this change does not add build-time fidelity gate enforcement.
+- [x] 9.3 Add source-contract tests proving this change does not add narrative enrichment application.
+
+**Verification for 9.1-9.3:** Source-contract tests confirm Phase 5+ surfaces remain future work.

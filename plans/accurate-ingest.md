@@ -1,7 +1,7 @@
 # Accurate Homebrew Ingest: Source-Faithful Multi-Pass Pipeline
 
-**Status:** Active roadmap - Phase 1 complete via `toolkit-accurate-ingest-source-graph`
-**Updated:** 2026-05-08
+**Status:** Active roadmap - Phase 1 complete; Phase 2-3 prerequisite changes defined; Phase 4 blueprint handoff next
+**Updated:** 2026-05-15
 **Target:** Fix the 95% fidelity loss between original adventure markdown/PDF sources and ingested NEQ modules, as observed with `The_Hidden_City_of_Numillian`.
 
 ---
@@ -90,6 +90,19 @@ The implementation should target these existing seams first:
 ---
 
 ## Target Architecture
+
+### Current Phase Status
+
+The roadmap is split into independently reviewable OpenSpec changes:
+
+| Phase | OpenSpec Change | Status | Notes |
+|---|---|---|---|
+| Phase 1 | `toolkit-accurate-ingest-source-graph` | Complete/archived | Deterministic `source_manifest.json` and `source_graph.json` foundation. |
+| Phase 2 | `toolkit-accurate-ingest-multipass-normalization` | Prerequisite scope defined | Section extraction, identity adjudication, topology synthesis, and source-backed packet synthesis. |
+| Phase 3 | `toolkit-accurate-ingest-fidelity-verifier-repair-loop` | Prerequisite scope defined | Normalization fidelity audit, additive repair loop, and compact fidelity/repair rollups. |
+| Phase 4 | `toolkit-accurate-ingest-blueprint-builder-handoff` | Next | Builder blueprint generation and source-locked builder handoff. |
+
+Phase 4 should assume Phases 2-3 provide final source-backed packet and fidelity artifacts, and should not re-own packet synthesis, repair, review UI, build-time fidelity gates, or enrichment.
 
 ### Canonical Artifact Chain
 
@@ -713,9 +726,9 @@ Suggested tests:
 
 ---
 
-### Phase 4: Normalized Packet v2 and Builder Blueprint Generation
+### Phase 4: Builder Blueprint Generation and Builder Handoff
 
-**Goal:** Preserve compatibility with existing review packet while adding a source-locked builder blueprint.
+**Goal:** Convert validated Phase 2-3 artifacts into a source-locked builder blueprint and builder handoff without letting the builder consume a lossy freeform summary.
 
 New file:
 
@@ -723,34 +736,40 @@ New file:
 
 Tasks:
 
-1. Generate `normalized_packet.json` from source graph rather than directly from raw LLM response.
-2. Add optional source graph references to packet entries.
-3. Generate `builder_blueprint.json` from source graph.
-4. Generate expanded `builder_narrative.md` from blueprint.
-5. Persist artifact metadata in normalization report.
+1. Load Phase 2-3 artifacts:
+   - `source_graph.json`
+   - `identity_resolution_report.json`
+   - `plot_topology_report.json`
+   - `source_graph_synthesis_report.json`
+   - final `normalized_packet.json`
+   - `normalization_fidelity_report.json`
+   - `normalization_report.json` fidelity/repair rollups
+2. Refuse blueprint generation when final fidelity status is `blocked`, `failed`, or missing required source artifacts.
+3. Generate `builder_blueprint.json` from source graph, identity, topology, and repaired packet artifacts.
+4. Generate expanded source-locked `builder_narrative.md` from blueprint.
+5. Persist blueprint identity, source lock settings, and fidelity precheck status in `builder_input.json`.
 
 Update:
 
 - `utils/toolkit_homebrew_normalizer.py`
-  - Replace single `_build_normalized_packet(...)` dependency with source graph synthesis.
-  - Keep backward-compatible fallback for old behavior behind a flag.
-- `prompts/toolkit/homebrew_upload_normalization_prompt.txt`
-  - Convert to legacy fallback prompt or split into new prompts.
+  - No longer owns Phase 4 except to leave Phase 2-3 packet/fidelity artifacts available.
 - `web/extensions/toolkit_homebrew_packet_builder.py`
   - Read `builder_blueprint.json` when present.
   - Include blueprint identity in `builder_input.json`.
 
 Acceptance:
 
-- Existing review packet still validates.
-- Blueprint includes all required source locations and NPCs.
+- Blueprint generation refuses blocked or failed normalization fidelity by default.
+- Blueprint includes all required source locations, NPCs, plot beats, puzzle chains, clue chains, encounters, items, and tone markers available from Phase 2-3 artifacts.
 - Builder narrative includes exact source rosters and plot topology, not just a 3-7 line summary.
+- `builder_input.json` carries blueprint artifact path, source lock settings, and fidelity status for later builder stages.
 
 Suggested tests:
 
 - `scripts/test_builder_blueprint_generation.py`
 - `scripts/test_builder_narrative_source_lock.py`
-- `scripts/test_normalized_packet_source_refs.py`
+- `scripts/test_packet_builder_blueprint_handoff.py`
+- `scripts/test_builder_blueprint_fidelity_gate.py`
 
 ---
 
@@ -1142,11 +1161,11 @@ This is too large for one implementation change. Split into OpenSpec changes:
 1. `toolkit-accurate-ingest-source-graph`
    - Source manifest/source graph extraction and Numillian benchmark baseline.
 2. `toolkit-accurate-ingest-multipass-normalization`
-   - Section extraction, identity resolution, plot topology, packet synthesis.
-3. `toolkit-accurate-ingest-fidelity-repair`
-   - Fidelity verifier, repair loop, review UI blocker handling.
+    - Section extraction, identity resolution, plot topology, packet synthesis.
+3. `toolkit-accurate-ingest-fidelity-verifier-repair-loop`
+    - Fidelity verifier, repair loop, review UI blocker handling.
 4. `toolkit-accurate-ingest-blueprint-builder-handoff`
-   - Builder blueprint, source-locked narrative, builder input integration.
+    - Builder blueprint, source-locked narrative, builder input integration.
 5. `toolkit-accurate-ingest-build-fidelity-gates`
    - Stage audits and final source fidelity report.
 6. `toolkit-accurate-ingest-narrative-enrichment-placeholder`

@@ -307,6 +307,125 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertEqual(report.get("error"), "normalization_artifact_persistence_failed")
         self.assertFalse(report.get("builder_narrative_persisted"))
 
+    # --- Blueprint narrative persistence tests ---
+
+    def _prepopulate_blueprint_artifacts(self):
+        """Pre-populate Phase 2-3 artifacts so blueprint generation activates."""
+        from utils.file_operations import safe_write_json
+
+        files = {
+            "source_graph": self.workspace / "source_graph.json",
+            "normalized_packet": self.workspace / "normalized_packet.json",
+        }
+
+        safe_write_json(str(files["source_graph"]), {
+            "source_graph_version": "sg.v1",
+            "atoms": [
+                {"id": "loc_1", "type": "location", "name": "Ruined Gate",
+                 "criticality": "major", "source_refs": []},
+                {"id": "npc_1", "type": "npc", "name": "Caretaker Noll",
+                 "criticality": "required", "source_refs": []},
+            ],
+            "tone_markers": ["Gothic horror"],
+        })
+
+        safe_write_json(str(files["normalized_packet"]), {
+            "packet_version": "v1",
+            "normalization_state": "normalized",
+            "title": "Crypt of Ash",
+            "description": "A short ruin crawl.",
+            "source_hash": "abc123",
+            "locations": [{"name": "Ruined Gate", "summary": "Collapsed"}],
+            "npc_seeds": [{"name": "Caretaker Noll", "role": "Guide"}],
+        })
+
+    @patch("utils.toolkit_homebrew_normalizer.get_model_config")
+    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    def test_blueprint_ready_narrative_matches_source_locked_lock(
+        self, mock_client_factory, mock_model_config,
+    ):
+        """When blueprint artifacts are ready, persisted builder_narrative
+        must contain the source-locked SOURCE-FAITHFUL BUILD LOCK."""
+        payload = _full_legacy_payload()
+        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_model_config.return_value = {
+            "model": "fake-model",
+            "temperature": 0.3,
+            "extra_body": {},
+        }
+        self._prepopulate_blueprint_artifacts()
+
+        # Patch ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF to True for the test
+        import utils.toolkit_homebrew_normalizer as tn
+        orig_bp_flag = getattr(tn, "ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF", True)
+        tn.ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
+        try:
+            result = normalize_homebrew_upload(
+                source_path=self.source_path,
+                workspace=self.workspace,
+                preflight=self.preflight,
+                source_rights_class="user_authored",
+            )
+        finally:
+            tn.ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = orig_bp_flag
+
+        self.assertEqual(result.get("status"), "success")
+        narrative = result.get("builder_narrative", "")
+        narrative_source = result.get("builder_narrative_source", "")
+
+        # Blueprint-derived narrative contains source-faithful build lock
+        self.assertIn(
+            "SOURCE-FAITHFUL BUILD LOCK",
+            narrative,
+            "Blueprint-ready normalizer must persist source-faithful build lock",
+        )
+        self.assertEqual(narrative_source, "blueprint", "Narrative source must be 'blueprint'")
+
+    @patch("utils.toolkit_homebrew_normalizer.get_model_config")
+    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    def test_blueprint_narrative_not_overwritten_by_legacy(
+        self, mock_client_factory, mock_model_config,
+    ):
+        """When blueprint is ready, the persisted builder_narrative must not
+        be overwritten with legacy narrative content."""
+        payload = _full_legacy_payload()
+        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_model_config.return_value = {
+            "model": "fake-model",
+            "temperature": 0.3,
+            "extra_body": {},
+        }
+        self._prepopulate_blueprint_artifacts()
+
+        import utils.toolkit_homebrew_normalizer as tn
+        orig_bp_flag = getattr(tn, "ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF", True)
+        tn.ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
+        try:
+            result = normalize_homebrew_upload(
+                source_path=self.source_path,
+                workspace=self.workspace,
+                preflight=self.preflight,
+                source_rights_class="user_authored",
+            )
+        finally:
+            tn.ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = orig_bp_flag
+
+        self.assertEqual(result.get("status"), "success")
+
+        # Load the persisted narrative from disk
+        narrative_path = self.workspace / "builder_narrative.txt"
+        self.assertTrue(narrative_path.exists(), "Persisted builder_narrative must exist")
+        disk_narrative = narrative_path.read_text(encoding="utf-8")
+
+        # The on-disk narrative must contain the blueprint source-locked content,
+        # not just legacy fields like "Build module: Crypt of Ash"
+        self.assertIn(
+            "SOURCE-FAITHFUL BUILD LOCK",
+            disk_narrative,
+            "Persisted builder_narrative must contain source-faithful build lock, "
+            "not be overwritten with legacy narrative",
+        )
+
     # --- Multipass orchestration tests ---
 
     def _make_multipass_model_config(self):

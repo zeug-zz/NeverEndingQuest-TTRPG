@@ -81,6 +81,7 @@ ENABLE_ACCURATE_INGEST_MULTI_PASS = True              # Multi-pass source-faithf
 ENABLE_NORMALIZATION_FIDELITY_AUDIT = True            # Compare normalized packet against source artifacts
 ENABLE_NORMALIZATION_FIDELITY_REPAIR = True           # Run bounded repair loop for repairable fidelity gaps
 NORMALIZATION_FIDELITY_MAX_REPAIR_ATTEMPTS = 3        # Max repair attempts before giving up
+ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True       # Generate source-locked builder blueprint and narrative (Phase 4)
 
 # --- Conversation Compression Settings ---
 # Enable/disable compression types before API calls
