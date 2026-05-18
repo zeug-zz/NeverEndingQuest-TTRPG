@@ -754,6 +754,12 @@ def run_toolkit_module_postbuild_finishing(
     publishable_status = str(
         publishability_stage.get("publishable_status", "fail") or "fail"
     )
+    source_fidelity_status = str(
+        publishability_stage.get("source_fidelity_status", "unknown") or "unknown"
+    )
+
+    # Surface source-fidelity category breakdown in finisher report
+    source_fidelity_categories = publishability_stage.get("source_fidelity_categories", [])
 
     if _detect_media_only_debt(publishability_stage):
         media_debt = _extract_media_debt_details(publishability_stage)
@@ -790,6 +796,10 @@ def run_toolkit_module_postbuild_finishing(
         publishable_status=publishable_status,
         phase="final",
     )
+
+    report["source_fidelity_status"] = source_fidelity_status
+    if source_fidelity_categories:
+        report["source_fidelity_categories"] = source_fidelity_categories
 
     write_ok = safe_write_json(str(report_path), report)
     if not write_ok:

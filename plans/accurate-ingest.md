@@ -1,6 +1,6 @@
 # Accurate Homebrew Ingest: Source-Faithful Multi-Pass Pipeline
 
-**Status:** Active roadmap - source graph through build-fidelity gates complete/archived; narrative enrichment placeholder complete/archived
+**Status:** Active roadmap - source graph through final benchmark/publication gates implemented; GUI builder unification planned
 **Updated:** 2026-05-18
 **Target:** Fix the 95% fidelity loss between original adventure markdown/PDF sources and ingested NEQ modules, as observed with `The_Hidden_City_of_Numillian`.
 
@@ -105,6 +105,9 @@ The roadmap is split into independently reviewable OpenSpec changes:
 | Phase 6 | `toolkit-accurate-ingest-review-ui-fidelity-panel` | Complete/archived | Pre-build fidelity review payload, approval gate, and toolkit UI surfacing. |
 | Phase 8 | `toolkit-accurate-ingest-build-fidelity-gates` | Complete/archived | Build-time fidelity report, final rollup, blocking behavior, and status surfacing. |
 | Phase 9 | `toolkit-accurate-ingest-narrative-enrichment-placeholder` | Complete/archived | Artifact-only enrichment profile and plan placeholder; no auto-apply. |
+| Phase 10 | `toolkit-accurate-ingest-deterministic-path-expansion` | Complete/archived | Generalized deterministic content-block/map-key parser and conservative fallback routing. |
+| Phase 11 | `toolkit-accurate-ingest-final-benchmark-publication-gate` | Implemented/review pending | Deterministic benchmark runner, source-fidelity publication gate, and report surfacing. |
+| Phase 12 | `toolkit-accurate-ingest-gui-builder-unification` | Planned | Make the accurate-ingest blueprint the actual GUI Module Builder contract: deterministic seed first, bounded LLM enrichment second, shared finisher and `MODULE_SUMMARY.md` last. |
 
 Phase 9 should assume source extraction, normalization, repair, review approval, blueprint handoff, and build-time fidelity gates are already reliable. It should not re-own source extraction, packet repair, builder handoff, review UI blocker handling, or build-fidelity scoring.
 
@@ -126,6 +129,8 @@ Readable-source workspaces should persist a richer chain of reviewable artifacts
 | `build_fidelity_report.json` | Stage-by-stage source preservation checks after build. |
 | `narrative_enrichment_plan.json` | Optional post-build enrichment strategy placeholder. |
 | `source_fidelity_report.json` | Final rollup for review, publication, and regression benchmarks. |
+| `toolkit_build_report.json` | Shared post-build readiness/publishability/source-fidelity report for GUI and publication surfaces. |
+| `MODULE_SUMMARY.md` | Final Homebrewery V3 adventure document generated from the completed module for user download/publishing. |
 
 ### Source Truth Hierarchy
 
@@ -458,6 +463,43 @@ Add a deterministic module materializer for source-faithful builds:
 - Use LLM only for field prose, not for structure discovery.
 
 This long-term path is the most faithful but should be staged after the source graph and fidelity verifier are stable.
+
+### Current Gap After Phase 11
+
+The accurate-ingest artifact chain now preserves source truth, but the GUI Module Builder path still has a structural weakness: the generated `builder_blueprint.json` is mostly converted into a source-locked narrative prompt and passed to `ModuleBuilder.build_module(...)`. The downstream builder can still behave like a concept-to-module generator rather than a blueprint materializer. Build-fidelity gates catch failures after generation, but they do not yet guarantee the builder started from the exact deterministic source skeleton.
+
+The deterministic importer path has the opposite tradeoff: it can preserve keyed structure (for example Numillian's 13 map-key locations), but direct deterministic emission is skeletal and may bypass richer builder enrichment, readiness repair, finisher publication checks, and `MODULE_SUMMARY.md` generation unless explicitly routed back through the toolkit stack.
+
+The next integration slice must unify these paths:
+
+```text
+GUI source upload
+  -> deterministic source graph/content blocks
+  -> builder_blueprint.v2
+  -> human fidelity/blueprint review
+  -> deterministic module seed writer
+  -> bounded LLM enrichment of allowed fields
+  -> build fidelity gate
+  -> readiness/semantic/media/materialization finisher
+  -> MODULE_SUMMARY.md generation
+  -> source-fidelity benchmark/publication gate
+```
+
+### Unified GUI Builder Handoff
+
+The unified path should stop treating the blueprint as only a prompt. It should make the blueprint the build contract.
+
+Required implementation shape:
+
+1. Produce `builder_blueprint.v2` from all source paths, including deterministic content-block importer output and multi-pass normalization output.
+2. Validate the blueprint before build. Required locations, NPCs, plot beats, puzzles/trials, clue dependencies, and tone locks must be explicit and reviewable.
+3. Seed module JSON deterministically from the blueprint before any LLM enrichment runs.
+4. Allow LLM passes only to fill or improve approved text fields, never to rename, omit, relocate, or replace required source content.
+5. Run existing build-fidelity gates after enrichment, using source graph and blueprint IDs as the comparison basis.
+6. Route every successful GUI build through the same readiness, semantic authority, monster materialization, media, and finisher stack.
+7. Generate `MODULE_SUMMARY.md` only after module data is complete and audited. The summary is presentation output, not source truth, and must not mutate module data.
+
+The practical first implementation can add a new blueprint materialization helper instead of deeply rewriting all of `ModuleBuilder` at once. `ModuleBuilder`/`ModuleGenerator` can remain available for legacy Describe-your-Adventure builds and for fallback concept builds.
 
 ---
 
@@ -1114,6 +1156,300 @@ Suggested tests:
 - `scripts/test_accurate_ingest_numillian_benchmark.py`
 - `scripts/test_audit_module_publishability.py` extensions.
 
+#### OpenSpec Plan-To-Builder Prompt Draft: Phase 11
+
+**Step Identifier:** Phase 11.0 - OpenSpec scaffold for `toolkit-accurate-ingest-final-benchmark-publication-gate`
+**Verbosity Tier:** full
+
+```text
+Implement OpenSpec planning artifacts for the next accurate-ingest slice only.
+
+Goal:
+Create a reviewable OpenSpec change named `toolkit-accurate-ingest-final-benchmark-publication-gate` that defines the final benchmark and publication gate integration for accurate ingest.
+
+Context:
+Accurate ingest now has source graph extraction, multi-pass normalization, fidelity repair, review UI, blueprint handoff, build-time fidelity gates, narrative enrichment placeholder, and deterministic content-block import. The next slice must make the full pipeline measurable against a real benchmark module and enforce publication warnings/blockers without weakening existing readiness or publishability contracts.
+
+Allowed files:
+- `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/proposal.md`
+- `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/design.md`
+- `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/tasks.md`
+- `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/executor_prompts.md`
+- `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/specs/*/spec.md`
+
+Forbidden changes:
+- MUST NOT edit runtime Python, HTML, prompts, schemas, module data, model config, tests, or plan files in this planning step.
+- MUST NOT run Numillian ingest or mutate any module artifacts.
+- MUST NOT create benchmark result JSON files yet.
+- MUST NOT change publishability behavior in this planning step.
+- MUST NOT call LLM providers or run ModuleBuilder.
+- MUST NOT archive the change.
+- MUST NOT include auto-commit, auto-push, destructive git, or publication commands.
+
+Contract layer (MUST):
+1. The proposal MUST state the problem: accurate-ingest components exist, but there is no final end-to-end benchmark contract proving source fidelity and no publication gate integration that surfaces degraded fidelity consistently.
+2. The proposal MUST define non-goals: no module mutation in planning, no provider calls, no automatic publication, no broad readiness rewrite, no source-fidelity threshold weakening, no runtime UI implementation in the scaffold step.
+3. The design MUST define a Numillian benchmark fixture contract with explicit source-fidelity expectations:
+   - 20/20 named source NPCs represented or intentionally classified minor/unused with review note.
+   - 13/13 source locations preserved by original name or approved exact mapping.
+   - Trial at the Door structure preserved, including skull riddle, flooding room puzzle, and kill-the-dog mindscape test.
+   - Gatepact lore represented in module objective or plot.
+   - Kobe protection objective preserved.
+   - No ward-network conspiracy replacement unless source explicitly supports it.
+   - Tone report confirms quirky character-driven hidden city, not generic conspiracy thriller.
+4. The design MUST define benchmark output artifacts without creating them yet. Recommended future names:
+   - `accurate_ingest_benchmark_report.json`
+   - `accurate_ingest_publication_gate_report.json`
+   - optional markdown summary for operator review.
+5. The design MUST define publication gate semantics:
+   - Source-fidelity `pass` SHOULD allow publication checks to proceed.
+   - Source-fidelity `degraded` MUST surface publication warnings and require review/waiver before tester-facing publication.
+   - Source-fidelity `blocked` MUST block publishability, not just readiness.
+   - Existing structural readiness and semantic publishability gates MUST remain authoritative and additive, not replaced.
+6. The design MUST define how final reports attach to existing toolkit readiness/build report surfaces without overwriting runtime/local campaign state.
+7. The specs MUST include testable requirements and scenarios for:
+   - end-to-end benchmark runner contract;
+   - Numillian source-fidelity benchmark expectations;
+   - publication gate status composition;
+   - degraded-with-waiver behavior;
+   - blocked source-fidelity behavior;
+   - report surfacing in toolkit/build/publishability outputs;
+   - legacy modules without accurate-ingest artifacts fail open or warn appropriately, as explicitly chosen by design.
+8. The tasks MUST be small, ordered, and verifiable. They MUST separate scaffold/planning, benchmark runner, report generation, publication gate integration, UI/status surfacing, regression tests, and verification.
+9. The executor prompts MUST be builder-ready and split implementation into safe future sections:
+   - benchmark fixture contract and report model;
+   - Numillian benchmark runner;
+   - publication gate composition;
+   - toolkit report/status surfacing;
+   - regression tests;
+   - verification and archive readiness.
+
+Guidance layer (SHOULD):
+- SHOULD keep this step planning-only and defer runtime/test implementation until the reviewed OpenSpec is accepted.
+- SHOULD use spec names such as:
+  - `toolkit-accurate-ingest-benchmark-runner`
+  - `toolkit-numillian-source-fidelity-benchmark`
+  - `toolkit-source-fidelity-publication-gate`
+  - `toolkit-source-fidelity-waiver-contract`
+  - `toolkit-source-fidelity-report-surfacing`
+- SHOULD preserve the distinction between readiness (`ready_status`) and publication (`publishable_status`).
+- SHOULD explicitly preserve legacy/non-accurate-ingest behavior.
+- SHOULD require `.venv/bin/python` for future benchmark and publishability test commands.
+- SHOULD keep terminology ASCII-only and use MUST/SHALL for normative requirements.
+
+Acceptance criteria:
+- `openspec validate toolkit-accurate-ingest-final-benchmark-publication-gate` passes.
+- `git status --short` shows only the new OpenSpec change directory for this planning step unless the reviewer explicitly approved plan file updates.
+- No runtime/code/test/module files are modified.
+- All tasks in the new change are unchecked until implementation begins.
+- The proposal, design, specs, tasks, and executor prompts clearly distinguish benchmark measurement from publication enforcement.
+
+Report back with:
+- Files created.
+- Spec names created.
+- Validation command and result.
+- Any open design questions for reviewer approval, especially around degraded-with-waiver behavior and legacy module handling.
+```
+
+**Verification Gate (after builder reports):**
+
+- `openspec validate toolkit-accurate-ingest-final-benchmark-publication-gate`
+- `git status --short`
+- Confirm no runtime files changed outside `openspec/changes/toolkit-accurate-ingest-final-benchmark-publication-gate/`
+- Confirm OpenSpec tasks are unchecked and implementation has not started.
+
+**Next Step Ready:** Review Phase 11.0 prompt, then create the OpenSpec scaffold if approved.
+
+---
+
+### Phase 12: GUI Builder Unification
+
+**Goal:** Integrate the accurate-ingest functions into one coherent Module Builder GUI ingest for users, so uploaded adventures are built from a deterministic source blueprint first and enriched by LLM passes second.
+
+Problem this phase fixes:
+
+- The GUI can now produce source graph, fidelity, and blueprint artifacts, but the actual module build still depends on `builder_narrative` prompt obedience.
+- The deterministic importer can preserve source map-key structure, but its direct emission path is too skeletal for publishable user adventures.
+- Post-build `MODULE_SUMMARY.md` generation is scheduled correctly in the finisher, but it currently summarizes whatever module was built; it cannot compensate for lost source truth.
+
+Target GUI flow:
+
+```text
+Upload MD/PDF
+  -> preflight and rights declaration
+  -> deterministic structure/content-block extraction
+  -> multi-pass source graph/identity/topology synthesis where needed
+  -> builder_blueprint.v2
+  -> fidelity/blueprint review panel
+  -> deterministic module seed writer
+  -> bounded LLM enrichment over approved fields
+  -> build fidelity gate
+  -> readiness/semantic/media/materialization finisher
+  -> MODULE_SUMMARY.md generation
+  -> source-fidelity publication gate
+```
+
+Core rule:
+
+> The builder may format, deepen, and fill gaps inside source bounds. It must not rediscover or replace the adventure.
+
+#### Phase 12A: Blueprint v2 Contract
+
+Create a `builder_blueprint.v2` contract that is rich enough to materialize a module without a freeform builder prompt.
+
+Required blueprint sections:
+
+- `module`: title, source path/hash, author/license, level range, tone profile, source rights class.
+- `source_lock`: canonical names locked, required atoms block omission, invented major entities forbidden, replacement plotlines forbidden, puzzle rule rewrites forbidden.
+- `area_plan`: ordered areas with source section refs and source-derived area names.
+- `location_roster`: exact source location names, map-key number, source order, parent area, description excerpt, aliases, connectivity hints, source refs, required/major/minor criticality.
+- `npc_roster`: canonical source names, aliases, role, disposition, faction/relationship hints, source location bindings, source refs, criticality.
+- `plot_graph`: main beats, dependencies, triggers, outcomes, endings, required source refs.
+- `puzzle_graph`: setup, player-facing prompt, rules, solution, failure consequences, required clues, source refs.
+- `clue_graph`: clue text/paraphrase, reveal location/NPC/item, supported plot or puzzle, mandatory/redundant classification.
+- `encounter_plan`: source monsters/NPCs, location, purpose, avoidability, tactics when present.
+- `item_roster`: keys, rewards, unique items, treasure from source locations.
+- `enrichment_allowlist`: per-field edit permissions and token/character budgets.
+
+Acceptance:
+
+- A Numillian blueprint preserves all 13 map-key locations in source order.
+- Trial-at-the-Door puzzle nodes contain skull riddle, flooding room, and kill-the-dog mindscape facts if source extraction finds them.
+- Missing required sections produce explicit `blueprint_status: blocked` or `degraded`, not silent fallback.
+
+#### Phase 12B: Deterministic Module Seed Writer
+
+Add a seed writer that creates a complete but minimally described NEQ module from `builder_blueprint.v2` before LLM enrichment.
+
+Seed writer responsibilities:
+
+- Create `module_context.json` and `module_context_BU.json` from blueprint module/NPC/entity data.
+- Create `module_plot.json` and `module_plot_BU.json` from `plot_graph`, `puzzle_graph`, and `clue_graph`.
+- Create `areas/*_BU.json` and runtime area files from `area_plan` and `location_roster`.
+- Create `map_*.json` from blueprint topology/connectivity hints, using existing spatial helpers for coordinates.
+- Create seed artifacts for monsters/NPC media prewarm and monster materialization.
+- Preserve source IDs/refs in additive metadata fields already accepted by schemas or in sidecar/workspace artifacts if schema fields are not allowed.
+
+Non-goals:
+
+- Do not remove legacy `ModuleBuilder.build_module(...)` concept builds.
+- Do not use LLMs to decide location/NPC/plot structure in this seed writer.
+- Do not generate `MODULE_SUMMARY.md` at this stage.
+
+Acceptance:
+
+- The seed writer can produce schema-valid skeletal module artifacts from a blueprint without provider calls.
+- Required source names are present before enrichment starts.
+- Build-fidelity checks can compare seeded module artifacts to the blueprint and source graph.
+
+#### Phase 12C: Bounded LLM Enrichment Passes
+
+After deterministic seeding, run LLM passes only over approved field budgets.
+
+Recommended pass order:
+
+1. Module overview enrichment: `mainObjective`, module description, continuity summaries.
+2. Area/location prose: `areaDescription`, location `description`, `adventureSummary`, `dmInstructions`, existing `plotHooks` strings.
+3. NPC prose: NPC `description`, `role`, `faction`, personality cues.
+4. Plot prose: plot point `description` and `plotImpact`, preserving IDs, dependencies, and puzzle rules.
+5. Encounter/treasure prose: encounter descriptions, source treasure presentation, tactical notes.
+
+Each pass must receive:
+
+- The exact blueprint IDs it may edit.
+- The source refs or excerpts for those IDs.
+- The current field values.
+- A strict output schema with patch operations only.
+
+Each pass must not:
+
+- Rename source locations/NPCs.
+- Add new major villains, factions, or replacement plotlines.
+- Change puzzle rules or solutions.
+- Remove source-critical clues, plot beats, or endings.
+- Write directly to module files before deterministic validation of the patch operations.
+
+Acceptance:
+
+- Enrichment failures degrade gracefully and preserve seeded module content.
+- Accepted patches are deterministic, validated, and traceable to blueprint IDs.
+- Build-fidelity status cannot become worse without blocking or surfacing a warning.
+
+#### Phase 12D: GUI Orchestration and Job States
+
+Update the GUI Homebrew route to expose the unified flow as one user operation.
+
+Required job states:
+
+- `preflight`
+- `extracting_source_truth`
+- `building_blueprint`
+- `awaiting_review`
+- `seeding_module`
+- `enriching_module`
+- `build_fidelity`
+- `readiness`
+- `finishing`
+- `publishability_audit`
+- `completed|not_publishable|failed|quarantined`
+
+Required UI surfaces:
+
+- Source structure summary: location/NPC/puzzle/plot counts.
+- Fidelity review blockers/warnings.
+- Blueprint coverage summary.
+- Enrichment status: skipped/degraded/success and which fields were edited.
+- Final links to `toolkit_build_report.json`, `source_fidelity_report.json`, `MODULE_SUMMARY.md`, and media generation steps.
+
+Acceptance:
+
+- Users uploading a readable adventure do not need to know whether deterministic parsing or multi-pass extraction was used.
+- The GUI does not auto-build when fidelity review is required and not approved.
+- Legacy Describe-your-Adventure builds remain unchanged.
+
+#### Phase 12E: Shared Finisher and MODULE_SUMMARY.md
+
+Every successful accurate-ingest GUI build must enter the existing toolkit finisher.
+
+Finisher requirements:
+
+- Run continuity, semantic authority, registry, monster materialization, LLM classification, publishability, and remediation stages as already implemented.
+- Generate `MODULE_SUMMARY.md` from completed module data using `utils/homebrewery_adventure_writer.py`.
+- Treat `MODULE_SUMMARY.md` as derived presentation output. It must not repair source-fidelity gaps or mutate module JSON.
+- Serve the cached summary from disk for download.
+
+Acceptance:
+
+- Successful GUI builds have `toolkit_build_report.json` and `MODULE_SUMMARY.md`.
+- `MODULE_SUMMARY.md` includes the actual seeded/enriched source locations, NPCs, plot, monsters, and treasure, not invented replacement content.
+- Download is immediate when the file already exists.
+
+#### Phase 12F: End-to-End Benchmark
+
+Run Numillian through the full GUI-equivalent path.
+
+Acceptance:
+
+- `ready_status=pass` unless media-only debt is intentionally surfaced.
+- `publishable_status=pass` or explicit source-fidelity blocker explains why not.
+- 13/13 source locations preserved by original source name or approved mapping.
+- Required NPC threshold meets benchmark requirements or degrades with explicit minor/unused classification.
+- Skull riddle, flooding room, kill-the-dog mindscape, Gatepact lore, and Kobe protection are preserved or source-fidelity blocks publication.
+- `MODULE_SUMMARY.md` reflects the source-faithful module.
+
+Suggested new OpenSpec change:
+
+- `toolkit-accurate-ingest-gui-builder-unification`
+
+Suggested implementation tests:
+
+- `scripts/test_toolkit_blueprint_v2_contract.py`
+- `scripts/test_toolkit_blueprint_seed_writer.py`
+- `scripts/test_toolkit_blueprint_enrichment_patches.py`
+- `scripts/test_toolkit_homebrew_gui_unified_flow.py`
+- `scripts/test_toolkit_module_summary_finisher_contract.py`
+- `scripts/test_accurate_ingest_numillian_end_to_end.py`
+
 ---
 
 ## Feature Flags and Rollout
@@ -1125,7 +1461,10 @@ ENABLE_ACCURATE_INGEST_SOURCE_GRAPH = True
 ENABLE_ACCURATE_INGEST_MULTI_PASS = True
 ENABLE_ACCURATE_INGEST_REPAIR_LOOP = True
 ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
+ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False
+ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False
 ENABLE_ACCURATE_INGEST_ENRICHMENT_PLACEHOLDER = True
+ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK = True
 ACCURATE_INGEST_MAX_REPAIR_ATTEMPTS = 2
 ```
 
@@ -1136,7 +1475,9 @@ Rollout:
 3. Fidelity report visible but warning-only initially.
 4. Blocker enforcement enabled after Numillian benchmark passes.
 5. Blueprint handoff enabled after builder-stage audit tests pass.
-6. Enrichment placeholder remains artifact-only until separately approved.
+6. GUI blueprint build initially disabled until seed-writer tests pass.
+7. Blueprint enrichment initially disabled until patch-validation tests pass.
+8. Enrichment placeholder remains artifact-only until separately approved.
 
 ---
 
@@ -1151,9 +1492,13 @@ Rollout:
 | `utils/toolkit_fidelity_verifier.py` | Normalization fidelity comparison and repair request generation. |
 | `utils/toolkit_build_fidelity.py` | Build-time source preservation audits. |
 | `utils/toolkit_narrative_enrichment_plan.py` | Enrichment profile placeholder and field budget planning. |
+| `utils/toolkit_blueprint_seed_writer.py` | Deterministic module skeleton materializer from `builder_blueprint.v2`. |
+| `utils/toolkit_blueprint_enrichment.py` | Bounded LLM patch orchestration for allowed blueprint fields. |
+| `utils/toolkit_blueprint_gui_orchestrator.py` | Shared GUI orchestration helpers for unified accurate-ingest build states. |
 | `prompts/toolkit/source_section_extraction_prompt.txt` | Section extraction prompt. |
 | `prompts/toolkit/source_identity_adjudication_prompt.txt` | Alias/entity adjudication prompt. |
 | `prompts/toolkit/source_plot_topology_prompt.txt` | Plot and puzzle topology prompt. |
+| `prompts/toolkit/blueprint_field_enrichment_prompt.txt` | Patch-only enrichment prompt for seeded module fields. |
 | `prompts/toolkit/narrative_enrichment_profile_prompt.txt` | Future enrichment profile prompt. |
 | `scripts/benchmark_accurate_ingest.py` | Benchmark runner for source fidelity fixtures. |
 
@@ -1169,9 +1514,11 @@ Rollout:
 | `web/routes/toolkit_homebrew_routes.py` | Surface fidelity reports and repair/waiver actions. |
 | `web/templates/module_toolkit.html` | Add source fidelity review panel. |
 | `core/importers/homebrewery_importer.py` | Generalized content block parser for map-key structures. |
-| `core/generators/module_builder.py` | Add optional blueprint/source-lock awareness and stage audit hooks. |
-| `core/generators/module_generator.py` | Seed generated module structure from blueprint/custom values where safe. |
+| `core/generators/module_builder.py` | Preserve legacy concept builds; optionally delegate accurate-ingest builds to blueprint seed/enrichment helper if enabled. |
+| `core/generators/module_generator.py` | Preserve legacy generation; avoid using it for source-locked accurate-ingest structure unless explicitly delegated. |
 | `prompts/toolkit/homebrew_upload_normalization_prompt.txt` | Retain as legacy fallback or reduce to packet synthesis prompt. |
+| `web/extensions/toolkit_module_finisher.py` | Ensure all successful accurate-ingest GUI builds run finisher and `MODULE_SUMMARY.md` generation. |
+| `utils/homebrewery_adventure_writer.py` | Preserve as final derived presentation writer; do not use it as source-fidelity repair. |
 | `model_config.py` | Add accurate ingest flags and repair attempt limits. |
 
 ---
@@ -1204,6 +1551,12 @@ Minimum regression suites:
 - `scripts/test_content_blocks_fallback.py`
 - `scripts/test_homebrewery_importer_map_key_locations.py`
 - `scripts/test_accurate_ingest_numillian_benchmark.py`
+- `scripts/test_toolkit_blueprint_v2_contract.py`
+- `scripts/test_toolkit_blueprint_seed_writer.py`
+- `scripts/test_toolkit_blueprint_enrichment_patches.py`
+- `scripts/test_toolkit_homebrew_gui_unified_flow.py`
+- `scripts/test_toolkit_module_summary_finisher_contract.py`
+- `scripts/test_accurate_ingest_numillian_end_to_end.py`
 
 Validation commands should use `.venv/bin/python` for dependency-sensitive paths.
 
@@ -1218,6 +1571,9 @@ Validation commands should use `.venv/bin/python` for dependency-sensitive paths
 | Too many LLM calls increase latency/cost. | Cache section extraction by source hash and section hash. |
 | GPT 5.4 Mini High still misses details. | Adversarial verifier and targeted repair loop. |
 | Builder ignores source locks. | Blueprint-aware handoff plus build-time fidelity gates. |
+| Blueprint-native seed writer creates valid but thin modules. | Follow immediately with bounded LLM enrichment of approved text fields. |
+| LLM enrichment mutates structure indirectly. | Patch-only schema, blueprint ID validation, and post-enrichment build fidelity gate. |
+| `MODULE_SUMMARY.md` hides build defects by sounding good. | Treat summary as final presentation only; source-fidelity and publishability gates remain authoritative. |
 | Enrichment rewrites source. | Enrichment runs only after source fidelity pass and cannot lower fidelity score. |
 | Existing pipeline compatibility breaks. | Feature flags and legacy fallback path. |
 | Review UI becomes overwhelming. | Show blocker summary first, with expandable detail tables. |
@@ -1231,9 +1587,12 @@ Validation commands should use `.venv/bin/python` for dependency-sensitive paths
 3. Source puzzle/trial mechanics are preserved.
 4. Unsupported replacement plotlines are blocked.
 5. Builder receives a source-locked blueprint, not only a prose summary.
-6. Build-time audits identify any stage that loses source material.
-7. Narrative enrichment is available as a separate, source-preserving placeholder pass.
-8. Existing deterministic ingest and legacy normalization paths remain available behind flags/fallbacks.
+6. GUI accurate-ingest builds deterministically seed module structure before LLM enrichment.
+7. LLM enrichment edits only approved text fields through validated patch operations.
+8. Build-time audits identify any stage that loses source material.
+9. `MODULE_SUMMARY.md` is generated at the end of successful toolkit finisher runs and reflects the audited module.
+10. Narrative enrichment is available as a separate, source-preserving placeholder pass.
+11. Existing deterministic ingest and legacy normalization paths remain available behind flags/fallbacks.
 
 ---
 
@@ -1252,6 +1611,12 @@ This is too large for one implementation change. Split into OpenSpec changes:
 5. `toolkit-accurate-ingest-build-fidelity-gates`
    - Stage audits and final source fidelity report.
 6. `toolkit-accurate-ingest-narrative-enrichment-placeholder`
-   - Enrichment profile artifact and source-preserving guardrails.
+    - Enrichment profile artifact and source-preserving guardrails.
+7. `toolkit-accurate-ingest-deterministic-path-expansion`
+   - Generalized map-key/content-block parser and deterministic fallback routing.
+8. `toolkit-accurate-ingest-final-benchmark-publication-gate`
+   - Final source-fidelity benchmark and publication gate composition.
+9. `toolkit-accurate-ingest-gui-builder-unification`
+   - Blueprint v2, deterministic seed writer, bounded LLM enrichment, GUI orchestration, shared finisher, and `MODULE_SUMMARY.md` finalization.
 
-Implement in that order. Do not start enrichment before source fidelity gates are reliable.
+Implement in that order. Do not start blueprint-native GUI build until source fidelity gates are reliable. Do not let `MODULE_SUMMARY.md` generation mask fidelity failures.

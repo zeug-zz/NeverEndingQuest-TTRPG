@@ -104,7 +104,10 @@ class ModuleValidator:
         if self._verbose:
             print("Loading schemas...")
         for file_type, schema_file in schema_mappings.items():
-            schema_path = self.schema_dir / "schemas" / schema_file
+            # Try direct path first, then /schemas/ subdirectory fallback.
+            schema_path = self.schema_dir / schema_file
+            if not schema_path.exists():
+                schema_path = self.schema_dir / "schemas" / schema_file
             if schema_path.exists():
                 try:
                     with open(schema_path, "r") as f:

@@ -20,6 +20,51 @@ from scripts.audit_module_readiness import audit_module_readiness
 from scripts.module_semantic_authority_audit import audit_module_semantic_authority
 from scripts.module_semantic_probe_harness import run_module_semantic_probes
 
+# Feature flag import (fail-open: default to True)
+try:
+    from model_config import ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK
+except ImportError:
+    ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK = True
+
+
+def _load_source_fidelity_status(module_path: Path) -> Dict[str, Any]:
+    report_file = module_path / "accurate_ingest_benchmark_report.json"
+    if not report_file.exists():
+        return {"source_fidelity_status": "unknown", "category_results": []}
+    try:
+        with open(report_file, "r") as f:
+            report = json.load(f)
+        if not isinstance(report, dict):
+            return {"source_fidelity_status": "unknown", "category_results": []}
+        return {
+            "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
+            "category_results": list(report.get("category_results", [])),
+        }
+    except Exception:
+        return {"source_fidelity_status": "unknown", "category_results": []}
+
+
+# Lazy import for gate composer to avoid circular imports at module level
+_GATE_COMPOSER = None
+
+def _get_gate_composer():
+    global _GATE_COMPOSER
+    if _GATE_COMPOSER is None:
+        from utils.toolkit_publication_gate_composer import compose_publishability_from_report
+        _GATE_COMPOSER = compose_publishability_from_report
+    return _GATE_COMPOSER
+    try:
+        with open(report_file, "r") as f:
+            report = json.load(f)
+        if not isinstance(report, dict):
+            return {"source_fidelity_status": "unknown", "category_results": []}
+        return {
+            "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
+            "category_results": list(report.get("category_results", [])),
+        }
+    except Exception:
+        return {"source_fidelity_status": "unknown", "category_results": []}
+
 
 def _resolve_module_path(module: str = "", module_path: str = "") -> Path:
     """Resolve module path from slug or explicit path."""
@@ -223,12 +268,40 @@ def audit_module_publishability(
         combined_warnings=warnings,
     )
 
+    # Source-fidelity integration
+    fidelity = _load_source_fidelity_status(resolved_module_path)
+    source_fidelity_status = fidelity.get("source_fidelity_status", "unknown")
+    category_results = fidelity.get("category_results", [])
+
+    compose = _get_gate_composer()
+    gate = compose(
+        ready_status=ready_status,
+        publishable_status=publishable_status,
+        source_fidelity_status=source_fidelity_status,
+        enable_fidelity_flag=ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK,
+    )
+
+    # Only surface fidelity warnings/blockers if fidelity is meaningful
+    if source_fidelity_status not in ("unknown", "pass"):
+        for w in gate.get("source_fidelity_warnings", []):
+            if w not in warnings:
+                warnings.append(w)
+        for b in gate.get("source_fidelity_blockers", []):
+            if b not in blocking_errors:
+                blocking_errors.append(b)
+
+    # Determine effective publishable status including fidelity
+    effective_publishable = gate.get("final_publishable_status", "unknown")
+
     return {
         "module": resolved_slug,
         "module_path": str(resolved_module_path),
         "source": normalized_source,
         "ready_status": ready_status,
         "publishable_status": publishable_status,
+        "source_fidelity_status": source_fidelity_status,
+        "source_fidelity_categories": category_results,
+        "effective_publishable_status": effective_publishable,
         "readiness": readiness_report,
         "publication_gates": {
             "semantic_audit": semantic_audit,
@@ -239,7 +312,7 @@ def audit_module_publishability(
         "remediation_categories": remediation_categories,
         "toolkit_media_policy": readiness_report.get("toolkit_media_policy", {}),
         "fix_list": _build_fix_list(readiness_report, semantic_audit, semantic_probes),
-        "exit_code": 0 if publishable_pass else 1,
+        "exit_code": 0 if effective_publishable == "pass" else 1,
     }
 
 
@@ -251,6 +324,7 @@ def _print_text_report(report: Dict[str, Any]) -> None:
     print(f"module: {report.get('module')}")
     print(f"ready_status: {report.get('ready_status')}")
     print(f"publishable_status: {report.get('publishable_status')}")
+    print(f"source_fidelity_status: {report.get('source_fidelity_status', 'unknown')}")
     print("")
 
     readiness = report.get("readiness", {})
@@ -299,6 +373,7 @@ def main() -> int:
         report = {
             "ready_status": "fail",
             "publishable_status": "fail",
+            "source_fidelity_status": "unknown",
             "blocking_errors": [str(exc)],
             "warnings": [],
             "fix_list": [],

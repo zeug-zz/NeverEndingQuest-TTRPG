@@ -80,6 +80,10 @@ def _classify_structure(source_text: str) -> str:
     if has_act and has_locations_header:
         return "act_location"
 
+    # Phase 10: map-key location headings (### N. Title or ### N - Title)
+    if re.search(r"^###\s+\d+[\.\-]\s+.+$", source_text, re.MULTILINE):
+        return "map_key_locations"
+
     return "unknown"
 
 
@@ -163,6 +167,8 @@ def assess_source_readiness(source_path: str) -> Dict[str, Any]:
 
     if structure_class == "room_based":
         can_auto_transform = True
+    elif structure_class == "map_key_locations":
+        can_auto_transform = True
     elif structure_class == "act_location":
         can_auto_transform = _has_parseable_location_bullets(source_text)
         if not can_auto_transform:
@@ -179,14 +185,14 @@ def assess_source_readiness(source_path: str) -> Dict[str, Any]:
             {
                 "type": "structure_unknown",
                 "severity": "manual_required",
-                "current": "No deterministic room or ACT/LOCATION structure found",
+                    "current": "No deterministic room, map-key, or ACT/LOCATION structure found",
                 "recommended": "Convert source to room-based or ACT/LOCATION format",
             }
         )
 
     blocking_issue_types = {"source_missing", "read_error", "structure_unknown", "structure_parseability"}
     has_blocking = any(issue.get("type") in blocking_issue_types for issue in issues)
-    ready = not has_blocking and structure_class == "room_based" and not any(
+    ready = not has_blocking and structure_class in ("room_based", "map_key_locations") and not any(
         issue.get("type") == "metadata_missing" for issue in issues
     ) and not any(issue.get("type") == "title_hygiene" for issue in issues)
 

@@ -87,4 +87,24 @@ MULTIPLAYER_MODE = True                                 # Enable tabletop/multi-
 WEB_PORT = 8357                                         # Port for the web interface (changed from 5000 for security)
 DEBUG_STATUS_SYNC = False                               # Enable/disable noisy status synchronization debug logs
 
+# Feature Flag -- Accurate-Ingest Final Benchmark
+# Controls integration of source-fidelity benchmark results into publishability audits.
+# When True, the publishability audit reads accurate_ingest_benchmark_report.json and
+# composes source-fidelity status with ready_status and publishable_status.
+# When False, source-fidelity checks are treated as unknown (non-blocking).
+# Default is True in model_config.py; override here if needed.
+# ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK = True
+
+# Feature Flag -- Accurate-Ingest GUI Blueprint Build (Phase 12)
+# When True, approved accurate-ingest workspaces build via deterministic
+# seed writer + bounded enrichment instead of ModuleBuilder.build_module(...).
+# Default is False in model_config.py; enable after seed-writer tests pass.
+# ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False
+
+# Feature Flag -- Accurate-Ingest Blueprint Enrichment (Phase 12)
+# When True, bounded LLM enrichment runs over seeded module fields after
+# deterministic seed materialization. Requires GUI_BLUEPRINT_BUILD.
+# Default is False in model_config.py; enable after patch-validation tests pass.
+# ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False
+
 # --- END OF FILE config_template.py ---

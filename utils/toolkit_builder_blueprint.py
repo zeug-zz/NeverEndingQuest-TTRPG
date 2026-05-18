@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 BUILDER_BLUEPRINT_VERSION = "source_faithful_builder_blueprint.v1"
+BUILDER_BLUEPRINT_V2_VERSION = "source_faithful_builder_blueprint.v2"
 BUILDER_HANDOFF_MODE_SOURCE_BLUEPRINT = "source_blueprint"
 BUILDER_HANDOFF_MODE_LEGACY = "legacy"
 _LOADED_ATTR_MARKER = "_blueprint_loader_used"
@@ -661,6 +662,387 @@ def _build_tone_requirements(markers: List[str]) -> List[str]:
     if not markers:
         return ["Preserve source tone where available"]
     return [f"Tone marker: {m}" for m in markers]
+
+
+# ---------------------------------------------------------------------------
+# Blueprint v2 generation
+# ---------------------------------------------------------------------------
+
+_ENRICHMENT_ALLOWLIST_DEFAULT = {
+    "npc_description": {
+        "field": "description",
+        "target_paths": ["npcs/{npc_key}.description"],
+        "scope": "module_context.json",
+        "max_chars": 500,
+    },
+    "npc_role": {
+        "field": "role",
+        "target_paths": ["npcs/{npc_key}.role"],
+        "scope": "module_context.json",
+        "max_chars": 100,
+    },
+    "npc_faction": {
+        "field": "faction",
+        "target_paths": ["npcs/{npc_key}.faction"],
+        "scope": "module_context.json",
+        "max_chars": 100,
+    },
+    "plot_main_objective": {
+        "field": "mainObjective",
+        "target_paths": ["mainObjective"],
+        "scope": "module_plot_BU.json",
+        "max_chars": 500,
+    },
+    "plot_point_description": {
+        "field": "description",
+        "target_paths": ["plotPoints[{index}].description"],
+        "scope": "module_plot_BU.json",
+        "max_chars": 800,
+    },
+    "plot_point_impact": {
+        "field": "plotImpact",
+        "target_paths": ["plotPoints[{index}].plotImpact"],
+        "scope": "module_plot_BU.json",
+        "max_chars": 400,
+    },
+    "area_description": {
+        "field": "areaDescription",
+        "target_paths": ["areaDescription"],
+        "scope": "area_*_BU.json",
+        "max_chars": 1000,
+    },
+    "location_description": {
+        "field": "description",
+        "target_paths": ["locations[{index}].description"],
+        "scope": "area_*_BU.json",
+        "max_chars": 1500,
+    },
+    "location_dm_instructions": {
+        "field": "dmInstructions",
+        "target_paths": ["locations[{index}].dmInstructions"],
+        "scope": "area_*_BU.json",
+        "max_chars": 2000,
+    },
+    "location_adventure_summary": {
+        "field": "adventureSummary",
+        "target_paths": ["locations[{index}].adventureSummary"],
+        "scope": "area_*_BU.json",
+        "max_chars": 600,
+    },
+    "location_plot_hooks": {
+        "field": "plotHooks",
+        "target_paths": ["locations[{index}].plotHooks[{hook_index}]"],
+        "scope": "area_*_BU.json",
+        "max_chars": 300,
+    },
+}
+
+
+def generate_builder_blueprint_v2(
+    source_graph: Dict[str, Any],
+    identity_report: Optional[Dict[str, Any]],
+    plot_topology: Optional[Dict[str, Any]],
+    synthesis_report: Optional[Dict[str, Any]],
+    normalized_packet: Dict[str, Any],
+    fidelity_report: Optional[Dict[str, Any]],
+    content_blocks: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Generate a builder_blueprint v2 artifact from source artifacts.
+
+    Reuses v1 roster builders and augments with v2-specific fields:
+    enrichment_allowlist, artifact_refs, coverage, and granular status.
+    Preserves source names, order, IDs, and refs.
+
+    The content_blocks parameter accepts Phase 10 deterministic parser
+    output for additional map-key structure context.
+    """
+    # Start with v1 blueprint for core rosters
+    v1 = generate_builder_blueprint(
+        source_graph=source_graph,
+        identity_report=identity_report,
+        plot_topology=plot_topology,
+        synthesis_report=synthesis_report,
+        normalized_packet=normalized_packet,
+        fidelity_report=fidelity_report,
+    )
+
+    atoms = source_graph.get("atoms", [])
+    location_count = len(v1.get("location_roster", []))
+    npc_count = len(v1.get("npc_roster", []))
+    plot_count = len(v1.get("plot_graph", []))
+    puzzle_count = len(v1.get("puzzle_graph", []))
+    clue_count = len(v1.get("clue_graph", []))
+    encounter_count = len(v1.get("encounter_plan", []))
+    item_count = len(v1.get("item_roster", []))
+
+    # Merge deterministic content block data where available
+    if content_blocks:
+        location_roster = _merge_content_blocks_into_roster(
+            v1.get("location_roster", []), content_blocks
+        )
+        v1["location_roster"] = location_roster
+        location_count = len(location_roster)
+
+    # Artifact refs
+    artifact_refs = {
+        "source_graph": "source_graph.json" if source_graph else None,
+        "identity_resolution_report": "identity_resolution_report.json" if identity_report else None,
+        "plot_topology_report": "plot_topology_report.json" if plot_topology else None,
+        "source_graph_synthesis_report": "source_graph_synthesis_report.json" if synthesis_report else None,
+        "normalized_packet": "normalized_packet.json",
+        "normalization_fidelity_report": "normalization_fidelity_report.json" if fidelity_report else None,
+    }
+
+    coverage = {
+        "locations_in_blueprint": location_count,
+        "npcs_in_blueprint": npc_count,
+        "plot_beats_in_blueprint": plot_count,
+        "puzzles_in_blueprint": puzzle_count,
+        "clues_in_blueprint": clue_count,
+        "encounters_in_blueprint": encounter_count,
+        "items_in_blueprint": item_count,
+    }
+
+    # Determine granular blueprint status
+    bp_status = _compute_blueprint_v2_status(v1, location_count, npc_count)
+
+    # Blockers
+    blockers = _compute_blueprint_v2_blockers(
+        v1, location_count, npc_count, plot_count, puzzle_count
+    )
+
+    v1["blueprint_version"] = BUILDER_BLUEPRINT_V2_VERSION
+    v1["blueprint_status"] = bp_status
+    v1["coverage"] = coverage
+    v1["enrichment_allowlist"] = dict(_ENRICHMENT_ALLOWLIST_DEFAULT)
+    v1["artifact_refs"] = artifact_refs
+    v1["blockers"] = blockers
+    # Add the module_summary_is_derived_only lock
+    v1.setdefault("source_lock", {})["module_summary_is_derived_only"] = True
+
+    return v1
+
+
+def _merge_content_blocks_into_roster(
+    location_roster: List[Dict[str, Any]],
+    content_blocks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge deterministic content-block metadata into location roster entries.
+
+    Enriches existing entries with source heading style, raw content,
+    map-key number, and subsection data from Phase 10 parsing.
+    """
+    block_map: Dict[str, Dict[str, Any]] = {}
+    for block in content_blocks:
+        name_key = (block.get("_source_title") or block.get("name") or "").lower().strip()
+        if name_key:
+            block_map[name_key] = block
+        src_num = block.get("_source_number")
+        if src_num is not None:
+            block_map[str(src_num)] = block
+
+    enriched = []
+    for loc in location_roster:
+        loc_name = loc.get("display_name", "").lower().strip()
+        match = block_map.get(loc_name)
+        if not match and loc.get("aliases"):
+            for alias in loc["aliases"]:
+                match = block_map.get(alias.lower().strip())
+                if match:
+                    break
+        if match:
+            enriched_loc = dict(loc)
+            enriched_loc["_source_block_kind"] = match.get("_source_block_kind")
+            enriched_loc["_source_style"] = match.get("_source_block_style")
+            enriched_loc["_source_number"] = match.get("_source_number")
+            enriched_loc["_raw_content_snippet"] = (match.get("raw_content") or "")[:200]
+            enriched_loc["description_excerpt"] = (match.get("description") or "")[:200]
+            enriched.append(enriched_loc)
+        else:
+            enriched.append(loc)
+    return enriched
+
+
+def _compute_blueprint_v2_status(
+    blueprint: Dict[str, Any],
+    location_count: int,
+    npc_count: int,
+) -> str:
+    """Compute granular blueprint v2 status based on content and fidelity."""
+
+    fidelity_status = _read_fidelity_status(
+        blueprint.get("normalization_fidelity_report"),
+        blueprint.get("normalization_report"),
+    )
+
+    if fidelity_status in ("blocked", "failed"):
+        return STATUS_BLOCKED_BY_FIDELITY
+
+    if location_count == 0 and npc_count == 0:
+        return STATUS_GENERATION_FAILED
+
+    if location_count == 0 or npc_count == 0:
+        return "degraded"
+
+    if fidelity_status == "degraded":
+        return "degraded"
+
+    return STATUS_READY
+
+
+def _compute_blueprint_v2_blockers(
+    blueprint: Dict[str, Any],
+    location_count: int,
+    npc_count: int,
+    plot_count: int,
+    puzzle_count: int,
+) -> List[Dict[str, Any]]:
+    """Compute blocker entries for blueprint v2 validation."""
+    blockers: List[Dict[str, Any]] = []
+
+    if location_count == 0:
+        blockers.append({
+            "category": "missing_locations",
+            "severity": "blocker",
+            "message": "No source locations in blueprint. Cannot seed module without location data.",
+        })
+    if npc_count == 0:
+        blockers.append({
+            "category": "missing_npcs",
+            "severity": "warning",
+            "message": "No source NPCs in blueprint. NPC descriptions will not be seeded.",
+        })
+    if plot_count == 0:
+        blockers.append({
+            "category": "missing_plot",
+            "severity": "warning",
+            "message": "No plot beats in blueprint. Module plot will not be seeded.",
+        })
+
+    has_blocking_fidelity = blueprint.get("blueprint_status") == STATUS_BLOCKED_BY_FIDELITY
+    if has_blocking_fidelity:
+        blockers.append({
+            "category": "fidelity_blocked",
+            "severity": "blocker",
+            "message": "Blueprint fidelity status prevents seed materialization.",
+        })
+
+    return blockers
+
+
+def validate_builder_blueprint_v2(
+    blueprint: Dict[str, Any],
+    *,
+    require_locations: bool = True,
+    require_npcs: bool = True,
+    require_plot: bool = True,
+) -> Dict[str, Any]:
+    """Validate a builder_blueprint v2 artifact for completeness.
+
+    Returns:
+        Dict with:
+          - valid: bool
+          - status: "pass|degraded|blocked"
+          - blockers: list of blocker dicts
+          - warnings: list of warning dicts
+          - coverage: dict from blueprint
+    """
+    version = str(blueprint.get("blueprint_version") or "").strip()
+    if version != BUILDER_BLUEPRINT_V2_VERSION:
+        return {
+            "valid": False,
+            "status": "blocked",
+            "reason": f"Expected blueprint v2 version '{BUILDER_BLUEPRINT_V2_VERSION}', got '{version}'",
+            "blockers": [{
+                "category": "version_mismatch",
+                "severity": "blocker",
+                "message": f"Expected v2, got '{version}'",
+            }],
+            "warnings": [],
+            "coverage": {},
+        }
+
+    bp_status = str(blueprint.get("blueprint_status") or "").strip()
+    if bp_status in ("blocked", "failed", STATUS_BLOCKED_BY_FIDELITY):
+        blockers = blueprint.get("blockers") or []
+        return {
+            "valid": False,
+            "status": "blocked",
+            "reason": f"Blueprint status is '{bp_status}'",
+            "blockers": blockers or [{
+                "category": "blueprint_status",
+                "severity": "blocker",
+                "message": f"Blueprint status '{bp_status}' prevents seeding",
+            }],
+            "warnings": blueprint.get("warnings", []),
+            "coverage": blueprint.get("coverage", {}),
+        }
+
+    blockers: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+
+    required_sections = ["module", "source_lock", "area_plan", "location_roster",
+                         "npc_roster", "plot_graph", "puzzle_graph", "clue_graph",
+                         "encounter_plan", "item_roster", "enrichment_allowlist",
+                         "artifact_refs"]
+
+    for section in required_sections:
+        if section not in blueprint:
+            blockers.append({
+                "category": "missing_section",
+                "severity": "blocker",
+                "message": f"Required blueprint section '{section}' is missing",
+            })
+
+    source_lock = blueprint.get("source_lock", {})
+    lock_keys = ["canonical_names_locked", "required_atom_omission_blocks_build",
+                 "invented_major_entities_forbidden", "replacement_plotlines_forbidden",
+                 "puzzle_rule_rewrite_forbidden", "module_summary_is_derived_only"]
+    for key in lock_keys:
+        if not source_lock.get(key):
+            warnings.append({
+                "category": "source_lock",
+                "severity": "warning",
+                "message": f"Source lock '{key}' is not enabled",
+            })
+
+    coverage = blueprint.get("coverage", {})
+    loc_count = int(coverage.get("locations_in_blueprint", 0))
+    npc_count = int(coverage.get("npcs_in_blueprint", 0))
+    plot_count = int(coverage.get("plot_beats_in_blueprint", 0))
+
+    if require_locations and loc_count == 0:
+        blockers.append({
+            "category": "empty_location_roster",
+            "severity": "blocker",
+            "message": "Location roster is empty when locations are required",
+        })
+    if require_npcs and npc_count == 0:
+        warnings.append({
+            "category": "empty_npc_roster",
+            "severity": "warning",
+            "message": "NPC roster is empty",
+        })
+    if require_plot and plot_count == 0:
+        warnings.append({
+            "category": "empty_plot_graph",
+            "severity": "warning",
+            "message": "Plot graph is empty",
+        })
+
+    valid = len(blockers) == 0
+    status = "pass" if valid else "blocked"
+    if valid and warnings:
+        status = "degraded"
+
+    return {
+        "valid": valid,
+        "status": status,
+        "reason": "" if valid else f"{len(blockers)} validation blocker(s)",
+        "blockers": blockers,
+        "warnings": warnings,
+        "coverage": coverage,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,8 @@ NORMALIZATION_FIDELITY_MAX_REPAIR_ATTEMPTS = 3        # Max repair attempts befo
 ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True       # Generate source-locked builder blueprint and narrative (Phase 4)
 ENABLE_ACCURATE_INGEST_FIDELITY_REVIEW_PANEL = True   # Pause accurate-ingest uploads for source-fidelity review before build
 ENABLE_ACCURATE_INGEST_BUILD_FIDELITY_GATES = True    # Compare generated module against source/blueprint artifacts (Phase 6)
+ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False   # Blueprint-native deterministic seed + bounded enrichment for accurate-ingest GUI builds (Phase 12)
+ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False  # Bounded LLM enrichment pass over seeded module fields (Phase 12; requires GUI_BLUEPRINT_BUILD)
 
 # --- Conversation Compression Settings ---
 # Enable/disable compression types before API calls
@@ -334,4 +336,12 @@ GPT_IMAGE_1_PRICING_USD = {
 # Rollback: set to False, no code removal needed. All LLM calls are advisory and
 # fail-open; Python validates all labels against strict enum contracts.
 ENABLE_LLM_CLASSIFICATION = True
+
+# Feature Flag -- Accurate-Ingest Final Benchmark and Publication Gate
+# When True, the publishability audit integrates source-fidelity benchmark
+# results (from accurate_ingest_benchmark_report.json) into the final
+# publishable determination. When False, source-fidelity checks are
+# treated as unknown (non-blocking). Default: True.
+# Rollback: set to False, no code removal needed.
+ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK = True
 # ============================================================================

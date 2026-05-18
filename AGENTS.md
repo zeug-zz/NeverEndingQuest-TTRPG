@@ -1152,6 +1152,68 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Final Benchmark + Publication Gate (COMPLETED - 2026-05-18)
+
+**Status:** COMPLETED - Added deterministic source-fidelity benchmark runner, publication gate integration, and Numillian baseline fixture for accurate-ingest Phase 11 closure.
+
+**Objective:**
+Add a deterministic benchmark runner for accurate-ingest source fidelity (no LLM calls), compose a three-dimensional publication gate (ready + publishable + source-fidelity), and create the Numillian baseline fixture to lock NPC/location/puzzle/lore/tone preservation.
+
+**Implementation Summary:**
+- `utils/toolkit_source_fidelity_benchmark.py` - Benchmark fixture model, validation, loading, per-category scoring, aggregate status (pass/degraded/blocked/unknown).
+- `utils/toolkit_publication_gate_composer.py` - Three-dimensional gate: ready_status + publishable_status + source_fidelity_status. Worst-status-wins precedence, degraded-with-waiver support, legacy unknown fail-open.
+- `utils/toolkit_blueprint_enrichment.py` / `utils/toolkit_blueprint_seed_writer.py` - Blueprint enrichment and seed writer for deterministic source-graph preservation.
+- `scripts/benchmark_accurate_ingest.py` - CLI benchmark runner (`--module`, `--benchmark`, `--json`). Deterministic scoring from source-graph artifacts.
+- `scripts/test_accurate_ingest_numillian_benchmark.py` - 8+ regression tests for fixture validation, benchmark runner, gate composition, feature flag.
+- `data/benchmarks/The_Hidden_City_of_Numillian_benchmark.json` - Baseline fixture: 23 NPCs (>=16 preserved), 13 locations (exact names), 3 puzzles, 2 lore items, quirky tone.
+- `modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json` - Generated benchmark report for Numillian.
+- `model_config.py` / `config_template.py` - `ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK` feature flag (default True).
+- `scripts/audit_module_publishability.py` - Added `source_fidelity_status` dimension to publishability output.
+- `scripts/test_audit_module_publishability.py` - Source-fidelity contract tests.
+- `plans/accurate-ingest.md` - Updated Phase 11 status to complete.
+
+**Key Design Decisions:**
+- Zero LLM calls in benchmark runner (purely deterministic from source-graph artifacts).
+- Additive to existing publishability gates; source-fidelity never overrides existing ready/publishable pass.
+- Legacy modules without accurate-ingest artifacts report `unknown` (fail open, no blocking).
+- Degraded-with-waiver supported via fidelity waiver contract.
+
+**Verification:**
+- `.venv/bin/python -m py_compile` -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark` -> PASS
+- `.venv/bin/python scripts/benchmark_accurate_ingest.py --module The_Hidden_City_of_Numillian --json` -> PASS
+- `.venv/bin/python -m unittest scripts.test_audit_module_publishability` -> PASS
+- `openspec validate toolkit-accurate-ingest-final-benchmark-publication-gate` -> VALID
+
+**Files Modified:**
+- `utils/toolkit_source_fidelity_benchmark.py`
+- `utils/toolkit_publication_gate_composer.py`
+- `utils/toolkit_blueprint_enrichment.py`
+- `utils/toolkit_blueprint_seed_writer.py`
+- `scripts/benchmark_accurate_ingest.py`
+- `scripts/test_accurate_ingest_numillian_benchmark.py`
+- `data/benchmarks/The_Hidden_City_of_Numillian_benchmark.json`
+- `modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json`
+- `model_config.py`
+- `config_template.py`
+- `scripts/audit_module_publishability.py`
+- `scripts/test_audit_module_publishability.py`
+- `scripts/homebrew_preflight.py`
+- `utils/toolkit_builder_blueprint.py`
+- `web/extensions/toolkit_module_finisher.py`
+- `plans/accurate-ingest.md`
+- `openspec/changes/archive/2026-05-18-toolkit-accurate-ingest-final-benchmark-publication-gate/`
+- `openspec/specs/toolkit-accurate-ingest-benchmark-runner/spec.md`
+- `openspec/specs/toolkit-numillian-source-fidelity-benchmark/spec.md`
+- `openspec/specs/toolkit-source-fidelity-publication-gate/spec.md`
+- `openspec/specs/toolkit-source-fidelity-report-surfacing/spec.md`
+- `openspec/specs/toolkit-source-fidelity-waiver-contract/spec.md`
+- `prompts/toolkit/blueprint_field_enrichment_prompt.txt`
+- `scripts/test_toolkit_blueprint_seed_writer.py`
+- `scripts/test_toolkit_blueprint_v2_contract.py`
+
+---
+
 ### Toolkit Fidelity Review UI Deadlock Fix (COMPLETED - 2026-05-18)
 
 **Status:** COMPLETED - Fixed Module Builder accurate-ingest deadlock where a job paused at `awaiting_review` but the GUI showed only raw JSON output with no approval controls.

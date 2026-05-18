@@ -441,5 +441,84 @@ class TestAuditModulePublishability(unittest.TestCase):
         self.assertNotIn("mixed_media_semantic_blocking", report["remediation_categories"])
 
 
+class TestAuditPublishabilitySourceFidelity(unittest.TestCase):
+    """Source-fidelity dimension tests for audit_module_publishability."""
+
+    def setUp(self):
+        self.base_readiness = {"overall_status": "pass", "fix_list": [], "gates": {}}
+        self.base_authority = {"status": "pass", "blocking_errors": [], "warnings": []}
+        self.base_probes = {"status": "pass", "blocking_errors": [], "warnings": []}
+
+    def test_source_fidelity_status_in_output(self):
+        with (
+            patch.object(publishability, "audit_module_readiness", return_value=self.base_readiness),
+            patch.object(publishability, "audit_module_semantic_authority", return_value=self.base_authority),
+            patch.object(publishability, "run_module_semantic_probes", return_value=self.base_probes),
+            patch.object(publishability, "_load_source_fidelity_status",
+                         return_value={"source_fidelity_status": "blocked", "category_results": []}),
+        ):
+            report = publishability.audit_module_publishability("example_module")
+        self.assertIn("source_fidelity_status", report)
+        self.assertIn("effective_publishable_status", report)
+        self.assertIn("source_fidelity_categories", report)
+
+    def test_blocked_fidelity_surfaces_blockers(self):
+        with (
+            patch.object(publishability, "audit_module_readiness", return_value=self.base_readiness),
+            patch.object(publishability, "audit_module_semantic_authority", return_value=self.base_authority),
+            patch.object(publishability, "run_module_semantic_probes", return_value=self.base_probes),
+            patch.object(publishability, "_load_source_fidelity_status",
+                         return_value={"source_fidelity_status": "blocked", "category_results": []}),
+        ):
+            report = publishability.audit_module_publishability("example_module")
+        self.assertEqual(report["source_fidelity_status"], "blocked")
+        self.assertIn("blocked", report["effective_publishable_status"])
+        self.assertGreater(len(report["blocking_errors"]), 0)
+
+    def test_unknown_fidelity_does_not_block(self):
+        with (
+            patch.object(publishability, "audit_module_readiness", return_value=self.base_readiness),
+            patch.object(publishability, "audit_module_semantic_authority", return_value=self.base_authority),
+            patch.object(publishability, "run_module_semantic_probes", return_value=self.base_probes),
+            patch.object(publishability, "_load_source_fidelity_status",
+                         return_value={"source_fidelity_status": "unknown", "category_results": []}),
+        ):
+            report = publishability.audit_module_publishability("example_module")
+        self.assertEqual(report["source_fidelity_status"], "unknown")
+        self.assertEqual(report["effective_publishable_status"], "pass")
+
+    def test_existing_keys_unchanged(self):
+        with (
+            patch.object(publishability, "audit_module_readiness", return_value=self.base_readiness),
+            patch.object(publishability, "audit_module_semantic_authority", return_value=self.base_authority),
+            patch.object(publishability, "run_module_semantic_probes", return_value=self.base_probes),
+            patch.object(publishability, "_load_source_fidelity_status",
+                         return_value={"source_fidelity_status": "pass", "category_results": []}),
+        ):
+            report = publishability.audit_module_publishability("example_module")
+        self.assertIn("ready_status", report)
+        self.assertIn("publishable_status", report)
+        self.assertIn("blocking_errors", report)
+        self.assertIn("fix_list", report)
+        self.assertIn("warnings", report)
+        self.assertIn("remediation_categories", report)
+
+    def test_category_results_surfaced(self):
+        categories = [
+            {"category": "npc_preservation", "status": "degraded", "score": 0.87},
+            {"category": "location_preservation", "status": "pass", "score": 1.0},
+        ]
+        with (
+            patch.object(publishability, "audit_module_readiness", return_value=self.base_readiness),
+            patch.object(publishability, "audit_module_semantic_authority", return_value=self.base_authority),
+            patch.object(publishability, "run_module_semantic_probes", return_value=self.base_probes),
+            patch.object(publishability, "_load_source_fidelity_status",
+                         return_value={"source_fidelity_status": "degraded", "category_results": categories}),
+        ):
+            report = publishability.audit_module_publishability("example_module")
+        self.assertEqual(len(report["source_fidelity_categories"]), 2)
+        self.assertEqual(report["source_fidelity_categories"][0]["category"], "npc_preservation")
+
+
 if __name__ == "__main__":
     unittest.main()

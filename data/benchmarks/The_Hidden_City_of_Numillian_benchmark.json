@@ -1,0 +1,98 @@
+{
+  "benchmark_version": "numillian_benchmark.v1",
+  "module_slug": "The_Hidden_City_of_Numillian",
+  "source_path": "Local_Docs/modules/hombrew/modules/The Hidden City of Numillian.md",
+  "canonical_source_title": "The Hidden City of Numillian",
+  "canonical_source_description": "A hidden city of refugees, wards, and secrets beneath the Karrnwood, where an illithid mind-warder tests those who seek entry.",
+
+  "expectations": {
+    "npc_preservation": {
+      "total_source_npcs": 23,
+      "named_source_npcs": [
+        "Adhagal", "Belrik Dumma-dhur", "Book-shut", "Bramak Pakel",
+        "Celun Spackles", "Chad", "Deflation", "Dog-Growl", "Dwal",
+        "Elroy Browning", "Irene Laughing-Eyes", "Jam", "Kobe",
+        "Procul", "Qillasithe", "Ragna Fitrill", "Rollo", "Shuluth",
+        "Strongrod Bildins", "The Caretaker", "Treever Klinhammer",
+        "Wayne (Waynobibille Nebiddlespun)", "Xaereal the Constructor"
+      ],
+      "minimum_represented": 16,
+      "allow_minor_unused": true,
+      "review_note": "Minor NPCs (kenku musicians, temple acolytes, druids) may be classified as flavor-only with review note."
+    },
+
+    "location_preservation": {
+      "total_source_locations": 13,
+      "source_locations": [
+        "Charion Tamer",
+        "Shuluth's Tomb",
+        "The Rookery",
+        "The Grove",
+        "Garden House",
+        "Brooksteps Inn",
+        "Wizard's Tower",
+        "Vampire's House",
+        "Cat's House",
+        "Art Gallery",
+        "Temple of Broance",
+        "Cellar",
+        "Handworks Guild"
+      ],
+      "minimum_preserved": 13,
+      "allowed_exact": true,
+      "allowed_mappings": {}
+    },
+
+    "puzzle_preservation": {
+      "total_source_puzzles": 3,
+      "required_puzzles": [
+        "skull_riddle",
+        "flooding_room",
+        "kill_the_dog_mindscape"
+      ],
+      "source_descriptions": {
+        "skull_riddle": "The First Trial: three skulls (Red/Wiseman, Blue/Beggar, Yellow/King) must be placed in the receptacles the clues do NOT indicate.",
+        "flooding_room": "The Second Trial: a barracks room fills with water; party must find ways to stop or escape the rising water.",
+        "kill_the_dog_mindscape": "The True Third Trial: each character alone in a room with a small dog, instructed to kill it. No wrong answer; Shuluth learns about them."
+      },
+      "minimum_preserved": 3
+    },
+
+    "lore_preservation": {
+      "total_source_lore_elements": 2,
+      "required_elements": [
+        "gatepact",
+        "kobe_protection"
+      ],
+      "source_descriptions": {
+        "gatepact": "Belrik Dumma-dhur and Shuluth forged a pact: Shuluth protects the city magically in exchange for sanctuary. Shuluth gave up his periapt of mind trapping to Belrik.",
+        "kobe_protection": "A young girl Kobe is indwelt by powerful magic; the party must protect her and not reveal the vault location to attackers."
+      },
+      "minimum_preserved": 2
+    },
+
+    "tone_preservation": {
+      "expected_tone": "quirky_character_driven_hidden_city",
+      "tone_description": "Numillian is a refuge city filled with eccentric characters: a Charion tamer, a cat wizard, a vampire impersonator, three mute kenku who compose with a mind-flayer tentacle, bro-worshipping bodybuilders, and lycanthropic druids plotting petty revenge. The city hides from the outside world behind powerful wards.",
+      "blocked_replacement": "generic_conspiracy_thriller",
+      "blocked_replacement_description": "The v1 ingest replaced Numillian with a generic conspiracy thriller about an illithid lich, ward-network sabotage, and shadowy cultists. This tone must NOT reappear."
+    }
+  },
+
+  "publication_thresholds": {
+    "pass": {
+      "npc_preservation": 0.9,
+      "location_preservation": 1.0,
+      "puzzle_preservation": 1.0,
+      "lore_preservation": 1.0,
+      "tone_preservation": "quirky_character_driven_hidden_city"
+    },
+    "degraded": {
+      "npc_preservation": 0.7,
+      "location_preservation": 0.85,
+      "puzzle_preservation": 0.67,
+      "lore_preservation": 0.5,
+      "tone_preservation": "generic_conspiracy_thriller"
+    }
+  }
+}

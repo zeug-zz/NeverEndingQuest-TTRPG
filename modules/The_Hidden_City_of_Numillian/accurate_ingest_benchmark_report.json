@@ -1,0 +1,123 @@
+{
+  "source_fidelity_status": "blocked",
+  "category_results": [
+    {
+      "category": "npc_preservation",
+      "status": "degraded",
+      "score": 0.8695652173913043,
+      "expected": 0.9,
+      "actual": "20/23",
+      "details": {
+        "total_source_npcs": 23,
+        "found_in_module": 20,
+        "matched_names": [
+          "Book-shut",
+          "Bramak Pakel",
+          "Celun Spackles",
+          "Chad",
+          "Deflation",
+          "Dog-Growl",
+          "Dwal",
+          "Elroy Browning",
+          "Irene Laughing-Eyes",
+          "Jam",
+          "Procul",
+          "Qillasithe",
+          "Ragna Fitrill",
+          "Rollo",
+          "Shuluth",
+          "Strongrod Bildins",
+          "The Caretaker",
+          "Treever Klinhammer",
+          "Wayne (Waynobibille Nebiddlespun)",
+          "Xaereal the Constructor"
+        ],
+        "missing_names": [
+          "Adhagal",
+          "Belrik Dumma-dhur",
+          "Kobe"
+        ]
+      }
+    },
+    {
+      "category": "location_preservation",
+      "status": "pass",
+      "score": 1.0,
+      "expected": 1.0,
+      "actual": "13/13",
+      "details": {
+        "total_source_locations": 13,
+        "found_in_module": 13,
+        "matched_names": [
+          "Charion Tamer",
+          "Shuluth's Tomb",
+          "The Rookery",
+          "The Grove",
+          "Garden House",
+          "Brooksteps Inn",
+          "Wizard's Tower",
+          "Vampire's House",
+          "Cat's House",
+          "Art Gallery",
+          "Temple of Broance",
+          "Cellar",
+          "Handworks Guild"
+        ],
+        "missing_names": []
+      }
+    },
+    {
+      "category": "puzzle_preservation",
+      "status": "blocked",
+      "score": 0.6666666666666666,
+      "expected": 1.0,
+      "actual": "2/3",
+      "details": {
+        "total_source_puzzles": 3,
+        "found_in_module": 2,
+        "matched": [
+          "flooding_room",
+          "kill_the_dog_mindscape"
+        ],
+        "missing": [
+          "skull_riddle"
+        ]
+      }
+    },
+    {
+      "category": "lore_preservation",
+      "status": "degraded",
+      "score": 0.5,
+      "expected": 1.0,
+      "actual": "1/2",
+      "details": {
+        "total_source_lore_elements": 2,
+        "found_in_module": 1,
+        "matched": [
+          "kobe_protection"
+        ],
+        "missing": [
+          "gatepact"
+        ]
+      }
+    },
+    {
+      "category": "tone_preservation",
+      "status": "degraded",
+      "score": null,
+      "expected": "quirky_character_driven_hidden_city",
+      "actual": "The_Hidden_City_of_Numillian",
+      "details": {
+        "expected_tone": "quirky_character_driven_hidden_city",
+        "blocked_replacement": "generic_conspiracy_thriller",
+        "actual_tone_sample": "The_Hidden_City_of_Numillian"
+      }
+    }
+  ],
+  "passed": false,
+  "degraded": false,
+  "blocked": true,
+  "benchmark_version": "numillian_benchmark.v1",
+  "module_slug": "The_Hidden_City_of_Numillian",
+  "fixture_source_path": "Local_Docs/modules/hombrew/modules/The Hidden City of Numillian.md"
+}
