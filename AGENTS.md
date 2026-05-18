@@ -1152,6 +1152,44 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Fidelity Review UI Deadlock Fix (COMPLETED - 2026-05-18)
+
+**Status:** COMPLETED - Fixed Module Builder accurate-ingest deadlock where a job paused at `awaiting_review` but the GUI showed only raw JSON output with no approval controls.
+
+**Objective:**
+Ensure required fidelity review controls are always visible in the Module Toolkit GUI when a homebrew upload enters `awaiting_review`, regardless of `HOME_BREW_ADVANCED_MODE` setting. The operator must always have a path to approve, reject, or refresh the review.
+
+**Implementation Summary:**
+- `web/templates/module_toolkit.html`:
+  - `loadToolkitHomebrewReview(jobId, options)` added `options.required` flag to bypass `HOME_BREW_ADVANCED_MODE` guard for required review states
+  - `setHomebrewReviewPanelVisible(isVisible, options)` added same required-mode support
+  - `getToolkitFidelityApproveDisabledReason(reviewPayload)` — computes why approval is disabled (refusal reason, failed/missing/blocked status, blockers, blueprint not ready, fallback)
+  - `renderToolkitHomebrewRequiredReviewActions(reviewPayload)` — fallback controls for `awaiting_review` and `approved_for_build` states; renders disabled approve + reason + reject + refresh when normal fidelity panel produces incomplete actions
+  - All refresh calls in submit decision, build start, and overwrite confirmation pass `{ required: true }` to preserve panel visibility after operator action
+  - Status copy: `"Legacy Homebrew job is awaiting review"` replaced with fidelity-mode-aware labels
+- `scripts/test_toolkit_module_build_publication_parity.py` — 7 source-contract tests locking the deadlock fix
+
+**Key Design Decisions:**
+- Backend strict approval remains authoritative: `fidelity_review_state_missing`, `fidelity_review_stale`, `fidelity_review_not_approvable` all intact
+- No broad force-approval backend bypass added
+- Fallback guard (`isRequiredState`) prevents existing Reject-only row from blocking disabled approve + reason rendering
+- Required review action row replaces the entire actions container for required states, avoiding duplicate buttons
+
+**Verification:**
+- `.venv/bin/python -m py_compile` -> PASS
+- `.venv/bin/python -m unittest scripts.test_toolkit_module_build_publication_parity` -> PASS (49/49)
+- `openspec validate toolkit-fidelity-review-ui-deadlock` -> VALID
+- `openspec validate --specs` -> PASS (308/308)
+
+**Files Modified:**
+- `web/templates/module_toolkit.html`
+- `scripts/test_toolkit_module_build_publication_parity.py`
+- `openspec/specs/toolkit-fidelity-review-approval-contract/spec.md`
+- `openspec/specs/toolkit-fidelity-review-required-ui/spec.md`
+- `openspec/specs/toolkit-homebrew-review-status-ux/spec.md`
+
+---
+
 ### Travel Sync Cross-Area Topology Fix (COMPLETED - 2026-05-10)
 
 **Status:** COMPLETED - Extended reconcile-first travel validation to recognize authored cross-area same-module routes through the module connectivity graph.

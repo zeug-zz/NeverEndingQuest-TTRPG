@@ -805,6 +805,69 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
 
         self.assertIn("ENABLE_ACCURATE_INGEST_BUILD_FIDELITY_GATES", source)
 
+    def test_fidelity_review_required_loading_bypasses_advanced_mode(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("async function loadToolkitHomebrewReview(jobId, options)", source)
+        self.assertIn("const required = Boolean(options && options.required);", source)
+        self.assertIn("!HOME_BREW_ADVANCED_MODE && !required", source)
+        self.assertIn("setHomebrewReviewPanelVisible(true, { required })", source)
+
+    def test_fidelity_review_awaiting_polling_uses_required_mode(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("job.status === 'awaiting_review'", source)
+        self.assertIn("await loadToolkitHomebrewReview(jobId, { required: true });", source)
+        self.assertNotIn("Legacy Homebrew job is awaiting review", source)
+        self.assertIn("Homebrew job is awaiting source-fidelity review", source)
+
+    def test_fidelity_review_required_action_fallback_exists(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("function getToolkitFidelityApproveDisabledReason", source)
+        self.assertIn("function renderToolkitHomebrewRequiredReviewActions", source)
+        self.assertIn("renderToolkitHomebrewFidelityReview(review);", source)
+        self.assertIn("renderToolkitHomebrewRequiredReviewActions(review);", source)
+
+    def test_fidelity_review_fallback_cannot_be_blocked_by_reject_button(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("const jobStatus = String(reviewPayload && reviewPayload.job_status || '').toLowerCase();", source)
+        self.assertIn("const isRequiredState = jobStatus === 'awaiting_review' || jobStatus === 'approved_for_build';", source)
+        self.assertIn("actionsEl.innerHTML.trim().length > 0 && !isRequiredState", source)
+
+    def test_fidelity_review_disabled_approve_reason_checks(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("review.refusal_reason", source)
+        self.assertIn("blockers.length > 0", source)
+        self.assertIn("blueprint.refusal_reason", source)
+        self.assertIn("Blueprint is not ready", source)
+        self.assertIn("Review is not currently approvable", source)
+
+    def test_fidelity_review_backend_strict_approval_intact(self) -> None:
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+
+        self.assertIn("fidelity_review_state_missing", source)
+        self.assertIn("fidelity_review_stale", source)
+        self.assertIn("fidelity_review_not_approvable", source)
+        self.assertIn("can_approve_fidelity_review(fidelity_review)", source)
+
+    def test_fidelity_review_refresh_calls_preserve_required_visibility(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("await loadToolkitHomebrewReview(activeJobId, { required: true });", source)
+        self.assertIn("await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });", source)
+
+        self.assertGreaterEqual(
+            source.count("await loadToolkitHomebrewReview(activeJobId, { required: true });"),
+            6,
+        )
+        self.assertGreaterEqual(
+            source.count("await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });"),
+            3,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

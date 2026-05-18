@@ -6577,15 +6577,20 @@
             return buildHomebrewHydrationAwareDetails({}, {}, finishingReport || {});
         }
 
-        function setHomebrewReviewPanelVisible(isVisible) {
+        function setHomebrewReviewPanelVisible(isVisible, options) {
             if (!homebrewReviewPanel) {
                 return;
             }
-            if (!HOME_BREW_ADVANCED_MODE) {
+            if (!isVisible) {
                 homebrewReviewPanel.style.display = 'none';
                 return;
             }
-            homebrewReviewPanel.style.display = isVisible ? 'block' : 'none';
+            const required = Boolean(options && options.required);
+            if (!HOME_BREW_ADVANCED_MODE && !required) {
+                homebrewReviewPanel.style.display = 'none';
+                return;
+            }
+            homebrewReviewPanel.style.display = 'block';
         }
 
         function formatReviewList(items) {
@@ -6953,7 +6958,88 @@
             panel.style.display = 'block';
         }
 
-        // LLM Classification Review
+        function getToolkitFidelityApproveDisabledReason(reviewPayload) {
+            const review = reviewPayload && reviewPayload.fidelity_review ? reviewPayload.fidelity_review : {};
+            const status = String(review.status || review.review_status || '').toLowerCase();
+            const blockers = Array.isArray(review.blockers) ? review.blockers : [];
+            const blueprint = review.blueprint || {};
+            const refusalReason = String(review.refusal_reason || '').trim();
+
+            if (refusalReason) return refusalReason;
+            if (status === 'missing') return 'Fidelity review data is missing.';
+            if (status === 'failed') return 'Fidelity review failed.';
+            if (status === 'blocked') return 'Fidelity review is blocked.';
+            if (blockers.length > 0) return blockers.length === 1 ? '1 blocker must be resolved before approval.' : blockers.length + ' blockers must be resolved before approval.';
+            const bpRefusal = String(blueprint.refusal_reason || '').trim();
+            if (bpRefusal) return bpRefusal;
+            const bpStatus = String(blueprint.status || '').toLowerCase();
+            if (bpStatus && bpStatus !== 'ready') return 'Blueprint is not ready (status: ' + bpStatus + ').';
+            return 'Review is not currently approvable. Refresh review details or reject this upload.';
+        }
+
+        function renderToolkitHomebrewRequiredReviewActions(reviewPayload) {
+            const actionsEl = homebrewFidelityReviewActions;
+            if (!actionsEl) return;
+
+            const jobStatus = String(reviewPayload && reviewPayload.job_status || '').toLowerCase();
+            const isRequiredState = jobStatus === 'awaiting_review' || jobStatus === 'approved_for_build';
+            if (actionsEl.innerHTML.trim().length > 0 && !isRequiredState) return;
+
+            const review = reviewPayload && reviewPayload.fidelity_review ? reviewPayload.fidelity_review : null;
+            const canApprove = Boolean(review && review.can_approve);
+            const canReject = !review || review.can_reject !== false;
+            const canStartBuild = Boolean(reviewPayload && reviewPayload.can_start_build);
+            const buttons = [];
+
+            if (jobStatus === 'awaiting_review') {
+                if (canApprove) {
+                    buttons.push('<button type="button" id="homebrew-fidelity-approve-btn" style="background-color:#2a5a2a; border:1px solid #4a8a4a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Approve Fidelity Review</button>');
+                } else {
+                    const reason = getToolkitFidelityApproveDisabledReason(reviewPayload);
+                    buttons.push('<div style="margin-bottom:6px; color:#d4a843; font-size:0.85em;">' + escapeToolkitHtml(reason) + '</div>');
+                    buttons.push('<button type="button" id="homebrew-fidelity-approve-btn" disabled style="background-color:#444; border:1px solid #666; color:#888; padding:6px 16px; border-radius:4px; cursor:not-allowed; font-size:0.85em;">Approve Fidelity Review</button>');
+                }
+                if (canReject) {
+                    buttons.push('<button type="button" id="homebrew-fidelity-reject-btn" style="background-color:#6b4c1f; border:1px solid #a67a32; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Reject Review</button>');
+                }
+                buttons.push('<button type="button" id="homebrew-fidelity-refresh-btn" style="background-color:#3a3a5a; border:1px solid #5a5a7a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Refresh Review</button>');
+            }
+
+            if (jobStatus === 'approved_for_build' && canStartBuild) {
+                buttons.push('<button type="button" id="homebrew-fidelity-start-build-btn" style="background-color:#214e6b; border:1px solid #3f74a0; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Start Build</button>');
+                buttons.push('<button type="button" id="homebrew-fidelity-refresh-btn" style="background-color:#3a3a5a; border:1px solid #5a5a7a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Refresh Review</button>');
+            }
+
+            if (buttons.length === 0) return;
+            actionsEl.innerHTML = buttons.join('');
+
+            var approveBtn = document.getElementById('homebrew-fidelity-approve-btn');
+            var rejectBtn = document.getElementById('homebrew-fidelity-reject-btn');
+            var startBuildBtn = document.getElementById('homebrew-fidelity-start-build-btn');
+            var refreshBtn = document.getElementById('homebrew-fidelity-refresh-btn');
+
+            if (approveBtn && !approveBtn.disabled) {
+                approveBtn.addEventListener('click', function() {
+                    submitToolkitHomebrewReviewDecision(homebrewActiveReviewJobId, 'approve');
+                });
+            }
+            if (rejectBtn) {
+                rejectBtn.addEventListener('click', function() {
+                    submitToolkitHomebrewReviewDecision(homebrewActiveReviewJobId, 'reject');
+                });
+            }
+            if (startBuildBtn) {
+                startBuildBtn.addEventListener('click', function() {
+                    submitToolkitHomebrewStartBuild();
+                });
+            }
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', function() {
+                    loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });
+                });
+            }
+        }
+
         function _llmLabelColor(label) {
             const green = '#4caf50', blue = '#2196f3', gray = '#888', orange = '#ff9800';
             const colors = {
@@ -7053,8 +7139,9 @@
             contentEl.innerHTML = html;
         }
 
-        async function loadToolkitHomebrewReview(jobId) {
-            if (!HOME_BREW_ADVANCED_MODE) {
+        async function loadToolkitHomebrewReview(jobId, options) {
+            const required = Boolean(options && options.required);
+            if (!HOME_BREW_ADVANCED_MODE && !required) {
                 setHomebrewReviewPanelVisible(false);
                 return;
             }
@@ -7102,8 +7189,9 @@
                     homebrewReviewSummary.textContent = buildToolkitHomebrewReviewSummary(review);
                 }
                 renderToolkitHomebrewFidelityReview(review);
+                renderToolkitHomebrewRequiredReviewActions(review);
 
-                setHomebrewReviewPanelVisible(true);
+                setHomebrewReviewPanelVisible(true, { required });
 
                 if (payload.artifact_manifest) {
                     renderArtifactManifest(payload.artifact_manifest, jobId);
@@ -7205,7 +7293,7 @@
                         'Homebrew overwrite confirmation request failed.',
                         JSON.stringify(inspectPayload, null, 2)
                     );
-                    await loadToolkitHomebrewReview(activeJobId);
+                    await loadToolkitHomebrewReview(activeJobId, { required: true });
                     return;
                 }
 
@@ -7251,7 +7339,7 @@
                         'Confirmed overwrite build start failed.',
                         JSON.stringify(confirmPayload, null, 2)
                     );
-                    await loadToolkitHomebrewReview(activeJobId);
+                    await loadToolkitHomebrewReview(activeJobId, { required: true });
                     return;
                 }
 
@@ -7263,7 +7351,7 @@
                 await pollToolkitHomebrewJob(activeJobId);
             } catch (buildError) {
                 renderHomebrewUploadStatus('error', `Homebrew overwrite confirmation request failed: ${buildError.message}`);
-                await loadToolkitHomebrewReview(activeJobId);
+                await loadToolkitHomebrewReview(activeJobId, { required: true });
             }
         }
 
@@ -7297,7 +7385,7 @@
                         'Homebrew review decision failed.',
                         JSON.stringify(payload, null, 2)
                     );
-                    await loadToolkitHomebrewReview(activeJobId);
+                    await loadToolkitHomebrewReview(activeJobId, { required: true });
                     return;
                 }
 
@@ -7306,10 +7394,10 @@
                     ? 'Fidelity review approved. Build is now unlocked.'
                     : 'Fidelity review rejected.';
                 renderHomebrewUploadStatus('success', message, JSON.stringify(payload.job, null, 2));
-                await loadToolkitHomebrewReview(activeJobId);
+                await loadToolkitHomebrewReview(activeJobId, { required: true });
             } catch (reviewError) {
                 renderHomebrewUploadStatus('error', `Homebrew review decision failed: ${reviewError.message}`);
-                await loadToolkitHomebrewReview(activeJobId);
+                await loadToolkitHomebrewReview(activeJobId, { required: true });
             }
         }
 
@@ -7335,7 +7423,7 @@
                         'Homebrew build start failed.',
                         JSON.stringify(payload, null, 2)
                     );
-                    await loadToolkitHomebrewReview(homebrewActiveReviewJobId);
+                    await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });
                     return;
                 }
 
@@ -7354,7 +7442,7 @@
                             'Rebuild cancelled. Existing module left unchanged.',
                             JSON.stringify(payload.job || payload, null, 2)
                         );
-                        await loadToolkitHomebrewReview(homebrewActiveReviewJobId);
+                        await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });
                         return;
                     }
 
@@ -7372,7 +7460,7 @@
                 await pollToolkitHomebrewJob(homebrewActiveReviewJobId);
             } catch (buildError) {
                 renderHomebrewUploadStatus('error', `Homebrew build request failed: ${buildError.message}`);
-                await loadToolkitHomebrewReview(homebrewActiveReviewJobId);
+                await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });
             }
         }
 
@@ -7526,12 +7614,16 @@
                     if (job.status === 'awaiting_review') {
                         setHomebrewConsoleWorking(false);
                         const routing = job.routing_outcome || (job.result || {}).routing_outcome || 'normalization_required';
+                        const hasFidelityReview = Boolean(job.result && job.result.fidelity_review);
+                        const reviewLabel = hasFidelityReview
+                            ? 'Homebrew job is awaiting source-fidelity review'
+                            : 'Homebrew job is awaiting review';
                         renderHomebrewUploadStatus(
                             'warning',
-                            `Legacy Homebrew job is awaiting review [routing: ${routing}]`,
+                            `${reviewLabel} [routing: ${routing}]`,
                             JSON.stringify(job.result || job, null, 2)
                         );
-                        await loadToolkitHomebrewReview(jobId);
+                        await loadToolkitHomebrewReview(jobId, { required: true });
                         stopHomebrewUploadPolling();
                         if (homebrewUploadButton) {
                             homebrewUploadButton.disabled = false;
@@ -7550,10 +7642,12 @@
                                 ? (fidelityMode === 'accurate_ingest'
                                     ? 'Accurate ingest review approved. Build remains paused until you press Start Build.'
                                     : 'Legacy approved state detected; auto-starting packet build.')
-                                : `Legacy review state detected [status: ${job.status}]`,
+                                : (fidelityMode === 'accurate_ingest'
+                                    ? `Accurate ingest review rejected [status: ${job.status}]`
+                                    : `Review state detected [status: ${job.status}]`),
                             JSON.stringify(reviewSnapshot, null, 2)
                         );
-                        await loadToolkitHomebrewReview(jobId);
+                        await loadToolkitHomebrewReview(jobId, { required: true });
                         if (job.status === 'approved_for_build' && fidelityMode !== 'accurate_ingest') {
                             await submitToolkitHomebrewStartBuild();
                         } else if (job.status === 'approved_for_build' && fidelityMode === 'accurate_ingest') {
@@ -7579,7 +7673,7 @@
                         if (homebrewReviewTitle) {
                             homebrewReviewTitle.textContent = `Rebuild Confirmation Required [job: ${jobId}]`;
                         }
-                        await loadToolkitHomebrewReview(jobId);
+                        await loadToolkitHomebrewReview(jobId, { required: true });
                         stopHomebrewUploadPolling();
                         if (homebrewUploadButton) {
                             homebrewUploadButton.disabled = false;
