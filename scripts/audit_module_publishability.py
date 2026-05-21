@@ -20,6 +20,11 @@ from scripts.audit_module_readiness import audit_module_readiness
 from scripts.module_semantic_authority_audit import audit_module_semantic_authority
 from scripts.module_semantic_probe_harness import run_module_semantic_probes
 
+try:
+    from utils.enhanced_logger import warning
+except ImportError:
+    warning = None
+
 # Feature flag import (fail-open: default to True)
 try:
     from model_config import ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK
@@ -28,6 +33,41 @@ except ImportError:
 
 
 def _load_source_fidelity_status(module_path: Path) -> Dict[str, Any]:
+    """Load source-fidelity status with precedence.
+
+    Priority:
+    1. module-level source_fidelity_report.json
+    2. module-level accurate_ingest_benchmark_report.json
+    3. synthetic unknown (legacy/default)
+    """
+    # Priority 1: Final module-level source-fidelity report
+    # If it exists but is invalid, degrade to unknown -- do not fall through
+    # to stale benchmark.
+    final_report = module_path / "source_fidelity_report.json"
+    if final_report.exists():
+        try:
+            with open(final_report, "r") as f:
+                report = json.load(f)
+            if isinstance(report, dict):
+                return {
+                    "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
+                    "category_results": list(report.get("categories", [])),
+                }
+        except Exception:
+            if warning:
+                warning(
+                    f"SOURCE_FIDELITY: Invalid source_fidelity_report.json at {final_report} -- degrading to unknown",
+                    category="validation",
+                )
+        else:
+            if warning:
+                warning(
+                    f"SOURCE_FIDELITY: source_fidelity_report.json at {final_report} is not a dict -- degrading to unknown",
+                    category="validation",
+                )
+        return {"source_fidelity_status": "unknown", "category_results": []}
+
+    # Priority 2: Benchmark-specific report
     report_file = module_path / "accurate_ingest_benchmark_report.json"
     if not report_file.exists():
         return {"source_fidelity_status": "unknown", "category_results": []}
@@ -47,23 +87,41 @@ def _load_source_fidelity_status(module_path: Path) -> Dict[str, Any]:
 # Lazy import for gate composer to avoid circular imports at module level
 _GATE_COMPOSER = None
 
+_SOURCE_FIDELITY_REPORT_VERSION = "source_fidelity_report.v1"
+
+
+def _build_source_fidelity_report_artifact(
+    module_slug: str,
+    module_path: Path,
+    publishability_report: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a compact module-level source_fidelity_report.json payload.
+
+    Args:
+        module_slug: Module slug (e.g. The_Hidden_City_of_Numillian).
+        module_path: Resolved module Path.
+        publishability_report: The full output of audit_module_publishability().
+
+    Returns:
+        Dict suitable for writing to modules/<slug>/source_fidelity_report.json.
+    """
+    fidelity = publishability_report.get("source_fidelity_status", "unknown")
+    categories = publishability_report.get("source_fidelity_categories", [])
+
+    return {
+        "report_version": _SOURCE_FIDELITY_REPORT_VERSION,
+        "module_slug": module_slug,
+        "module_path": str(module_path),
+        "source_fidelity_status": str(fidelity or "unknown"),
+        "categories": list(categories) if isinstance(categories, list) else [],
+    }
+
 def _get_gate_composer():
     global _GATE_COMPOSER
     if _GATE_COMPOSER is None:
         from utils.toolkit_publication_gate_composer import compose_publishability_from_report
         _GATE_COMPOSER = compose_publishability_from_report
     return _GATE_COMPOSER
-    try:
-        with open(report_file, "r") as f:
-            report = json.load(f)
-        if not isinstance(report, dict):
-            return {"source_fidelity_status": "unknown", "category_results": []}
-        return {
-            "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
-            "category_results": list(report.get("category_results", [])),
-        }
-    except Exception:
-        return {"source_fidelity_status": "unknown", "category_results": []}
 
 
 def _resolve_module_path(module: str = "", module_path: str = "") -> Path:

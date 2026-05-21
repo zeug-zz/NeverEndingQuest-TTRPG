@@ -2642,7 +2642,7 @@
                                     <pre id="homebrew-review-summary" style="max-height: 260px; overflow: auto; color: #bbb; font-size: 0.9em; white-space: pre-wrap;"></pre>
                                     <div id="homebrew-fidelity-review-panel" style="display: none; margin-top: 10px; padding: 10px; background: #181818; border: 1px solid #555; border-radius: 4px;">
                                         <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                                            <div style="color: #ffcc66; font-weight: bold; font-size: 0.95em;">Accurate Ingest Fidelity Review</div>
+                                            <div id="homebrew-fidelity-review-heading" style="color: #ffcc66; font-weight: bold; font-size: 0.95em;">Accurate Ingest Fidelity Review</div>
                                             <div id="homebrew-fidelity-review-status" style="color: #bbb; font-size: 0.85em;"></div>
                                         </div>
                                         <div id="homebrew-fidelity-review-summary" style="color: #d7d7d7; font-size: 0.85em;"></div>
@@ -5901,6 +5901,7 @@
         let homebrewFidelityReviewPanel = null;
         let homebrewFidelityReviewSummary = null;
         let homebrewFidelityReviewActions = null;
+        let homebrewFidelityReviewHeading = null;
         let homebrewArtifactManifestPanel = null;
         let homebrewArtifactChecklist = null;
         let homebrewArtifactActions = null;
@@ -5941,6 +5942,7 @@
             homebrewFidelityReviewPanel = document.getElementById('homebrew-fidelity-review-panel');
             homebrewFidelityReviewSummary = document.getElementById('homebrew-fidelity-review-summary');
             homebrewFidelityReviewActions = document.getElementById('homebrew-fidelity-review-actions');
+            homebrewFidelityReviewHeading = document.getElementById('homebrew-fidelity-review-heading');
             homebrewArtifactManifestPanel = document.getElementById('homebrew-artifact-manifest-panel');
             homebrewArtifactChecklist = document.getElementById('homebrew-artifact-checklist');
             homebrewArtifactActions = document.getElementById('homebrew-artifact-actions');
@@ -6867,16 +6869,25 @@
             const summaryEl = homebrewFidelityReviewSummary;
             const actionsEl = homebrewFidelityReviewActions;
             const statusEl = document.getElementById('homebrew-fidelity-review-status');
+            const headingEl = homebrewFidelityReviewHeading;
             const review = reviewPayload && reviewPayload.fidelity_review ? reviewPayload.fidelity_review : null;
             if (!panel || !summaryEl || !actionsEl || !review || String(review.mode || '').toLowerCase() !== 'accurate_ingest') {
                 if (panel) { panel.style.display = 'none'; }
                 if (summaryEl) { summaryEl.innerHTML = ''; }
                 if (actionsEl) { actionsEl.innerHTML = ''; }
                 if (statusEl) { statusEl.textContent = ''; }
+                if (headingEl) { headingEl.textContent = 'Accurate Ingest Fidelity Review'; }
                 homebrewReviewApproveButton = null;
                 homebrewReviewRejectButton = null;
                 homebrewReviewStartBuildButton = null;
                 return;
+            }
+
+            const reviewRequired = isToolkitFidelityReviewRequired(reviewPayload);
+            if (headingEl) {
+                headingEl.textContent = reviewRequired
+                    ? 'Accurate Ingest Fidelity Review'
+                    : 'Accurate Ingest Diagnostics';
             }
 
             const status = String(review.status || review.review_status || '').toLowerCase();
@@ -6924,14 +6935,16 @@
             ].join('');
 
             const buttons = [];
-            if (review.can_approve) {
-                buttons.push('<button type="button" id="homebrew-fidelity-approve-btn" style="background-color:#2a5a2a; border:1px solid #4a8a4a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Approve Fidelity Review</button>');
-            }
-            if (review.can_reject !== false) {
-                buttons.push('<button type="button" id="homebrew-fidelity-reject-btn" style="background-color:#6b4c1f; border:1px solid #a67a32; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Reject Review</button>');
-            }
-            if (canStartBuild) {
-                buttons.push('<button type="button" id="homebrew-fidelity-start-build-btn" style="background-color:#214e6b; border:1px solid #3f74a0; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Start Build</button>');
+            if (reviewRequired) {
+                if (review.can_approve) {
+                    buttons.push('<button type="button" id="homebrew-fidelity-approve-btn" style="background-color:#2a5a2a; border:1px solid #4a8a4a; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Approve Fidelity Review</button>');
+                }
+                if (review.can_reject !== false) {
+                    buttons.push('<button type="button" id="homebrew-fidelity-reject-btn" style="background-color:#6b4c1f; border:1px solid #a67a32; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Reject Review</button>');
+                }
+                if (canStartBuild) {
+                    buttons.push('<button type="button" id="homebrew-fidelity-start-build-btn" style="background-color:#214e6b; border:1px solid #3f74a0; color:#ddd; padding:6px 16px; border-radius:4px; cursor:pointer; font-size:0.85em;">Start Build</button>');
+                }
             }
             actionsEl.innerHTML = buttons.join('');
 
@@ -6975,6 +6988,11 @@
             const bpStatus = String(blueprint.status || '').toLowerCase();
             if (bpStatus && bpStatus !== 'ready') return 'Blueprint is not ready (status: ' + bpStatus + ').';
             return 'Review is not currently approvable. Refresh review details or reject this upload.';
+        }
+
+        function isToolkitFidelityReviewRequired(reviewPayload) {
+            const jobStatus = String(reviewPayload && reviewPayload.job_status || '').toLowerCase();
+            return jobStatus === 'awaiting_review';
         }
 
         function renderToolkitHomebrewRequiredReviewActions(reviewPayload) {
@@ -7175,6 +7193,8 @@
                         } else {
                             homebrewReviewTitle.textContent = `Accurate Ingest Review Blocked [job: ${jobId}]`;
                         }
+                    } else if (fidelityMode === 'accurate_ingest' && fidelityReview.status) {
+                        homebrewReviewTitle.textContent = `Accurate Ingest Diagnostics [job: ${jobId}]`;
                     } else if (reviewStatus === 'awaiting_overwrite_confirmation') {
                         homebrewReviewTitle.textContent = `Overwrite Confirmation Required [job: ${jobId}]`;
                     } else if (reviewStatus === 'building') {

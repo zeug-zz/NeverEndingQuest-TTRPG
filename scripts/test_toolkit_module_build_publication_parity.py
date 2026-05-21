@@ -306,6 +306,7 @@ class TestToolkitModuleFinisher(unittest.TestCase):
             strict=True,
             refresh_reason="toolkit_homebrew_route_finisher",
             refresh_workflow="toolkit_report_refresh",
+            extra_stages=None,
         )
 
     def test_mmg_completion_path_writes_final_media_report(self) -> None:
@@ -867,6 +868,196 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
             source.count("await loadToolkitHomebrewReview(homebrewActiveReviewJobId, { required: true });"),
             3,
         )
+
+    def test_fidelity_review_optional_diagnostics_heading_exists(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("homebrew-fidelity-review-heading", source)
+        self.assertIn("Accurate Ingest Diagnostics", source)
+        self.assertIn("'Accurate Ingest Diagnostics'", source)
+
+    def test_fidelity_review_required_heading_still_exists(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("Accurate Ingest Fidelity Review", source)
+
+    def test_isToolkitFidelityReviewRequired_helper_exists(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("function isToolkitFidelityReviewRequired", source)
+        self.assertIn("return jobStatus === 'awaiting_review'", source)
+
+    def test_fidelity_review_buttons_guarded_by_reviewRequired(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("if (reviewRequired) {", source)
+        self.assertIn("homebrew-fidelity-approve-btn", source)
+        self.assertIn("homebrew-fidelity-reject-btn", source)
+
+    def test_fidelity_review_optional_title_in_loadToolkitHomebrew(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("Accurate Ingest Diagnostics [job: ${jobId}]", source)
+        self.assertIn("fidelityReview.status", source)
+
+    def test_fidelity_required_review_renders_disabled_approve_with_reason(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("const reason = getToolkitFidelityApproveDisabledReason(reviewPayload);", source)
+        self.assertIn("cursor:not-allowed", source)
+        self.assertIn('disabled style="background-color:#444', source)
+
+    def test_fidelity_required_review_always_shows_refresh_button(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("homebrew-fidelity-refresh-btn", source)
+        self.assertIn("Refresh Review", source)
+
+    def test_fidelity_required_review_fallback_guard_preserved(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("if (actionsEl.innerHTML.trim().length > 0 && !isRequiredState) return;", source)
+        self.assertIn("const isRequiredState = jobStatus === 'awaiting_review' || jobStatus === 'approved_for_build';", source)
+
+    def test_fidelity_required_review_validate_reject_disabled_refresh_present(self) -> None:
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("if (jobStatus === 'awaiting_review')", source)
+        self.assertIn("getToolkitFidelityApproveDisabledReason", source)
+        self.assertIn('id="homebrew-fidelity-reject-btn"', source)
+        self.assertIn('id="homebrew-fidelity-refresh-btn"', source)
+        self.assertIn("submitToolkitHomebrewReviewDecision(homebrewActiveReviewJobId, 'reject')", source)
+
+    def test_default_packet_builder_path_not_seed_writer(self) -> None:
+        source = Path("web/extensions/toolkit_homebrew_packet_builder.py").read_text(encoding="utf-8")
+
+        self.assertIn("_use_seed_writer = False", source)
+        self.assertIn("elif handoff_class in (\"source_blueprint_v2_ready\", \"source_blueprint_v2_degraded\"):", source)
+        self.assertIn('_build_mode = "source_enhanced_modulebuilder"', source)
+        self.assertIn("_execute_seed_writer_build", source)
+
+
+class TestSourceFidelityReportPersistence(unittest.TestCase):
+    """Behavioral tests for source_fidelity_report.json mirroring in finisher build report."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self.temp_dir.name)
+        self.original_cwd = Path.cwd()
+        os.chdir(self.repo_root)
+
+        self.module_slug = "Source_Fidelity_Test"
+        self.module_dir = self.repo_root / "modules" / self.module_slug
+        self.module_dir.mkdir(parents=True, exist_ok=True)
+        (self.module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+
+        # Save originals
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+
+        # Stub non-publishability stages to succeed so only the
+        # publishability report content drives the result.
+        finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+        finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+        finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+
+    def tearDown(self):
+        finisher._run_continuity_stage = self.orig_continuity
+        finisher._run_registry_stage = self.orig_registry
+        finisher._run_monster_materialization_stage = self.orig_materialization
+        finisher._run_publishability_stage = self.orig_publishability
+        os.chdir(self.original_cwd)
+        self.temp_dir.cleanup()
+
+    def _stub_publishability(self, status: str, categories: list):
+        """Replace _run_publishability_stage with a stub that injects source-fidelity data into its report."""
+        def _stage(*args, **kwargs):
+            return {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "source": "toolkit",
+                "report": {
+                    "source_fidelity_status": status,
+                    "source_fidelity_categories": categories,
+                    "module": self.module_slug,
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+        return _stage
+
+    def test_finisher_report_mirrors_source_fidelity_status(self):
+        finisher._run_publishability_stage = self._stub_publishability(
+            "degraded",
+            [{"category": "npc_preservation", "status": "degraded", "score": 0.87}],
+        )
+        result = finisher.run_toolkit_module_postbuild_finishing(
+            self.module_slug, strict=True
+        )
+        self.assertEqual(result.get("source_fidelity_status"), "degraded",
+                         "Build report must mirror source_fidelity_status from publishability report")
+
+    def test_finisher_report_mirrors_source_fidelity_categories(self):
+        categories = [{"category": "npc_preservation", "status": "pass", "score": 1.0}]
+        finisher._run_publishability_stage = self._stub_publishability("pass", categories)
+        result = finisher.run_toolkit_module_postbuild_finishing(
+            self.module_slug, strict=True
+        )
+        self.assertEqual(result.get("source_fidelity_categories"), categories,
+                         "Build report must mirror source_fidelity_categories from publishability report")
+
+    def test_finisher_report_includes_source_fidelity_report_ref(self):
+        finisher._run_publishability_stage = self._stub_publishability(
+            "pass",
+            [{"category": "npc_preservation", "status": "pass", "score": 1.0}],
+        )
+        result = finisher.run_toolkit_module_postbuild_finishing(
+            self.module_slug, strict=True
+        )
+        # source_fidelity_report.json is persisted when report exists
+        self.assertEqual(result.get("source_fidelity_report"), "source_fidelity_report.json",
+                         "Build report must include reference to source_fidelity_report.json when persisted")
+
+    def test_finisher_report_unknown_when_no_report_key(self):
+        """When publishability_stage has no report key, source_fidelity_status defaults to unknown."""
+        finisher._run_publishability_stage = lambda *a, **kw: {
+            "status": "success",
+            "ready_status": "pass",
+            "publishable_status": "pass",
+        }
+        result = finisher.run_toolkit_module_postbuild_finishing(
+            self.module_slug, strict=True
+        )
+        self.assertEqual(result.get("source_fidelity_status"), "unknown",
+                         "Without report key, build report must default source_fidelity_status to unknown")
+        self.assertEqual(result.get("source_fidelity_categories"), [],
+                         "Without report key, build report must include empty source_fidelity_categories list")
+        self.assertNotIn("source_fidelity_report", result,
+                         "Without report key, build report must not include source_fidelity_report ref")
+
+    def test_module_summary_not_used_for_source_fidelity(self):
+        """MODULE_SUMMARY.md must not be treated as a source-fidelity repair mechanism."""
+        audit_source_path = Path(Path(__file__).resolve().parents[1] /
+                                 "scripts/audit_module_publishability.py")
+        audit_source = audit_source_path.read_text(encoding="utf-8")
+        self.assertNotIn("MODULE_SUMMARY", audit_source,
+                         "Audit module must not reference MODULE_SUMMARY for source fidelity")
+        finisher_source = Path(Path(__file__).resolve().parents[1] /
+                               "web/extensions/toolkit_module_finisher.py")
+        finisher_src = finisher_source.read_text(encoding="utf-8")
+        # finisher generates MODULE_SUMMARY but must not read it back to drive
+        # source-fidelity decisions
+        lines_to_check = [
+            i + 1 for i, line in enumerate(finisher_src.splitlines())
+            if "MODULE_SUMMARY" in line and "read_text" in line
+        ]
+        self.assertFalse(lines_to_check,
+                         f"Finisher must not read MODULE_SUMMARY.md: lines={lines_to_check}")
 
 
 if __name__ == "__main__":

@@ -92,10 +92,31 @@ def _iter_plot_texts(module_path: Path) -> List[str]:
     return texts
 
 
+def _iter_structured_npc_names(module_path: Path) -> List[str]:
+    """Extract NPC names from structured data sources (module_context, npcs_seed)."""
+    names: List[str] = []
+    ctx = _load_module_json(module_path, "module_context.json")
+    if ctx:
+        for npc_key, npc_val in ctx.get("npcs", {}).items():
+            if isinstance(npc_val, dict):
+                name = npc_val.get("name", "")
+                if name:
+                    names.append(f"[NPC] {name}")
+    seed = _load_module_json(module_path, "npcs_seed.json")
+    if seed:
+        for npc in seed.get("npcs", []) or []:
+            if isinstance(npc, dict):
+                name = npc.get("name", "")
+                if name:
+                    names.append(f"[NPC_SEED] {name}")
+    return names
+
+
 def _iter_all_module_text(module_path: Path) -> str:
     parts: List[str] = []
     parts.extend(_iter_location_descriptions(module_path))
     parts.extend(_iter_plot_texts(module_path))
+    parts.extend(_iter_structured_npc_names(module_path))
     ctx = _load_module_json(module_path, "module_context.json")
     if ctx:
         objective = ctx.get("plotObjective") or ctx.get("mainObjective") or ""
@@ -205,7 +226,8 @@ def score_lore_preservation(module_path: Path, expectation: Dict[str, Any],
     if not required:
         return make_score_result("lore_preservation", STATUS_UNKNOWN)
     sources: Dict[str, str] = expectation.get("source_descriptions", {})
-    combined = _iter_all_module_text(module_path).lower()
+    raw_text = _iter_all_module_text(module_path).lower()
+    combined = re.sub(r"[^a-z\s]", "", raw_text)
     found_elements: List[str] = []
     for element_key in required:
         text_hint = sources.get(element_key, element_key).lower()
@@ -237,7 +259,19 @@ def score_tone_preservation(module_path: Path, expectation: Dict[str, Any],
     if ctx is None:
         return make_score_result("tone_preservation", STATUS_UNKNOWN)
     classification = ctx.get("classification_metadata", {})
-    actual_tone_raw: str = classification.get("tone", "") or ctx.get("module_name", "")
+    actual_tone_raw: str = (
+        classification.get("tone", "")
+        or ctx.get("tone", "")
+        or ctx.get("module_name", "")
+    )
+    # Also check seed report for tone evidence from seed writer
+    if not actual_tone_raw or actual_tone_raw == ctx.get("module_name", ""):
+        seed = _load_module_json(module_path, "npcs_seed.json")
+        if seed:
+            actual_tone_raw = (
+                str(seed.get("module_tone") or "")
+                or actual_tone_raw
+            )
     if not actual_tone_raw:
         descriptions = _iter_location_descriptions(module_path)
         combined = " ".join(descriptions) + " "

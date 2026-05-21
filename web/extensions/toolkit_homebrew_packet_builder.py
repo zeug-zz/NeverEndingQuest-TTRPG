@@ -35,6 +35,23 @@ try:
 except Exception:
     ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True
 
+try:
+    from model_config import ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD
+except Exception:
+    ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False
+
+try:
+    from model_config import ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK
+except Exception:
+    ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK = False
+
+_VALID_SEED_WRITER_MODES = frozenset({"fallback", "preview", "support"})
+_SEED_BUILD_MODES = {
+    "fallback": "blueprint_seed_fallback",
+    "preview": "blueprint_seed_preview",
+    "support": "blueprint_seed_support",
+}
+
 
 def _utc_now_iso() -> str:
     """Return UTC timestamp in ISO-8601 format."""
@@ -189,6 +206,104 @@ def _execute_module_builder(
     builder.build_module(builder_input["builder_narrative"])
 
 
+def _execute_seed_writer_build(
+    workspace: Path,
+    job_id: str,
+    files: Dict[str, Path],
+    params: Dict[str, Any],
+    blueprint_artifact: Dict[str, Any],
+    progress_callback: Optional[Callable[[str, str], None]] = None,
+) -> Dict[str, Any]:
+    """Run v2 seed writer build instead of ModuleBuilder for accurate-ingest."""
+    module_dir = Path(params["output_directory"])
+
+    if progress_callback:
+        progress_callback("seeding", "Seeding module from source blueprint")
+
+    try:
+        from utils.toolkit_blueprint_seed_writer import materialize_module_from_blueprint
+
+        if module_dir.exists():
+            seed_result = materialize_module_from_blueprint(
+                blueprint_artifact, str(module_dir), overwrite=True, dry_run=False
+            )
+        else:
+            seed_result = materialize_module_from_blueprint(
+                blueprint_artifact, str(module_dir), overwrite=False, dry_run=False
+            )
+
+        seed_status = seed_result.get("seed_status", "failed")
+        if seed_status != "success":
+            error(
+                f"TOOLKIT_HOMEBREW: Seed writer returned status '{seed_status}' for job={job_id}",
+                category="web_interface",
+            )
+            return {
+                "status": "failed",
+                "stage": "seed",
+                "error": f"seed_writer_{seed_status}",
+                "job_id": job_id,
+                "module_name": params["module_name"],
+                "output_directory": params["output_directory"],
+            }
+    except Exception as e:
+        error(
+            f"TOOLKIT_HOMEBREW: Seed writer failed for job={job_id}: {e}",
+            exception=e,
+            category="web_interface",
+        )
+        return {
+            "status": "failed",
+            "stage": "seed",
+            "error": f"seed_writer_exception:{e}",
+            "job_id": job_id,
+            "module_name": params["module_name"],
+            "output_directory": params["output_directory"],
+        }
+
+    all_warnings: list = list(seed_result.get("warnings", []))
+
+    if progress_callback:
+        progress_callback("enriching", "Running bounded enrichment")
+
+    enrichment_status = "skipped"
+    enrichment_warnings: list = []
+    try:
+        from utils.toolkit_blueprint_enrichment import run_enrichment_pipeline
+
+        enrichment_result = run_enrichment_pipeline(blueprint_artifact, str(module_dir))
+        enrichment_status = enrichment_result.get("status", "skipped")
+        enrichment_warnings = enrichment_result.get("warnings", [])
+        all_warnings.extend(enrichment_warnings)
+    except Exception as e:
+        warning(
+            f"TOOLKIT_HOMEBREW: Enrichment pipeline failed for job={job_id}: {e}",
+            category="web_interface",
+        )
+        enrichment_status = "degraded"
+        all_warnings.append(f"Enrichment pipeline failed: {e}")
+
+    info(
+        f"TOOLKIT_HOMEBREW: Seed writer build complete for job={job_id} "
+        f"seed={seed_status} enrichment={enrichment_status}",
+        category="web_interface",
+    )
+
+    return {
+        "status": "success",
+        "stage": "build",
+        "job_id": job_id,
+        "build_mode": "packet_workspace_v2",
+        "completed_at": _utc_now_iso(),
+        "module_name": params["module_name"],
+        "output_directory": params["output_directory"],
+        "seed_status": seed_status,
+        "seed_coverage": seed_result.get("coverage", {}),
+        "enrichment_status": enrichment_status,
+        "warnings": all_warnings,
+    }
+
+
 _ACCURATE_INGEST_EVIDENCE_PATHS = [
     "source_graph",
     "normalization_fidelity_report",
@@ -205,7 +320,8 @@ def _classify_blueprint_handoff(
     """Classify handoff mode for this workspace.
 
     Returns one of:
-        `source_blueprint_ready` -- blueprint artifacts exist and status is ready.
+        `source_blueprint_v2_ready` -- v2 blueprint artifacts, status is ready.
+        `source_blueprint_ready` -- v1 blueprint artifacts, status is ready.
         `blueprint_required_not_ready` -- blueprint is required but not ready.
         `legacy_allowed` -- workspace has no accurate-ingest evidence or blueprint handoff.
     """
@@ -215,10 +331,26 @@ def _classify_blueprint_handoff(
 
     blueprint_status = str((blueprint_artifact or {}).get("blueprint_status") or "").strip().lower()
     report_status = str((blueprint_report_artifact or {}).get("blueprint_status") or "").strip().lower()
+    fidelity_status = str((blueprint_report_artifact or {}).get("fidelity_status") or "").strip().lower()
 
     # Source-blueprint mode requires both artifacts to be present and ready.
     if blueprint_status == "ready" and report_status == "ready":
+        version = str((blueprint_artifact or {}).get("blueprint_version") or "").strip()
+        if "v2" in version.lower():
+            return "source_blueprint_v2_ready"
         return "source_blueprint_ready"
+
+    # blocked_by_fidelity: blueprint was blocked by precheck findings but the
+    # normalized packet and fidelity report are complete.  Accept as degraded
+    # v2 mode — seed writer handles whatever the packet contains.
+    if report_status == "blocked_by_fidelity":
+        return "source_blueprint_v2_degraded"
+
+    # If report is ready but blueprint is missing (fidelity blocked creation),
+    # and the normalized packet exists, treat as degraded v2 mode
+    if report_status == "ready" and not blueprint_status:
+        if fidelity_status == "blocked":
+            return "source_blueprint_v2_degraded"
 
     # If either artifact exists, blueprint mode has been attempted and must fail closed.
     if blueprint_artifact or blueprint_report_artifact:
@@ -265,8 +397,27 @@ def run_toolkit_homebrew_packet_build(
     job_id: str,
     builder_executor: Optional[Callable[..., None]] = None,
     progress_callback: Optional[Callable[[str, str], None]] = None,
+    overwrite_confirmed: bool = False,
+    seed_writer_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build one approved Homebrew upload workspace from normalized packet."""
+    """Build one approved Homebrew upload workspace from normalized packet.
+
+    Args:
+        workspace: Upload workspace directory.
+        job_id: Unique job identifier.
+        builder_executor: Optional override for the module builder callable.
+        progress_callback: Optional progress callback (status, message).
+        overwrite_confirmed: Whether route-level overwrite confirmation has been
+            obtained. If the output module directory already exists and this is
+            False, the build fails before any writes.
+        seed_writer_mode: Optional explicit seed writer mode ("fallback",
+            "preview", "support"). When None, seed writer is gated by
+            ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK config. Invalid
+            values fail closed.
+
+    Returns:
+        Dict with build result status and metadata.
+    """
     files = get_workspace_files(workspace)
     packet = load_json_artifact(files["normalized_packet"])
     packet_ok, packet_error = validate_review_packet(packet)
@@ -293,6 +444,64 @@ def run_toolkit_homebrew_packet_build(
     blueprint_report_artifact = load_builder_blueprint_report_artifact(workspace)
     handoff_class = _classify_blueprint_handoff(files, blueprint_artifact, blueprint_report_artifact)
 
+    # Overwrite authorization: refuse to write over an existing module
+    # directory unless route-level confirmation or a valid rebuild plan
+    # artifact is present.
+    _module_dir = Path(params["output_directory"])
+    if _module_dir.exists() and not overwrite_confirmed:
+        return {
+            "status": "failed",
+            "stage": "build",
+            "error": "overwrite_not_authorized",
+            "reason": "Module directory already exists and overwrite was not confirmed. "
+                      "Retry with confirm_overwrite=true to authorize a backup-clean rebuild.",
+            "job_id": job_id,
+            "module_name": params["module_name"],
+            "module_dir": str(_module_dir),
+        }
+
+    # TABLETOP MODE: seed writer path (explicit mode or fallback flag)
+    _seed_writer_mode: Optional[str] = seed_writer_mode
+    if _seed_writer_mode is not None and _seed_writer_mode not in _VALID_SEED_WRITER_MODES:
+        return {
+            "status": "failed",
+            "stage": "build",
+            "error": f"seed_writer_mode_invalid:{_seed_writer_mode}",
+            "job_id": job_id,
+            "allowed_modes": sorted(_VALID_SEED_WRITER_MODES),
+        }
+
+    _use_seed_writer = False
+    if _seed_writer_mode is not None:
+        _use_seed_writer = True
+    elif (
+        bool(ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD)
+        and bool(ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK)
+        and handoff_class
+        in (
+            "source_blueprint_v2_ready",
+            "source_blueprint_v2_degraded",
+        )
+    ):
+        _use_seed_writer = True
+        _seed_writer_mode = "fallback"
+
+    _build_mode = "packet_workspace_v1"
+    if _use_seed_writer and _seed_writer_mode:
+        _build_mode = _SEED_BUILD_MODES.get(_seed_writer_mode, "packet_workspace_v2")
+    elif handoff_class in ("source_blueprint_v2_ready", "source_blueprint_v2_degraded"):
+        _build_mode = "source_enhanced_modulebuilder"
+    elif handoff_class == "source_blueprint_ready":
+        _build_mode = "source_blueprint_modulebuilder"
+
+    _v2_build_result: Optional[Dict[str, Any]] = None
+    if _use_seed_writer:
+        _v2_build_result = _execute_seed_writer_build(
+            workspace, job_id, files, params, blueprint_artifact, progress_callback,
+        )
+        if _v2_build_result.get("status") != "success":
+            return _v2_build_result
+
     # Handle blueprint required but not ready -- fail closed before executor
     if handoff_class == "blueprint_required_not_ready":
         bp_status = _describe_blueprint_not_ready(
@@ -309,7 +518,7 @@ def run_toolkit_homebrew_packet_build(
 
     blueprint_metadata: Dict[str, Any] = {}
 
-    if handoff_class == "source_blueprint_ready" and blueprint_report_artifact:
+    if handoff_class in ("source_blueprint_ready", "source_blueprint_v2_ready") and blueprint_report_artifact:
         blueprint_metadata = {
             "handoff_mode": "source_blueprint",
             "blueprint_path": str(files.get("builder_blueprint", "")),
@@ -329,96 +538,103 @@ def run_toolkit_homebrew_packet_build(
             },
         }
 
-    narrative_bundle = _read_builder_narrative(files, packet, blueprint=blueprint_artifact)
+    if not _use_seed_writer:
+        narrative_bundle = _read_builder_narrative(files, packet, blueprint=blueprint_artifact)
 
-    builder_input = {
-        "status": "ready",
-        "stage": "builder_input",
-        "created_at": _utc_now_iso(),
-        "job_id": job_id,
-        "build_mode": "packet_workspace_v1",
-        "packet_identity": {
-            "packet_version": packet.get("packet_version"),
-            "source_hash": packet.get("source_hash"),
-            "source_path": packet.get("source_path"),
-            "title": packet.get("title"),
-        },
-        "review_snapshot": {
-            "decision": review_snapshot.get("decision"),
-            "recorded_at": review_snapshot.get("recorded_at"),
-            "job_id": review_snapshot.get("job_id"),
-        },
-        "derived_builder_parameters": params,
-        "builder_narrative_source": narrative_bundle["source"],
-        "builder_narrative": narrative_bundle["narrative"],
-    }
-    if blueprint_metadata:
-        builder_input["handoff_mode"] = "source_blueprint"
-        builder_input["blueprint"] = blueprint_metadata
-
-    if not persist_builder_input_artifact(workspace, builder_input):
-        return {
-            "status": "failed",
-            "stage": "build",
-            "error": "builder_input_persist_failed",
+        builder_input = {
+            "status": "ready",
+            "stage": "builder_input",
+            "created_at": _utc_now_iso(),
             "job_id": job_id,
-            "packet_identity": builder_input["packet_identity"],
+            "build_mode": _build_mode,
+            "packet_identity": {
+                "packet_version": packet.get("packet_version"),
+                "source_hash": packet.get("source_hash"),
+                "source_path": packet.get("source_path"),
+                "title": packet.get("title"),
+            },
+            "review_snapshot": {
+                "decision": review_snapshot.get("decision"),
+                "recorded_at": review_snapshot.get("recorded_at"),
+                "job_id": review_snapshot.get("job_id"),
+            },
+            "derived_builder_parameters": params,
+            "builder_narrative_source": narrative_bundle["source"],
+            "builder_narrative": narrative_bundle["narrative"],
         }
+        if blueprint_metadata:
+            builder_input["handoff_mode"] = "source_blueprint"
+            builder_input["blueprint"] = blueprint_metadata
 
-    executor = builder_executor or _execute_module_builder
+        if not persist_builder_input_artifact(workspace, builder_input):
+            return {
+                "status": "failed",
+                "stage": "build",
+                "error": "builder_input_persist_failed",
+                "job_id": job_id,
+                "packet_identity": builder_input["packet_identity"],
+            }
 
-    try:
-        info(
-            (
-                f"TOOLKIT_HOMEBREW: Starting packet-driven build job={job_id} "
-                f"module={params['module_name']}"
-            ),
-            category="web_interface",
-        )
+        executor = builder_executor or _execute_module_builder
+
         try:
-            if progress_callback:
-                executor(builder_input, progress_callback=progress_callback)
-            else:
-                executor(builder_input)
-        except TypeError as executor_error:
-            if progress_callback and "unexpected keyword argument 'progress_callback'" in str(
-                executor_error
-            ):
-                executor(builder_input)
-            else:
-                raise
+            info(
+                (
+                    f"TOOLKIT_HOMEBREW: Starting packet-driven build job={job_id} "
+                    f"module={params['module_name']}"
+                ),
+                category="web_interface",
+            )
+            try:
+                if progress_callback:
+                    executor(builder_input, progress_callback=progress_callback)
+                else:
+                    executor(builder_input)
+            except TypeError as executor_error:
+                if progress_callback and "unexpected keyword argument 'progress_callback'" in str(
+                    executor_error
+                ):
+                    executor(builder_input)
+                else:
+                    raise
 
-        build_result = {
-            "status": "success",
-            "stage": "build",
-            "job_id": job_id,
-            "build_mode": "packet_workspace_v1",
-            "completed_at": _utc_now_iso(),
-            "packet_identity": builder_input["packet_identity"],
-            "module_name": params["module_name"],
-            "output_directory": params["output_directory"],
-            "builder_input_path": str(files["builder_input"]),
-            "build_result_path": str(files["build_result"]),
-        }
-    except Exception as build_error:
-        error(
-            f"TOOLKIT_HOMEBREW: Packet-driven build failed for job={job_id}: {build_error}",
-            exception=build_error,
-            category="web_interface",
-        )
-        build_result = {
-            "status": "failed",
-            "stage": "build",
-            "job_id": job_id,
-            "build_mode": "packet_workspace_v1",
-            "completed_at": _utc_now_iso(),
-            "packet_identity": builder_input["packet_identity"],
-            "module_name": params["module_name"],
-            "output_directory": params["output_directory"],
-            "builder_input_path": str(files["builder_input"]),
-            "build_result_path": str(files["build_result"]),
-            "error": str(build_error),
-        }
+            build_result = {
+                "status": "success",
+                "stage": "build",
+                "job_id": job_id,
+                "build_mode": _build_mode,
+                "completed_at": _utc_now_iso(),
+                "packet_identity": builder_input["packet_identity"],
+                "module_name": params["module_name"],
+                "output_directory": params["output_directory"],
+                "builder_input_path": str(files["builder_input"]),
+                "build_result_path": str(files["build_result"]),
+            }
+        except Exception as build_error:
+            error(
+                f"TOOLKIT_HOMEBREW: Packet-driven build failed for job={job_id}: {build_error}",
+                exception=build_error,
+                category="web_interface",
+            )
+            build_result = {
+                "status": "failed",
+                "stage": "build",
+                "job_id": job_id,
+                "build_mode": _build_mode,
+                "completed_at": _utc_now_iso(),
+                "packet_identity": builder_input["packet_identity"],
+                "module_name": params["module_name"],
+                "output_directory": params["output_directory"],
+                "builder_input_path": str(files["builder_input"]),
+                "build_result_path": str(files["build_result"]),
+                "error": str(build_error),
+            }
+
+    if _use_seed_writer:
+        build_result = _v2_build_result  # type: ignore[assignment]
+        build_result["build_mode"] = _build_mode
+        if _seed_writer_mode:
+            build_result["seed_writer_mode"] = _seed_writer_mode
 
     # TABLETOP MODE: Run build fidelity gates before finishing/publication
     _fidelity_required = False
@@ -516,27 +732,29 @@ def run_toolkit_homebrew_packet_build(
             )
 
     # TABLETOP MODE: Generate narrative enrichment plan artifact (default profile "none")
-    try:
-        from utils.toolkit_narrative_enrichment_plan import build_enrichment_plan
+    # Skipped for v2 builds (enrichment already handled in seed writer path)
+    if not _use_seed_writer:
+        try:
+            from utils.toolkit_narrative_enrichment_plan import build_enrichment_plan
 
-        enrichment_plan = build_enrichment_plan(
-            build_result=build_result,
-            profile="none",
-            report_path=files.get("build_fidelity_report"),
-            rollup_path=files.get("source_fidelity_report"),
-        )
-        persist_narrative_enrichment_plan_artifact(workspace, enrichment_plan)
-        build_result["narrative_enrichment_plan"] = {
-            "status": enrichment_plan.get("status"),
-            "profile": enrichment_plan.get("profile"),
-            "blocker_count": len(enrichment_plan.get("blockers") or []),
-            "warning_count": len(enrichment_plan.get("warnings") or []),
-        }
-    except Exception as enrichment_error:
-        warning(
-            f"TOOLKIT_HOMEBREW: Narrative enrichment plan generation failed with default profile: {enrichment_error}",
-            category="web_interface",
-        )
+            enrichment_plan = build_enrichment_plan(
+                build_result=build_result,
+                profile="none",
+                report_path=files.get("build_fidelity_report"),
+                rollup_path=files.get("source_fidelity_report"),
+            )
+            persist_narrative_enrichment_plan_artifact(workspace, enrichment_plan)
+            build_result["narrative_enrichment_plan"] = {
+                "status": enrichment_plan.get("status"),
+                "profile": enrichment_plan.get("profile"),
+                "blocker_count": len(enrichment_plan.get("blockers") or []),
+                "warning_count": len(enrichment_plan.get("warnings") or []),
+            }
+        except Exception as enrichment_error:
+            warning(
+                f"TOOLKIT_HOMEBREW: Narrative enrichment plan generation failed with default profile: {enrichment_error}",
+                category="web_interface",
+            )
 
     build_result["build_result_persisted"] = persist_build_result_artifact(workspace, build_result)
     if not build_result["build_result_persisted"]:

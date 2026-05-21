@@ -69,6 +69,8 @@ except ImportError:
     _HAS_LLM_CLASSIFICATION = False
 
 
+_VALID_SEED_WRITER_MODES = frozenset({"fallback", "preview", "support"})
+
 _TERMINAL_JOB_STATES = {
     "completed",
     "not_publishable",
@@ -227,6 +229,172 @@ def _build_hydration_summary(job_payload: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
+def _build_accurate_ingest_summary(job_copy: Dict[str, Any]) -> Dict[str, Any]:
+    """Build compact accurate-ingest summary from job state for unified flow."""
+    result = job_copy.get("result") or {}
+    if not isinstance(result, dict):
+        result = {}
+
+    build_mode = str(result.get("build_mode") or "").strip()
+    seed_writer_mode = str(result.get("seed_writer_mode") or "").strip() or None
+
+    seed_status = str(result.get("seed_status") or "").strip()
+    enrichment_status = str(result.get("enrichment_status") or "").strip()
+    seed_coverage = result.get("seed_coverage") or {}
+    build_fidelity = result.get("build_fidelity") or {}
+
+    # Readiness and publishability from finishing report
+    ready_status = str(result.get("ready_status") or "").strip()
+    publishable_status = str(result.get("publishable_status") or "").strip()
+
+    # Blueprint status from handoff mode or build fidelity
+    handoff_mode = str(result.get("handoff_mode") or "").strip()
+    blueprint_status = "unknown"
+    if handoff_mode == "source_blueprint":
+        blueprint_status = "ready"
+    elif build_fidelity:
+        bf_status = str(build_fidelity.get("status") or "").strip()
+        if bf_status:
+            blueprint_status = "ready" if bf_status in ("pass", "degraded") else "blocked"
+
+    # Build mode family for downstream consumers
+    _ACCURATE_INGEST_MODES = frozenset({
+        "source_enhanced_modulebuilder",
+        "source_blueprint_modulebuilder",
+        "blueprint_seed_fallback",
+        "blueprint_seed_preview",
+        "blueprint_seed_support",
+        "packet_workspace_v2",
+    })
+    _SEED_WRITER_MODES = frozenset({
+        "blueprint_seed_fallback",
+        "blueprint_seed_preview",
+        "blueprint_seed_support",
+        "packet_workspace_v2",
+    })
+    _MODULEBUILDER_MODES = frozenset({
+        "source_enhanced_modulebuilder",
+        "source_blueprint_modulebuilder",
+    })
+
+    if build_mode in _MODULEBUILDER_MODES:
+        build_mode_family = "modulebuilder"
+    elif build_mode in _SEED_WRITER_MODES:
+        build_mode_family = "seed_writer"
+    elif build_mode == "packet_workspace_v1":
+        build_mode_family = "packet_workspace"
+    elif build_mode:
+        build_mode_family = "unknown"
+    else:
+        build_mode_family = "none"
+
+    ack: Dict[str, Any] = {
+        "build_mode": build_mode,
+        "build_mode_family": build_mode_family,
+        "seed_status": seed_status or None,
+        "enrichment_status": enrichment_status or None,
+        "seed_coverage": seed_coverage,
+        "blueprint_status": blueprint_status or None,
+        "build_fidelity_status": str(build_fidelity.get("status") or "").strip() or None,
+        "source_fidelity_status": str(build_fidelity.get("rollup_status")
+            or build_fidelity.get("status") or "").strip() or None,
+        "readiness_status": ready_status or None,
+        "publishability_status": publishable_status or None,
+    }
+    if seed_writer_mode:
+        ack["seed_writer_mode"] = seed_writer_mode
+    ack["has_accurate_ingest"] = bool(build_mode in _ACCURATE_INGEST_MODES or seed_status or enrichment_status)
+
+    if seed_coverage:
+        ack["source_locations"] = int(seed_coverage.get("locations") or 0)
+        ack["source_npcs"] = int(seed_coverage.get("npcs_in_roster") or 0)
+        ack["source_plot_beats"] = int(seed_coverage.get("plot_beats") or 0)
+        ack["source_areas"] = int(seed_coverage.get("areas") or 0)
+
+    return ack
+
+
+_ACCURATE_INGEST_CANONICAL_PHASES = {
+    # In-progress pipeline stages
+    "preflight",
+    "extracting_source_truth",
+    "building_blueprint",
+    "awaiting_review",
+    "seeding_module",
+    "enriching_module",
+    "build_fidelity",
+    "readiness",
+    "finishing",
+    "publishability_audit",
+    # Terminal states
+    "completed",
+    "not_publishable",
+    "quarantined",
+    "failed",
+    "rejected",
+    "awaiting_overwrite_confirmation",
+}
+
+
+def _get_canonical_accurate_ingest_phase(job: Dict[str, Any]) -> str:
+    """Derive canonical accurate-ingest phase from job state.
+
+    Returns one of _ACCURATE_INGEST_CANONICAL_PHASES.
+    """
+    status = str(job.get("status") or "").strip().lower()
+    stage = str(job.get("stage") or "").strip().lower()
+    pipeline_status = str(job.get("pipeline_status") or "").strip().lower()
+    progress_stage = str(job.get("progress_stage") or "").strip().lower()
+
+    # Terminal statuses map directly
+    if status in ("completed", "not_publishable", "quarantined", "failed", "rejected", "awaiting_overwrite_confirmation"):
+        return status
+
+    # Pipeline-status-based mapping (most specific first)
+    if pipeline_status == "awaiting_confirmation":
+        return "awaiting_overwrite_confirmation"
+    if pipeline_status == "reviewing" or status == "awaiting_review":
+        return "awaiting_review"
+
+    # Stage-based mapping with progress detail
+    if stage == "upload" or stage == "normalization":
+        return "preflight"
+    if stage == "review":
+        return "awaiting_review"
+
+    # Build stage: check progress_stage for detailed phase
+    if stage == "build" or stage == "building":
+        if progress_stage == "seeding_module":
+            return "seeding_module"
+        if progress_stage == "enriching_module":
+            return "enriching_module"
+        if progress_stage == "build_fidelity":
+            return "build_fidelity"
+        if progress_stage:
+            return "building_blueprint"
+        return "extracting_source_truth"
+
+    # Post-build stages
+    if stage == "readiness":
+        return "readiness"
+    if stage == "finishing":
+        return "finishing"
+    if stage == "publishability_audit":
+        return "publishability_audit"
+
+    # Default: map from pipeline_status if it looks like a known phase
+    if pipeline_status:
+        for phase in sorted(_ACCURATE_INGEST_CANONICAL_PHASES, key=len, reverse=True):
+            if phase in pipeline_status:
+                return phase
+
+    # Fallback for new/building jobs
+    if status == "approved_for_build":
+        return "extracting_source_truth"
+
+    return "preflight"
+
+
 ALLOWED_HOME_BREW_EXTENSIONS = {".md", ".pdf"}
 TOOLKIT_HOMEBREW_UPLOAD_ROOT = Path("user_uploads") / "toolkit" / "homebrew_md"
 TOOLKIT_HOMEBREW_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -280,6 +448,16 @@ def _normalize_homebrew_build_progress_stage(
 ) -> str:
     """Map ModuleBuilder progress signals to stable toolkit stage labels."""
     status_text = f"{progress_status} {progress_message}".strip().lower()
+    raw_status = str(progress_status or "").strip().lower()
+
+    # TABLETOP MODE: v2 accurate-ingest unified stage names
+    if raw_status == "seeding":
+        return "seeding_module"
+    if raw_status == "enriching":
+        return "enriching_module"
+    if raw_status == "build_fidelity":
+        return "build_fidelity"
+
     if "getting party members" in status_text or "initializing" in status_text:
         return "builder_initializing"
     if "directory structure" in status_text or "creating builder" in status_text:
@@ -422,6 +600,8 @@ def _run_homebrew_packet_build(
     artifact_workspace: Path,
     job_id: str,
     progress_callback: Optional[Any] = None,
+    overwrite_confirmed: bool = False,
+    seed_writer_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run packet-driven builder for one approved toolkit Homebrew job."""
     from web.extensions.toolkit_homebrew_packet_builder import (
@@ -432,6 +612,8 @@ def _run_homebrew_packet_build(
         workspace=artifact_workspace,
         job_id=job_id,
         progress_callback=progress_callback,
+        overwrite_confirmed=overwrite_confirmed,
+        seed_writer_mode=seed_writer_mode,
     )
 
 
@@ -452,16 +634,29 @@ def _run_homebrew_readiness_gate(
     )
 
 
-def _run_homebrew_finisher(module_slug: str) -> Dict[str, Any]:
+def _run_homebrew_finisher(
+    module_slug: str, build_result: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """Run shared toolkit finisher/publication stack for one module."""
     from web.extensions.toolkit_module_finisher import (
         refresh_toolkit_build_report,
     )
 
+    extra_stages: Dict[str, Any] = {}
+    if build_result and isinstance(build_result, dict):
+        bp_seed = str(build_result.get("seed_status") or "").strip()
+        bp_enrich = str(build_result.get("enrichment_status") or "").strip()
+        if bp_seed or bp_enrich:
+            extra_stages["accurate_ingest_build"] = {
+                "seed_status": bp_seed,
+                "enrichment_status": bp_enrich,
+            }
+
     return refresh_toolkit_build_report(
         module_slug,
         strict=True,
         refresh_reason="toolkit_homebrew_route_finisher",
+        extra_stages=extra_stages if extra_stages else None,
     )
 
 
@@ -661,6 +856,25 @@ def _build_fidelity_review_or_error(workspace: Path) -> Dict[str, Any]:
         }
 
 
+def _fidelity_review_requires_decision(review: Dict[str, Any]) -> bool:
+    """Return True when fidelity review requires an operator decision before build.
+
+    Clean/approvable reviews with no blocking findings do not need a pause
+    for operator approval.  Blocked, non-approvable, stale, or waiver-requiring
+    reviews still require the awaiting_review gate.
+    """
+    if not review or not isinstance(review, dict):
+        return True  # missing payload = safe to pause
+    can_approve = bool(review.get("can_approve"))
+    if not can_approve:
+        return True
+    blockers = review.get("blockers") or []
+    for b in blockers:
+        if isinstance(b, dict) and str(b.get("severity") or "").lower() == "blocking":
+            return True
+    return False
+
+
 def _run_homebrew_ingest_job(
     job_id: str,
     source_path: Path,
@@ -750,25 +964,32 @@ def _run_homebrew_ingest_job(
 
             if _should_use_fidelity_review(artifact_workspace):
                 fidelity_review = _build_fidelity_review_or_error(artifact_workspace)
-                review_result = {
-                    **auto_build_result,
-                    "fidelity_review": fidelity_review,
-                }
-                _set_job_state(
-                    job_id,
-                    "awaiting_review",
-                    stage="review",
-                    pipeline_status="awaiting_review",
-                    routing_outcome=routing_outcome,
-                    review_decision=None,
-                    quarantine_reason=None,
-                    result=review_result,
-                )
+                if _fidelity_review_requires_decision(fidelity_review):
+                    review_result = {
+                        **auto_build_result,
+                        "fidelity_review": fidelity_review,
+                    }
+                    _set_job_state(
+                        job_id,
+                        "awaiting_review",
+                        stage="review",
+                        pipeline_status="awaiting_review",
+                        routing_outcome=routing_outcome,
+                        review_decision=None,
+                        quarantine_reason=None,
+                        result=review_result,
+                    )
+                    info(
+                        f"TOOLKIT_HOMEBREW: Accurate-ingest job {job_id} paused for fidelity review",
+                        category="web_interface",
+                    )
+                    return
+                # Clean diagnostics: attach to result but do NOT pause for review
+                auto_build_result["fidelity_review"] = fidelity_review
                 info(
-                    f"TOOLKIT_HOMEBREW: Accurate-ingest job {job_id} paused for fidelity review",
+                    f"TOOLKIT_HOMEBREW: Accurate-ingest job {job_id} fidelity review is clean; continuing auto-build",
                     category="web_interface",
                 )
-                return
 
             # TABLETOP MODE: Preserve review snapshot artifact compatibility even though
             # upload now auto-approves and auto-starts packet build.
@@ -1055,7 +1276,8 @@ def _run_homebrew_build_job(
 
             try:
                 finishing_report = _run_homebrew_finisher(
-                    str(finisher_entry.get("module_name") or "")
+                    str(finisher_entry.get("module_name") or ""),
+                    build_result=prior_result,
                 )
             except Exception as finisher_error:
                 _set_job_state(
@@ -1146,6 +1368,8 @@ def _run_homebrew_build_job(
             return
 
         rebuild_mode = bool(build_opts.get("rebuild_mode"))
+        seed_writer_mode_raw = build_opts.get("seed_writer_mode")
+        seed_writer_mode = seed_writer_mode_raw if seed_writer_mode_raw in _VALID_SEED_WRITER_MODES else None
         build_progress_callback = _make_homebrew_build_progress_callback(job_id)
         if rebuild_mode:
             rebuild_module_name = str(build_opts.get("module_name") or "").strip()
@@ -1219,6 +1443,8 @@ def _run_homebrew_build_job(
             workspace,
             job_id,
             progress_callback=build_progress_callback,
+            overwrite_confirmed=rebuild_mode,
+            seed_writer_mode=seed_writer_mode,
         )
         build_status = str(build_result.get("status") or "failed").lower()
         if rebuild_prep_result:
@@ -1371,7 +1597,29 @@ def _run_homebrew_build_job(
 
             try:
                 finishing_report = _run_homebrew_finisher(
-                    str(finisher_entry.get("module_name") or "")
+                    str(finisher_entry.get("module_name") or ""),
+                    build_result=build_result,
+                )
+            except Exception as finisher_error:
+                _set_job_state(
+                    job_id,
+                    "finishing_failed",
+                    stage="finishing",
+                    pipeline_status="failed",
+                    error=str(finisher_error),
+                    result={
+                        "status": "failed",
+                        "stage": "finishing",
+                        "job_id": job_id,
+                        "error": str(finisher_error),
+                    },
+                    build_result_path=str(workspace_files["build_result"]),
+                    readiness_validation_report_path=str(
+                        workspace_files["readiness_validation_report"]
+                    ),
+                    readiness_audit_report_path=str(
+                        workspace_files["readiness_audit_report"]
+                    ),
                 )
             except Exception as finisher_error:
                 _set_job_state(
@@ -1991,6 +2239,18 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 }
             ), 400
 
+        seed_writer_mode_raw = str(payload.get("seed_writer_mode") or "").strip().lower()
+        seed_writer_mode: Optional[str] = seed_writer_mode_raw if seed_writer_mode_raw in _VALID_SEED_WRITER_MODES else None
+        if seed_writer_mode_raw and seed_writer_mode_raw not in _VALID_SEED_WRITER_MODES:
+            return jsonify(
+                {
+                    "status": "error",
+                    "reason": "seed_writer_mode_invalid",
+                    "message": "seed_writer_mode must be one of: fallback, preview, support",
+                    "allowed_modes": sorted(_VALID_SEED_WRITER_MODES),
+                }
+            ), 400
+
         workspace_raw = ""
         current_status = ""
         job_copy: Dict[str, Any] = {}
@@ -2138,6 +2398,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     job["rebuild_mode"] = True
                     job["rebuild_collision"] = collision
                     job["expected_module_name"] = module_name
+                    if seed_writer_mode:
+                        job["pending_seed_writer_mode"] = seed_writer_mode
                     job["updated_at"] = _utc_now_iso()
                     job_copy = dict(job)
 
@@ -2151,6 +2413,14 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     }
                 )
 
+            if not seed_writer_mode and confirm_overwrite:
+                with _jobs_lock:
+                    job = _jobs.get(job_id)
+                    if job:
+                        pending = str(job.get("pending_seed_writer_mode") or "").strip().lower()
+                        if pending in _VALID_SEED_WRITER_MODES:
+                            seed_writer_mode = pending
+
             build_options = {
                 "finishing_only": False,
                 "rebuild_mode": bool(module_dir_exists and confirm_overwrite),
@@ -2158,6 +2428,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "module_dir": str((collision or {}).get("module_dir") or ""),
                 "overwrite_policy": overwrite_policy,
             }
+            if seed_writer_mode:
+                build_options["seed_writer_mode"] = seed_writer_mode
 
         with _jobs_lock:
             if _active_job_id is not None:
@@ -2223,6 +2495,32 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         """Retry build from normalized packet for an existing toolkit Homebrew job."""
         global _active_job_id
 
+        payload = request.get_json(silent=True) or {}
+        confirm_overwrite = bool(payload.get("confirm_overwrite"))
+        overwrite_policy = (
+            str(payload.get("overwrite_policy") or "backup_clean").strip().lower()
+        )
+        if confirm_overwrite and overwrite_policy != "backup_clean":
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Unsupported overwrite policy",
+                    "allowed_overwrite_policies": ["backup_clean"],
+                }
+            ), 400
+
+        seed_writer_mode_raw = str(payload.get("seed_writer_mode") or "").strip().lower()
+        seed_writer_mode: Optional[str] = seed_writer_mode_raw if seed_writer_mode_raw in _VALID_SEED_WRITER_MODES else None
+        if seed_writer_mode_raw and seed_writer_mode_raw not in _VALID_SEED_WRITER_MODES:
+            return jsonify(
+                {
+                    "status": "error",
+                    "reason": "seed_writer_mode_invalid",
+                    "message": "seed_writer_mode must be one of: fallback, preview, support",
+                    "allowed_modes": sorted(_VALID_SEED_WRITER_MODES),
+                }
+            ), 400
+
         with _jobs_lock:
             job = _jobs.get(job_id)
             if not job:
@@ -2257,6 +2555,73 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 }
             ), 409
 
+        # Resolve module target and detect collision before worker start
+        target_info = _resolve_homebrew_build_target(workspace)
+        if target_info.get("status") != "success":
+            return jsonify(
+                {
+                    "status": "error",
+                    "reason": "build_target_unresolved",
+                    "message": "Unable to resolve module build target from packet",
+                    "details": target_info,
+                }
+            ), 409
+
+        module_name = str(target_info.get("module_name") or "").strip()
+        collision = (
+            target_info.get("collision")
+            if isinstance(target_info.get("collision"), dict)
+            else {}
+        )
+        module_dir_exists = bool(collision.get("module_dir_exists"))
+
+        # Collision without confirmation: surface overwrite confirmation request
+        if module_dir_exists and not confirm_overwrite:
+            with _jobs_lock:
+                job = _jobs.get(job_id)
+                if not job:
+                    return jsonify(
+                        {"status": "error", "message": "Job not found"}
+                    ), 404
+
+                job["status"] = "awaiting_overwrite_confirmation"
+                job["stage"] = "build"
+                job["pipeline_status"] = "awaiting_confirmation"
+                job["rebuild_mode"] = True
+                job["rebuild_collision"] = collision
+                job["expected_module_name"] = module_name
+                if seed_writer_mode:
+                    job["pending_seed_writer_mode"] = seed_writer_mode
+                job["updated_at"] = _utc_now_iso()
+                job_copy = dict(job)
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "requires_confirmation": True,
+                    "overwrite_policy": "backup_clean",
+                    "collision": collision,
+                    "job": job_copy,
+                }
+            )
+
+        if not seed_writer_mode and confirm_overwrite:
+            with _jobs_lock:
+                job = _jobs.get(job_id)
+                if job:
+                    pending = str(job.get("pending_seed_writer_mode") or "").strip().lower()
+                    if pending in _VALID_SEED_WRITER_MODES:
+                        seed_writer_mode = pending
+
+        build_options = {
+            "finishing_only": False,
+            "rebuild_mode": bool(module_dir_exists and confirm_overwrite),
+            "module_name": module_name,
+            "overwrite_policy": overwrite_policy,
+        }
+        if seed_writer_mode:
+            build_options["seed_writer_mode"] = seed_writer_mode
+
         with _jobs_lock:
             if _active_job_id is not None:
                 return jsonify(
@@ -2270,13 +2635,6 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
 
             _active_job_id = job_id
 
-        build_options = {
-            "finishing_only": False,
-            "rebuild_mode": False,
-            "module_name": "",
-        }
-
-        with _jobs_lock:
             job = _jobs.get(job_id)
             if not job:
                 _active_job_id = None
@@ -2284,6 +2642,10 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             job["status"] = "approved_for_build"
             job["stage"] = "build"
             job["pipeline_status"] = "rebuilding_from_packet"
+            job["rebuild_mode"] = bool(build_options["rebuild_mode"])
+            job["rebuild_collision"] = collision
+            job["expected_module_name"] = module_name
+            job["overwrite_policy"] = overwrite_policy
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -2558,11 +2920,16 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 workspace, str(job_copy.get("status") or "")
             )
 
+        accurate_ingest_summary = _build_accurate_ingest_summary(job_copy)
+        accurate_ingest_phase = _get_canonical_accurate_ingest_phase(job_copy)
+
         return jsonify(
             {
                 "status": "success",
                 "job": job_copy,
                 "artifact_manifest": artifact_manifest,
+                "accurate_ingest_summary": accurate_ingest_summary,
+                "accurate_ingest_phase": accurate_ingest_phase,
             }
         )
 
@@ -2591,6 +2958,9 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 workspace, str(job_copy.get("status") or "")
             )
 
+        accurate_ingest_summary = _build_accurate_ingest_summary(job_copy)
+        accurate_ingest_phase = _get_canonical_accurate_ingest_phase(job_copy)
+
         return jsonify(
             {
                 "status": "success",
@@ -2600,5 +2970,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "hydration_summary": _build_hydration_summary(
                     job_copy.get("result") or {}
                 ),
+                "accurate_ingest_summary": accurate_ingest_summary,
+                "accurate_ingest_phase": accurate_ingest_phase,
             }
         )

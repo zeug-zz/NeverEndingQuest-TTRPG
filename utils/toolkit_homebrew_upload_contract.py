@@ -81,6 +81,7 @@ def get_workspace_files(workspace: Path) -> Dict[str, Path]:
         "builder_blueprint": workspace / "builder_blueprint.json",
         "builder_blueprint_report": workspace / "builder_blueprint_report.json",
         "build_fidelity_report": workspace / "build_fidelity_report.json",
+        "entity_candidate_triage_report": workspace / "entity_candidate_triage_report.json",
         "source_fidelity_report": workspace / "source_fidelity_report.json",
         "narrative_enrichment_plan": workspace / "narrative_enrichment_plan.json",
     }
@@ -660,6 +661,27 @@ def load_narrative_enrichment_plan_artifact(
     """Load narrative enrichment plan artifact if present."""
     files = get_workspace_files(workspace)
     path = files.get("narrative_enrichment_plan")
+    if path and path.exists():
+        return load_json_artifact(path)
+    return None
+
+
+def persist_entity_candidate_triage_artifact(
+    workspace: Path, report: Dict[str, Any]
+) -> bool:
+    """Persist entity_candidate_triage_report.json."""
+    from utils.file_operations import safe_write_json
+
+    files = get_workspace_files(workspace)
+    return safe_write_json(str(files["entity_candidate_triage_report"]), report)
+
+
+def load_entity_candidate_triage_artifact(
+    workspace: Path,
+) -> Optional[Dict[str, Any]]:
+    """Load entity_candidate_triage_report.json if present."""
+    files = get_workspace_files(workspace)
+    path = files.get("entity_candidate_triage_report")
     if path and path.exists():
         return load_json_artifact(path)
     return None

@@ -435,5 +435,33 @@ class TestSidecarContinuityPersistence(TestCase):
         )
 
 
+class TestSidecarPersistenceImport(TestCase):
+    """Regression: sidecar import must not fail in package context (GUI)."""
+
+    def test_import_via_package_context_does_not_raise(self):
+        import importlib
+
+        # Reset any cached sidecar module to force fresh import path
+        for mod_name in list(sys.modules):
+            if "homebrew_sidecar_audit" in mod_name:
+                del sys.modules[mod_name]
+
+        # Simulate GUI context: import ingest_dev via package path
+        ingest_dev = importlib.import_module("scripts.homebrew_ingest_dev")
+
+        result = ingest_dev._persist_media_to_sidecar(
+            module_slug="Definitely_Missing_Module_For_Test",
+            media_extraction=None,
+            media_handles=None,
+            portrait_prewarm=None,
+            media_warnings=None,
+            continuity_contract=None,
+        )
+
+        self.assertIsInstance(result, dict)
+        self.assertFalse(result["success"])
+        self.assertIsNotNone(result["error"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -85,8 +85,13 @@ def _find_blueprint_required(
         for loc in area.get("location_roster") or []:
             if isinstance(loc, dict):
                 required["location"].append(loc)
-    plot_graph = blueprint.get("plot_graph") or {}
-    beats = plot_graph.get("beats") or []
+    plot_graph = blueprint.get("plot_graph") or []
+    if isinstance(plot_graph, dict):
+        beats = plot_graph.get("beats") or []
+    elif isinstance(plot_graph, list):
+        beats = plot_graph
+    else:
+        beats = []
     required["plot_beat"] = [b for b in beats if isinstance(b, dict)]
     return required
 
@@ -144,6 +149,42 @@ def _scan_module_areas(
                 if lower_name not in seen_npc_names:
                     seen_npc_names.add(lower_name)
                     result["npcs"].append(npc)
+
+    # Scan module_context.npcs for structured NPC entries (seed writer output).
+    ctx_path = module_dir / "module_context.json"
+    if ctx_path.is_file():
+        try:
+            ctx = load_json_artifact(ctx_path)
+            for npc_key, npc_val in (ctx.get("npcs") or {}).items():
+                if not isinstance(npc_val, dict):
+                    continue
+                name = str(npc_val.get("name") or "").strip()
+                if not name:
+                    continue
+                lower_name = name.strip().lower()
+                if lower_name not in seen_npc_names:
+                    seen_npc_names.add(lower_name)
+                    result["npcs"].append(npc_val)
+        except Exception:
+            pass
+
+    # Scan npcs_seed.json for structured NPC entries.
+    seed_path = module_dir / "npcs_seed.json"
+    if seed_path.is_file():
+        try:
+            seed = load_json_artifact(seed_path)
+            for npc in (seed.get("npcs") or []) or []:
+                if not isinstance(npc, dict):
+                    continue
+                name = str(npc.get("name") or "").strip()
+                if not name:
+                    continue
+                lower_name = name.strip().lower()
+                if lower_name not in seen_npc_names:
+                    seen_npc_names.add(lower_name)
+                    result["npcs"].append(npc)
+        except Exception:
+            pass
 
     return result
 

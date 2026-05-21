@@ -2,6 +2,8 @@
 """Tests for layered module publishability audit."""
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -518,6 +520,117 @@ class TestAuditPublishabilitySourceFidelity(unittest.TestCase):
             report = publishability.audit_module_publishability("example_module")
         self.assertEqual(len(report["source_fidelity_categories"]), 2)
         self.assertEqual(report["source_fidelity_categories"][0]["category"], "npc_preservation")
+
+
+class TestSourceFidelityFilePrecedence(unittest.TestCase):
+    """Tests for _load_source_fidelity_status file-based precedence."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(str(self.tmpdir), ignore_errors=True)
+
+    def _write_json(self, name: str, data: dict):
+        path = self.tmpdir / name
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def test_final_report_wins_over_benchmark(self):
+        self._write_json("accurate_ingest_benchmark_report.json", {
+            "source_fidelity_status": "pass",
+            "category_results": [{"category": "benchmark", "score": 1.0}],
+        })
+        self._write_json("source_fidelity_report.json", {
+            "report_version": "source_fidelity_report.v1",
+            "module_slug": "test_module",
+            "source_fidelity_status": "blocked",
+            "categories": [{"category": "npc_preservation", "status": "blocked"}],
+        })
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "blocked",
+                         "Final report should win over benchmark")
+        self.assertEqual(len(result["category_results"]), 1)
+
+    def test_benchmark_fallback_when_no_final_report(self):
+        self._write_json("accurate_ingest_benchmark_report.json", {
+            "source_fidelity_status": "degraded",
+            "category_results": [{"category": "location_preservation", "score": 0.85}],
+        })
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "degraded")
+
+    def test_unknown_when_no_reports(self):
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "unknown")
+        self.assertEqual(result["category_results"], [])
+
+    def test_final_report_category_mapping(self):
+        self._write_json("source_fidelity_report.json", {
+            "source_fidelity_status": "pass",
+            "categories": [{"category": "npc_preservation", "status": "pass"}],
+        })
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "pass")
+        self.assertEqual(len(result["category_results"]), 1)
+
+    def test_invalid_final_report_returns_unknown(self):
+        """Invalid source_fidelity_report.json must return unknown, not fall through to benchmark."""
+        self._write_json("accurate_ingest_benchmark_report.json", {
+            "source_fidelity_status": "pass",
+            "category_results": [{"category": "benchmark", "score": 1.0}],
+        })
+        path = self.tmpdir / "source_fidelity_report.json"
+        path.write_text("not valid json", encoding="utf-8")
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "unknown",
+                         "Invalid final report must return unknown, not stale benchmark")
+
+    def test_corrupt_json_final_report_returns_unknown(self):
+        """Corrupt JSON in source_fidelity_report.json must return unknown."""
+        path = self.tmpdir / "source_fidelity_report.json"
+        path.write_text("{invalid: true, missing: quotes}", encoding="utf-8")
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "unknown")
+
+    def test_non_dict_final_report_returns_unknown(self):
+        """source_fidelity_report.json containing non-dict json must return unknown."""
+        self._write_json("source_fidelity_report.json", ["pass", "degraded"])
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "unknown")
+
+    def test_build_source_fidelity_report_artifact(self):
+        pub_report = {
+            "source_fidelity_status": "degraded",
+            "source_fidelity_categories": [
+                {"category": "npc_preservation", "status": "degraded", "score": 0.87},
+            ],
+        }
+        artifact = publishability._build_source_fidelity_report_artifact(
+            module_slug="test_module",
+            module_path=self.tmpdir,
+            publishability_report=pub_report,
+        )
+        self.assertEqual(artifact["report_version"], "source_fidelity_report.v1")
+        self.assertEqual(artifact["module_slug"], "test_module")
+        self.assertEqual(artifact["source_fidelity_status"], "degraded")
+        self.assertEqual(len(artifact["categories"]), 1)
+        self.assertEqual(artifact["categories"][0]["category"], "npc_preservation")
+
+    def test_module_summary_does_not_override_blocked_fidelity(self):
+        """MODULE_SUMMARY.md must not override blocked source-fidelity status."""
+        self._write_json("source_fidelity_report.json", {
+            "report_version": "source_fidelity_report.v1",
+            "module_slug": "test_module",
+            "source_fidelity_status": "blocked",
+            "categories": [],
+        })
+        path = self.tmpdir / "MODULE_SUMMARY.md"
+        path.write_text("# This module summary should not override source fidelity", encoding="utf-8")
+        result = publishability._load_source_fidelity_status(self.tmpdir)
+        self.assertEqual(result["source_fidelity_status"], "blocked",
+                         "MODULE_SUMMARY.md must not override blocked source fidelity")
 
 
 if __name__ == "__main__":

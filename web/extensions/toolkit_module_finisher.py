@@ -12,9 +12,9 @@ Licensed under Fair Source License 1.0
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from utils.enhanced_logger import error, info
+from utils.enhanced_logger import error, info, warning
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_semantic_authority import enrich_module_semantic_authority
 
@@ -559,6 +559,7 @@ def run_toolkit_module_postbuild_finishing(
     strict: bool = True,
     refresh_reason: str = "postbuild_finishing",
     refresh_workflow: str = "toolkit_postbuild_finisher",
+    extra_stages: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run post-build publication parity stages for toolkit-generated modules."""
     module_slug = str(module_slug or "").strip()
@@ -587,6 +588,12 @@ def run_toolkit_module_postbuild_finishing(
 
     stages: Dict[str, Dict[str, Any]] = {}
     overall_status = "success"
+
+    # Ingest extra stages from caller (e.g., seed/enrichment status from v2 builds)
+    if extra_stages and isinstance(extra_stages, dict):
+        for stage_key, stage_payload in extra_stages.items():
+            if stage_key not in stages and isinstance(stage_payload, dict):
+                stages[stage_key] = stage_payload
 
     continuity_stage = _run_continuity_stage(
         module_slug=module_slug, module_dir=module_dir, strict=strict
@@ -742,6 +749,23 @@ def run_toolkit_module_postbuild_finishing(
     )
     stages["publishability"] = publishability_stage
 
+    # TABLETOP MODE: Persist module-level source_fidelity_report.json
+    # so publishability audit can consume the same status on subsequent runs.
+    _sf_report_persisted = False
+    try:
+        from scripts.audit_module_publishability import _build_source_fidelity_report_artifact
+        pub_report = publishability_stage.get("report", {})
+        if pub_report:
+            sf_report = _build_source_fidelity_report_artifact(
+                module_slug=module_slug,
+                module_path=module_dir,
+                publishability_report=pub_report,
+            )
+            if safe_write_json(str(module_dir / "source_fidelity_report.json"), sf_report):
+                _sf_report_persisted = True
+    except Exception:
+        warning(f"TOOLKIT_FINISHER: Failed to persist source_fidelity_report for {module_slug}", category="module_ingest")
+
     # TABLETOP MODE: LLM-assisted remediation proposals (Phase 2 DP4)
     llm_remediation_stage = _run_llm_remediation_stage(
         module_slug=module_slug,
@@ -754,12 +778,13 @@ def run_toolkit_module_postbuild_finishing(
     publishable_status = str(
         publishability_stage.get("publishable_status", "fail") or "fail"
     )
-    source_fidelity_status = str(
-        publishability_stage.get("source_fidelity_status", "unknown") or "unknown"
-    )
 
-    # Surface source-fidelity category breakdown in finisher report
-    source_fidelity_categories = publishability_stage.get("source_fidelity_categories", [])
+    # Source fidelity lives inside publishability_stage["report"], not on the stage wrapper
+    _pub_report = publishability_stage.get("report", {}) or {}
+    source_fidelity_status = str(
+        _pub_report.get("source_fidelity_status", "unknown") or "unknown"
+    )
+    source_fidelity_categories = _pub_report.get("source_fidelity_categories", [])
 
     if _detect_media_only_debt(publishability_stage):
         media_debt = _extract_media_debt_details(publishability_stage)
@@ -798,8 +823,9 @@ def run_toolkit_module_postbuild_finishing(
     )
 
     report["source_fidelity_status"] = source_fidelity_status
-    if source_fidelity_categories:
-        report["source_fidelity_categories"] = source_fidelity_categories
+    report["source_fidelity_categories"] = list(source_fidelity_categories) if isinstance(source_fidelity_categories, list) else []
+    if _sf_report_persisted:
+        report["source_fidelity_report"] = "source_fidelity_report.json"
 
     write_ok = safe_write_json(str(report_path), report)
     if not write_ok:
@@ -825,6 +851,7 @@ def refresh_toolkit_build_report(
     module_slug: str,
     strict: bool = True,
     refresh_reason: str = "toolkit_revalidation",
+    extra_stages: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run explicit report-refresh contract for publishability-facing workflows."""
     return run_toolkit_module_postbuild_finishing(
@@ -832,4 +859,5 @@ def refresh_toolkit_build_report(
         strict=strict,
         refresh_reason=refresh_reason,
         refresh_workflow="toolkit_report_refresh",
+        extra_stages=extra_stages,
     )

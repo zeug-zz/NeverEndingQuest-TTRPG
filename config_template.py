@@ -99,7 +99,16 @@ DEBUG_STATUS_SYNC = False                               # Enable/disable noisy s
 # When True, approved accurate-ingest workspaces build via deterministic
 # seed writer + bounded enrichment instead of ModuleBuilder.build_module(...).
 # Default is False in model_config.py; enable after seed-writer tests pass.
+# The existing ModuleBuilder orchestration is the default accurate-ingest GUI
+# authoring path. Seed writer is support/fallback/preview tooling only.
 # ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False
+
+# Feature Flag -- Accurate-Ingest Seed Writer Fallback
+# When True, allows the deterministic seed writer to run as an explicit
+# fallback or preview mode when ModuleBuilder cannot be used. When False
+# (default), the seed writer is not reachable from GUI accurate-ingest jobs.
+# This is support tooling, not the default adventure authoring path.
+# ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK = False
 
 # Feature Flag -- Accurate-Ingest Blueprint Enrichment (Phase 12)
 # When True, bounded LLM enrichment runs over seeded module fields after

@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model_config import (
     ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD,
+    ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK,
     ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT,
 )
 
@@ -23,9 +24,22 @@ from utils.toolkit_builder_blueprint import (
     generate_builder_blueprint,
     generate_builder_blueprint_v2,
     validate_builder_blueprint_v2,
+    load_phase2_artifacts,
+    build_builder_blueprint_report,
     STATUS_READY,
     STATUS_BLOCKED_BY_FIDELITY,
     STATUS_GENERATION_FAILED,
+)
+
+from utils.toolkit_entity_candidate_triage import (
+    build_triage_decision,
+    DECISION_KEEP,
+    DECISION_REJECT,
+    DECISION_RECLASSIFY,
+    TYPE_TRUE_NPC,
+    TYPE_NARRATIVE_PHRASE,
+    TYPE_PLOT_NOTE,
+    TRIAGE_REPORT_STATUS_PASS,
 )
 
 
@@ -65,11 +79,15 @@ def _make_normalized_packet(title="Test Module") -> dict:
 
 
 class TestFeatureFlagSourceContracts(unittest.TestCase):
-    """Source-contract tests: flags exist and default to disabled."""
+    """Source-contract tests: flags exist and have expected defaults."""
 
-    def test_gui_blueprint_build_flag_exists_and_disabled(self):
+    def test_gui_blueprint_build_disabled_by_default(self):
         self.assertIsNotNone(ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD)
         self.assertFalse(ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD)
+
+    def test_seed_writer_fallback_exists_and_disabled(self):
+        self.assertIsNotNone(ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK)
+        self.assertFalse(ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK)
 
     def test_blueprint_enrichment_flag_exists_and_disabled(self):
         self.assertIsNotNone(ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT)
@@ -383,6 +401,247 @@ class TestBlueprintV2StatusComputation(unittest.TestCase):
             normalized_packet=packet, fidelity_report=None,
         )
         self.assertEqual(bp.get("blueprint_status"), STATUS_READY)
+
+
+def _make_triage_report(decisions: list) -> dict:
+    """Build a minimal entity candidate triage report."""
+    total = len(decisions)
+    return {
+        "triage_report_version": "entity_candidate_triage_report.v1",
+        "status": TRIAGE_REPORT_STATUS_PASS,
+        "total_candidates": total,
+        "summary": {
+            "kept": sum(1 for d in decisions if d.get("decision") == DECISION_KEEP),
+            "rejected": sum(1 for d in decisions if d.get("decision") == DECISION_REJECT),
+            "reclassified": sum(1 for d in decisions if d.get("decision") == DECISION_RECLASSIFY),
+            "non_actor": sum(1 for d in decisions if d.get("adjudicated_type") in ("narrative_phrase", "plot_note", "tone_marker", "unknown")),
+            "underbound_npcs": 0,
+        },
+        "type_counts": {},
+        "decisions": decisions,
+    }
+
+
+class TestBlueprintV2TriageIntegration(unittest.TestCase):
+    """Blueprint NPC roster triage filtering tests."""
+
+    def test_load_phase2_artifacts_includes_triage_key(self):
+        tmp = Path(tempfile.mkdtemp(prefix="bp_triage_"))
+        try:
+            artifacts = load_phase2_artifacts({})
+            self.assertIn("entity_candidate_triage_report", artifacts)
+            self.assertIsNone(artifacts.get("entity_candidate_triage_report"))
+        finally:
+            import shutil
+            shutil.rmtree(str(tmp), ignore_errors=True)
+
+    def test_missing_triage_preserves_legacy_roster(self):
+        sg = _make_source_graph(location_count=3, npc_count=3)
+        packet = _make_normalized_packet("Legacy Module")
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=None,
+        )
+        self.assertEqual(len(bp.get("npc_roster", [])), 3)
+
+    def test_rejected_narrative_phrase_excluded(self):
+        sg = _make_source_graph(location_count=2, npc_count=2)
+        packet = _make_normalized_packet("Phrase Test")
+        rejected = build_triage_decision(
+            candidate_text="but this is not true",
+            candidate_slug="npc_001",
+            proposed_type="npc",
+            adjudicated_type=TYPE_NARRATIVE_PHRASE,
+            decision=DECISION_REJECT,
+            reason="prefilter: narrative phrase",
+        )
+        triage = _make_triage_report([rejected])
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=triage,
+        )
+        names = [e["display_name"] for e in bp.get("npc_roster", [])]
+        self.assertNotIn("NPC_1", names)
+        self.assertIn("NPC 2", names)
+
+    def test_kept_source_npc_with_bindings_retained(self):
+        sg = _make_source_graph(location_count=2, npc_count=1)
+        packet = _make_normalized_packet("Binding Test")
+        kept = build_triage_decision(
+            candidate_text="Dog-Growl",
+            candidate_slug="npc_001",
+            proposed_type="npc",
+            adjudicated_type=TYPE_TRUE_NPC,
+            decision=DECISION_KEEP,
+            reason="bound to The Rookery",
+            location_bindings=["The Rookery"],
+            source_role="kenku_inhabitant",
+        )
+        triage = _make_triage_report([kept])
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=triage,
+        )
+        self.assertEqual(len(bp.get("npc_roster", [])), 1)
+        entry = bp["npc_roster"][0]
+        self.assertEqual(entry["display_name"], "NPC_1")
+        self.assertEqual(entry["role"], "kenku_inhabitant")
+        self.assertEqual(entry["location_binding"], "The Rookery")
+
+    def test_reclassified_plot_note_excluded(self):
+        sg = _make_source_graph(location_count=2, npc_count=2)
+        packet = _make_normalized_packet("Reclassify Test")
+        reclassified = build_triage_decision(
+            candidate_text="a darkened corridor",
+            candidate_slug="npc_001",
+            proposed_type="npc",
+            adjudicated_type=TYPE_PLOT_NOTE,
+            decision=DECISION_RECLASSIFY,
+            reason="atmospheric description",
+        )
+        triage = _make_triage_report([reclassified])
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=triage,
+        )
+        names = [e["display_name"] for e in bp.get("npc_roster", [])]
+        self.assertNotIn("NPC_1", names)
+        self.assertIn("NPC 2", names)
+
+    def test_v2_threads_triage_report(self):
+        sg = _make_source_graph(location_count=2, npc_count=2)
+        packet = _make_normalized_packet("V2 Triage Test")
+        rejected = build_triage_decision(
+            candidate_text="but this is not true",
+            candidate_slug="npc_001",
+            proposed_type="npc",
+            adjudicated_type=TYPE_NARRATIVE_PHRASE,
+            decision=DECISION_REJECT,
+            reason="prefilter",
+        )
+        triage = _make_triage_report([rejected])
+        bp = generate_builder_blueprint_v2(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=triage,
+        )
+        names = [e["display_name"] for e in bp.get("npc_roster", [])]
+        self.assertNotIn("NPC_1", names)
+        self.assertIn("NPC 2", names)
+        self.assertIn("entity_candidate_triage_report", bp.get("artifact_refs", {}))
+
+    def test_no_triage_v2_preserves_legacy(self):
+        sg = _make_source_graph(location_count=3, npc_count=3)
+        packet = _make_normalized_packet("No Triage V2")
+        bp = generate_builder_blueprint_v2(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=None,
+        )
+        self.assertEqual(len(bp.get("npc_roster", [])), 3)
+        self.assertIsNone(bp.get("artifact_refs", {}).get("entity_candidate_triage_report"))
+
+    def test_missing_triage_emits_warning_in_report(self):
+        """Step 2.3: missing triage warns in builder_blueprint_report."""
+        sg = _make_source_graph(location_count=2, npc_count=2)
+        packet = _make_normalized_packet("Missing Triage")
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=None,
+        )
+        artifacts = {
+            "source_graph": sg,
+            "identity_resolution_report": None,
+            "normalized_packet": packet,
+            "normalization_fidelity_report": None,
+            "normalization_report": None,
+            "entity_candidate_triage_report": None,
+        }
+        report = build_builder_blueprint_report(
+            blueprint_status=STATUS_READY,
+            artifacts=artifacts,
+            precheck_result={"precheck_status": "allowed", "fidelity_status": "pass"},
+            blueprint=bp,
+        )
+        warning_ids = [w["finding_id"] for w in report.get("warnings", [])]
+        self.assertIn("candidate_triage_missing", warning_ids)
+        self.assertFalse(report["input_artifacts"]["entity_candidate_triage_present"])
+
+    def test_missing_triage_report_input_artifacts_false(self):
+        """Step 2.3: entity_candidate_triage_present is false when triage is None."""
+        sg = _make_source_graph(location_count=1, npc_count=1)
+        packet = _make_normalized_packet("Input Artifact False")
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=None,
+        )
+        artifacts = {
+            "source_graph": sg,
+            "identity_resolution_report": None,
+            "normalized_packet": packet,
+            "normalization_fidelity_report": None,
+            "normalization_report": None,
+            "entity_candidate_triage_report": None,
+        }
+        report = build_builder_blueprint_report(
+            blueprint_status=STATUS_READY,
+            artifacts=artifacts,
+            precheck_result={"precheck_status": "allowed", "fidelity_status": "pass"},
+            blueprint=bp,
+        )
+        self.assertFalse(report["input_artifacts"]["entity_candidate_triage_present"])
+
+    def test_present_triage_does_not_emit_missing_warning(self):
+        """Step 2.3: present triage report suppresses candidate_triage_missing."""
+        sg = _make_source_graph(location_count=2, npc_count=2)
+        packet = _make_normalized_packet("Present Triage")
+        kept = build_triage_decision(
+            candidate_text="Dog-Growl",
+            candidate_slug="npc_001",
+            proposed_type="npc",
+            adjudicated_type=TYPE_TRUE_NPC,
+            decision=DECISION_KEEP,
+            reason="bound",
+            location_bindings=["The Rookery"],
+        )
+        triage = _make_triage_report([kept])
+        bp = generate_builder_blueprint(
+            source_graph=sg, identity_report=None,
+            plot_topology=None, synthesis_report=None,
+            normalized_packet=packet, fidelity_report=None,
+            triage_report=triage,
+        )
+        artifacts = {
+            "source_graph": sg,
+            "identity_resolution_report": None,
+            "normalized_packet": packet,
+            "normalization_fidelity_report": None,
+            "normalization_report": None,
+            "entity_candidate_triage_report": triage,
+        }
+        report = build_builder_blueprint_report(
+            blueprint_status=STATUS_READY,
+            artifacts=artifacts,
+            precheck_result={"precheck_status": "allowed", "fidelity_status": "pass"},
+            blueprint=bp,
+        )
+        warning_ids = [w["finding_id"] for w in report.get("warnings", [])]
+        self.assertNotIn("candidate_triage_missing", warning_ids)
+        self.assertTrue(report["input_artifacts"]["entity_candidate_triage_present"])
 
 
 if __name__ == "__main__":

@@ -1052,11 +1052,13 @@ def _persist_media_to_sidecar(
     Finds the latest sidecar for module_slug and appends media blocks.
     Fail-open: returns error but doesn't block if sidecar not found or unwritable.
     """
-    from homebrew_sidecar_audit import find_latest_sidecar_for_slug
-
     result = {"success": False, "error": None, "sidecar_path": None}
 
     try:
+        try:
+            from homebrew_sidecar_audit import find_latest_sidecar_for_slug
+        except ImportError:
+            from scripts.homebrew_sidecar_audit import find_latest_sidecar_for_slug
         if not module_slug:
             result["error"] = "No module slug available for sidecar persistence"
             return result
@@ -1106,7 +1108,7 @@ def _persist_media_to_sidecar(
         result["sidecar_path"] = str(sidecar_path)
 
     except Exception as e:
-        result["error"] = f"Failed to persist ingest stages: {e}"
+        result["error"] = f"sidecar_persistence_failed: {e}"
 
     return result
 

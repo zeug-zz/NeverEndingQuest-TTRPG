@@ -66,7 +66,8 @@ def load_phase2_artifacts(files: Dict[str, Path]) -> Dict[str, Any]:
 
     Returns a dict with key names: source_graph, identity_resolution_report,
     plot_topology_report, source_graph_synthesis_report, normalized_packet,
-    normalization_fidelity_report, normalization_report.
+    normalization_fidelity_report, normalization_report,
+    entity_candidate_triage_report.
     Missing/unreadable artifacts return None for that key.
     """
     return {
@@ -77,6 +78,7 @@ def load_phase2_artifacts(files: Dict[str, Path]) -> Dict[str, Any]:
         "normalized_packet": load_artifact_json(files.get("normalized_packet")),
         "normalization_fidelity_report": load_artifact_json(files.get("normalization_fidelity_report")),
         "normalization_report": load_artifact_json(files.get("normalization_report")),
+        "entity_candidate_triage_report": load_artifact_json(files.get("entity_candidate_triage_report")),
     }
 
 
@@ -243,6 +245,7 @@ def build_builder_blueprint_report(
             "normalized_packet_present": artifacts.get("normalized_packet") is not None,
             "normalization_fidelity_present": artifacts.get("normalization_fidelity_report") is not None,
             "normalization_report_present": artifacts.get("normalization_report") is not None,
+            "entity_candidate_triage_present": artifacts.get("entity_candidate_triage_report") is not None,
         },
         "source_coverage": {
             "location_candidates": len(location_candidates),
@@ -262,6 +265,18 @@ def build_builder_blueprint_report(
 def _gather_warnings(artifacts: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Collect warnings from fidelity and normalization reports."""
     warnings: List[Dict[str, Any]] = []
+
+    # Entity candidate triage availability
+    if artifacts.get("entity_candidate_triage_report") is None:
+        warnings.append({
+            "source": "entity_candidate_triage",
+            "finding_id": "candidate_triage_missing",
+            "message": (
+                "Entity candidate triage artifact was not available "
+                "during blueprint generation.  Legacy source-graph npc "
+                "behavior was preserved."
+            ),
+        })
 
     # Fidelity findings that are not blocking
     fidelity_report = artifacts.get("normalization_fidelity_report")
@@ -298,6 +313,7 @@ def generate_builder_blueprint(
     synthesis_report: Optional[Dict[str, Any]],
     normalized_packet: Dict[str, Any],
     fidelity_report: Optional[Dict[str, Any]],
+    triage_report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate ``builder_blueprint.json`` from Phase 2-3 artifacts.
 
@@ -319,7 +335,7 @@ def generate_builder_blueprint(
 
     # Build rosters
     location_roster = _build_location_roster(atoms, identity_report)
-    npc_roster = _build_npc_roster(atoms, identity_report)
+    npc_roster = _build_npc_roster(atoms, identity_report, triage_report)
     area_plan = _build_area_plan(location_roster, atoms)
     plot_graph = _build_plot_graph(plot_topology)
     puzzle_graph = _build_puzzle_graph(plot_topology)
@@ -439,9 +455,24 @@ def _build_location_roster(
 def _build_npc_roster(
     atoms: List[Dict[str, Any]],
     identity_report: Optional[Dict[str, Any]],
+    triage_report: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Build NPC roster from source atoms and identity adjudication."""
+    """Build NPC roster from source atoms and identity adjudication.
+
+    When an ``entity_candidate_triage_report`` is available, rejected
+    candidates and non-actor adjudications are excluded from the roster.
+    Kept/reclassified actor-equivalent decisions are included and enriched
+    with source binding metadata.
+    """
     alias_map = _build_alias_map(identity_report)
+
+    _triage_by_slug: Dict[str, Dict[str, Any]] = {}
+    if triage_report:
+        for d in triage_report.get("decisions") or []:
+            slug = (d.get("candidate_slug") or "").strip()
+            if slug:
+                _triage_by_slug[slug] = d
+
     roster = []
     seen: set = set()
 
@@ -455,17 +486,29 @@ def _build_npc_roster(
             continue
         seen.add(key)
 
-        # Look for additional data in identity report
+        candidate_slug = (a.get("id") or a.get("name") or "").replace(" ", "_").lower()
+        triage_d = _triage_by_slug.get(candidate_slug)
+        if triage_d is not None and _is_triage_blocked_for_npc_roster(triage_d):
+            continue
+
         role = ""
         faction = ""
         location_binding = ""
         scene_presence = "present"
+        triage_source_refs: List[Dict[str, Any]] = []
 
         from_identity = _find_identity(identity_report, name, npc_id)
         if from_identity is not None:
             entity_type = from_identity.get("entity_type", "")
             if entity_type:
                 role = entity_type
+
+        if triage_d is not None:
+            role = triage_d.get("source_role", "") or role
+            faction = (triage_d.get("faction_bindings") or [None])[0] or faction
+            if triage_d.get("location_bindings"):
+                location_binding = triage_d["location_bindings"][0] or location_binding
+            triage_source_refs = triage_d.get("source_refs") or []
 
         entry = {
             "atom_id": npc_id,
@@ -476,11 +519,25 @@ def _build_npc_roster(
             "location_binding": location_binding,
             "scene_presence": scene_presence,
             "criticality": a.get("criticality", "ambiguous"),
-            "source_refs": a.get("source_refs", []),
+            "source_refs": triage_source_refs or a.get("source_refs", []),
         }
         roster.append(entry)
 
     return roster
+
+
+def _is_triage_blocked_for_npc_roster(triage_d: Dict[str, Any]) -> bool:
+    """Return True when a triage decision should exclude an NPC from rosters.
+
+    A candidate is blocked when it is rejected or its adjudicated type is
+    non-actor (narrative phrase, plot note, tone marker, unknown).
+    """
+    if triage_d.get("decision") == "reject":
+        return True
+    non_actor = frozenset({"narrative_phrase", "plot_note", "tone_marker", "unknown"})
+    if triage_d.get("adjudicated_type") in non_actor:
+        return True
+    return False
 
 
 def _build_alias_map(identity_report: Optional[Dict[str, Any]]) -> Dict[str, set]:
@@ -746,6 +803,7 @@ def generate_builder_blueprint_v2(
     normalized_packet: Dict[str, Any],
     fidelity_report: Optional[Dict[str, Any]],
     content_blocks: Optional[List[Dict[str, Any]]] = None,
+    triage_report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate a builder_blueprint v2 artifact from source artifacts.
 
@@ -755,6 +813,8 @@ def generate_builder_blueprint_v2(
 
     The content_blocks parameter accepts Phase 10 deterministic parser
     output for additional map-key structure context.
+    The triage_report parameter accepts the entity candidate triage
+    report for NPC roster filtering.
     """
     # Start with v1 blueprint for core rosters
     v1 = generate_builder_blueprint(
@@ -764,6 +824,7 @@ def generate_builder_blueprint_v2(
         synthesis_report=synthesis_report,
         normalized_packet=normalized_packet,
         fidelity_report=fidelity_report,
+        triage_report=triage_report,
     )
 
     atoms = source_graph.get("atoms", [])
@@ -791,6 +852,7 @@ def generate_builder_blueprint_v2(
         "source_graph_synthesis_report": "source_graph_synthesis_report.json" if synthesis_report else None,
         "normalized_packet": "normalized_packet.json",
         "normalization_fidelity_report": "normalization_fidelity_report.json" if fidelity_report else None,
+        "entity_candidate_triage_report": "entity_candidate_triage_report.json" if triage_report else None,
     }
 
     coverage = {

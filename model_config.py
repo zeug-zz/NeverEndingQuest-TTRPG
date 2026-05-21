@@ -84,7 +84,11 @@ NORMALIZATION_FIDELITY_MAX_REPAIR_ATTEMPTS = 3        # Max repair attempts befo
 ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF = True       # Generate source-locked builder blueprint and narrative (Phase 4)
 ENABLE_ACCURATE_INGEST_FIDELITY_REVIEW_PANEL = True   # Pause accurate-ingest uploads for source-fidelity review before build
 ENABLE_ACCURATE_INGEST_BUILD_FIDELITY_GATES = True    # Compare generated module against source/blueprint artifacts (Phase 6)
-ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False   # Blueprint-native deterministic seed + bounded enrichment for accurate-ingest GUI builds (Phase 12)
+# Accurate-ingest GUI default authoring path: existing ModuleBuilder orchestration with
+# source-enhanced input. Seed writer remains available as support/fallback/preview tooling
+# behind ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK.
+ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False   # Blueprint-native deterministic seed + bounded enrichment for accurate-ingest GUI builds (Phase 12; default OFF)
+ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK = False  # Explicit seed-writer fallback/preview mode (support tooling, not default author)
 ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False  # Bounded LLM enrichment pass over seeded module fields (Phase 12; requires GUI_BLUEPRINT_BUILD)
 
 # --- Conversation Compression Settings ---

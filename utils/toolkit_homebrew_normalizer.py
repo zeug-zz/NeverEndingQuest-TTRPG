@@ -42,6 +42,14 @@ from utils.toolkit_homebrew_upload_contract import (
     load_section_extraction_artifact,
     persist_builder_blueprint_artifact,
     persist_builder_blueprint_report_artifact,
+    persist_entity_candidate_triage_artifact,
+)
+from utils.toolkit_entity_candidate_triage import (
+    build_entity_candidate_triage_report,
+    build_prefilter_decision,
+    build_triage_decision,
+    build_underbound_npc_findings,
+    TRIAGE_REPORT_STATUS_PASS,
 )
 from utils.toolkit_source_extraction import (
     build_extraction_index,
@@ -89,6 +97,7 @@ from utils.toolkit_builder_blueprint import (
     build_builder_blueprint_report,
     evaluate_blueprint_fidelity_precheck,
     generate_builder_blueprint,
+    generate_builder_blueprint_v2,
     load_phase2_artifacts,
     serialize_builder_blueprint_to_narrative,
 )
@@ -398,6 +407,7 @@ def normalize_homebrew_upload(
     artifact_persistence_degraded = False
     identity_report: Optional[Dict[str, Any]] = None
     plot_topology: Optional[Dict[str, Any]] = None
+    synthesis_report: Optional[Dict[str, Any]] = None
     extraction_units: List[Dict[str, Any]] = []
 
     if multipass_enabled and source_graph is not None and not source_graph_degraded:
@@ -560,6 +570,55 @@ def normalize_homebrew_upload(
             if workspace:
                 ok = persist_identity_resolution_artifact(workspace, identity_report)
                 if not ok:
+                    artifact_persistence_degraded = True
+
+            # Step 3b -- entity candidate triage (deterministic prefilter)
+            triage_decisions: List[Dict[str, Any]] = []
+            triage_warnings: List[Dict[str, Any]] = []
+            triage_blockers: List[Dict[str, Any]] = []
+            if workspace and source_graph is not None:
+                try:
+                    atoms = source_graph.get("atoms", [])
+                    for atom in atoms:
+                        atom_type = atom.get("type", "")
+                        if atom_type not in ("npc", "scene_actor", "monster_actor", "item", "faction", "mechanic", "puzzle", "encounter"):
+                            continue
+                        candidate = {
+                            "candidate_text": atom.get("name", ""),
+                            "candidate_slug": atom.get("id", atom.get("name", "")).replace(" ", "_").lower(),
+                            "proposed_type": atom_type,
+                            "source_refs": atom.get("source_refs"),
+                        }
+                        pref = build_prefilter_decision(candidate)
+                        if pref is not None:
+                            triage_decisions.append(pref)
+                            continue
+                        if atom_type == "npc":
+                            deci = build_triage_decision(
+                                candidate_text=candidate["candidate_text"],
+                                candidate_slug=candidate["candidate_slug"],
+                                proposed_type=atom_type,
+                                adjudicated_type="true_npc",
+                                decision="keep",
+                                reason="Accepted from source graph without adjudication seam.",
+                                source_refs=candidate.get("source_refs"),
+                            )
+                            triage_decisions.append(deci)
+
+                    ub_findings = build_underbound_npc_findings(triage_decisions)
+                    triage_warnings = ub_findings.get("warnings", [])
+                    triage_blockers = ub_findings.get("blockers", [])
+
+                    triage_report = build_entity_candidate_triage_report(
+                        decisions=triage_decisions,
+                        status=TRIAGE_REPORT_STATUS_PASS,
+                        warnings=triage_warnings if triage_warnings else None,
+                        blockers=triage_blockers if triage_blockers else None,
+                    )
+                    ok = persist_entity_candidate_triage_artifact(workspace, triage_report)
+                    if not ok:
+                        artifact_persistence_degraded = True
+                except Exception:
                     artifact_persistence_degraded = True
 
             # Step 4 -- plot topology synthesis (with LLM prompt)
@@ -952,11 +1011,21 @@ def normalize_homebrew_upload(
             "normalized_packet": workspace / "normalized_packet.json",
             "normalization_fidelity_report": workspace / "normalization_fidelity_report.json",
             "normalization_report": workspace / "normalization_report.json",
+            "entity_candidate_triage_report": workspace / "entity_candidate_triage_report.json",
         })
-        # Override with in-memory artifacts when available (prefer live state)
-        bp_artifacts["source_graph"] = bp_artifacts["source_graph"] or source_graph
-        bp_artifacts["normalized_packet"] = bp_artifacts["normalized_packet"] or packet
-        bp_artifacts["normalization_fidelity_report"] = bp_artifacts["normalization_fidelity_report"] or (fidelity_report if fidelity_report else None)
+        # Override placeholders with live artifacts from this normalization run.
+        # Placeholder normalized_packet.json is truthy, so `or packet` is unsafe here.
+        if source_graph is not None:
+            bp_artifacts["source_graph"] = source_graph
+        if identity_report is not None:
+            bp_artifacts["identity_resolution_report"] = identity_report
+        if plot_topology is not None:
+            bp_artifacts["plot_topology_report"] = plot_topology
+        if synthesis_report is not None:
+            bp_artifacts["source_graph_synthesis_report"] = synthesis_report
+        bp_artifacts["normalized_packet"] = packet
+        if fidelity_report:
+            bp_artifacts["normalization_fidelity_report"] = fidelity_report
 
         precheck = evaluate_blueprint_fidelity_precheck(
             source_graph=bp_artifacts["source_graph"],
@@ -967,13 +1036,14 @@ def normalize_homebrew_upload(
 
         if precheck.get("precheck_status") == "allowed":
             try:
-                bp = generate_builder_blueprint(
+                bp = generate_builder_blueprint_v2(
                     source_graph=bp_artifacts["source_graph"],
-                    identity_report=identity_report,
-                    plot_topology=plot_topology,
-                    synthesis_report=synthesis_report,
+                    identity_report=bp_artifacts["identity_resolution_report"],
+                    plot_topology=bp_artifacts["plot_topology_report"],
+                    synthesis_report=bp_artifacts["source_graph_synthesis_report"],
                     normalized_packet=bp_artifacts["normalized_packet"],
                     fidelity_report=bp_artifacts["normalization_fidelity_report"],
+                    triage_report=bp_artifacts.get("entity_candidate_triage_report"),
                 )
                 bp_report = build_builder_blueprint_report(
                     blueprint_status="ready",

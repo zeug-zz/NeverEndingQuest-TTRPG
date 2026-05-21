@@ -30,6 +30,13 @@ SEED_REPORT_VERSION = "blueprint_seed_report.v1"
 STATUS_SEED_REFUSED = "refused"
 STATUS_SEED_PLANNED = "planned"
 STATUS_SEED_SUCCESS = "success"
+STATUS_SEED_DEGRADED = "degraded"
+STATUS_SEED_FAILED = "failed"
+
+# Seed artifact version constants
+NPC_SEED_VERSION = "toolkit_npc_seed.v1"
+MONSTER_SEED_VERSION = "toolkit_monster_seed.v1"
+SEED_SOURCE_REPORT_VERSION = "toolkit_seed_source_report.v1"
 
 LOCATION_REQUIRED_DEFAULTS: Dict[str, Any] = {
     "type": "room",
@@ -238,11 +245,16 @@ def _compute_planned_files(
     files.append({"path": str(base / "module_context_BU.json"), "purpose": "canonical backup of module_context"})
     files.append({"path": str(base / "module_plot.json"), "purpose": "plot points from source topology"})
     files.append({"path": str(base / "module_plot_BU.json"), "purpose": "canonical backup of module_plot"})
+    files.append({"path": str(base / "party_tracker_BU.json"), "purpose": "canonical party tracker backup"})
     for area_name, area_id in area_ids.items():
         count = len(area_locations.get(area_name, []))
         files.append({"path": str(base / "areas" / f"{area_id}_BU.json"), "purpose": f"area {area_name} with {count} locations"})
         files.append({"path": str(base / "areas" / f"{area_id}.json"), "purpose": f"runtime area {area_name}"})
         files.append({"path": str(base / f"map_{area_id}.json"), "purpose": f"map for area {area_name}"})
+    # Seed support artifacts
+    files.append({"path": str(base / "npcs_seed.json"), "purpose": "NPC seed for media prewarm and materialization"})
+    files.append({"path": str(base / "monsters_seed.json"), "purpose": "monster seed for media prewarm and materialization"})
+    files.append({"path": str(base / "seed_source_report.json"), "purpose": "source-preservation sidecar with IDs, order, and refs"})
     return files
 
 
@@ -270,6 +282,7 @@ def _build_module_context(
     npc_roster: List[Dict[str, Any]],
     plot_graph: List[Dict[str, Any]],
     area_plan: List[Dict[str, Any]],
+    blueprint: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build module_context.json from blueprint data."""
 
@@ -383,7 +396,7 @@ def _build_module_context(
             ref_key = f"npc:{npc_name}"
             references[ref_key] = ["module:plotStages"]
 
-    return {
+    result: Dict[str, Any] = {
         "module_name": module_name,
         "module_id": module_id,
         "areas": areas,
@@ -392,6 +405,21 @@ def _build_module_context(
         "plot_scopes": plot_scopes,
         "references": references,
     }
+    if blueprint:
+        tone_reqs = blueprint.get("tone_requirements") or {}
+        if isinstance(tone_reqs, str):
+            tone_label = tone_reqs
+        elif isinstance(tone_reqs, list):
+            tone_label = " ".join(str(t) for t in tone_reqs)
+        elif isinstance(tone_reqs, dict):
+            tone_label = " ".join(str(v) for v in tone_reqs.values())
+        else:
+            tone_label = ""
+        result["tone"] = tone_label
+        result["classification_metadata"] = {
+            "tone": tone_label if tone_label else blueprint.get("module", {}).get("summary", ""),
+        }
+    return result
 
 
 def _build_module_plot(
@@ -472,15 +500,14 @@ def _build_area_file(
                     "attitude": "",
                 })
 
-        # Determine connectivity from location_roster source refs
+        # Build connectivity from same-area location IDs (chain adjacency).
+        # Use generated location IDs to avoid validator "unknown room" errors.
         connectivity: List[str] = []
-        atom_id = loc_entry.get("atom_id", "")
-        if atom_id:
-            for other in location_roster:
-                oid = other.get("atom_id", "")
-                oname = other.get("display_name", "")
-                if oid != atom_id and oname:
-                    connectivity.append(oname)
+        area_room_ids = [_generate_location_id(area_id, j) for j in range(len(loc_entries))]
+        if i > 0:
+            connectivity.append(area_room_ids[i - 1])
+        if i < len(area_room_ids) - 1:
+            connectivity.append(area_room_ids[i + 1])
 
         loc: Dict[str, Any] = {
             "name": dname,
@@ -572,6 +599,361 @@ def _build_map_file(area_file: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "startRoom": rooms[0]["id"] if rooms else "",
         "rooms": rooms,
         "layout": map_data.get("layout", _generate_default_layout(rooms)),
+    }
+
+
+def _build_npcs_seed(
+    blueprint: Dict[str, Any],
+    npc_roster: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build npcs_seed.json content from blueprint NPC roster.
+
+    Args:
+        blueprint: builder_blueprint.v2 dict
+        npc_roster: Blueprint npc_roster list
+
+    Returns:
+        Dict with schema_version, source, blueprint_version, module_title,
+        source_hash, and npcs array preserving names, aliases, role, faction,
+        location_binding, scene_presence, criticality, and source_refs.
+    """
+    mod = blueprint.get("module", {})
+    source_hash = blueprint.get("source_hash", "")
+    bp_version = blueprint.get("blueprint_version", "")
+
+    npcs: List[Dict[str, Any]] = []
+    for npc in npc_roster:
+        entry: Dict[str, Any] = {
+            "name": npc.get("display_name", ""),
+            "aliases": npc.get("aliases", []),
+            "role": npc.get("role", ""),
+            "faction": npc.get("faction", ""),
+            "location_binding": npc.get("location_binding", ""),
+            "scene_presence": npc.get("scene_presence", ""),
+            "criticality": npc.get("criticality", "optional"),
+            "source_refs": npc.get("source_refs", []),
+        }
+        npcs.append(entry)
+
+    return {
+        "schema_version": NPC_SEED_VERSION,
+        "source": "builder_blueprint.v2",
+        "blueprint_version": bp_version,
+        "module_title": mod.get("title", ""),
+        "source_hash": source_hash,
+        "npcs": npcs,
+    }
+
+
+def _build_monsters_seed(
+    blueprint: Dict[str, Any],
+    location_roster: List[Dict[str, Any]],
+    encounter_plan: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build monsters_seed.json content conservatively from blueprint data.
+
+    Does not generate monster stat files. Preserves source monster names
+    and materialization hints for downstream media/builder tooling.
+
+    Deduplicates by normalized name, keeping first source order.
+
+    Args:
+        blueprint: builder_blueprint.v2 dict
+        location_roster: Blueprint location_roster list
+        encounter_plan: Blueprint encounter_plan list
+
+    Returns:
+        Dict with schema_version, source, blueprint_version, module_title,
+        source_hash, and monsters array.
+    """
+    mod = blueprint.get("module", {})
+    source_hash = blueprint.get("source_hash", "")
+    bp_version = blueprint.get("blueprint_version", "")
+
+    seen: Set[str] = set()
+    monsters: List[Dict[str, Any]] = []
+
+    def _add(name: str, location: str, criticality: str, source_refs: list, hint: str) -> None:
+        key = name.lower().strip()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        monsters.append({
+            "name": name,
+            "location_binding": location,
+            "criticality": criticality,
+            "source_refs": source_refs,
+            "materialization_hint": hint,
+        })
+
+    # Priority 1: Encounter plan explicit monster/creature entries
+    for enc in encounter_plan:
+        for monster_ref in enc.get("monsters", enc.get("creatures", [])):
+            if isinstance(monster_ref, str):
+                _add(monster_ref, "", "major", [], "srd_lookup_candidate")
+            elif isinstance(monster_ref, dict):
+                mname = monster_ref.get("name", monster_ref.get("creature", ""))
+                hint = monster_ref.get("materialization_hint", "custom_needed")
+                loc = monster_ref.get("location_binding", "")
+                _add(mname, loc, "major", monster_ref.get("source_refs", []), hint)
+        # Support builder blueprint monster_names list
+        enc_loc = enc.get("location", enc.get("required_location", ""))
+        enc_refs = enc.get("source_refs", [])
+        for mname in enc.get("monster_names", []):
+            if isinstance(mname, str):
+                _add(mname, enc_loc, "major", enc_refs, "srd_lookup_candidate")
+
+    # Priority 2: Location roster structured monster refs
+    for loc in location_roster:
+        loc_monsters = loc.get("monsters", [])
+        if isinstance(loc_monsters, list):
+            for mref in loc_monsters:
+                if isinstance(mref, str):
+                    _add(mref, loc.get("display_name", ""), "minor", loc.get("source_refs", []), "srd_lookup_candidate")
+                elif isinstance(mref, dict):
+                    mname = mref.get("name", mref.get("creature", ""))
+                    hint = mref.get("materialization_hint", "custom_needed")
+                    _add(mname, loc.get("display_name", ""), "minor", mref.get("source_refs", []), hint)
+
+    # Priority 3: Normalized packet monster hints
+    if "monster_hints" in blueprint:
+        mh = blueprint["monster_hints"]
+        if isinstance(mh, list):
+            for hint_entry in mh:
+                if isinstance(hint_entry, str):
+                    _add(hint_entry, "", "minor", [], "srd_lookup_candidate")
+                elif isinstance(hint_entry, dict):
+                    _add(
+                        hint_entry.get("name", ""),
+                        hint_entry.get("location_binding", ""),
+                        hint_entry.get("criticality", "minor"),
+                        hint_entry.get("source_refs", []),
+                        "srd_lookup_candidate",
+                    )
+
+    return {
+        "schema_version": MONSTER_SEED_VERSION,
+        "source": "builder_blueprint.v2",
+        "blueprint_version": bp_version,
+        "module_title": mod.get("title", ""),
+        "source_hash": source_hash,
+        "monsters": monsters,
+    }
+
+
+def _build_party_tracker_backup(
+    module_name: str,
+    area_ids: Dict[str, str],
+    area_locations: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Build canonical starting party tracker backup for seeded modules."""
+    first_area_name = next(iter(area_locations.keys()), "")
+    first_area_id = area_ids.get(first_area_name, "")
+    first_location: Dict[str, Any] = {}
+    if first_area_name and area_locations.get(first_area_name):
+        first_location = area_locations[first_area_name][0] or {}
+
+    return {
+        "module": module_name,
+        "partyMembers": [],
+        "partyNPCs": [],
+        "worldConditions": {
+            "year": 1492,
+            "month": "Hammer",
+            "day": 1,
+            "time": "08:00:00",
+            "weather": "Clear",
+            "season": "Winter",
+            "dayNightCycle": "Day",
+            "moonPhase": "New Moon",
+            "currentLocation": str(first_location.get("display_name") or first_location.get("name") or ""),
+            "currentLocationId": str(first_location.get("location_id") or first_location.get("locationId") or ""),
+            "currentArea": first_area_name,
+            "currentAreaId": first_area_id,
+            "majorEventsUnderway": [],
+            "politicalClimate": "",
+            "activeEncounter": "",
+            "activeCombatEncounter": "",
+            "weatherConditions": "",
+            "lastCompletedEncounter": "",
+        },
+        "activeQuests": [],
+    }
+
+
+def _build_seed_source_report(
+    blueprint: Dict[str, Any],
+    area_plan: List[Dict[str, Any]],
+    location_roster: List[Dict[str, Any]],
+    npc_roster: List[Dict[str, Any]],
+    plot_graph: List[Dict[str, Any]],
+    puzzle_graph: List[Dict[str, Any]],
+    clue_graph: List[Dict[str, Any]],
+    encounter_plan: List[Dict[str, Any]],
+    item_roster: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build seed source report preserving blueprint IDs, source order, and refs.
+
+    Serves as the sidecar source-preservation artifact when module schemas
+    cannot carry all blueprint metadata directly.
+
+    Args:
+        blueprint: builder_blueprint.v2 dict
+        area_plan: Blueprint area_plan list
+        location_roster: Blueprint location_roster list
+        npc_roster: Blueprint npc_roster list
+        plot_graph: Blueprint plot_graph list
+        puzzle_graph: Blueprint puzzle_graph list
+        clue_graph: Blueprint clue_graph list
+        encounter_plan: Blueprint encounter_plan list
+        item_roster: Blueprint item_roster list
+
+    Returns:
+        Dict with report_version, module_title, source_hash, source,
+        and arrays for locations, npcs, plot_beats, puzzles, clues,
+        encounters, and items preserving source order and source refs.
+    """
+    mod = blueprint.get("module", {})
+    source_hash = blueprint.get("source_hash", "")
+    bp_version = blueprint.get("blueprint_version", "")
+
+    locations: List[Dict[str, Any]] = []
+    for i, loc in enumerate(location_roster):
+        source_refs = loc.get("source_refs", [])
+        locations.append({
+            "source_order": i,
+            "atom_id": loc.get("atom_id", ""),
+            "display_name": loc.get("display_name", ""),
+            "aliases": loc.get("aliases", []),
+            "parent_area": loc.get("parent_area", ""),
+            "criticality": loc.get("criticality", "optional"),
+            "source_refs": source_refs,
+        })
+
+    npcs: List[Dict[str, Any]] = []
+    for i, npc in enumerate(npc_roster):
+        npcs.append({
+            "source_order": i,
+            "atom_id": npc.get("atom_id", ""),
+            "display_name": npc.get("display_name", ""),
+            "aliases": npc.get("aliases", []),
+            "role": npc.get("role", ""),
+            "faction": npc.get("faction", ""),
+            "location_binding": npc.get("location_binding", ""),
+            "scene_presence": npc.get("scene_presence", ""),
+            "criticality": npc.get("criticality", "optional"),
+            "source_refs": npc.get("source_refs", []),
+        })
+
+    plot_beats: List[Dict[str, Any]] = []
+    for i, beat in enumerate(plot_graph):
+        plot_beats.append({
+            "source_order": i,
+            "beat_id": beat.get("beat_id", ""),
+            "title": beat.get("title", ""),
+            "trigger": beat.get("trigger", ""),
+            "dependencies": beat.get("dependencies", []),
+            "required_location": beat.get("required_location", ""),
+            "required_npc": beat.get("required_npc", ""),
+            "outcome": beat.get("outcome", ""),
+            "failure_state": beat.get("failure_state", ""),
+            "beat_type": beat.get("beat_type", ""),
+            "criticality": beat.get("criticality", "required"),
+            "source_refs": beat.get("source_refs", []),
+        })
+
+    puzzles: List[Dict[str, Any]] = []
+    for i, puzzle in enumerate(puzzle_graph):
+        puzzles.append({
+            "source_order": i,
+            "chain_id": puzzle.get("chain_id", ""),
+            "title": puzzle.get("title", ""),
+            "setup": puzzle.get("setup", ""),
+            "rules": puzzle.get("rules", ""),
+            "solution": puzzle.get("solution", ""),
+            "failure_consequences": puzzle.get("failure_consequences", ""),
+            "unlocks": puzzle.get("unlocks", ""),
+            "criticality": puzzle.get("criticality", "required"),
+            "source_refs": puzzle.get("source_refs", []),
+        })
+
+    clues: List[Dict[str, Any]] = []
+    for i, clue in enumerate(clue_graph):
+        clues.append({
+            "source_order": i,
+            "clue_id": clue.get("clue_id", ""),
+            "description": clue.get("description", ""),
+            "location": clue.get("location", ""),
+            "reveals": clue.get("reveals", ""),
+            "mandatory": bool(clue.get("mandatory", False)),
+            "supports_beat": clue.get("supports_beat", ""),
+            "criticality": clue.get("criticality", "required") if clue.get("mandatory", False) else "optional",
+            "source_refs": clue.get("source_refs", []),
+        })
+
+    encounters: List[Dict[str, Any]] = []
+    for i, enc in enumerate(encounter_plan):
+        encounters.append({
+            "source_order": i,
+            "atom_id": enc.get("atom_id", ""),
+            "name": enc.get("name", enc.get("title", "")),
+            "location": enc.get("location", enc.get("required_location", "")),
+            "purpose": enc.get("purpose", enc.get("summary", "")),
+            "monsters": enc.get("monsters", enc.get("creatures", [])),
+            "monster_names": enc.get("monster_names", []),
+            "avoidable": bool(enc.get("avoidable", False)),
+            "social": bool(enc.get("social", False)),
+            "criticality": enc.get("criticality", "major"),
+            "source_refs": enc.get("source_refs", []),
+        })
+
+    items: List[Dict[str, Any]] = []
+    for i, item in enumerate(item_roster):
+        items.append({
+            "source_order": i,
+            "atom_id": item.get("atom_id", ""),
+            "name": item.get("name", item.get("display_name", "")),
+            "display_name": item.get("display_name", ""),
+            "type": item.get("type", ""),
+            "location": item.get("location", item.get("location_binding", "")),
+            "description": item.get("description", ""),
+            "required": bool(item.get("required", False)),
+            "criticality": item.get("criticality", "optional"),
+            "source_refs": item.get("source_refs", []),
+        })
+
+    bp_coverage = blueprint.get("coverage", {})
+    coverage_meta = {
+        "locations_count": len(locations),
+        "npcs_count": len(npcs),
+        "plot_beats_count": len(plot_beats),
+        "puzzles_count": len(puzzles),
+        "clues_count": len(clues),
+        "encounters_count": len(encounters),
+        "items_count": len(items),
+        "locations_in_blueprint": bp_coverage.get("locations_in_blueprint", 0),
+        "npcs_in_blueprint": bp_coverage.get("npcs_in_blueprint", 0),
+        "plot_beats_in_blueprint": bp_coverage.get("plot_beats_in_blueprint", 0),
+        "puzzles_in_blueprint": bp_coverage.get("puzzles_in_blueprint", 0),
+        "clues_in_blueprint": bp_coverage.get("clues_in_blueprint", 0),
+        "encounters_in_blueprint": bp_coverage.get("encounters_in_blueprint", 0),
+        "items_in_blueprint": bp_coverage.get("items_in_blueprint", 0),
+    }
+
+    return {
+        "report_version": SEED_SOURCE_REPORT_VERSION,
+        "source": "builder_blueprint.v2",
+        "blueprint_version": bp_version,
+        "module_title": mod.get("title", ""),
+        "source_hash": source_hash,
+        "coverage": coverage_meta,
+        "locations": locations,
+        "npcs": npcs,
+        "plot_beats": plot_beats,
+        "puzzles": puzzles,
+        "clues": clues,
+        "encounters": encounters,
+        "items": items,
     }
 
 
@@ -682,6 +1064,7 @@ def materialize_module_from_blueprint(
     context = _build_module_context(
         module_name, module_id, area_ids, area_locations,
         location_roster, npc_roster, plot_graph, area_plan,
+        blueprint,
     )
     _safe_write_json(module_path / "module_context.json", context, created_files, skipped_files)
     _safe_write_json(module_path / "module_context_BU.json", context, created_files, skipped_files)
@@ -689,6 +1072,9 @@ def materialize_module_from_blueprint(
     plot_data = _build_module_plot(blueprint, plot_graph, area_ids, area_locations)
     _safe_write_json(module_path / "module_plot.json", plot_data, created_files, skipped_files)
     _safe_write_json(module_path / "module_plot_BU.json", plot_data, created_files, skipped_files)
+
+    party_tracker_bu = _build_party_tracker_backup(module_name, area_ids, area_locations)
+    _safe_write_json(module_path / "party_tracker_BU.json", party_tracker_bu, created_files, skipped_files)
 
     npc_loc_map = _build_npc_location_map(npc_roster, location_roster)
     for area_name, loc_entries in area_locations.items():
@@ -706,11 +1092,77 @@ def materialize_module_from_blueprint(
         if map_file:
             _safe_write_json(module_path / f"map_{area_id}.json", map_file, created_files, skipped_files)
 
+    # Build and write seed support artifacts
+    npcs_seed_data = _build_npcs_seed(blueprint, npc_roster)
+    _safe_write_json(module_path / "npcs_seed.json", npcs_seed_data, created_files, skipped_files)
+
+    monsters_seed_data = _build_monsters_seed(blueprint, location_roster, encounter_plan)
+    _safe_write_json(module_path / "monsters_seed.json", monsters_seed_data, created_files, skipped_files)
+
+    seed_source_report_data = _build_seed_source_report(
+        blueprint, area_plan, location_roster, npc_roster,
+        plot_graph, puzzle_graph, clue_graph, encounter_plan, item_roster,
+    )
+    _safe_write_json(module_path / "seed_source_report.json", seed_source_report_data, created_files, skipped_files)
+
     unassigned_npcs = _find_unassigned_npcs(npc_roster, location_roster)
     unassigned_count = len(unassigned_npcs)
 
+    # Classify required vs optional write failures
+    created_set = set(created_files)
+    skipped_paths = {str(s["path"]) for s in skipped_files}
+
+    # Build complete required write list
+    required_writes: List[str] = []
+
+    # Required: core context/plot files
+    for fn in ("module_context.json", "module_context_BU.json",
+               "module_plot.json", "module_plot_BU.json", "party_tracker_BU.json",
+               "npcs_seed.json", "monsters_seed.json", "seed_source_report.json"):
+        required_writes.append(fn)
+
+    # Required: area files per area
+    for area_id in area_ids.values():
+        required_writes.append(f"areas/{area_id}_BU.json")
+        required_writes.append(f"areas/{area_id}.json")
+        required_writes.append(f"map_{area_id}.json")
+
+    required_failed: List[Dict[str, Any]] = []
+    optional_failed: List[Dict[str, Any]] = []
+    for skip in skipped_files:
+        spath = skip.get("path", "")
+        sreason = skip.get("reason", "unknown error")
+        is_required = any(spath.endswith("/" + r) for r in required_writes)
+        entry = {"path": spath, "reason": sreason}
+        if is_required:
+            required_failed.append(entry)
+        else:
+            optional_failed.append(entry)
+
+    seed_blockers: List[Dict[str, Any]] = []
+    seed_warnings: List[Dict[str, Any]] = _gather_seed_warnings(blueprint, unassigned_npcs)
+
+    if required_failed:
+        for fail in required_failed:
+            seed_blockers.append({
+                "category": "required_write_failed",
+                "severity": "blocker",
+                "message": f"Required artifact write failed: {fail['path']} - {fail['reason']}",
+            })
+        seed_status = STATUS_SEED_FAILED
+    elif optional_failed:
+        for fail in optional_failed:
+            seed_warnings.append({
+                "category": "optional_write_failed",
+                "severity": "warning",
+                "message": f"Optional artifact write failed: {fail['path']} - {fail['reason']}",
+            })
+        seed_status = STATUS_SEED_DEGRADED
+    else:
+        seed_status = STATUS_SEED_SUCCESS
+
     return {
-        "seed_status": STATUS_SEED_SUCCESS,
+        "seed_status": seed_status,
         "module_dir": module_dir,
         "created_files": created_files,
         "skipped_files": skipped_files,
@@ -725,6 +1177,6 @@ def materialize_module_from_blueprint(
             "encounters_planned": len(encounter_plan),
             "items_planned": len(item_roster),
         },
-        "warnings": _gather_seed_warnings(blueprint, unassigned_npcs),
-        "blockers": [],
+        "warnings": seed_warnings,
+        "blockers": seed_blockers,
     }
