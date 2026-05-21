@@ -1,8 +1,4 @@
-## Purpose
-
-Transform source-backed Phase 2-3 normalization artifacts into a deterministic source-locked builder blueprint that preserves source atom identity, plot topology, puzzle/trial rules, and required NPC/location rosters.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Builder blueprint SHALL be generated from source-backed Phase 2-3 artifacts
 
@@ -32,35 +28,7 @@ The accurate-ingest builder handoff pipeline SHALL generate `builder_blueprint.j
 - **THEN** the NPC SHALL appear in `npc_roster`
 - **AND** aliases, source bindings, and original display names SHALL be preserved where available.
 
-### Requirement: Blueprint generation SHALL preserve source topology
-
-The builder blueprint SHALL include source plot, puzzle, clue, and trial topology from Phase 2-3 artifacts.
-
-#### Scenario: Source puzzle chain is represented structurally
-
-- **GIVEN** plot topology artifacts define a source puzzle or trial chain
-- **WHEN** blueprint generation succeeds
-- **THEN** the chain SHALL appear in `puzzle_graph` and/or `clue_graph`
-- **AND** puzzle rules, solution, failure consequences, and clue dependencies SHALL not be flattened into vague summary only.
-
-#### Scenario: Source plot order is preserved
-
-- **GIVEN** source plot topology defines mainline beats with order or dependencies
-- **WHEN** blueprint generation succeeds
-- **THEN** `plot_graph` SHALL preserve that order or dependency structure
-- **AND** missing transitions SHALL be represented as assumptions or warnings, not invented as facts.
-
-### Requirement: Blueprint generation SHALL report inability to preserve required source truth
-
-Blueprint generation SHALL not silently omit required source truth.
-
-#### Scenario: Required source atom cannot be mapped
-
-- **GIVEN** a required source atom exists
-- **AND** blueprint generation cannot map it into a blueprint section
-- **WHEN** blueprint report is produced
-- **THEN** `builder_blueprint_report.json` SHALL include a blocking or refusal finding
-- **AND** blueprint status SHALL not be `ready` unless the omission is explicitly allowed by prior fidelity artifacts.
+## ADDED Requirements
 
 ### Requirement: Blueprint generation SHALL honor candidate triage decisions
 

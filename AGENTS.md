@@ -1152,6 +1152,47 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest LLM Blueprint Enrichment (COMPLETED - 2026-05-21)
+
+**Status:** COMPLETED - Implemented provider-free blueprint enrichment passes (NPC, location, plot/puzzle/clue, encounter/item, tone/style) with deterministic input hashing, pass telemetry, fail-open provider error handling, and additive report metadata.
+
+**Objective:**
+Replace placeholder enrichment layer with bounded, provider-backed passes that propose prose/source-context patches while preserving Python authority over IDs, coordinates, connectivity, schema structure, puzzles, plotlines, and all structural fields. All tests run without live provider calls.
+
+**Implementation Summary:**
+- `utils/toolkit_blueprint_enrichment.py` - Core enrichment helpers: 5 provider-free scaffolds (NPC, location, plot/puzzle/clue, encounter/item, tone/style), strict JSON parser/converter, structural mutation guards, pass telemetry with input caching, fail-open `build_enrichment_report` with additive metadata (`pass_metadata`, `pass_telemetry`, `input_cache_keys`).
+- `scripts/test_toolkit_blueprint_enrichment_patches.py` - 159 regression tests covering all 5 pass types, Numillian fixture regressions (rejected phrases, kept NPCs, provider error paths), cache keys, telemetry, and report metadata.
+- `utils/toolkit_entity_candidate_triage.py` - Blueprint entity candidate triage helper for NPC enrichment source selection.
+
+**Key Design Decisions:**
+- All enrichment paths remain provider-free; injected data where patch application is needed.
+- `_run_enrichment_pass` emits `result["pass_telemetry"]` with status, applied/rejected counts, and cache keys.
+- Report metadata is compact and additive; raw target lists and source excerpts are not copied into report.
+- Structural fields (IDs, names, coordinates, connectivity, puzzle rules, plotlines) are immutable; rejected with `unsafe_structural_field` reason.
+- Cache keys are 64-char SHA-256 hex digests from stable JSON inputs; provider/cache orchestration deferred.
+
+**Verification:**
+- `.venv/bin/python -m py_compile utils/toolkit_blueprint_enrichment.py scripts/test_toolkit_blueprint_enrichment_patches.py` -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_enrichment_patches` -> 159/159 PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_entity_candidate_triage scripts.test_toolkit_blueprint_v2_contract` -> OK
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_module_build_publication_parity` -> 64/64 PASS
+- `openspec validate toolkit-accurate-ingest-llm-blueprint-enrichment` -> VALID
+- Provider pattern scan -> all clean
+
+**Files Modified:**
+- `utils/toolkit_blueprint_enrichment.py`
+- `scripts/test_toolkit_blueprint_enrichment_patches.py`
+- `utils/toolkit_entity_candidate_triage.py`
+- `scripts/test_toolkit_entity_candidate_triage.py`
+- `openspec/changes/archive/2026-05-21-toolkit-accurate-ingest-llm-blueprint-enrichment/`
+- `openspec/specs/toolkit-blueprint-enrichment-cache-and-telemetry/spec.md`
+- `openspec/specs/toolkit-blueprint-enrichment-provider-failopen/spec.md`
+- `openspec/specs/toolkit-blueprint-enrichment-source-ref-contract/spec.md`
+- `openspec/specs/toolkit-blueprint-llm-enrichment-passes/spec.md`
+- `openspec/specs/toolkit-blueprint-llm-json-output-contract/spec.md`
+
+---
+
 ### Toolkit Accurate-Ingest Final Benchmark + Publication Gate (COMPLETED - 2026-05-18)
 
 **Status:** COMPLETED - Added deterministic source-fidelity benchmark runner, publication gate integration, and Numillian baseline fixture for accurate-ingest Phase 11 closure.

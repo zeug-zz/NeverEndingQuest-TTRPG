@@ -51,3 +51,15 @@ Integration of source-fidelity reporting SHALL be strictly additive to existing 
 - **AND** publishable_status SHALL still be pass
 - **AND** source_fidelity_status SHALL be added as an additional field.
 
+### Requirement: Toolkit build report SHALL mirror final source-fidelity status
+
+`toolkit_build_report.json` SHALL surface the same effective source-fidelity status used by the final publishability audit.
+
+#### Scenario: Build report includes source-fidelity fields
+
+- **GIVEN** an accurate-ingest build has final source-fidelity status
+- **WHEN** `toolkit_build_report.json` is written
+- **THEN** it SHALL include `source_fidelity_status`
+- **AND** it SHALL include category details or an equivalent source-fidelity summary
+- **AND** it SHALL reference `source_fidelity_report.json` when that artifact exists.
+
