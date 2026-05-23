@@ -1,0 +1,616 @@
+{
+  "areaId": "SWD004",
+  "areaName": "The Submerged Ward",
+  "areaType": "town",
+  "areaDescription": "Half-drowned streets and barnacled rooftops rise from the black water, where broken ward-stones still flicker with sickly blue light beneath the tide. At night, the canals whisper with unseen movement, and those who linger too long may find the flood is not the only thing waiting to pull them under.",
+  "dangerLevel": "high",
+  "recommendedLevel": 6,
+  "climate": "temperate",
+  "terrain": "urban streets and buildings",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Town Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "market",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Tideworn Bazaar"
+      },
+      {
+        "id": "G02",
+        "type": "residence",
+        "connections": [
+          "G01",
+          "G03",
+          "G04"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01",
+          "east": "G03"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "high",
+        "name": "Memory House"
+      },
+      {
+        "id": "G03",
+        "type": "market",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "G02"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Echoing Market"
+      },
+      {
+        "id": "G04",
+        "type": "residence",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "high",
+        "name": "Floodward Residence"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G02",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Tideworn Bazaar",
+      "type": "market",
+      "description": "A half-submerged market square where warped awnings sag over flooded stalls and barnacle-crusted counters. Broken ward-stones embedded in the flagstones cast a sickly blue glow through the black water, illuminating hanging charms, salvaged relics, and prices whispered in code.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Tideworn Bazaar",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_market:Tideworn Bazaar",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "A flooded lane toward the Inner City of Numillian",
+        "A narrow causeway leading back to Submerged Wardworks",
+        "The Inner Ward of Numillian"
+      ],
+      "areaConnectivityId": [
+        "ICN003",
+        "SWD004",
+        "G04"
+      ],
+      "npcs": [
+        {
+          "name": "Orven Tideglass, a drowned-path ferryman",
+          "description": "A reed-thin ferryman with waterlogged boots and a lantern sealed in blue glass. He knows which canals are safe, which are watched, and which voices in the water are not human.",
+          "attitude": "Cautious, businesslike, and willing to help for the right price or favor."
+        }
+      ],
+      "monsters": [
+        "2d4 drowned thralls if the bazaar is disturbed after dark",
+        "1 water weird lurking beneath the central floodpool if ward-light is shattered"
+      ],
+      "lootTable": [
+        "Waterproof satchel containing 18 gp in mixed coin",
+        "Ward-chalk sticks",
+        "1 potion of water breathing",
+        "Barnacled charm that grants advantage on one Survival check to navigate flooded streets"
+      ],
+      "plotHooks": [
+        "Orven can ferry the party to hidden routes deeper into the ward.",
+        "A merchant offers a map fragment marked with a safe path to the Hall of Memory Trials.",
+        "The ward-stones flicker in a pattern that matches a warning about a collapsing canal gate."
+      ],
+      "dmInstructions": "Use this as the social and logistical hub of The Submerged Ward. Orven should be the primary guide for travel through the flooded canals. If combat breaks out, the market\u2019s narrow lanes and waist-deep water make ranged attacks awkward and favor ambushes from below.",
+      "doors": [
+        {
+          "name": "North Awning Gate",
+          "description": "A canvas flap reinforced with driftwood ribs and copper rings.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 10,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Floodwalk Arch",
+          "description": "A stone arch half-swallowed by algae and chained to a leaning market pier.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 14,
+          "breakDC": 18,
+          "keyname": "Bazaar Chain-Key",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Silt-Slip Rune",
+          "detectDC": 14,
+          "disableDC": 14,
+          "triggerDC": 0,
+          "damage": "2d6 bludgeoning and prone; the victim slides into a deeper drainage channel"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Notice the ward-stones flashing in a distress pattern beneath the floodwater.",
+        "Investigation DC 15: Spot counterfeit relics and hidden compartments in the market stalls.",
+        "Survival DC 14: Identify the safest route through the canal network without drawing attention."
+      ],
+      "accessibility": "Accessible by foot through flooded walkways, by boat via the canals, or from the causeway connecting the ward to nearby districts.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Flooded Bargain Rows",
+          "description": "Stalls stand on raised planks and broken steps, forcing buyers and sellers into close quarters while water laps at their ankles."
+        },
+        {
+          "name": "Ward-Light Basin",
+          "description": "A cracked blue-lit basin in the market center that amplifies whispers and sometimes repeats words spoken here hours earlier."
+        },
+        {
+          "name": "Salvage Hooks",
+          "description": "Ceiling beams and awnings are lined with hooks for drying netted goods, hanging charms, and the occasional suspicious bundle."
+        }
+      ],
+      "encounters": [
+        "A tense haggling scene interrupted by a sudden current that reveals a body or clue.",
+        "An ambush by drowned thralls rising from beneath the stalls.",
+        "A guided boat crossing through concealed alleys and submerged courtyards."
+      ],
+      "adventureSummary": "Tideworn Bazaar is the social heart of the Submerged Ward, where the party can gather rumors, hire transport, and acquire ward-safe supplies. It also serves as the most visible place where the ward\u2019s instability and hidden threats begin to surface."
+    },
+    {
+      "locationId": "G02",
+      "name": "Memory House",
+      "type": "residence",
+      "description": "A tilted townhouse of pale stone and mirrored shutters, partially flooded to the second stair. The interior is lined with memory panes that shimmer when touched, replaying fragments of old conversations, family feasts, and the night the ward began to drown.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G03",
+        "G04"
+      ],
+      "aliases": [
+        "Memory House",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_residence:Memory House",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Ilyra Fen, a frightened witness with fragmented memories",
+          "description": "A trembling resident with salt-stiff hair and a habit of speaking to reflections instead of people. Her memories surface in pieces when she is near the mirrored walls.",
+          "attitude": "Terrified, confused, but eager to be protected and willing to share clues if calmed."
+        },
+        {
+          "name": "Veyra Moonquill, a dissident scholar",
+          "description": "A sharp-eyed scholar wrapped in a waterproof cloak, cataloging the house\u2019s memory panes and searching for proof that the flood was caused intentionally.",
+          "attitude": "Suspicious of authority, intellectually curious, and cooperative with anyone who values truth."
+        }
+      ],
+      "monsters": [
+        "1\u20132 memory echoes manifesting as hostile illusory duplicates if the panes are shattered",
+        "1 drowned shadow emerging from the flooded cellar if the house is searched recklessly"
+      ],
+      "lootTable": [
+        "Memory Pane Shard",
+        "Water-damaged journal with a partial ward-route map",
+        "Silver handmirror worth 25 gp",
+        "Spell scroll of comprehend languages"
+      ],
+      "plotHooks": [
+        "Ilyra remembers a masked figure speaking the phrase that opens a hidden canal gate.",
+        "Veyra has decoded a repeated symbol pointing toward the Hall of Memory Trials.",
+        "A mirror reveals a false reflection that lingers one heartbeat too long, implying a watcher in the house."
+      ],
+      "dmInstructions": "This location should function as an information node and emotional anchor. Let Ilyra\u2019s fragmented recollections reveal the human cost of the flood, while Veyra can steer the party toward deeper conspiracy. If the party lingers, the memory panes may replay a critical clue from elsewhere in the ward.",
+      "doors": [
+        {
+          "name": "Front Door",
+          "description": "A warped cedar door with silver inlay and swollen hinges.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 11,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Cellar Hatch",
+          "description": "A iron-rimmed trap hatch set into the floorboards, slick with condensation.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 17,
+          "keyname": "Memory House Cellar Key",
+          "trapped": true,
+          "trap": "A burst of memory-static flashes into the opener's mind, dealing 2d6 psychic damage and imposing disadvantage on the next Wisdom check."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Reflective Rebound",
+          "detectDC": 15,
+          "disableDC": 15,
+          "triggerDC": 0,
+          "damage": "2d8 psychic damage; the target is briefly disoriented and cannot take reactions until the start of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 13: Determine whether Ilyra is recalling a true memory or a magical imprint.",
+        "Investigation DC 14: Decode the sequence of symbols hidden in the mirrored wall patterns.",
+        "Arcana DC 15: Stabilize a memory pane long enough to view its full projection."
+      ],
+      "accessibility": "Reachable from the bazaar by raised boardwalks or by wading through a shallow side canal. The upper floor is accessible only by a narrow interior stair.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Memory Panes",
+          "description": "Thin mirrored plates embedded in the walls that replay scenes tied to strong emotions and can be used as clues or distractions."
+        },
+        {
+          "name": "Flooded Cellar",
+          "description": "A knee-deep, echoing lower level with floating debris, hidden storage, and something that moves when no one is watching."
+        },
+        {
+          "name": "Murmuring Hearth",
+          "description": "An extinguished hearth that still gives off faint warmth and occasionally whispers names from the past."
+        }
+      ],
+      "encounters": [
+        "A roleplay scene in which Ilyra\u2019s memories unlock a hidden route.",
+        "An illusory duplicate fight caused by damaged panes.",
+        "A stealth scene navigating the flooded cellar to recover a concealed clue."
+      ],
+      "adventureSummary": "Memory House is a fragile sanctuary where the party can learn the ward\u2019s recent history, retrieve memory-based clues, and uncover who benefited from the flooding. Its mirrored surfaces tie directly into the city\u2019s magical trials and hidden routes."
+    },
+    {
+      "locationId": "G03",
+      "name": "Echoing Market",
+      "type": "market",
+      "description": "A drowned trading lane built beneath a collapsed arcade, where every footstep rebounds in layered whispers. Vendors here sell contraband, salvage, and forbidden copies of old city records, while the water below the planks carries sounds from neighboring streets.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Echoing Market",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_market:Echoing Market",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "A submerged lane leading toward the Hall of Memory Trials"
+      ],
+      "areaConnectivityId": [
+        "HMT002"
+      ],
+      "npcs": [
+        {
+          "name": "Thalan Deepcurrent, a trapped maintenance mage",
+          "description": "A tired elven mage pinned behind a crackling ward lattice beneath the market\u2019s central boardwalk. He can speak through the water and knows the mechanics of the failing flood controls.",
+          "attitude": "Desperate, practical, and grateful to anyone who can free him."
+        }
+      ],
+      "monsters": [
+        "2 quippers swarming through the drainage gaps",
+        "1 animated armor patrolling the old market arcade if the ward-lattice is disturbed"
+      ],
+      "lootTable": [
+        "Maintenance rod etched with ward symbols",
+        "Bundle of waterproofed contracts worth 30 gp to the right buyer",
+        "Potion of healing",
+        "Rune-scribed map scrap showing a shortcut to the trial chambers"
+      ],
+      "plotHooks": [
+        "Thalan can explain how the ward lattice is failing and who tampered with it.",
+        "A whispered auction offers a record that names a gate opener in the lower city.",
+        "The market\u2019s echoing planks repeat a conversation between conspirators after the speakers have left."
+      ],
+      "dmInstructions": "This is the best place to seed technical information about the flooding wards. Thalan should be trapped but not helpless; he can guide the party to disable a mechanism or reveal a shortcut into HMT002. Keep the market tense and noisy, with eavesdropping opportunities and sudden movement beneath the boards.",
+      "doors": [
+        {
+          "name": "Arcade Curtain",
+          "description": "A hanging curtain of beadwork and algae-stiff rope strands concealing the inner stalls.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Ward-Lattice Access Panel",
+          "description": "A bronze maintenance panel bolted into the floor beside a drain channel.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 19,
+          "keyname": "Thalan's Maintenance Sigil",
+          "trapped": true,
+          "trap": "A surge of blue ward-energy lashes the opener, dealing 3d6 lightning damage and stunning them until the end of their next turn on a failed DC 14 Constitution save."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo Snare",
+          "detectDC": 13,
+          "disableDC": 14,
+          "triggerDC": 0,
+          "damage": "2d6 thunder damage; all creatures within 10 feet must succeed on a DC 13 Wisdom save or be unable to hear verbal clues clearly for 1 minute"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 14: Hear Thalan\u2019s voice through the water and locate the hidden access panel.",
+        "Investigation DC 15: Identify which market stalls conceal illegal ward components.",
+        "Arcana DC 16: Safely interrupt the failing lattice without triggering a surge."
+      ],
+      "accessibility": "Accessible from Memory House via flooded side streets and from the canals below. The central boardwalk is narrow but passable, though hidden gaps make it hazardous in combat.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Whispering Planks",
+          "description": "The floorboards carry sound unnaturally well, allowing conversations from one end of the market to be heard at the other."
+        },
+        {
+          "name": "Contraband Niches",
+          "description": "Hidden compartments beneath stalls store illegal records, ward tools, and smuggled relics."
+        },
+        {
+          "name": "Ward-Lattice Drain",
+          "description": "A cracked maintenance channel that leaks blue light and can be used to reach deeper infrastructure below the ward."
+        }
+      ],
+      "encounters": [
+        "A negotiation with black-market sellers who want protection from the flood.",
+        "A rescue operation to free Thalan from the ward lattice.",
+        "A short combat in which enemies use the planks and drain channels for cover and ambushes."
+      ],
+      "adventureSummary": "Echoing Market is the ward\u2019s illicit information exchange and maintenance access point. It provides technical answers, a trapped ally, and a direct lead toward the Hall of Memory Trials."
+    },
+    {
+      "locationId": "G04",
+      "name": "Floodward Residence",
+      "type": "residence",
+      "description": "A once-elegant family residence now half-swallowed by the tide, with its lower hall turned into a still pool and its upper rooms preserved behind brittle ward-charms. The building is lined with floodward sigils, some intact and some scratched out by desperate hands.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Floodward Residence",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_residence:Floodward Residence",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Veiled Coast"
+      ],
+      "areaConnectivityId": [
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Elarion Sableleaf, a diplomatic wardkeeper envoy",
+          "description": "A composed envoy in rainproof ceremonial armor, stationed here to negotiate access between frightened residents, the wardkeepers, and anyone trying to keep the flood from spreading.",
+          "attitude": "Formal, diplomatic, and willing to bargain if the party proves trustworthy."
+        }
+      ],
+      "monsters": [
+        "1 giant constrictor snake nested in the flooded lower hall",
+        "2 swarms of insects feeding on damp wood and mold if the upper rooms are breached"
+      ],
+      "lootTable": [
+        "Floodward charm",
+        "Signet ring of the house worth 40 gp",
+        "Herbal antitoxin",
+        "Scroll of protection from water"
+      ],
+      "plotHooks": [
+        "Elarion can authorize passage or deny it depending on the party\u2019s conduct.",
+        "The scratched-out sigils conceal a hidden message naming a saboteur\u2019s meeting place.",
+        "A locked family shrine contains a ward key needed in later locations."
+      ],
+      "dmInstructions": "This residence should feel like a diplomatic checkpoint and a haunted survivor space. Elarion can provide official guidance, but only if the party respects the house and its occupants. The flooded lower hall is ideal for a tense combat or stealth search, while the upper floor offers clues and safe respite.",
+      "doors": [
+        {
+          "name": "Front Residence Door",
+          "description": "A carved oak door swollen by water and reinforced with brass bands.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 13,
+          "breakDC": 16,
+          "keyname": "Floodward Residence Key",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Shrine Door",
+          "description": "A narrow lacquered door etched with silver ward-lines and family prayers.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 17,
+          "breakDC": 18,
+          "keyname": "House Shrine Token",
+          "trapped": true,
+          "trap": "A ward pulse forces intruders to make a DC 14 Constitution save or suffer 2d8 radiant damage and be pushed 10 feet back."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Ward-Sigil Backlash",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 0,
+          "damage": "2d8 radiant damage and a brief flash that imposes disadvantage on the next attack roll made before the end of the turn"
+        }
+      ],
+      "dcChecks": [
+        "Persuasion DC 14: Earn Elarion\u2019s cooperation and access to the family records.",
+        "Investigation DC 15: Find the scratched ward-signs that conceal a hidden message.",
+        "Religion DC 13: Interpret the family shrine\u2019s protective prayers and unlock its purpose."
+      ],
+      "accessibility": "Reached from Memory House by a flooded side passage or from the exterior lane along the ward\u2019s eastern edge. The lower hall is easy to enter but dangerous to traverse without care.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Preserved Upper Rooms",
+          "description": "Dry, dust-sheathed chambers protected by failing wards, containing family records and intact furnishings."
+        },
+        {
+          "name": "Flooded Lower Hall",
+          "description": "A dark mirror of the upper house where submerged furniture and hidden movement make every step uncertain."
+        },
+        {
+          "name": "Ward-Scribed Walls",
+          "description": "Blue sigils line the plaster, some acting as barriers and others as warnings left by previous occupants."
+        }
+      ],
+      "encounters": [
+        "A diplomatic exchange with Elarion over access and local authority.",
+        "A search through the flooded hall for hidden documents.",
+        "A defensive fight if the house\u2019s wards are triggered or the shrine is disturbed."
+      ],
+      "adventureSummary": "Floodward Residence offers authority, protection, and family secrets. It is a safe-looking place with dangerous depths, and its records can point the party toward the hidden mechanics behind the ward\u2019s collapse."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 6 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "dangerous predator",
+      "description": "A dangerous predator appropriate for level 6 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 6 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 6 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 6 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 6 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "enemy squad",
+      "description": "A enemy squad appropriate for level 6 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "monster pack",
+      "description": "A monster pack appropriate for level 6 parties"
+    }
+  ],
+  "areaFeatures": [
+    "merchant quarter",
+    "local tavern",
+    "market square"
+  ],
+  "notes": "NPCs should have daily routines. Political factions create roleplay opportunities.",
+  "spatialContractVersion": 1
+}

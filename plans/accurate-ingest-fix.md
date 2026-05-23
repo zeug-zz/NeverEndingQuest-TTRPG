@@ -1374,6 +1374,125 @@ Exit gate:
 
 - Numillian is release/gametest-ready or blockers are explicit, narrow, and reviewable.
 
+---
+
+## Next OpenSpec Builder Handoff (2026-05-22)
+
+### Current Disposition
+
+The remaining dirty Numillian module files are held and MUST NOT be committed while source fidelity is blocked.
+
+Current blocker summary:
+
+- `source_fidelity_status`: `blocked`
+- Build-fidelity blocker: required NPCs `Red Skull:`, `Blue Skull:`, and `Yellow Skull:` not found in module.
+- Current module artifacts contain `Red Skull`, `Blue Skull`, and `Yellow Skull` without trailing colons.
+- Benchmark blocker remains puzzle preservation: `skull_riddle` and `kill_the_dog_mindscape` are missing from benchmark-visible module artifacts.
+- Entity pollution risk remains: `but this is not true` must not be promoted into NPC/module actor output.
+- `openspec/changes/toolkit-accurate-ingest-llm-blueprint-enrichment` has been archived and should be treated as completed background work.
+
+### Next Change To Scaffold
+
+Create the next focused OpenSpec change:
+
+```text
+toolkit-accurate-ingest-numillian-source-fidelity-fix
+```
+
+This is a narrow bridge change before full `toolkit-accurate-ingest-numillian-release-proof`.
+
+Purpose:
+
+- Remove the current source-fidelity blockers without weakening accurate-ingest gates.
+- Prove punctuation-safe source atom matching for markdown labels such as `Red Skull:`.
+- Preserve Numillian's required skull riddle and dog mindscape trials in benchmark-visible module artifacts.
+- Prevent prose emphasis phrases such as `but this is not true` from becoming actors.
+- Rebuild and reassess Numillian only after tests and pipeline fixes are in place.
+
+### Required Capabilities
+
+The OpenSpec scaffold SHOULD include these capability specs:
+
+1. `numillian-skull-trial-entity-canonicalization`
+2. `numillian-required-puzzle-preservation`
+3. `accurate-ingest-punctuation-normalized-build-fidelity`
+4. `accurate-ingest-prose-phrase-actor-filtering`
+5. `numillian-rebuild-publication-reassessment`
+
+### MUST Contract For The Change
+
+- Build fidelity SHALL match source atom labels with trailing markdown/table punctuation such as `Red Skull:` to canonical generated names such as `Red Skull`.
+- Punctuation normalization SHALL NOT weaken matching enough to collapse distinct source names.
+- The First Trial skull riddle SHALL be preserved as a puzzle/trial or equivalent benchmark-visible source-fidelity artifact.
+- The False Third Trial dog mindscape SHALL be preserved as a puzzle/trial, plot beat, location instruction, or equivalent benchmark-visible source-fidelity artifact.
+- `but this is not true` SHALL NOT appear as an NPC, monster, scene actor, semantic NPC authority entry, or seed actor.
+- The three skulls SHALL NOT be converted into hostile/combat monsters unless the source explicitly requires combat behavior.
+- The production Numillian rebuild SHALL be run only after deterministic tests cover the blocker classes.
+- No commit or push SHALL happen until source fidelity is no longer blocked and the user explicitly requests publication.
+
+### SHOULD Guidance
+
+- Prefer canonicalization and source-classification fixes over hand-editing generated Numillian artifacts.
+- Prefer source graph, blueprint, and benchmark-visible artifact fixes over changing benchmark thresholds.
+- Keep `monsters_seed.json` as a media/materialization support artifact unless a source entity is truly a combat monster.
+- Treat the skulls as puzzle/scene actors or puzzle components, not ordinary NPCs, if that better fits source truth and existing gates can see them.
+- If synthetic blueprint fallback remains in `scripts/rebuild_numillian_accurate_ingest.py`, it should carry puzzle/clue graph data forward instead of emitting `puzzle_graph=[]`.
+
+### Initial Builder Prompt
+
+```text
+Implement OpenSpec `toolkit-accurate-ingest-numillian-source-fidelity-fix` Step 0 only.
+
+Goal: Scaffold the focused OpenSpec change from `plans/accurate-ingest-fix.md` and add deterministic regression locks for the current Numillian fidelity blockers before repairing the pipeline or module artifacts.
+
+Allowed:
+- `openspec/changes/toolkit-accurate-ingest-numillian-source-fidelity-fix/**`
+- `scripts/test_toolkit_build_fidelity.py`
+- `scripts/test_toolkit_blueprint_enrichment_patches.py`
+- `scripts/test_accurate_ingest_numillian_benchmark.py`
+- Add one new focused `scripts/test_*.py` file only if the existing test files are a poor fit.
+
+Forbidden:
+- Do not edit `modules/The_Hidden_City_of_Numillian/**` in this step.
+- Do not edit production pipeline code in this step except tests.
+- Do not change benchmark thresholds to make blocked output pass.
+- Do not weaken source-fidelity gates.
+- Do not commit, push, archive, or stage files.
+- Do not revert existing dirty Numillian files.
+
+Required MUSTs:
+- Create OpenSpec artifacts: `proposal.md`, `design.md`, `tasks.md`, and delta specs for the five capabilities listed in `plans/accurate-ingest-fix.md`.
+- The scaffold MUST state that `toolkit-accurate-ingest-llm-blueprint-enrichment` is archived background work.
+- Add regression coverage proving `Red Skull:`, `Blue Skull:`, and `Yellow Skull:` are the current build-fidelity punctuation/canonicalization blocker class.
+- Add regression coverage requiring punctuation-normalized matching to treat `Red Skull:` and `Red Skull` as the same identity while preserving distinct meaningful names.
+- Add regression coverage proving `but this is not true` must not be emitted as NPC/actor output.
+- Add regression coverage documenting the current benchmark blockers for `skull_riddle` and `kill_the_dog_mindscape`.
+- Tests MUST be deterministic and provider-free.
+
+SHOULD guidance:
+- Use source-contract tests if implementation changes are deferred to Step 1.
+- Keep tests small and targeted; do not run the full Numillian rebuild in Step 0.
+- Reuse existing fixture/report snippets when possible rather than copying large production JSON fixtures.
+
+Edit Strategy: Apply one anchored patch at a time. Run `py_compile` after touching Python tests. Do not use broad regex/script rewrites in indentation-sensitive files.
+
+Verify:
+- `.venv/bin/python -m py_compile scripts/test_toolkit_build_fidelity.py scripts/test_toolkit_blueprint_enrichment_patches.py scripts/test_accurate_ingest_numillian_benchmark.py`
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_build_fidelity`
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_enrichment_patches`
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark`
+- `openspec validate toolkit-accurate-ingest-numillian-source-fidelity-fix`
+
+Report:
+- Files changed.
+- OpenSpec capabilities created.
+- Commands run and results.
+- Whether regression locks pass as source-contract tests or intentionally fail pending Step 1 implementation.
+- Confirm no Numillian module artifacts were modified.
+
+Stop: Do not implement canonicalization or rebuild Numillian in Step 0.
+```
+
 ### Chain-Level Archive Policy
 
 Archive changes only after their verification gate passes and the next dependent change has not discovered a contradiction.

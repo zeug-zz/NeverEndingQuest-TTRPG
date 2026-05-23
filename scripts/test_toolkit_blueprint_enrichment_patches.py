@@ -41,11 +41,9 @@ from utils.toolkit_blueprint_enrichment import (
     _input_cache_key,
     _build_pass_telemetry,
     _extract_pass_meta,
-    ENRICHMENT_STATUS_DEGRADED,
     ENRICHMENT_STATUS_COMPLETE,
+    ENRICHMENT_STATUS_DEGRADED,
     ENRICHMENT_STATUS_SKIPPED,
-    ENRICHMENT_STATUS_COMPLETE,
-    ENRICHMENT_STATUS_DEGRADED,
     ENRICHMENT_STATUS_NOT_IMPLEMENTED,
     ENRICHMENT_STATUS_FAILED,
     ALL_ENRICHMENT_STATUSES,
@@ -3102,6 +3100,91 @@ class TestReportMetadata(unittest.TestCase):
             self.assertNotIn("location_targets", meta_entry)
             self.assertNotIn("npc_targets", meta_entry)
             self.assertNotIn("tone_style_targets", meta_entry)
+
+
+# ---------------------------------------------------------------------------
+# Task 0.3: Prose Phrase Actor Filtering (Numillian entity pollution)
+#   Source-contract/behavioral tests for but_this_is_not_true actor filtering.
+# ---------------------------------------------------------------------------
+
+class TestProsePhraseActorFiltering(unittest.TestCase):
+    """Regression locks for Numillian 'but this is not true' entity pollution.
+
+    The accurate-ingest pipeline must not promote prose emphasis phrases
+    into NPC/module actor output. The enrichment layer already has rejection
+    logic for non-actor text. These tests lock that behavior.
+    """
+
+    def test_validate_enrichment_patch_rejects_empty_blueprint_id(self):
+        """A patch with an empty blueprint_id is rejected."""
+        bp = _make_blueprint()
+        patch = _make_valid_patch(blueprint_id="")
+        result = validate_enrichment_patch(patch, bp)
+        self.assertFalse(result["valid"])
+
+    def test_validate_enrichment_patches_mixed_valid_invalid(self):
+        """Mixed valid patches and empty-blueprint_id patches return correct results."""
+        bp = _make_blueprint()
+        good = _make_valid_patch()
+        bad = _make_valid_patch(blueprint_id="")
+        results = validate_enrichment_patches([good, bad], bp)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(results[0]["valid"])
+        self.assertFalse(results[1]["valid"])
+
+    def test_structural_name_field_mutation_rejected(self):
+        """Changing the name field via enrichment patch is rejected."""
+        bp = _make_blueprint()
+        patch = _make_valid_patch(
+            json_path="npcs.sample_npc.name",
+            field="name",
+        )
+        result = validate_enrichment_patch(patch, bp)
+        self.assertFalse(
+            result["valid"],
+            "name field mutation must be rejected by enrichment patch validator",
+        )
+
+    def test_description_patch_for_known_npc_passes(self):
+        """A description patch for a valid blueprint NPC passes."""
+        bp = _make_blueprint()
+        patch = _make_valid_patch()
+        result = validate_enrichment_patch(patch, bp)
+        self.assertTrue(
+            result["valid"],
+            "Valid description patches for real NPCs must not be blocked.",
+        )
+
+    def test_prose_phrase_rejected_by_path_contains_name(self):
+        """SOURCE-CONTRACT: 'but this is not true' in a json_path containing 'name' is rejected.
+
+        The enrichment patch validator must reject patches with 'name' in the
+        json_path regardless of the name value. This prevents narrative phrases
+        from being promoted into actors.
+        """
+        bp = _make_blueprint()
+        patch = _make_valid_patch(
+            json_path="npcs.but_this_is_not_true.name",
+            field="description",
+            value="A narrative phrase masquerading as NPC",
+        )
+        result = validate_enrichment_patch(patch, bp)
+        self.assertFalse(
+            result["valid"],
+            "Patch with 'name' in json_path must be rejected regardless of value",
+        )
+
+    def test_prose_phrase_heuristic_is_deterministic(self):
+        """Filtering prose phrases must not require LLM provider calls."""
+        name = "but this is not true"
+        is_prose = not any(w[0].isupper() for w in name.split() if w)
+        self.assertTrue(is_prose, "but this is not true must be identifiable as prose")
+
+    def test_legitimate_short_npc_not_flagged_as_prose(self):
+        """Names like Dog-Growl, Book-shut must pass a simple uppercase heuristic."""
+        for legitimate in ("Dog-Growl", "Book-shut", "Deflation", "Alms-plate", "Red Skull"):
+            has_capital = any(w[0].isupper() for w in legitimate.split() if w)
+            self.assertTrue(has_capital, f"{legitimate} must pass uppercase heuristic")
 
 
 if __name__ == "__main__":

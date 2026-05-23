@@ -1,0 +1,94 @@
+{
+  "mapId": "MAP_G_4",
+  "mapName": "Town Map",
+  "totalRooms": 4,
+  "rooms": [
+    {
+      "id": "G01",
+      "type": "square",
+      "connections": [
+        "G02"
+      ],
+      "coordinates": "X10Y10",
+      "directions": {
+        "east": "G02"
+      },
+      "tags": [
+        "hub",
+        "dead_end"
+      ],
+      "purpose": "unknown",
+      "landmark": true,
+      "dangerLevel": "medium",
+      "name": "Mirrorless Ward Square"
+    },
+    {
+      "id": "G02",
+      "type": "residence",
+      "connections": [
+        "G01",
+        "G03"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "west": "G01",
+        "east": "G03"
+      },
+      "tags": [],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Veiled Memory Residence"
+    },
+    {
+      "id": "G03",
+      "type": "square",
+      "connections": [
+        "G02",
+        "G04"
+      ],
+      "coordinates": "X12Y10",
+      "directions": {
+        "west": "G02",
+        "east": "G04"
+      },
+      "tags": [
+        "hub"
+      ],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "medium",
+      "name": "Floodward Forum"
+    },
+    {
+      "id": "G04",
+      "type": "guild",
+      "connections": [
+        "G03"
+      ],
+      "coordinates": "X13Y10",
+      "directions": {
+        "west": "G03"
+      },
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "unknown",
+      "landmark": true,
+      "dangerLevel": "medium",
+      "name": "Runescribe Guildhall"
+    }
+  ],
+  "layout": [
+    [
+      "G01",
+      "G02",
+      "G03",
+      "G04"
+    ]
+  ],
+  "startRoom": "G02",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}

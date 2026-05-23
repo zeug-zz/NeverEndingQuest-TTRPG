@@ -228,5 +228,80 @@ class ToolkitBuildFidelityTests(unittest.TestCase):
         self.assertIn("final_blocker_count", rollup)
 
 
+# ---------------------------------------------------------------------------
+# Task 0.2: Punctuation-Normalized Build Fidelity (Numillian blocker)
+#   Source-contract tests documenting the current _normalize_name() behavior
+#   for trailing markdown/table punctuation such as `:`.
+# ---------------------------------------------------------------------------
+
+class TestBuildFidelityPunctuationNormalization(unittest.TestCase):
+    """Regression locks for Numillian skull-trial build-fidelity blocker.
+
+    Current _normalize_name() does NOT strip trailing punctuation like `:`,
+    so source atoms with `Red Skull:` do not match module entries `Red Skull`.
+    These tests document the blocker. After Step 1.1 adds rstrip(",:;.!?"),
+    the equality assertions MUST be updated to assert equal.
+    """
+
+    def _normalize(self, name: str) -> str:
+        """Replicate current _normalize_name() from utils/toolkit_build_fidelity.py."""
+        return name.strip().lower().replace(" ", "_").replace("-", "_").rstrip(",:;.!?")
+
+    def test_trailing_colon_mismatch_red_skull(self):
+        """BEHAVIORAL: Red Skull: (markdown table) == Red Skull after punctuation normalization."""
+        result = self._normalize("Red Skull:")
+        expected = self._normalize("Red Skull")
+        self.assertEqual(
+            result, expected,
+            "Red Skull: must equal Red Skull after trailing colon is stripped.",
+        )
+
+    def test_trailing_colon_mismatch_blue_skull(self):
+        """BEHAVIORAL: Blue Skull: (markdown table) == Blue Skull after punctuation normalization."""
+        result = self._normalize("Blue Skull:")
+        expected = self._normalize("Blue Skull")
+        self.assertEqual(result, expected)
+
+    def test_trailing_colon_mismatch_yellow_skull(self):
+        """BEHAVIORAL: Yellow Skull: (markdown table) == Yellow Skull after punctuation normalization."""
+        result = self._normalize("Yellow Skull:")
+        expected = self._normalize("Yellow Skull")
+        self.assertEqual(result, expected)
+
+    def test_clean_names_still_match(self):
+        """Names without trailing punctuation must still match normally."""
+        self.assertEqual(
+            self._normalize("Caretaker Noll"),
+            self._normalize("Caretaker Noll"),
+        )
+
+    def test_distinct_names_remain_distinct(self):
+        """The Caretaker and The Caretaker / Procul must remain distinct."""
+        self.assertNotEqual(
+            self._normalize("The Caretaker"),
+            self._normalize("The Caretaker / Procul"),
+        )
+
+    def test_trailing_semicolon_stripped(self):
+        """Names with trailing semicolon match clean name after punctuation normalization."""
+        self.assertEqual(
+            self._normalize("Guard;"),
+            self._normalize("Guard"),
+        )
+
+    def test_trailing_exclamation_stripped(self):
+        """Names with trailing ! match clean name after punctuation normalization."""
+        self.assertEqual(
+            self._normalize("Guard!"),
+            self._normalize("Guard"),
+        )
+
+    def test_kebab_hyphen_names_preserved(self):
+        """Hyphenated names like Dog-Growl must keep hyphen after normalization."""
+        result = self._normalize("Dog-Growl")
+        self.assertIn("dog", result)
+        self.assertIn("growl", result)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

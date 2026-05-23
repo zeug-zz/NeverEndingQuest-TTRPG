@@ -1152,6 +1152,55 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Numillian Source-Fidelity Bridge Fix (COMPLETED - 2026-05-23)
+
+**Status:** COMPLETED - Narrow bridge fix for Numillian source-fidelity blockers: punctuation-normalized build-fidelity matching, puzzle preservation via plot topology, and prose-phrase actor filtering via entity candidate triage. Benchmark shows puzzle preservation now pass (3/3); NPC (1/23) and location (0/13) preservation remain blocked, deferred to broader structural fix in `plans/accurate-ingest-fix.md`.
+
+**Implementation Summary:**
+- `utils/toolkit_build_fidelity.py` - `_normalize_name()` strips trailing markdown/table punctuation (`,:;.!?`) so colon-bearing source labels match canonical names.
+- `scripts/rebuild_numillian_accurate_ingest.py` - Synthetic blueprint fallback now loads `plot_topology_report.json` for puzzle graph construction and `entity_candidate_triage_report.json` for prose-phrase actor filtering. Filtered NPCs recorded as top-level `filtered_npc_candidates` metadata.
+- `scripts/test_toolkit_build_fidelity.py` - Punctuation normalization regression tests (22 PASS).
+- `scripts/test_toolkit_blueprint_enrichment_patches.py` - Updated for actor filtering API compatibility (166 PASS).
+- `scripts/test_accurate_ingest_numillian_benchmark.py` - Expanded with puzzle/triage/filter/audit/final-artifact coverage (97 PASS).
+- `scripts/test_toolkit_entity_candidate_triage.py` - Confirmed (57 PASS).
+- `scripts/test_accurate_ingest_numillian_end_to_end.py` - Confirmed (42 PASS, 2 skipped).
+- `openspec/changes/toolkit-accurate-ingest-numillian-source-fidelity-fix/` - All OpenSpec artifacts (proposal, design, tasks, 5 delta specs).
+- `plans/accurate-ingest-fix.md` - Updated with handoff plan for broader NPC/location structural preservation.
+
+**Verification:**
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_build_fidelity` -> 22/22 PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_enrichment_patches` -> 166/166 PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark` -> 97/97 PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_end_to_end` -> 42/42 PASS (2 skipped)
+- `openspec validate toolkit-accurate-ingest-numillian-source-fidelity-fix` -> VALID
+- `source_fidelity_status`: blocked (expected — NPC/location preservation deferred)
+
+**Notes:**
+- Task 4.2 intentionally unchecked: benchmark remains `source_fidelity_status: "blocked"` until broader NPC/location structural preservation lands via planned Phases 2-3 of `plans/accurate-ingest-fix.md`.
+- Dirty Numillian artifacts after rebuild include canonical files committed here and runtime state (`module_plot.json`, `areas/*.json`, backups) excluded per gitignore rules.
+
+**Files Modified:**
+- `utils/toolkit_build_fidelity.py`
+- `scripts/rebuild_numillian_accurate_ingest.py`
+- `scripts/test_toolkit_build_fidelity.py`
+- `scripts/test_toolkit_blueprint_enrichment_patches.py`
+- `scripts/test_accurate_ingest_numillian_benchmark.py`
+- `plans/accurate-ingest-fix.md`
+- `openspec/changes/toolkit-accurate-ingest-numillian-source-fidelity-fix/`
+- `modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json`
+- `modules/The_Hidden_City_of_Numillian/module_context.json`
+- `modules/The_Hidden_City_of_Numillian/module_context_BU.json`
+- `modules/The_Hidden_City_of_Numillian/module_plot_BU.json`
+- `modules/The_Hidden_City_of_Numillian/party_tracker_BU.json`
+- `modules/The_Hidden_City_of_Numillian/validation_report.json`
+- `modules/The_Hidden_City_of_Numillian/MODULE_SUMMARY.md`
+- `modules/The_Hidden_City_of_Numillian/map_*.json` / `map_*_BU.json`
+- `modules/The_Hidden_City_of_Numillian/monsters/`
+- `modules/The_Hidden_City_of_Numillian/media/`
+- `modules/The_Hidden_City_of_Numillian/areas/*_BU.json`
+
+---
+
 ### Toolkit Accurate-Ingest LLM Blueprint Enrichment (COMPLETED - 2026-05-21)
 
 **Status:** COMPLETED - Implemented provider-free blueprint enrichment passes (NPC, location, plot/puzzle/clue, encounter/item, tone/style) with deterministic input hashing, pass telemetry, fail-open provider error handling, and additive report metadata.

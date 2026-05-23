@@ -1,0 +1,85 @@
+{
+  "mapId": "MAP_G_4",
+  "mapName": "Dungeon Map",
+  "totalRooms": 4,
+  "rooms": [
+    {
+      "id": "G01",
+      "type": "corridor",
+      "connections": [
+        "G02",
+        "G04"
+      ],
+      "coordinates": "X10Y10",
+      "directions": {
+        "east": "G02"
+      },
+      "tags": [],
+      "purpose": "unknown",
+      "landmark": false,
+      "dangerLevel": "low",
+      "name": "Veiled Memory Passage"
+    },
+    {
+      "id": "G02",
+      "type": "treasure room",
+      "connections": [
+        "G01",
+        "G03"
+      ],
+      "coordinates": "X11Y10",
+      "directions": {
+        "west": "G01"
+      },
+      "tags": [],
+      "purpose": "quest_goal",
+      "landmark": false,
+      "dangerLevel": "low",
+      "name": "Gleaming Tribute Vault"
+    },
+    {
+      "id": "G03",
+      "type": "vault",
+      "connections": [
+        "G02"
+      ],
+      "coordinates": "X13Y10",
+      "directions": {},
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "quest_goal",
+      "landmark": true,
+      "dangerLevel": "low",
+      "name": "Forbidden Echo Vault"
+    },
+    {
+      "id": "G04",
+      "type": "chamber",
+      "connections": [
+        "G01"
+      ],
+      "coordinates": "X12Y10",
+      "directions": {},
+      "tags": [
+        "dead_end"
+      ],
+      "purpose": "unknown",
+      "landmark": true,
+      "dangerLevel": "low",
+      "name": "Tidebound Riddle Chamber"
+    }
+  ],
+  "layout": [
+    [
+      "G01",
+      "G02",
+      "G04",
+      "G03"
+    ]
+  ],
+  "startRoom": "G01",
+  "version": "1.1",
+  "notes": "Extended schema with AI-friendly navigation fields",
+  "spatialContractVersion": 1
+}

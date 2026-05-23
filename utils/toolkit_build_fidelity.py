@@ -98,7 +98,7 @@ def _find_blueprint_required(
 
 def _normalize_name(name: str) -> str:
     """Normalize a character/NPC name for comparison."""
-    return name.strip().lower().replace(" ", "_").replace("-", "_")
+    return name.strip().lower().replace(" ", "_").replace("-", "_").rstrip(",:;.!?")
 
 
 def _scan_module_areas(

@@ -15,7 +15,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Set
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -34,6 +34,11 @@ from utils.toolkit_homebrew_upload_contract import (
     persist_review_snapshot_artifact,
 )
 from utils.toolkit_source_fidelity_benchmark import load_benchmark_fixture
+from utils.toolkit_entity_candidate_triage import (
+    build_prefilter_decision,
+    is_non_actor_decision,
+    is_rejected,
+)
 from scripts.benchmark_accurate_ingest import run_benchmark
 from web.extensions.toolkit_homebrew_packet_builder import run_toolkit_homebrew_packet_build
 from web.extensions.toolkit_module_finisher import run_toolkit_module_postbuild_finishing
@@ -97,7 +102,140 @@ def _run_validation() -> Dict[str, Any]:
     }
 
 
-def _build_synthetic_blueprint_from_packet(packet: Dict[str, Any], source_hash: str) -> Dict[str, Any]:
+def _get_synthetic_puzzle_source_candidates(
+    packet: Dict[str, Any],
+    plot_topology_report: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Return raw puzzle candidate entries in priority order.
+
+    Prefers plot_topology_report.puzzle_chains over packet-local
+    puzzle fields. Returns a list of dicts that will later be
+    converted into puzzle_graph entries.
+    """
+    if plot_topology_report is not None:
+        chains = plot_topology_report.get("puzzle_chains") or []
+        if chains:
+            return list(chains)
+        trials = plot_topology_report.get("trials") or []
+        if trials:
+            return list(trials)
+    for key in ("puzzle_chains", "puzzles", "puzzle_seeds", "trials"):
+        candidates = packet.get(key)
+        if isinstance(candidates, list) and candidates:
+            return list(candidates)
+    return []
+
+
+def _build_synthetic_puzzle_graph(
+    packet: Dict[str, Any],
+    plot_topology_report: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Build puzzle_graph entries from topology or packet puzzle sources.
+
+    Calls _get_synthetic_puzzle_source_candidates() for source priority,
+    then converts each raw entry into a blueprint puzzle_graph entry.
+    Does not invent content — preserves source-provided fields only.
+    """
+    candidates = _get_synthetic_puzzle_source_candidates(packet, plot_topology_report)
+    puzzle_graph: List[Dict[str, Any]] = []
+    for i, raw in enumerate(candidates):
+        if isinstance(raw, str):
+            str_entry: Dict[str, Any] = {
+                "chain_id": f"puzzle_{i+1}",
+                "title": raw,
+            }
+            puzzle_graph.append(str_entry)
+            continue
+        chain_id = (
+            raw.get("chain_id")
+            or raw.get("beat_id")
+            or raw.get("id")
+            or raw.get("atom_id")
+            or f"puzzle_{i+1}"
+        )
+        title = raw.get("title") or raw.get("name") or f"Puzzle {i+1}"
+        entry: Dict[str, Any] = {
+            "chain_id": str(chain_id),
+            "title": str(title),
+        }
+        for field in ("setup", "rules", "solution", "failure_consequences", "unlocks", "clue_dependencies", "source_refs", "source_descriptions"):
+            val = raw.get(field)
+            if val is not None:
+                entry[field] = val
+        puzzle_graph.append(entry)
+    return puzzle_graph
+
+
+def _build_triage_exclusion_slugs(
+    entity_candidate_triage_report: Optional[Dict[str, Any]] = None,
+) -> Set[str]:
+    """Build a set of candidate slugs that MUST be excluded from NPC roster.
+
+    Uses existing triage adjudication: rejected candidates and non-actor
+    adjudicated types (narrative_phrase, plot_note, tone_marker, unknown)
+    are excluded from synthetic NPC generation.
+    """
+    excluded: Set[str] = set()
+    if not entity_candidate_triage_report:
+        return excluded
+    for decision in entity_candidate_triage_report.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        if is_rejected(decision) or is_non_actor_decision(decision):
+            slug = decision.get("candidate_slug") or ""
+            if slug:
+                excluded.add(slug.strip().lower())
+    return excluded
+
+
+def _build_triage_decision_slugs(
+    entity_candidate_triage_report: Optional[Dict[str, Any]] = None,
+) -> Set[str]:
+    """Build a set of candidate slugs that have ANY existing triage decision.
+
+    Used to decide whether a seed has been explicitly adjudicated.
+    Seeds with an existing triage decision skip the deterministic prefilter,
+    because the triage is authoritative.
+    """
+    slugs: Set[str] = set()
+    if not entity_candidate_triage_report:
+        return slugs
+    for decision in entity_candidate_triage_report.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        slug = decision.get("candidate_slug") or ""
+        if slug:
+            slugs.add(slug.strip().lower())
+    return slugs
+
+
+def _make_npc_slug(name: str) -> str:
+    """Derive a simple slug from an NPC name for triage matching."""
+    return name.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _build_triage_decision_map(
+    entity_candidate_triage_report: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Build a slug -> decision dict for quick audit lookup during filtering."""
+    decision_map: Dict[str, Dict[str, Any]] = {}
+    if not entity_candidate_triage_report:
+        return decision_map
+    for decision in entity_candidate_triage_report.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        slug = decision.get("candidate_slug") or ""
+        if slug:
+            decision_map[slug.strip().lower()] = decision
+    return decision_map
+
+
+def _build_synthetic_blueprint_from_packet(
+    packet: Dict[str, Any],
+    source_hash: str,
+    plot_topology_report: Optional[Dict[str, Any]] = None,
+    entity_candidate_triage_report: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Build a minimal v2 blueprint from normalized packet for seed writer consumption.
 
     Used when the fidelity precheck blocks blueprint generation but the
@@ -140,10 +278,44 @@ def _build_synthetic_blueprint_from_packet(packet: Dict[str, Any], source_hash: 
         })
 
     npc_roster: list = []
+    triage_decision_map = _build_triage_decision_map(entity_candidate_triage_report)
+    triage_excluded_slugs = _build_triage_exclusion_slugs(entity_candidate_triage_report)
+    triage_decision_slugs = _build_triage_decision_slugs(entity_candidate_triage_report)
+    filtered_npc_candidates: List[Dict[str, Any]] = []
     for i, npc_item in enumerate(npcs):
         if isinstance(npc_item, str):
             npc_item = {"name": npc_item}
         name = str(npc_item.get("name") or f"NPC {i+1}")
+        slug = _make_npc_slug(name)
+        if slug in triage_excluded_slugs:
+            triage_decision = triage_decision_map.get(slug, {})
+            filtered_npc_candidates.append({
+                "candidate_text": name,
+                "candidate_slug": slug,
+                "filter_source": "triage",
+                "decision": triage_decision.get("decision", "unknown"),
+                "adjudicated_type": triage_decision.get("adjudicated_type", "unknown"),
+                "reason": triage_decision.get("reason", "excluded by triage"),
+            })
+            continue
+        # Explicit triage decisions override the deterministic prefilter
+        if slug not in triage_decision_slugs:
+            candidate_for_prefilter = {
+                "candidate_text": name,
+                "candidate_slug": slug,
+                "proposed_type": npc_item.get("type") or "true_npc",
+            }
+            prefilter_decision = build_prefilter_decision(candidate_for_prefilter)
+            if prefilter_decision and (is_rejected(prefilter_decision) or is_non_actor_decision(prefilter_decision)):
+                filtered_npc_candidates.append({
+                    "candidate_text": name,
+                    "candidate_slug": slug,
+                    "filter_source": "prefilter",
+                    "decision": prefilter_decision.get("decision", "reject"),
+                    "adjudicated_type": prefilter_decision.get("adjudicated_type", "narrative_phrase"),
+                    "reason": prefilter_decision.get("reason", "excluded by prefilter"),
+                })
+                continue
         role = str(npc_item.get("role") or "")
         faction = str(npc_item.get("faction") or "")
         loc_bind = str(npc_item.get("location") or npc_item.get("found_in") or "")
@@ -190,6 +362,22 @@ def _build_synthetic_blueprint_from_packet(packet: Dict[str, Any], source_hash: 
             "source_refs": [],
         })
 
+    puzzle_graph = _build_synthetic_puzzle_graph(packet, plot_topology_report)
+
+    warnings: List[Dict[str, Any]] = [
+        {"message": "Synthetic blueprint generated from normalized packet (fidelity blocked)", "severity": "warning"},
+    ]
+    if not puzzle_graph:
+        warnings.append(
+            {"message": "Synthetic blueprint has no puzzle_graph entries from topology or packet sources", "severity": "warning"},
+        )
+    if filtered_npc_candidates:
+        warnings.append({
+            "message": "Synthetic blueprint filtered NPC candidates from triage/prefilter",
+            "severity": "warning",
+            "filtered_count": len(filtered_npc_candidates),
+        })
+
     return {
         "blueprint_version": "source_faithful_builder_blueprint.v2",
         "blueprint_status": "degraded",
@@ -211,23 +399,24 @@ def _build_synthetic_blueprint_from_packet(packet: Dict[str, Any], source_hash: 
         "location_roster": location_roster,
         "npc_roster": npc_roster,
         "plot_graph": plot_graph,
-        "puzzle_graph": [],
+        "puzzle_graph": puzzle_graph,
         "clue_graph": [],
         "encounter_plan": encounter_plan,
         "item_roster": [],
         "tone_requirements": tone_label,
         "source_refs": [],
-        "warnings": [{"message": "Synthetic blueprint generated from normalized packet (fidelity blocked)", "severity": "warning"}],
+        "warnings": warnings,
         "coverage": {
             "locations_in_blueprint": len(location_roster),
             "npcs_in_blueprint": len(npc_roster),
             "plot_beats_in_blueprint": len(plot_graph),
-            "puzzles_in_blueprint": 0,
+            "puzzles_in_blueprint": len(puzzle_graph),
             "clues_in_blueprint": 0,
             "encounters_in_blueprint": len(encounter_plan),
             "items_in_blueprint": 0,
         },
         "enrichment_allowlist": {},
+        "filtered_npc_candidates": filtered_npc_candidates,
         "artifact_refs": {},
         "blockers": [],
     }
@@ -280,6 +469,8 @@ def rebuild_numillian(dry_run: bool = False) -> Dict[str, Any]:
     packet = load_json_artifact(files["normalized_packet"])
     blueprint = load_json_artifact(files["builder_blueprint"])
     blueprint_report = load_json_artifact(files["builder_blueprint_report"])
+    plot_topology_report = load_json_artifact(files["plot_topology_report"])
+    entity_candidate_triage_report = load_json_artifact(files["entity_candidate_triage_report"])
 
     bp_report_status = str(blueprint_report.get("blueprint_status") or "").strip()
     bp_report_fidelity = str(blueprint_report.get("fidelity_status") or "").strip()
@@ -315,7 +506,7 @@ def rebuild_numillian(dry_run: bool = False) -> Dict[str, Any]:
             f"report_status={bp_report_status} fidelity_status={bp_report_fidelity}",
             category="accurate_ingest",
         )
-        blueprint = _build_synthetic_blueprint_from_packet(packet, source_hash)
+        blueprint = _build_synthetic_blueprint_from_packet(packet, source_hash, plot_topology_report=plot_topology_report, entity_candidate_triage_report=entity_candidate_triage_report)
         safe_write_json(str(files["builder_blueprint"]), blueprint)
         info(
             f"[rebuild_numillian] Synthetic blueprint written with "

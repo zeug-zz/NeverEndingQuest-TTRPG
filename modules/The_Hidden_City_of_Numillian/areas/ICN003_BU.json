@@ -1,0 +1,659 @@
+{
+  "areaId": "ICN003",
+  "areaName": "The Inner Ward of Numillian",
+  "areaType": "town",
+  "areaDescription": "Encircled by old stone walls and crowded with market squares, guildhalls, and narrow lanes, the Inner Ward hums with the constant press of commerce, politics, and whispered intrigue. Lanternlight glints off rain-slick cobbles by night, when watch patrols grow wary and even familiar streets can turn dangerous for the unwary.",
+  "dangerLevel": "medium",
+  "recommendedLevel": 6,
+  "climate": "temperate",
+  "terrain": "urban streets and buildings",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Town Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "square",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "hub",
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Mirrorless Ward Square"
+      },
+      {
+        "id": "G02",
+        "type": "residence",
+        "connections": [
+          "G01",
+          "G03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01",
+          "east": "G03"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Veiled Memory Residence"
+      },
+      {
+        "id": "G03",
+        "type": "square",
+        "connections": [
+          "G02",
+          "G04"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {
+          "west": "G02",
+          "east": "G04"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Floodward Forum"
+      },
+      {
+        "id": "G04",
+        "type": "guild",
+        "connections": [
+          "G03"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {
+          "west": "G03"
+        },
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Runescribe Guildhall"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G02",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Mirrorless Ward Square",
+      "type": "square",
+      "description": "A rain-polished market square where every public mirror has been removed or shattered by decree. The stone paving is inlaid with faint silver seams that catch lanternlight like a web of veins, and the surrounding arcades are crowded with shuttered stalls, civic notices, and watch placards warning citizens not to speak their own names after dusk. The square feels open, but the angles of the surrounding buildings create blind pockets that conceal eavesdroppers and patrols alike.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Mirrorless Ward Square",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_square:Mirrorless Ward Square",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Memory Trials Expanse"
+      ],
+      "areaConnectivityId": [
+        "G04"
+      ],
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Ward Lanternling",
+          "description": "A small animated ward-lantern that hovers near the notices and flashes blinding light at anyone lingering too long.",
+          "quantity": 2,
+          "cr": 1
+        },
+        {
+          "name": "City Watch Patrol",
+          "description": "Two stern inner-ward guards who question strangers and intervene if violence breaks out.",
+          "quantity": 1,
+          "cr": 2
+        }
+      ],
+      "lootTable": [
+        "Waterlogged market tally tokens",
+        "A folded watch bulletin naming a meeting at Floodward Forum",
+        "Silver mirror shards worth 15 gp",
+        "A stamped pass permitting entry to Runescribe Guildhall"
+      ],
+      "plotHooks": [
+        "A torn notice mentions a witness with fragmented memories seen near Veiled Memory Residence.",
+        "The removed mirrors were taken to prevent scrying, but one hidden reflection still shows a secret route.",
+        "Street gossip links recent flooding to missing civic records and a rise in watch arrests."
+      ],
+      "dmInstructions": "Use this as the social and investigative entry point for the Inner Ward. The square should feel watched, with patrols responding to loud magic or open weapons. Encourage rumor gathering, tailing suspects, and noticing the reflective silver seams in the paving.",
+      "doors": [
+        {
+          "name": "North Arcade Gate",
+          "description": "A broad archway leading into a covered commercial lane with iron-reinforced shutters on either side.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 14,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Passage Screen",
+          "description": "A hanging lattice screen of carved wood and bronze filigree that separates the square from civic offices.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Silver Seam Alarm",
+          "description": "A hidden ward in the paving flashes a beacon to nearby watch posts when disturbed by teleportation or strong illusion magic.",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "2d6 radiant damage and the square is illuminated for 1 minute"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Spot the silver seams in the paving and the hidden watch sightlines.",
+        "Investigation DC 14: Learn which notices are recent forgeries and which are genuine.",
+        "Insight DC 12: Tell which bystanders are ordinary shoppers and which are informants."
+      ],
+      "accessibility": "Normal access through open streets and market lanes; watch scrutiny is the main obstacle, not terrain.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Shuttered Stalls",
+          "description": "Abandoned market stalls provide half cover and hiding places for tailing suspects."
+        },
+        {
+          "name": "Civic Notice Board",
+          "description": "Public decrees, warrants, and coded watch announcements are pinned here in overlapping layers."
+        },
+        {
+          "name": "Silver Paving Seams",
+          "description": "Faintly enchanted lines in the stone can be traced to reveal traffic patterns and hidden ward routes."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Watch Inspection",
+          "description": "A routine search becomes tense if the party carries suspicious relics or questions the wrong person.",
+          "cr": 2
+        },
+        {
+          "name": "Lantern Ward Surge",
+          "description": "A burst of ward-light forces creatures in the open to make quick decisions or risk being exposed.",
+          "cr": 3
+        }
+      ],
+      "adventureSummary": "Mirrorless Ward Square is the social gateway to the Inner Ward, where rumors, patrols, and subtle ward-magic push the party toward deeper intrigue."
+    },
+    {
+      "locationId": "G02",
+      "name": "Veiled Memory Residence",
+      "type": "residence",
+      "description": "An old townhouse with rain-dark stone steps, shuttered upper windows, and a front hall lined with faded family portraits whose faces have been scraped away. Inside, the rooms are neat but oddly sparse, as if the occupants were ordered to live without anything that might anchor a memory. The air carries a faint scent of lamp oil and mint, used to steady minds after magical questioning.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G03"
+      ],
+      "aliases": [
+        "Veiled Memory Residence",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_residence:Veiled Memory Residence",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Ilyra Fen, a frightened witness with fragmented memories",
+          "description": "A pale resident who remembers flashes of flooding, masked figures, and a forbidden door, but cannot keep the timeline straight.",
+          "attitude": "Afraid and cooperative"
+        },
+        {
+          "name": "Veyra Moonquill, a dissident scholar",
+          "description": "A hidden guest posing as a cousin, quietly comparing the house's erased portraits to old civic records and memory-lore.",
+          "attitude": "Suspicious but helpful"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Memory Echo",
+          "description": "A lingering psychic imprint that repeats fragments of a past interrogation and lashes out when the truth is pressed too hard.",
+          "quantity": 1,
+          "cr": 3
+        }
+      ],
+      "lootTable": [
+        "A cracked signet ring from a forgotten household branch",
+        "A coded notebook of memory exercises",
+        "A vial of mint oil used to resist charm effects",
+        "A torn portrait backing with a concealed address"
+      ],
+      "plotHooks": [
+        "Ilyra can identify one masked figure only by their voice and boots.",
+        "Veyra knows the residence was searched after a meeting with the city watch.",
+        "A portrait backing hides a clue leading to Floodward Forum and a second hiding place."
+      ],
+      "dmInstructions": "This location should reward careful questioning and empathy. Ilyra's memories are incomplete, so reveal clues in fragments rather than a full confession. Veyra can provide context about civic censorship and the wardkeepers' fear of recorded truth.",
+      "doors": [
+        {
+          "name": "Front Door",
+          "description": "A heavy oak door with a brass knocker shaped like a closed eye.",
+          "type": "regular",
+          "locked": true,
+          "lockDC": 13,
+          "breakDC": 15,
+          "keyname": "Residence key",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Parlor Screen",
+          "description": "A folding screen of lacquered wood that hides the rear study from the front hall.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 10,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Mnemonic Hush Sigil",
+          "description": "A ward etched beneath the foyer rug suppresses speech and briefly scrambles short-term memory if crossed carelessly.",
+          "detectDC": 15,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "2d8 psychic damage and the creature can't take reactions until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 13: Notice when Ilyra's memories are being suppressed by fear rather than magic.",
+        "Investigation DC 15: Piece together the hidden address behind the portrait backing.",
+        "Arcana DC 14: Recognize the mnemonic hush sigil and its effect on recall."
+      ],
+      "accessibility": "Normal access through a guarded residential street; the locked front door and social tension are the primary barriers.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Erased Portraits",
+          "description": "Family portraits with scraped faces suggest an organized attempt to remove identities from record and memory."
+        },
+        {
+          "name": "Quiet Study",
+          "description": "A cramped room with ledger shelves and a concealed writing desk used for private research."
+        },
+        {
+          "name": "Mint Oil Lamp",
+          "description": "A steady-burning lamp that helps calm frightened minds and resist intrusive magic."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Interrogation Aftermath",
+          "description": "The party may arrive while a watch inquiry is still fresh, forcing them to decide whether to comfort or conceal.",
+          "cr": 2
+        },
+        {
+          "name": "Memory Fracture",
+          "description": "When a clue is touched, a psychic flash briefly overlays the room with a past scene of masked visitors.",
+          "cr": 3
+        }
+      ],
+      "adventureSummary": "Veiled Memory Residence is a safe-looking home that hides the human cost of Numillian's memory magic, offering a key witness and a scholar ally."
+    },
+    {
+      "locationId": "G03",
+      "name": "Floodward Forum",
+      "type": "square",
+      "description": "A broad civic forum where merchants, wardkeepers, and petitioners gather beneath banners that warn of rising waters and rising lies. Stone drainage channels cut through the plaza and run toward bronze grates, while a central speaking dais has been ringed with chalk marks showing where people stood during a recent emergency assembly. The forum is loud by day, but at night the sound of water moving through the drains can be heard beneath every conversation.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G02",
+        "G04"
+      ],
+      "aliases": [
+        "Floodward Forum",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_square:Floodward Forum",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Captain Soryn Thal, leader of the city watch",
+          "description": "A disciplined watch captain overseeing crowd control, flood response, and the quiet suppression of rumors.",
+          "attitude": "Wary but fair"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Drain-Crawling Skulk",
+          "description": "A slick sewer predator drawn up through the grates by the ward flooding.",
+          "quantity": 2,
+          "cr": 2
+        }
+      ],
+      "lootTable": [
+        "Flood tally brass tokens",
+        "A sealed civic dispatch to the Runescribe Guildhall",
+        "A length of warded rope",
+        "A map scrap showing drain access to Submerged Wardworks"
+      ],
+      "plotHooks": [
+        "Soryn can authorize access to restricted streets if the party proves the flood threat is real.",
+        "The chalk marks on the dais map out the positions of witnesses during a missing-person event.",
+        "A sealed dispatch references a maintenance mage trapped below the city.",
+        "Drain grates bear traces of a route that points toward the Submerged Wardworks."
+      ],
+      "dmInstructions": "This is the town's pressure valve: political, noisy, and full of competing agendas. Captain Soryn can become an ally if the party helps with crowd safety, but he will not tolerate reckless magic in the open. Use the forum to stage public testimony, tense negotiations, or a sudden street fight that spills into the drains.",
+      "doors": [
+        {
+          "name": "Dais Stair Gate",
+          "description": "A short iron gate that blocks access to the speaking dais after official hours.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 13,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Drain Hatch",
+          "description": "A bolted bronze hatch set into the paving beside the forum grates.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 17,
+          "keyname": "Drain key held by city watch",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Floodgate Release",
+          "description": "Pulling the wrong lever opens a hidden sluice and surges knee-deep water through the forum drains.",
+          "detectDC": 14,
+          "disableDC": 16,
+          "triggerDC": 14,
+          "damage": "3d6 bludgeoning damage and creatures must succeed on a DC 13 Strength save or be knocked prone"
+        }
+      ],
+      "dcChecks": [
+        "Persuasion DC 14: Convince Captain Soryn to share restricted flood reports.",
+        "Perception DC 13: Notice the drain grates have been recently opened from below.",
+        "History DC 12: Recognize the forum's chalk marks as an official emergency witness diagram."
+      ],
+      "accessibility": "Open and easy to reach, though crowded and heavily monitored during the day.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Speaking Dais",
+          "description": "Raised stone steps where civic announcements and accusations are delivered to the crowd."
+        },
+        {
+          "name": "Drain Grates",
+          "description": "Bronze grates reveal the city's hidden water-management network and provide access to deeper routes."
+        },
+        {
+          "name": "Banners of Warning",
+          "description": "Public notices about flooding and security create a constant atmosphere of urgency."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Public Dispute",
+          "description": "Merchants and wardkeepers argue over flood tolls, and the party can intervene or exploit the chaos.",
+          "cr": 1
+        },
+        {
+          "name": "Sewer Breakout",
+          "description": "A creature driven up from the drains interrupts the assembly and tests the crowd's panic.",
+          "cr": 3
+        }
+      ],
+      "adventureSummary": "Floodward Forum is the civic crossroads of the Inner Ward, where official authority, public fear, and flood-related clues converge."
+    },
+    {
+      "locationId": "G04",
+      "name": "Runescribe Guildhall",
+      "type": "guild",
+      "description": "A venerable guildhall of carved stone and dark timber, its upper windows etched with sigils that glow faintly when legal records are opened. The main chamber is lined with ledgers, seal presses, and map drawers, while the back rooms smell of ink, dust, and damp parchment. Staff move carefully here, because every spoken word may later be compared against the written record.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G03"
+      ],
+      "aliases": [
+        "Runescribe Guildhall",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_guild:Runescribe Guildhall",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Submerged Ward"
+      ],
+      "areaConnectivityId": [
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Maerith the Unseen, if still at large",
+          "description": "A hidden cabal strategist who may appear here only in disguise, using the guildhall's records to erase or redirect evidence.",
+          "attitude": "Hostile and deceptive"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Inkbound Ledger Construct",
+          "description": "An animated stack of records and seal wax that defends forbidden files from tampering.",
+          "quantity": 1,
+          "cr": 4
+        }
+      ],
+      "lootTable": [
+        "A ciphered ledger page naming secret meeting sites",
+        "Guild seal wax worth 25 gp",
+        "A key impression for a restricted archive drawer",
+        "A folded chart of the Inner Ward's old wall routes"
+      ],
+      "plotHooks": [
+        "The guild's records show repeated requests for floodproofing near the Submerged Wardworks.",
+        "A ledger entry is altered in a hand that matches no current clerk.",
+        "Maerith's presence here can be hinted at by missing pages, false seals, or a clerk with an unfamiliar voice."
+      ],
+      "dmInstructions": "This is a place of investigation and deception. If Maerith appears, keep the encounter subtle at first, with forged paperwork and social misdirection rather than a direct confrontation. The guildhall should feel like a puzzle box of records that can either help or mislead the party.",
+      "doors": [
+        {
+          "name": "Front Guild Door",
+          "description": "A tall carved door reinforced with bronze bands and etched with legal sigils.",
+          "type": "heavy",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 18,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Archive Vault Door",
+          "description": "A narrow iron-banded door leading to the restricted records vault.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 20,
+          "keyname": "Archive key held by senior scribes",
+          "trapped": true,
+          "trap": "A needle-thin ink ward stains the intruder's hand and triggers a silent alarm to the back office."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Sealpress Glyph Alarm",
+          "description": "Tampering with the archive drawers without the correct sequence causes a resonant glyph to alert guild clerks and watch allies.",
+          "detectDC": 16,
+          "disableDC": 17,
+          "triggerDC": 15,
+          "damage": "2d10 psychic damage and the creature is marked by glowing sigils for 10 minutes"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 15: Find the altered ledger entry and identify the forged seal.",
+        "Arcana DC 16: Understand the archive vault's ward sequence.",
+        "Deception DC 14: Pass as an authorized clerk long enough to access the back office."
+      ],
+      "accessibility": "Open to the public by appointment, but restricted areas require credentials or clever impersonation.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Record Shelves",
+          "description": "Tall shelves of ledgers and maps create maze-like aisles and excellent hiding places."
+        },
+        {
+          "name": "Seal Presses",
+          "description": "Heavy brass presses used to authenticate civic orders and detect forgeries."
+        },
+        {
+          "name": "Restricted Archive",
+          "description": "A back room where sensitive flood reports and civic secrets are stored."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Clerical Audit",
+          "description": "A sudden records check can expose forged identities or stolen documents.",
+          "cr": 2
+        },
+        {
+          "name": "Construct Defense",
+          "description": "The animated ledger rises to protect the archive if someone forces entry.",
+          "cr": 4
+        }
+      ],
+      "adventureSummary": "Runescribe Guildhall is the record-keeper's heart of the Inner Ward, where the party can expose forgeries, uncover Maerith's interference, and trace the city's hidden power structure."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 6 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 6 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 6 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 6 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 6 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 6 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 6 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 6 parties"
+    }
+  ],
+  "areaFeatures": [
+    "local tavern",
+    "guard posts",
+    "market square"
+  ],
+  "notes": "NPCs should have daily routines. Political factions create roleplay opportunities.",
+  "spatialContractVersion": 1
+}

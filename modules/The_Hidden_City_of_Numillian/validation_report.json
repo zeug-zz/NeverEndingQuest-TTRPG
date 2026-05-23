@@ -1,0 +1,186 @@
+{
+  "module": "The_Hidden_City_of_Numillian",
+  "timestamp": "2026-05-23T23:10:42.776181",
+  "summary": {
+    "total_files": 34,
+    "total_passed": 30,
+    "total_failed": 33
+  },
+  "results": {
+    "area": {
+      "files": [
+        "SWD004_BU.json (areas/)",
+        "FVS005.json (areas/)",
+        "SWD004.json (areas/)",
+        "FVS005_BU.json (areas/)",
+        "HMT002_BU.json (areas/)",
+        "ICN003_BU.json (areas/)",
+        "VCA001_BU.json (areas/)",
+        "HMT002.json (areas/)",
+        "ICN003.json (areas/)",
+        "VCA001.json (areas/)"
+      ],
+      "passed": 10,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 0,
+      "failed": 28,
+      "errors": [
+        "Rune-bound sentinels in The Forbidden Vaultlands/Riddle-Sealed Temple -> expected monsters/rune_bound_sentinels.json",
+        "Memory echo wraiths in The Forbidden Vaultlands/Riddle-Sealed Temple -> expected monsters/memory_echo_wraiths.json",
+        "Possessed reflections in The Forbidden Vaultlands/Gilded Echo Tavern -> expected monsters/possessed_reflections.json",
+        "Vault-touched cutpurses in The Forbidden Vaultlands/Gilded Echo Tavern -> expected monsters/vault_touched_cutpurses.json",
+        "Dust husks in The Forbidden Vaultlands/Moonlit Vale House -> expected monsters/dust_husks.json",
+        "Ward-echo swarms in The Forbidden Vaultlands/Moonlit Vale House -> expected monsters/ward_echo_swarms.json",
+        "Cabal enforcers in The Forbidden Vaultlands/Sable Chalice Tavern -> expected monsters/cabal_enforcers.json",
+        "Enchanted drinking vessels in The Forbidden Vaultlands/Sable Chalice Tavern -> expected monsters/enchanted_drinking_vessels.json",
+        "2d4 drowned thralls if the bazaar is disturbed after dark in The Submerged Ward/Tideworn Bazaar -> expected monsters/2d4_drowned_thralls_if_the_bazaar_is_disturbed_after_dark.json",
+        "1 water weird lurking beneath the central floodpool if ward-light is shattered in The Submerged Ward/Tideworn Bazaar -> expected monsters/1_water_weird_lurking_beneath_the_central_floodpool_if_ward_light_is_shattered.json",
+        "1\u20132 memory echoes manifesting as hostile illusory duplicates if the panes are shattered in The Submerged Ward/Memory House -> expected monsters/1_2_memory_echoes_manifesting_as_hostile_illusory_duplicates_if_the_panes_are_shattered.json",
+        "1 drowned shadow emerging from the flooded cellar if the house is searched recklessly in The Submerged Ward/Memory House -> expected monsters/1_drowned_shadow_emerging_from_the_flooded_cellar_if_the_house_is_searched_recklessly.json",
+        "2 quippers swarming through the drainage gaps in The Submerged Ward/Echoing Market -> expected monsters/2_quippers_swarming_through_the_drainage_gaps.json",
+        "1 animated armor patrolling the old market arcade if the ward-lattice is disturbed in The Submerged Ward/Echoing Market -> expected monsters/1_animated_armor_patrolling_the_old_market_arcade_if_the_ward_lattice_is_disturbed.json",
+        "1 giant constrictor snake nested in the flooded lower hall in The Submerged Ward/Floodward Residence -> expected monsters/1_giant_constrictor_snake_nested_in_the_flooded_lower_hall.json",
+        "2 swarms of insects feeding on damp wood and mold if the upper rooms are breached in The Submerged Ward/Floodward Residence -> expected monsters/2_swarms_of_insects_feeding_on_damp_wood_and_mold_if_the_upper_rooms_are_breached.json",
+        "Memory Wisp in The Memory Trials Expanse/Whispering Trial Nexus -> expected monsters/memory_wisp.json",
+        "Mirror Shade in The Memory Trials Expanse/Mirror of Echoes -> expected monsters/mirror_shade.json",
+        "Drowned Memory Spawn in The Memory Trials Expanse/Flooded Memory Vault -> expected monsters/drowned_memory_spawn.json",
+        "Seal Guardian Construct in The Memory Trials Expanse/Sealed Warden Archive -> expected monsters/seal_guardian_construct.json",
+        "Ward Lanternling in The Inner Ward of Numillian/Mirrorless Ward Square -> expected monsters/ward_lanternling.json",
+        "City Watch Patrol in The Inner Ward of Numillian/Mirrorless Ward Square -> expected monsters/city_watch_patrol.json",
+        "Memory Echo in The Inner Ward of Numillian/Veiled Memory Residence -> expected monsters/memory_echo.json",
+        "Drain-Crawling Skulk in The Inner Ward of Numillian/Floodward Forum -> expected monsters/drain_crawling_skulk.json",
+        "Inkbound Ledger Construct in The Inner Ward of Numillian/Runescribe Guildhall -> expected monsters/inkbound_ledger_construct.json",
+        "2 animated armor guardians in The Veiled Coast/Forbidden Echo Vault -> expected monsters/2_animated_armor_guardians.json",
+        "1 shadowy echo construct in The Veiled Coast/Forbidden Echo Vault -> expected monsters/1_shadowy_echo_construct.json",
+        "2 water weird echoes in The Veiled Coast/Tidebound Riddle Chamber -> expected monsters/2_water_weird_echoes.json"
+      ]
+    },
+    "map": {
+      "files": [
+        "map_HMT002.json",
+        "map_ICN003.json",
+        "map_VCA001.json",
+        "map_FVS005.json",
+        "map_SWD004.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 0,
+      "failed": 1,
+      "errors": [
+        "party_tracker.json: worldConditions -> month: 'Hammer' is not one of ['Firstmonth', 'Coldmonth', 'Thawmonth', 'Springmonth', 'Bloommonth', 'Sunmonth', 'Heatmonth', 'Harvestmonth', 'Autumnmonth', 'Fademonth', 'Frostmonth', 'Yearend']"
+      ]
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/FVS005.json",
+        "areas/HMT002.json",
+        "areas/ICN003.json",
+        "areas/SWD004.json",
+        "areas/VCA001.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "FVS005.json <-> map_FVS005.json",
+        "HMT002.json <-> map_HMT002.json",
+        "ICN003.json <-> map_ICN003.json",
+        "SWD004.json <-> map_SWD004.json",
+        "VCA001.json <-> map_VCA001.json"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "FVS005.json <-> map_FVS005.json",
+        "HMT002.json <-> map_HMT002.json",
+        "ICN003.json <-> map_ICN003.json",
+        "SWD004.json <-> map_SWD004.json",
+        "VCA001.json <-> map_VCA001.json"
+      ],
+      "passed": 1,
+      "failed": 4,
+      "errors": [
+        "FVS005.json: connected rooms G01->G03 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "FVS005.json: connected rooms G01->G04 are not cardinally adjacent (X10Y10 -> X13Y10)",
+        "FVS005.json: connected rooms G03->G01 are not cardinally adjacent (X12Y10 -> X10Y10)",
+        "FVS005.json: connected rooms G04->G01 are not cardinally adjacent (X13Y10 -> X10Y10)",
+        "map_FVS005.json: connected rooms G01->G03 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "map_FVS005.json: connected rooms G01->G04 are not cardinally adjacent (X10Y10 -> X13Y10)",
+        "map_FVS005.json: connected rooms G03->G01 are not cardinally adjacent (X12Y10 -> X10Y10)",
+        "map_FVS005.json: connected rooms G04->G01 are not cardinally adjacent (X13Y10 -> X10Y10)",
+        "HMT002.json: connected rooms G01->G03 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "HMT002.json: connected rooms G02->G04 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "HMT002.json: connected rooms G03->G01 are not cardinally adjacent (X12Y10 -> X10Y10)",
+        "HMT002.json: connected rooms G04->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "map_HMT002.json: connected rooms G01->G03 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "map_HMT002.json: connected rooms G02->G04 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "map_HMT002.json: connected rooms G03->G01 are not cardinally adjacent (X12Y10 -> X10Y10)",
+        "map_HMT002.json: connected rooms G04->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "SWD004.json: connected rooms G02->G04 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "SWD004.json: connected rooms G04->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "map_SWD004.json: connected rooms G02->G04 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "map_SWD004.json: connected rooms G04->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "VCA001.json: connected rooms G01->G04 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "VCA001.json: connected rooms G02->G03 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "VCA001.json: connected rooms G03->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "VCA001.json: connected rooms G04->G01 are not cardinally adjacent (X12Y10 -> X10Y10)",
+        "map_VCA001.json: connected rooms G01->G04 are not cardinally adjacent (X10Y10 -> X12Y10)",
+        "map_VCA001.json: connected rooms G02->G03 are not cardinally adjacent (X11Y10 -> X13Y10)",
+        "map_VCA001.json: connected rooms G03->G02 are not cardinally adjacent (X13Y10 -> X11Y10)",
+        "map_VCA001.json: connected rooms G04->G01 are not cardinally adjacent (X12Y10 -> X10Y10)"
+      ]
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
+  }
+}

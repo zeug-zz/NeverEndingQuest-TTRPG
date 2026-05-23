@@ -1,0 +1,633 @@
+{
+  "areaId": "FVS005",
+  "areaName": "The Forbidden Vaultlands",
+  "areaType": "town",
+  "areaDescription": "A bleak settlement sprawls around sealed stone vaults half-swallowed by dust and ruin, where every street ends at a warded door and every silence feels watched. At night, green light leaks through ancient seams, and those who linger too long often vanish into the dark with only their screams echoing back.",
+  "dangerLevel": "extreme",
+  "recommendedLevel": 7,
+  "climate": "temperate",
+  "terrain": "urban streets and buildings",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Town Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "temple",
+        "connections": [
+          "G02",
+          "G03",
+          "G04"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [
+          "hub"
+        ],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "extreme",
+        "name": "Riddle-Sealed Temple"
+      },
+      {
+        "id": "G02",
+        "type": "tavern",
+        "connections": [
+          "G01"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01"
+        },
+        "tags": [
+          "rest",
+          "dead_end"
+        ],
+        "purpose": "safe_haven",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Gilded Echo Tavern"
+      },
+      {
+        "id": "G03",
+        "type": "residence",
+        "connections": [
+          "G01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Moonlit Vale House"
+      },
+      {
+        "id": "G04",
+        "type": "tavern",
+        "connections": [
+          "G01"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {},
+        "tags": [
+          "rest",
+          "dead_end"
+        ],
+        "purpose": "safe_haven",
+        "landmark": true,
+        "dangerLevel": "extreme",
+        "name": "Sable Chalice Tavern"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Riddle-Sealed Temple",
+      "type": "temple",
+      "description": "A half-buried temple of pale stone rises from the dust at the center of the Forbidden Vaultlands, its stepped facade carved with elven knotwork and warning sigils. Every threshold is sealed by rotating rune-disks that whisper questions in forgotten tongues, and the air inside tastes faintly of ozone, candle ash, and old memory.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02",
+        "G03",
+        "G04"
+      ],
+      "aliases": [
+        "Riddle-Sealed Temple",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_temple:Riddle-Sealed Temple",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Sister Aelwyn, a masked city oracle",
+          "description": "A silent oracle who kneels before the altar and speaks only when the temple's questions are answered correctly. She knows which vaults are false, which are bait, and which contain forbidden seals that should never be broken.",
+          "attitude": "Guarded and cryptic"
+        },
+        {
+          "name": "Arannis Vey, keeper of the trial chambers",
+          "description": "He arrives to oversee the temple's trial rites, recording every answer and judging whether visitors are seekers, thieves, or liabilities. He is calm, exacting, and deeply invested in the integrity of the wards.",
+          "attitude": "Formal and testing"
+        }
+      ],
+      "monsters": [
+        "Rune-bound sentinels",
+        "Memory echo wraiths"
+      ],
+      "lootTable": [
+        "Silvered prayer-strip key",
+        "Dusty vault map fragment",
+        "Potion of greater healing",
+        "Scroll of protection from evil and good"
+      ],
+      "plotHooks": [
+        "The altar's riddle sequence reveals the order of vault seals deeper in the town.",
+        "A hidden compartment beneath the offering basin contains a memory shard tied to Numillian's forbidden power.",
+        "The oracle can identify which nearby door is a decoy and which leads toward the true vault complex."
+      ],
+      "dmInstructions": "This is the spiritual and investigative heart of the settlement. Use the temple to gate progress with riddles, memory tests, and moral choices rather than simple combat. Sister Aelwyn and Arannis Vey should feel like judges of intent, not allies by default. If the party shows force, the temple responds with ward pulses and summoned guardians.",
+      "doors": [
+        {
+          "name": "East Rune Door",
+          "description": "A tall stone door inlaid with concentric rune-disks that slowly rotate under their own power.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 22,
+          "keyname": "Silvered prayer-strip key",
+          "trapped": true,
+          "trap": "Opening without solving the riddle releases a burst of psychic static; creatures within 10 feet must save or take force damage and lose their reaction."
+        },
+        {
+          "name": "South Offering Gate",
+          "description": "A narrow bronze-framed gate behind the altar, etched with incense-smoke patterns and sealed with waxed sigils.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 14,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Riddle Feedback Ward",
+          "detectDC": 15,
+          "disableDC": 18,
+          "triggerDC": 15,
+          "damage": "3d8 psychic damage, and the creature is pushed 10 feet away from the door or glyph"
+        }
+      ],
+      "dcChecks": [
+        "Arcana DC 15: Identify the rune sequence that suppresses the temple's ward pulse.",
+        "Insight DC 14: Tell whether Sister Aelwyn is withholding a crucial warning.",
+        "Religion DC 16: Interpret the altar's invocation and learn which vault seal it references."
+      ],
+      "accessibility": "Accessible from the town square, but entry is controlled by rune locks and riddle wards. Casual entry is possible only for those who solve the temple's tests or possess a proper key.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Whispering Rune Disks",
+          "description": "Interlocking stone rings around the doors speak in fragments when touched, repeating half-answers to old riddles."
+        },
+        {
+          "name": "Memory Basin",
+          "description": "A shallow basin of black water reflects not faces, but the last thing a creature feared losing."
+        },
+        {
+          "name": "Trial Altar",
+          "description": "A stepped altar used to confirm whether a visitor's intent aligns with the city's sealed vows."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Riddle of the First Seal",
+          "description": "The party must answer a sequence of temple riddles while warded sentinels watch for deception."
+        },
+        {
+          "name": "Guardian Awakening",
+          "description": "If the altar is disturbed, rune-bound guardians emerge from the walls to enforce the temple's ancient law."
+        }
+      ],
+      "adventureSummary": "The temple serves as the town's gate of judgment, where riddles and memory magic reveal the first truths of the Forbidden Vaultlands and point toward the deeper seal network."
+    },
+    {
+      "locationId": "G02",
+      "name": "Gilded Echo Tavern",
+      "type": "tavern",
+      "description": "A battered but well-kept tavern built into the shadow of a sealed vault wall, its gilded sign creaking above a doorway that never fully closes. Inside, murmured rumors bounce strangely off the mirrored bottles and lacquered beams, so that every whisper seems to return with one extra meaning.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01"
+      ],
+      "aliases": [
+        "Gilded Echo Tavern",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_tavern:Gilded Echo Tavern",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Veyra Moonquill, a dissident scholar",
+          "description": "She trades stories for favors and quietly collects evidence that the vault seals are being misused. Her notes are hidden among the tavern's songbooks and bottle labels.",
+          "attitude": "Wary but helpful"
+        },
+        {
+          "name": "Ilyra Fen, a frightened witness with fragmented memories",
+          "description": "She drinks watered tea and sketches doors she cannot fully remember, terrified that speaking too much will cause her missing memories to vanish forever.",
+          "attitude": "Frightened and unstable"
+        }
+      ],
+      "monsters": [
+        "Possessed reflections",
+        "Vault-touched cutpurses"
+      ],
+      "lootTable": [
+        "Bottle of moon-sour spirits",
+        "Ciphered receipt roll",
+        "2d6 gold pieces",
+        "Antitoxin"
+      ],
+      "plotHooks": [
+        "Veyra can point the party toward a safe route through the town's warded streets.",
+        "Ilyra remembers a green-lit seam under one of the nearby vault doors.",
+        "A tavern ledger records who visited the temple and who left with missing hours."
+      ],
+      "dmInstructions": "Use this as a roleplay and information hub. The tavern should feel like the safest place in a dangerous town, but only by a narrow margin. Reflections in glass can be used as a subtle surveillance motif; rivals may eavesdrop from mirrored surfaces.",
+      "doors": [
+        {
+          "name": "Front Door",
+          "description": "A warped cedar door banded in tarnished brass, opening onto the street with a faint bell chime.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Cellar Hatch",
+          "description": "A heavy floor hatch behind the bar, reinforced with iron rings and smelling of damp stone.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 14,
+          "breakDC": 18,
+          "keyname": "Barmaid's cellar key",
+          "trapped": true,
+          "trap": "A tilted bottle rack drops glass shards into the stairwell, dealing slashing damage to the first creature descending without disabling it."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Shattered Mirror Snare",
+          "detectDC": 13,
+          "disableDC": 15,
+          "triggerDC": 14,
+          "damage": "2d6 slashing damage and disadvantage on the next Wisdom check due to disorienting reflections"
+        }
+      ],
+      "dcChecks": [
+        "Persuasion DC 14: Calm Ilyra long enough for her to recall a useful detail.",
+        "Investigation DC 13: Find Veyra's hidden notes among the tavern clutter.",
+        "Perception DC 15: Catch a reflected eavesdropper watching from a bottle or mirror."
+      ],
+      "accessibility": "Open to the public but watched by suspicious regulars and hidden informants; entering unnoticed is easy, leaving with secrets is harder.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Mirror Shelves",
+          "description": "Polished backboards behind the bottles create false angles and doubled silhouettes."
+        },
+        {
+          "name": "Collapsed Hearth Niche",
+          "description": "A soot-stained recess where travelers can speak privately if they trust the noise around them."
+        },
+        {
+          "name": "Rumor Board",
+          "description": "Scraps of parchment, tab marks, and coded chalk symbols track the town's current fears."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Rumor Exchange",
+          "description": "The party can buy or barter for clues, though each question risks attracting attention from hidden listeners."
+        },
+        {
+          "name": "Reflection Trouble",
+          "description": "If violence erupts, hostile figures may seem to step out of mirrors and polished surfaces."
+        }
+      ],
+      "adventureSummary": "The tavern is the settlement's information market, where frightened witnesses, dissident scholars, and hidden watchers trade rumors about the vaults and the town's missing people."
+    },
+    {
+      "locationId": "G03",
+      "name": "Moonlit Vale House",
+      "type": "residence",
+      "description": "A narrow residence of cracked white stone and moon-bleached shutters, half-sunk into a drift of pale dust. The house has been abandoned in plain sight, yet fresh footprints appear each night at its threshold and vanish by dawn, as if someone still comes home through a door no one can see.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G01"
+      ],
+      "aliases": [
+        "Moonlit Vale House",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_residence:Moonlit Vale House",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Thalan Deepcurrent, a trapped maintenance mage",
+          "description": "The mage is confined beneath the floorboards by a failed ward lattice, able to speak through vents and loosen mechanisms but unable to leave without help. He knows the maintenance routes beneath the vault streets and fears the green light in the walls.",
+          "attitude": "Desperate and cooperative"
+        }
+      ],
+      "monsters": [
+        "Dust husks",
+        "Ward-echo swarms"
+      ],
+      "lootTable": [
+        "Maintenance rune spanner",
+        "Hidden compartment key",
+        "Spell scroll of detect magic",
+        "Moonstone charm"
+      ],
+      "plotHooks": [
+        "Thalan knows a service route that bypasses one of the temple's locked doors.",
+        "A hidden crawlspace contains sketches of vault ventilation shafts and ward sinks.",
+        "The house's nightly footprints suggest someone is using an unseen passage to move between vaults."
+      ],
+      "dmInstructions": "This is the safest place to learn about the town's infrastructure, but it is haunted by malfunctioning wards. Thalan should be useful, anxious, and physically constrained; rescuing him can open shortcuts elsewhere. The house can serve as a low-combat puzzle site with one strong defensive hazard.",
+      "doors": [
+        {
+          "name": "Front Door",
+          "description": "A peeling white door with a crescent-shaped brass knocker and a warped frame.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 10,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Floor Hatch",
+          "description": "A concealed hatch under a rotting rug, its iron latch engraved with maintenance sigils.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 19,
+          "keyname": "Maintenance rune spanner",
+          "trapped": true,
+          "trap": "Opening the hatch without disarming it triggers a ward shock that jolts the hands and briefly numbs the arms."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Misfiring Ward Lattice",
+          "detectDC": 14,
+          "disableDC": 16,
+          "triggerDC": 13,
+          "damage": "3d6 lightning damage and the target cannot take reactions until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 15: Locate the hidden crawlspace beneath the floorboards.",
+        "Arcana DC 16: Stabilize the ward lattice enough to free Thalan safely.",
+        "Medicine DC 12: Help Thalan recover from the stress of prolonged confinement."
+      ],
+      "accessibility": "The front door is easy to reach, but the true interior is sealed by a malfunctioning ward and hidden access panels. Entry is straightforward for those with maintenance knowledge or patience.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Dust-White Parlor",
+          "description": "An empty sitting room where dust gathers in footprints that never belong to the same person twice."
+        },
+        {
+          "name": "Ward Vent Grates",
+          "description": "Thin bronze vents in the walls carry whispers, heat, and the occasional frightened voice from below."
+        },
+        {
+          "name": "Collapsed Stairwell",
+          "description": "A broken stair that descends into a maintenance crawlspace lined with chalked repair marks."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Rescue from the Walls",
+          "description": "The party can free Thalan by solving the ward misfire and opening the hidden hatch."
+        },
+        {
+          "name": "Haunting Interference",
+          "description": "If the house is searched aggressively, dust husks and ward echoes coalesce to defend the hidden passage."
+        }
+      ],
+      "adventureSummary": "Moonlit Vale House hides the town's maintenance secrets and a trapped mage who can guide the party through concealed routes beneath the vault district."
+    },
+    {
+      "locationId": "G04",
+      "name": "Sable Chalice Tavern",
+      "type": "tavern",
+      "description": "A darker, rougher tavern than its gilded rival, the Sable Chalice is built from scavenged vault stone and blackened timber. It serves as a meeting place for smugglers, ward-breakers, and the desperate, while a row of sealed cups behind the bar is said to contain the last drinks of those who vanished into the vaults.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G01"
+      ],
+      "aliases": [
+        "Sable Chalice Tavern",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_tavern:Sable Chalice Tavern",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Memory Trials Expanse"
+      ],
+      "areaConnectivityId": [
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Maerith the Unseen, cabal strategist",
+          "description": "A veiled strategist who uses the tavern's back room to coordinate covert moves around the vault wards. They are patient, manipulative, and always three conversations ahead.",
+          "attitude": "Polite but dangerous"
+        },
+        {
+          "name": "Elarion Sableleaf, a diplomatic wardkeeper envoy",
+          "description": "He keeps a careful watch on the tavern's dealings, attempting to prevent a public breach between the town's wardkeepers and the cabal. He is measured, diplomatic, and under constant pressure.",
+          "attitude": "Measured and observant"
+        }
+      ],
+      "monsters": [
+        "Cabal enforcers",
+        "Enchanted drinking vessels"
+      ],
+      "lootTable": [
+        "Encrypted meeting token",
+        "Black salt pouch",
+        "Gleaming vault coin",
+        "Potion of healing"
+      ],
+      "plotHooks": [
+        "Maerith can offer a covert bargain if the party agrees to investigate a sealed vault door elsewhere.",
+        "Elarion knows which factions are likely to escalate into violence after the next ward flare.",
+        "A back-room chalkboard lists times when the green light leaks strongest from the vault seams."
+      ],
+      "dmInstructions": "This tavern should feel politically charged. Conversations here can open alliances, but any obvious allegiance will be noticed. Maerith is not a simple villain in this location; they should present a useful but morally compromised path forward. Elarion can serve as a stabilizing counterweight and source of official information.",
+      "doors": [
+        {
+          "name": "Street Door",
+          "description": "A reinforced plank door with a black iron latch and a faded chalice emblem.",
+          "type": "heavy",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 15,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Back Room Curtain",
+          "description": "A thick velvet curtain concealing a private meeting room behind the bar.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 16,
+          "keyname": "Encrypted meeting token",
+          "trapped": true,
+          "trap": "A whispered warning alerting hidden sentries, who arrive after a brief delay if the curtain is forced."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Poisoned Pour Snare",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "2d8 poison damage and poisoned condition until the end of the target's next turn"
+        }
+      ],
+      "dcChecks": [
+        "Deception DC 15: Gain an audience with Maerith without immediately provoking suspicion.",
+        "Insight DC 14: Determine whether Elarion is withholding the full truth about the town's wards.",
+        "Stealth DC 15: Enter the back room without alerting the cabal enforcers."
+      ],
+      "accessibility": "Publicly accessible but socially dangerous; the door is open, yet every visitor is judged by the room. Physical access is easy, social access is not.",
+      "dangerLevel": "Very High",
+      "features": [
+        {
+          "name": "Sealed Cup Display",
+          "description": "A shelf of dust-sealed goblets said to have belonged to the first vanished wardbreakers."
+        },
+        {
+          "name": "Back Room Map Table",
+          "description": "A scarred table covered in chalk routes, seal diagrams, and faction markers."
+        },
+        {
+          "name": "Blackened Vault Stone Walls",
+          "description": "The walls are built from scavenged stone that hums softly when forbidden magic is spoken nearby."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Faction Negotiation",
+          "description": "The party can broker information or a temporary alliance between Maerith and Elarion, though distrust runs high."
+        },
+        {
+          "name": "Cabal Test",
+          "description": "If the party appears too curious, cabal enforcers may attempt to probe their loyalties with intimidation or force."
+        }
+      ],
+      "adventureSummary": "The Sable Chalice is the town's political pressure valve, where cabal plots and wardkeeper diplomacy collide over the fate of the vault wards."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "elite enemies",
+      "description": "A elite enemies appropriate for level 7 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 7 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 7 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 7 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 7 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 7 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "deadly trap",
+      "description": "A deadly trap appropriate for level 7 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "boss monster",
+      "description": "A boss monster appropriate for level 7 parties"
+    }
+  ],
+  "areaFeatures": [
+    "guard posts",
+    "merchant quarter",
+    "local tavern"
+  ],
+  "notes": "NPCs should have daily routines. Political factions create roleplay opportunities.",
+  "spatialContractVersion": 1
+}

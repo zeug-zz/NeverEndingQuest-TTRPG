@@ -1,0 +1,627 @@
+{
+  "areaId": "HMT002",
+  "areaName": "The Memory Trials Expanse",
+  "areaType": "mixed",
+  "areaDescription": "Across this haunted region, broken stone halls, forgotten shrines, and wind-scoured paths seem arranged by some patient hand to test the mind as much as the body. Whispering echoes cling to every ruin, and those who linger too long may find themselves reliving old regrets while hidden dangers stir in the shadows.",
+  "dangerLevel": "medium",
+  "recommendedLevel": 5,
+  "climate": "varied",
+  "terrain": "varied terrain",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Mixed Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "room",
+        "connections": [
+          "G02",
+          "G03"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Whispering Trial Nexus"
+      },
+      {
+        "id": "G02",
+        "type": "room",
+        "connections": [
+          "G01",
+          "G04"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "medium",
+        "name": "Mirror of Echoes"
+      },
+      {
+        "id": "G03",
+        "type": "room",
+        "connections": [
+          "G01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Flooded Memory Vault"
+      },
+      {
+        "id": "G04",
+        "type": "room",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "medium",
+        "name": "Sealed Warden Archive"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G03",
+        "G04"
+      ]
+    ],
+    "startRoom": "G01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Whispering Trial Nexus",
+      "type": "room",
+      "description": "A circular chamber of broken moonstone and black-veined marble, arranged like a judge's dais. Thin channels in the floor carry a low silver glow that pulses in time with distant whispers, and every footstep seems to answer with a memory not your own. The chamber feels designed to separate truth from comfort, and to punish anyone who lies to themselves.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02",
+        "G03"
+      ],
+      "aliases": [
+        "Whispering Trial Nexus",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Whispering Trial Nexus",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "The Forbidden Vaultlands"
+      ],
+      "areaConnectivityId": [
+        "G04"
+      ],
+      "npcs": [
+        {
+          "name": "Arannis Vey, keeper of the trial chambers",
+          "description": "An austere elven examiner who maintains the chamber's ritual order. He speaks in measured tones and tests newcomers with memory riddles before allowing passage.",
+          "attitude": "Wary but fair"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Memory Wisp",
+          "description": "A pale psychic remnant that feeds on uncertainty and repeats the last emotional impression it touched."
+        }
+      ],
+      "lootTable": [
+        "Silvered trial seal worth 25 gp",
+        "Scroll of comprehend languages",
+        "2d4 moonshard tokens used in the trial halls"
+      ],
+      "plotHooks": [
+        "Arannis can explain how the trial chambers respond to emotional truth instead of brute force.",
+        "The silver channels in the floor briefly reveal a hidden route toward the flooded vault if a character recalls a specific lost detail."
+      ],
+      "dmInstructions": "Use this as the party's first contact point with the Memory Trials Expanse. Arannis should feel like an ally of the city, but one who will not bend the rules for outsiders. If combat begins, the Memory Wisp should target the most uncertain or recently mind-afflicted character.",
+      "doors": [
+        {
+          "name": "North Archway",
+          "description": "A tall, open arch framed by etched lunar runes and cracked ward-stone.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Stone Door",
+          "description": "A heavy stone slab with a handprint recess worn smooth by countless examiners.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Trial Seal of the Nexus",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo Snare",
+          "description": "A psychic ward that lashes intruders with a brief flood of intrusive recollections when the central dais is disturbed without permission.",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "2d6 psychic damage and disadvantage on the next Wisdom check"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 13: Tell when Arannis is testing the party versus truly warning them.",
+        "History DC 14: Recognize the chamber's layout as a memory-based judgment hall.",
+        "Investigation DC 15: Find the pattern that opens the east stone door."
+      ],
+      "accessibility": "Normal access through open stone arches; the chamber is easy to enter but difficult to interpret safely.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Whispering Floor Channels",
+          "description": "Thin luminous grooves carry fragments of spoken thoughts, letting attentive listeners catch snippets of old trials and lost confessions."
+        },
+        {
+          "name": "Broken Dais",
+          "description": "A fractured central platform where examiners once stood to judge intruders and resolve disputes."
+        },
+        {
+          "name": "Memory Resonance",
+          "description": "Strong emotions linger here, causing faint illusionary overlays of past visitors to appear for a heartbeat at a time."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Trial of Truth",
+          "description": "Arannis presents the party with a three-part memory challenge. Success earns passage and a useful clue; failure causes the chamber to summon a Memory Wisp and impose a psychic backlash."
+        }
+      ],
+      "adventureSummary": "The nexus introduces the Memory Trials Expanse through judgment, riddles, and unstable psychic echoes. It establishes the rules of the region and points toward deeper chambers."
+    },
+    {
+      "locationId": "G02",
+      "name": "Mirror of Echoes",
+      "type": "room",
+      "description": "A narrow hall lined with tall, tarnished mirror-panels set into cracked silver frames. The reflections lag a heartbeat behind reality, and some show alternate versions of the viewer making different choices. Every spoken word returns softened, distorted, or answered by a voice from another memory.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G04"
+      ],
+      "aliases": [
+        "Mirror of Echoes",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Mirror of Echoes",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Mirael of the Third Reflection, an illusion-bound examiner",
+          "description": "A shimmering examiner trapped within the mirror network, appearing as a calm elven figure whose outline occasionally splits into three overlapping reflections.",
+          "attitude": "Guarded and cryptic"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Mirror Shade",
+          "description": "A hostile reflection born from fear and self-doubt, able to mimic a target's stance and minor gestures."
+        }
+      ],
+      "lootTable": [
+        "Mirror shard focus worth 50 gp",
+        "Potion of psychic resistance",
+        "Hidden cache containing 1d4+1 moonshard tokens"
+      ],
+      "plotHooks": [
+        "Mirael can reveal which memories in the region are genuine and which are planted.",
+        "A cracked mirror shows a fleeting image of the Sealed Warden Archive and the route to it."
+      ],
+      "dmInstructions": "This is a roleplay and puzzle-heavy location. Mirael should not directly hand over answers, but she can confirm whether the party has already been altered by memory magic. The Mirror Shade should emerge if the party breaks a mirror or lies during questioning.",
+      "doors": [
+        {
+          "name": "West Mirror Gate",
+          "description": "A frame of silvered glass that parts like curtains when the correct reflection is traced.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 14,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Arch",
+          "description": "A plain stone arch covered in mirror dust and old handprints.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Reflective Reversal",
+          "description": "A ward that swaps a creature's sense of direction, making left feel like right and forward feel like backward for a short time.",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 14,
+          "damage": "1d8 psychic damage and the creature is confused until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 13: Notice which mirror is slightly warmer than the others.",
+        "Arcana DC 15: Understand how the reflections store and replay fragments of memory.",
+        "Deception DC 14: Bluff the mirrors into showing a false path."
+      ],
+      "accessibility": "Accessible through open arches, though the mirror-warded hall disorients careless travelers.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Lagging Reflections",
+          "description": "Reflections in the mirrors move a fraction of a second late, creating opportunities to spot invisible movement or hidden actions."
+        },
+        {
+          "name": "Silver Frame Inscriptions",
+          "description": "Tiny elven script names emotions rather than people, suggesting the hall was used to test identity and resolve."
+        },
+        {
+          "name": "Memory Fog",
+          "description": "A faint haze clings to the floor and can briefly erase the last few seconds from a witness's certainty."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "The Unreliable Reflection",
+          "description": "Mirael demands that the party identify one true memory and one false one. Success grants guidance to the archive; failure releases the Mirror Shade and seals one exit until the hall is soothed."
+        }
+      ],
+      "adventureSummary": "The mirror hall forces the party to question what they believe about themselves and the city. It provides a major clue toward the archive and advances the memory-testing theme."
+    },
+    {
+      "locationId": "G03",
+      "name": "Flooded Memory Vault",
+      "type": "room",
+      "description": "A low chamber half-swallowed by black water that laps against shattered steps and sunken plinths. Floating wisps of light drift under the surface like trapped thoughts, and the vault's walls hum with failing wards that threaten to burst at any moment. Anything dropped here is quickly taken by the water or by something moving beneath it.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G01"
+      ],
+      "aliases": [
+        "Flooded Memory Vault",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Flooded Memory Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Submerged Wardworks"
+      ],
+      "areaConnectivityId": [
+        "SWD004"
+      ],
+      "npcs": [
+        {
+          "name": "Thalan Deepcurrent, a trapped maintenance mage",
+          "description": "A waterlogged maintenance mage pinned behind a collapsed ward frame, still trying to keep the vault's floodgates from failing entirely.",
+          "attitude": "Desperate and cooperative"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Drowned Memory Spawn",
+          "description": "A sludge-like psychic aberration that forms from submerged recollections and attacks by dragging victims into half-remembered visions."
+        }
+      ],
+      "lootTable": [
+        "Ward key etched with tide-runes",
+        "Pearl of water breathing",
+        "Arcane schematic showing the next seal lattice junction"
+      ],
+      "plotHooks": [
+        "Thalan knows how the flooding wards connect to the Submerged Wardworks.",
+        "The vault floor contains a sealed memory capsule tied to the forbidden records."
+      ],
+      "dmInstructions": "This should feel urgent and unstable. Thalan can aid the party if rescued, but he cannot leave without assistance. The chamber may partially flood during combat; raise the tension by narrowing safe footing and forcing movement.",
+      "doors": [
+        {
+          "name": "North Stone Hatch",
+          "description": "A water-slick hatch ringed with corroded bronze and old ward marks.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 20,
+          "keyname": "Ward key etched with tide-runes",
+          "trapped": true,
+          "trap": "A burst of pressurized water and psychic static erupts when forced open improperly."
+        },
+        {
+          "name": "West Flood Channel",
+          "description": "A grated opening where dark water drains toward lower tunnels.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 13,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Ward Surge",
+          "description": "Failing memory wards discharge a pulse of force and disorienting recollections when the central plinth is disturbed.",
+          "detectDC": 14,
+          "disableDC": 16,
+          "triggerDC": 15,
+          "damage": "3d6 force damage and disadvantage on Dexterity checks for 1 minute"
+        }
+      ],
+      "dcChecks": [
+        "Athletics DC 13: Move through the flooded chamber without being pulled under.",
+        "Arcana DC 15: Stabilize a failing ward long enough to protect Thalan.",
+        "Investigation DC 14: Locate the hidden memory capsule beneath the waterline."
+      ],
+      "accessibility": "Difficult access due to flooding, slick stone, and unstable wards; suitable for cautious or well-prepared parties.",
+      "dangerLevel": "Medium",
+      "features": [
+        {
+          "name": "Black Floodwater",
+          "description": "The water obscures hazards, conceals loot, and carries whispering fragments of memories from past victims."
+        },
+        {
+          "name": "Sunken Plinths",
+          "description": "Broken pedestals mark where important memory vessels once rested, some still etched with protective sigils."
+        },
+        {
+          "name": "Failing Ward Hum",
+          "description": "A constant vibration in the walls warns that the chamber may shift or partially collapse if the flood is not controlled."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Rescue in the Flood",
+          "description": "The party must decide whether to save Thalan, contain the water, or seize the hidden memory capsule while the Drowned Memory Spawn rises from the depths."
+        }
+      ],
+      "adventureSummary": "The vault is the first major environmental hazard of the expanse, combining flood danger, rescue pressure, and a revelation about the city's ward network."
+    },
+    {
+      "locationId": "G04",
+      "name": "Sealed Warden Archive",
+      "type": "room",
+      "description": "A hushed archive chamber wrapped in layered seals of gold leaf, pale crystal, and weathered oak. Shelves of memory tablets stand behind a lattice of wardlight, and the air smells of dust, rain, and old ink. Every document here was chosen to be remembered, hidden, or denied.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Sealed Warden Archive",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_room:Sealed Warden Archive",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Forbidden Vault Sanctum",
+        "The Inner Ward of Numillian"
+      ],
+      "areaConnectivityId": [
+        "FVS005",
+        "G01"
+      ],
+      "npcs": [
+        {
+          "name": "Archivist Nymora, custodian of forbidden records",
+          "description": "A meticulous archivist in layered ink-stained robes, guarding restricted tablets and cataloguing which memories must never be spoken aloud.",
+          "attitude": "Suspicious but knowledgeable"
+        },
+        {
+          "name": "High Warden Caldorin, master of the seal lattice",
+          "description": "The stern architect of the archive's sealing system, present here to inspect the ward lattice and determine whether the hidden vault should remain closed.",
+          "attitude": "Severe and authoritative"
+        }
+      ],
+      "monsters": [
+        {
+          "name": "Seal Guardian Construct",
+          "description": "A rune-carved sentinel animated by the archive's ward lattice, programmed to defend forbidden records from unauthorized access."
+        }
+      ],
+      "lootTable": [
+        "Forbidden index tablet",
+        "Seal lattice component",
+        "Spell scroll of nondetection",
+        "Key fragment for the Forbidden Vault Sanctum"
+      ],
+      "plotHooks": [
+        "Nymora can identify the party's next required trial and reveal which records implicate the hidden vault.",
+        "Caldorin may authorize or deny access depending on how the party has treated the memory trials.",
+        "A concealed index references Maerith the Unseen and the route toward the final ward authority."
+      ],
+      "dmInstructions": "This location is the information hub and gatekeeper chamber. Keep Nymora useful but cautious, and Caldorin uncompromising. If the party has earned trust, they may gain a path forward; if not, the Seal Guardian Construct should be activated and the archive doors sealed.",
+      "doors": [
+        {
+          "name": "West Archive Door",
+          "description": "A double door of dark oak banded in crystal and stamped with seal marks.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 17,
+          "breakDC": 21,
+          "keyname": "Archivist Nymora's seal token",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "Secret Vault Alcove",
+          "description": "A concealed stone panel hidden behind a shelf of memory tablets.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 20,
+          "keyname": "Key fragment for the Forbidden Vault Sanctum",
+          "trapped": true,
+          "trap": "A silent alarm that alerts the ward lattice and summons a Seal Guardian Construct."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Mnemonic Lock",
+          "description": "A seal that forces intruders to relive a chosen regret until the correct archival phrase is spoken.",
+          "detectDC": 16,
+          "disableDC": 17,
+          "triggerDC": 16,
+          "damage": "2d8 psychic damage and the creature cannot take reactions for 1 round"
+        }
+      ],
+      "dcChecks": [
+        "History DC 15: Interpret the archive's catalog and identify references to the forbidden vault.",
+        "Persuasion DC 16: Convince Nymora to reveal a protected record.",
+        "Arcana DC 17: Understand the seal lattice enough to safely bypass part of it."
+      ],
+      "accessibility": "Access is restricted by layered wards and authority seals; entry is possible only through the trial route or by bypassing the archive protections.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Memory Tablets",
+          "description": "Thin stone tablets preserve selected events, testimonies, and censored histories in careful elven script."
+        },
+        {
+          "name": "Wardlight Lattice",
+          "description": "A web of pale magical lines that brightens or dims depending on whether the archive approves the current speaker."
+        },
+        {
+          "name": "Restricted Index Shelves",
+          "description": "Rows of hidden compartments contain references to forbidden power, erased names, and the city-wide seal structure."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Inspection of the Records",
+          "description": "Caldorin and Nymora interrogate the party's intent. Honest answers and evidence from earlier rooms can open the path to the Forbidden Vault Sanctum; suspicious behavior triggers the Seal Guardian Construct."
+        }
+      ],
+      "adventureSummary": "The archive ties the memory trials to the hidden city's deepest secrets. It is the key transition point from investigation to the final sealed region."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 5 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 5 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "71-80",
+      "encounter": "hostile creature",
+      "description": "A hostile creature appropriate for level 5 parties"
+    },
+    {
+      "roll": "81-90",
+      "encounter": "bandit patrol",
+      "description": "A bandit patrol appropriate for level 5 parties"
+    },
+    {
+      "roll": "91-100",
+      "encounter": "territorial beast",
+      "description": "A territorial beast appropriate for level 5 parties"
+    }
+  ],
+  "areaFeatures": [
+    "landmarks",
+    "crossroads",
+    "ruins"
+  ],
+  "notes": "Balance combat, exploration, and social encounters. Transitions between areas should feel natural.",
+  "spatialContractVersion": 1
+}

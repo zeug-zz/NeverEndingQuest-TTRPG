@@ -1,0 +1,630 @@
+{
+  "areaId": "VCA001",
+  "areaName": "The Veiled Coast",
+  "areaType": "dungeon",
+  "areaDescription": "A mist-choked stretch of shoreline where salt spray clings to black stone and gulls cry through the fog like distant warnings. Hidden coves, half-sunk wrecks, and weather-softened paths make the coast feel unsettled rather than truly perilous, though travelers still tread carefully in its shifting veils.",
+  "dangerLevel": "low",
+  "recommendedLevel": 5,
+  "climate": "controlled - cool and damp",
+  "terrain": "stone corridors and chambers",
+  "map": {
+    "mapId": "MAP_G_4",
+    "mapName": "Dungeon Map",
+    "totalRooms": 4,
+    "rooms": [
+      {
+        "id": "G01",
+        "type": "corridor",
+        "connections": [
+          "G02",
+          "G04"
+        ],
+        "coordinates": "X10Y10",
+        "directions": {
+          "east": "G02"
+        },
+        "tags": [],
+        "purpose": "unknown",
+        "landmark": false,
+        "dangerLevel": "low",
+        "name": "Veiled Memory Passage"
+      },
+      {
+        "id": "G02",
+        "type": "treasure room",
+        "connections": [
+          "G01",
+          "G03"
+        ],
+        "coordinates": "X11Y10",
+        "directions": {
+          "west": "G01"
+        },
+        "tags": [],
+        "purpose": "quest_goal",
+        "landmark": false,
+        "dangerLevel": "low",
+        "name": "Gleaming Tribute Vault"
+      },
+      {
+        "id": "G03",
+        "type": "vault",
+        "connections": [
+          "G02"
+        ],
+        "coordinates": "X13Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "quest_goal",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Forbidden Echo Vault"
+      },
+      {
+        "id": "G04",
+        "type": "chamber",
+        "connections": [
+          "G01"
+        ],
+        "coordinates": "X12Y10",
+        "directions": {},
+        "tags": [
+          "dead_end"
+        ],
+        "purpose": "unknown",
+        "landmark": true,
+        "dangerLevel": "low",
+        "name": "Tidebound Riddle Chamber"
+      }
+    ],
+    "layout": [
+      [
+        "G01",
+        "G02",
+        "G04",
+        "G03"
+      ]
+    ],
+    "startRoom": "G01",
+    "version": "1.1",
+    "notes": "Extended schema with AI-friendly navigation fields",
+    "spatialContractVersion": 1
+  },
+  "locations": [
+    {
+      "locationId": "G01",
+      "name": "Veiled Memory Passage",
+      "type": "corridor",
+      "description": "A narrow black-stone corridor where cold mist crawls along the floor in ankle-high ribbons. Salt crystals glaze the walls like old tears, and carved elven lines repeat in looping sequences that subtly change whenever no one is looking directly at them.",
+      "coordinates": "X10Y10",
+      "connectivity": [
+        "G02",
+        "G04"
+      ],
+      "aliases": [
+        "Veiled Memory Passage",
+        "G01"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_corridor:Veiled Memory Passage",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Hall of Memory Trials",
+        "The Submerged Ward"
+      ],
+      "areaConnectivityId": [
+        "HMT002",
+        "G04"
+      ],
+      "npcs": [
+        {
+          "name": "Lethariel Vaun, a wary wardkeeper scout",
+          "description": "A cautious scout stationed here to watch for intruders who follow the wrong memories. She marks safe stone with chalk and warns that the corridor's inscriptions can be trusted only after they are spoken aloud.",
+          "attitude": "Wary but cooperative"
+        },
+        {
+          "name": "Ilyra Fen, a frightened witness with fragmented memories",
+          "description": "Ilyra clutches a broken shell pendant and repeatedly loses track of which passage she came from. She can describe flashes of hidden doors, but only if the party calms her and helps piece together her memories.",
+          "attitude": "Terrified and confused"
+        }
+      ],
+      "monsters": [],
+      "lootTable": [
+        "Chalk of true marks (3 uses)",
+        "Silvered shell pendant",
+        "1d4 healing potions hidden in a dry niche"
+      ],
+      "plotHooks": [
+        "The repeating inscriptions hint at a memory-locked route deeper into Numillian.",
+        "Lethariel can reveal that the passage only stays stable when travelers speak the correct names of nearby places.",
+        "Ilyra's fragments point toward a chamber where the city tests intruders with mirrored illusions."
+      ],
+      "dmInstructions": "Use this corridor as the connective tissue between the coast approach and the trials beyond. The writing should subtly foreshadow the city's reliance on memory, naming, and spoken truth.",
+      "doors": [
+        {
+          "name": "South Arch",
+          "description": "A broad arched opening veiled by hanging mist and salt-stiffened kelp strands.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Stone Door",
+          "description": "A smooth slab of black stone etched with a tide spiral that seems to rotate when viewed from the corner of the eye.",
+          "type": "regular",
+          "locked": true,
+          "lockDC": 13,
+          "breakDC": 15,
+          "keyname": "Wardkeeper chalk-mark",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Memory Slip Glyph",
+          "description": "A faint rune in the floor causes a traveler to misremember the last ten feet of movement, risking a stumble into the wrong side passage.",
+          "detectDC": 14,
+          "disableDC": 15,
+          "triggerDC": 13,
+          "damage": "No damage; the creature is pushed 10 feet and has disadvantage on its next Perception check"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 13: Notice the corridor's inscriptions rewrite themselves in response to spoken names.",
+        "Arcana DC 14: Identify the memory-slip effect before it disorients the party.",
+        "Insight DC 12: Determine that Ilyra's fragments are genuine but incomplete."
+      ],
+      "accessibility": "Normal access; the passage is open but its shifting inscriptions can mislead the unwary.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Shifting Inscription Bands",
+          "description": "Lines of elven script loop around the walls and subtly alter their wording when not directly observed."
+        },
+        {
+          "name": "Salt-Fog Drift",
+          "description": "Low mist pools in the corridor, muffling footsteps and making the space feel larger than it is."
+        },
+        {
+          "name": "Chalk Mark Niche",
+          "description": "A shallow recess where prior wardkeepers have left safety marks, arrows, and warnings."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Misdirected Footsteps",
+          "description": "If the party ignores the inscriptions, the corridor briefly loops them back to its midpoint, forcing them to reorient before proceeding.",
+          "monsterStats": [],
+          "difficulty": "Easy"
+        }
+      ],
+      "adventureSummary": "The Veiled Memory Passage introduces the coast's deceptive calm and establishes the theme of truth spoken aloud. It links the outer approach to the trial spaces and provides the first hints that memory itself is part of the city's defenses."
+    },
+    {
+      "locationId": "G02",
+      "name": "Gleaming Tribute Vault",
+      "type": "treasure room",
+      "description": "A low chamber lined with polished black stone and shallow alcoves for offerings. The air smells of brine and old incense, and dozens of reflective inlays catch even the dimmest light, making the room glitter like a tide of coins.",
+      "coordinates": "X11Y10",
+      "connectivity": [
+        "G01",
+        "G03"
+      ],
+      "aliases": [
+        "Gleaming Tribute Vault",
+        "G02"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_treasure room:Gleaming Tribute Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "npcs": [
+        {
+          "name": "Elarion Sableleaf, a diplomatic wardkeeper envoy",
+          "description": "An envoy tasked with preserving the vault's social protocols as carefully as its seals. He insists that any tribute taken must be balanced by a spoken oath or a returned favor.",
+          "attitude": "Formal and cautiously helpful"
+        },
+        {
+          "name": "Thalan Deepcurrent, a trapped maintenance mage",
+          "description": "Trapped behind a collapsed service grate, Thalan can describe the vault's maintenance routes and hidden fail-safes. He is anxious, brilliant, and desperate to be freed before the wards recycle the chamber.",
+          "attitude": "Panicked but useful"
+        }
+      ],
+      "monsters": [],
+      "lootTable": [
+        "Electrum tribute bands worth 120 gp",
+        "Pearl-inlaid ward token",
+        "Scroll of comprehend languages",
+        "Bottle of saltwater ink"
+      ],
+      "plotHooks": [
+        "Elarion explains that tribute vaults in Numillian are tied to civic memory and cannot simply be looted without consequence.",
+        "Thalan knows a maintenance phrase that can suppress one ward for a short time.",
+        "A hidden niche contains a record of prior visitors whose names were erased from the city's memory."
+      ],
+      "dmInstructions": "This is a social-and-treasure room rather than a simple hoard. Reward respectful interaction, but make greedy behavior awaken the vault's defensive echoes or trigger a ward response.",
+      "doors": [
+        {
+          "name": "West Arch",
+          "description": "An open archway bordered by sea-glass tiles, leading back toward the memory passage.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "North Vault Door",
+          "description": "A heavy circular door with concentric rings and a central tribute slot shaped like a handprint.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 15,
+          "breakDC": 18,
+          "keyname": "Tribute Token",
+          "trapped": true,
+          "trap": "If forced without the proper token, a burst of radiant salt sparks fills the doorway."
+        }
+      ],
+      "traps": [
+        {
+          "name": "Tribute Echo",
+          "description": "Taking valuables without speaking the vault's acknowledgement phrase causes the chamber to ring with accusatory echoes that reveal the thief's position.",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 14,
+          "damage": "2d6 thunder damage and the creature is outlined by shimmering light until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Persuasion DC 13: Secure Elarion's cooperation and learn the vault etiquette.",
+        "Investigation DC 14: Find the hidden maintenance grate where Thalan is trapped.",
+        "Arcana DC 15: Recognize the tribute echo as a warded alarm rather than a damaging curse."
+      ],
+      "accessibility": "Normal access, though the north vault door requires a tribute token or clever bypass.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Reflective Inlays",
+          "description": "Polished stone panels reflect movement a half-second late, creating an unsettling sense of doubled motion."
+        },
+        {
+          "name": "Tribute Alcoves",
+          "description": "Small niches around the room once held offerings, oaths, and memory seals."
+        },
+        {
+          "name": "Collapsed Maintenance Grate",
+          "description": "A bent iron grate reveals a cramped service space where someone can be heard shifting behind the wall."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Ward Echo Response",
+          "description": "If the vault is disturbed improperly, the room animates with harmless but obstructive echo-images of wardkeepers that try to drive intruders toward the exit.",
+          "monsterStats": [],
+          "difficulty": "Moderate"
+        }
+      ],
+      "adventureSummary": "The Gleaming Tribute Vault offers treasure, etiquette, and a trapped ally who can teach the party how Numillian's civic magic works. It also reinforces that wealth here is bound to memory, obligation, and spoken protocol."
+    },
+    {
+      "locationId": "G03",
+      "name": "Forbidden Echo Vault",
+      "type": "vault",
+      "description": "A sealed chamber of dark mirror-stone and suspended hush. Every sound seems to return a heartbeat later, altered by the room's lingering enchantments, and a pale seam of light traces the outline of a deeper lock set into the far wall.",
+      "coordinates": "X13Y10",
+      "connectivity": [
+        "G02"
+      ],
+      "aliases": [
+        "Forbidden Echo Vault",
+        "G03"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_vault:Forbidden Echo Vault",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Forbidden Vault Sanctum"
+      ],
+      "areaConnectivityId": [
+        "FVS005"
+      ],
+      "npcs": [
+        {
+          "name": "Maerith the Unseen, cabal strategist",
+          "description": "A hidden strategist who has already infiltrated the vault's periphery and now manipulates events through projected whispers and false reflections. Maerith is never where they seem to be, but their plans are written across the room's mirrored surfaces.",
+          "attitude": "Hostile and manipulative"
+        },
+        {
+          "name": "High Warden Selvaris, final authority over the vault wards",
+          "description": "The ultimate voice of the vault's security, appearing here in person or as a ward-projected overseer depending on how the party arrives. Selvaris will demand identification, then test whether the intruders are thieves, petitioners, or liabilities.",
+          "attitude": "Suspicious and authoritative"
+        }
+      ],
+      "monsters": [
+        "2 animated armor guardians",
+        "1 shadowy echo construct"
+      ],
+      "lootTable": [
+        "Ward-sealed reliquary key",
+        "Mirror shard of Numillian",
+        "Potion of water breathing",
+        "Spell scroll of dispel magic"
+      ],
+      "plotHooks": [
+        "The vault seam leads to a deeper sanctum and confirms that the forbidden power lies beyond this chamber.",
+        "Maerith's manipulation suggests a rival faction is trying to trigger the vault's release mechanisms.",
+        "Selvaris can be persuaded to grant limited access if the party proves the deeper threat is worse than the intrusion."
+      ],
+      "dmInstructions": "This should feel like the threshold of a major secret. Keep the encounter tense and intelligent: Selvaris may bargain, Maerith may taunt from cover, and the guardians should defend the seam to the deeper sanctum rather than fight to the death.",
+      "doors": [
+        {
+          "name": "South Gate",
+          "description": "A reinforced stone gate framed by mirror-black ribs and etched with ward sigils.",
+          "type": "heavy",
+          "locked": true,
+          "lockDC": 18,
+          "breakDC": 22,
+          "keyname": "Ward-sealed reliquary key",
+          "trapped": true,
+          "trap": "A pulse of force and echoing disorientation erupts when opened without authorization."
+        },
+        {
+          "name": "Deep Seam Panel",
+          "description": "A nearly invisible panel in the far wall where the stone looks thinner, as if it were stretched over a hidden passage.",
+          "type": "secret",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 18,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "Echo Reversal Ward",
+          "description": "A ward causes hostile sounds to bounce back at their source, turning shouted commands and spellcasting into a risk for the unwary.",
+          "detectDC": 16,
+          "disableDC": 17,
+          "triggerDC": 15,
+          "damage": "3d6 thunder damage and the creature is deafened until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Insight DC 15: Tell when Selvaris is speaking from authority versus when a ward is speaking through them.",
+        "Arcana DC 16: Identify the mirror seam as a gateway mechanism tied to forbidden vault wards.",
+        "Perception DC 17: Spot Maerith's hidden vantage point among the reflections."
+      ],
+      "accessibility": "Restricted access; the vault is sealed and can be approached only by passing the previous chamber's defenses or obtaining ward authority.",
+      "dangerLevel": "High",
+      "features": [
+        {
+          "name": "Mirror-Stone Walls",
+          "description": "The chamber's reflective surfaces distort silhouettes and make it difficult to tell which movement is real."
+        },
+        {
+          "name": "Suspended Silence",
+          "description": "Sound dulls here, then returns late and warped, making conversation feel like a negotiation with the room itself."
+        },
+        {
+          "name": "Deep Seam of Light",
+          "description": "A pale vertical line in the far wall suggests a path into the forbidden sanctum beyond."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Ward Authority Challenge",
+          "description": "Selvaris demands proof of intent while Maerith attempts to destabilize the chamber with false commands and reflection tricks.",
+          "monsterStats": [],
+          "difficulty": "Hard"
+        }
+      ],
+      "adventureSummary": "The Forbidden Echo Vault is the climax of the coast approach, combining elite guardianship, political tension, and the first clear route into the forbidden sanctum. It should feel like the final gate before the party enters the city's deepest secrets."
+    },
+    {
+      "locationId": "G04",
+      "name": "Tidebound Riddle Chamber",
+      "type": "chamber",
+      "description": "A circular chamber where the floor is carved like a tide pool map and the walls are inscribed with layered riddles in faded gold. At the center stands a low stone dais with four grooves, each shaped like a different spoken answer rather than a physical key.",
+      "coordinates": "X12Y10",
+      "connectivity": [
+        "G01"
+      ],
+      "aliases": [
+        "Tidebound Riddle Chamber",
+        "G04"
+      ],
+      "tactical_grid": [
+        "northwest:cover",
+        "north:approach",
+        "northeast:cover",
+        "west:approach",
+        "center_chamber:Tidebound Riddle Chamber",
+        "east:approach",
+        "southwest:cover",
+        "south:approach",
+        "southeast:cover"
+      ],
+      "areaConnectivity": [
+        "Hall of Memory Trials"
+      ],
+      "areaConnectivityId": [
+        "HMT002"
+      ],
+      "npcs": [
+        {
+          "name": "Sister Aelwyn, a masked city oracle",
+          "description": "A masked oracle who speaks in tidal metaphors and reveals answers only when the party asks the right question. She understands the chamber's riddles and warns that incorrect certainty is more dangerous than ignorance.",
+          "attitude": "Calm, enigmatic, and helpful"
+        },
+        {
+          "name": "Arannis Vey, keeper of the trial chambers",
+          "description": "The chamber's official overseer, responsible for judging whether an answer is sincere, clever, or merely stolen. Arannis watches from the dais or a side alcove and may offer a trial instead of a fight.",
+          "attitude": "Severe but fair"
+        },
+        {
+          "name": "Mirael of the Third Reflection, an illusion-bound examiner",
+          "description": "An examiner bound to the chamber's mirrored judgments, appearing in a surface of still water or polished stone. Mirael tests the party with layered illusions and can reveal hidden truths if properly engaged.",
+          "attitude": "Cool, analytical, and impartial"
+        }
+      ],
+      "monsters": [
+        "2 water weird echoes"
+      ],
+      "lootTable": [
+        "Riddle key tablet",
+        "Pearl dust focus",
+        "Scroll of detect thoughts",
+        "Elven tide charm"
+      ],
+      "plotHooks": [
+        "The chamber's answers point toward the deeper trial spaces in the Hall of Memory Trials.",
+        "A correct response unlocks a hidden route and provides the party with a memory-safe phrase.",
+        "Arannis and Mirael can jointly confirm which rumors about Numillian are true and which are planted lies."
+      ],
+      "dmInstructions": "This is the puzzle-forward location that bridges exploration and roleplay. Let the riddles be solvable through observation, conversation, or prior clues from the coast, and reward players who ask the oracle the right questions instead of guessing.",
+      "doors": [
+        {
+          "name": "West Arch",
+          "description": "A low arch with wave motifs and worn steps leading back to the passage.",
+          "type": "regular",
+          "locked": false,
+          "lockDC": 0,
+          "breakDC": 12,
+          "keyname": "",
+          "trapped": false,
+          "trap": ""
+        },
+        {
+          "name": "East Riddle Gate",
+          "description": "A round stone gate with four answer grooves and no visible handle.",
+          "type": "secret",
+          "locked": true,
+          "lockDC": 16,
+          "breakDC": 20,
+          "keyname": "Riddle key tablet",
+          "trapped": false,
+          "trap": ""
+        }
+      ],
+      "traps": [
+        {
+          "name": "False Answer Pulse",
+          "description": "Speaking an incorrect answer aloud causes the chamber to emit a sharp pulse that scrambles the speaker's recent memory of the riddle.",
+          "detectDC": 15,
+          "disableDC": 16,
+          "triggerDC": 14,
+          "damage": "2d6 psychic damage and the creature cannot take reactions until the end of its next turn"
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 14: Learn which carvings are original and which are added later.",
+        "Religion DC 13: Recognize Sister Aelwyn's ritual masking as a sign of sanctioned oracle status.",
+        "Arcana DC 15: Understand how Mirael's reflections bind the chamber's illusion tests."
+      ],
+      "accessibility": "Accessible with caution; the chamber is open, but progression depends on solving the riddle gate or earning the overseers' approval.",
+      "dangerLevel": "Low",
+      "features": [
+        {
+          "name": "Tide-Map Floor",
+          "description": "The floor depicts a coastline that shifts depending on where the viewer stands, implying different answers to the same question."
+        },
+        {
+          "name": "Answer Grooves",
+          "description": "Four carved slots on the dais respond to spoken truths rather than inserted keys."
+        },
+        {
+          "name": "Still-Water Mirror",
+          "description": "A shallow basin in the center reflects people with slight delays, as if judging their honesty."
+        }
+      ],
+      "encounters": [
+        {
+          "name": "Trial of the Spoken Tide",
+          "description": "The chamber challenges the party to answer a sequence of riddles or present a convincing case for why they should be allowed to proceed.",
+          "monsterStats": [],
+          "difficulty": "Moderate"
+        }
+      ],
+      "adventureSummary": "The Tidebound Riddle Chamber is the module's puzzle and lore hub, where the city's trial culture comes into focus. It opens the way toward the Hall of Memory Trials while teaching the party that words, not force, are often the real keys in Numillian."
+    }
+  ],
+  "randomEncounters": [
+    {
+      "roll": "1-10",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "11-20",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "21-30",
+      "encounter": "lost traveler",
+      "description": "A lost traveler appropriate for level 5 parties"
+    },
+    {
+      "roll": "31-40",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "41-50",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "51-60",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    },
+    {
+      "roll": "61-70",
+      "encounter": "wandering animal",
+      "description": "A wandering animal appropriate for level 5 parties"
+    }
+  ],
+  "areaFeatures": [
+    "mysterious mechanisms",
+    "hidden passages",
+    "ancient murals"
+  ],
+  "notes": "Consider lighting sources and trap placement. Underground areas may have limited resources.",
+  "spatialContractVersion": 1
+}
