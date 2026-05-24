@@ -328,6 +328,25 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
         self.assertEqual(result.get("seed_writer_mode"), "support")
         mock_seed.assert_called_once()
 
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_seed_writer_build")
+    def test_seed_writer_mode_explicit_fallback(self, mock_seed):
+        self._build_v2_workspace()
+        mock_seed.return_value = {
+            "status": "success",
+            "seed_status": "success",
+            "coverage": {},
+            "warnings": [],
+        }
+
+        result = run_toolkit_homebrew_packet_build(
+            self.workspace, "test-job-001", seed_writer_mode="fallback",
+        )
+
+        self.assertEqual(result["build_mode"], "blueprint_seed_fallback")
+        self.assertEqual(result.get("seed_writer_mode"), "fallback")
+        self.assertEqual(result["seed_status"], "success")
+        mock_seed.assert_called_once()
+
     def test_seed_writer_mode_invalid_fails_closed(self):
         self._build_v2_workspace()
 
@@ -351,6 +370,154 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
         self.assertFalse(bool(result.get("seed_writer_mode")))
         mock_executor.assert_called_once()
         mock_seed.assert_not_called()
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_handoff_includes_source_contract_npc_location_puzzle_tone(self, mock_executor):
+        # Build Numillian-like v2 workspace with source tokens matching
+        # production synthetic blueprint shape (display_name, chain_id/title,
+        # tone as string).
+        bp = _make_v2_blueprint(
+            npc_roster=[
+                {"display_name": "Adhagal", "aliases": [], "role": "illithid"},
+                {"display_name": "Belrik Dumma-dhur", "aliases": [], "role": "smith"},
+                {"display_name": "Xaereal the Constructor", "aliases": [], "role": "builder"},
+            ],
+            location_roster=[
+                {"display_name": "Charion Tamer", "parent_area": "District", "aliases": []},
+                {"display_name": "The Rookery", "parent_area": "District", "aliases": []},
+                {"display_name": "Handworks Guild", "parent_area": "Guild", "aliases": []},
+            ],
+            puzzle_graph=[
+                {"chain_id": "skull_riddle", "title": "The Skull Riddle"},
+                {"chain_id": "flooding_room", "title": "The Flooding Room"},
+                {"chain_id": "kill_the_dog_mindscape", "title": "Kill the Dog"},
+            ],
+            tone_requirements="quirky_character_driven_hidden_city",
+        )
+        report = {"blueprint_status": "ready", "fidelity_status": "pass"}
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(json.dumps(report), encoding="utf-8")
+
+        mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        mock_executor.assert_called_once()
+        builder_input = mock_executor.call_args[0][0]
+
+        # Handoff mode
+        self.assertEqual(builder_input.get("handoff_mode"), "source_blueprint")
+
+        # Forbidden-invention source lock
+        self.assertIn("blueprint", builder_input)
+        source_lock = builder_input["blueprint"]["source_lock"]
+        self.assertTrue(source_lock["canonical_names_locked"])
+        self.assertTrue(source_lock["invented_major_entities_forbidden"])
+        self.assertTrue(source_lock["replacement_plotlines_forbidden"])
+        self.assertTrue(source_lock["puzzle_rule_rewrite_forbidden"])
+
+        # Source artifact paths
+        artifacts = builder_input["blueprint"]["source_artifacts"]
+        self.assertIsInstance(artifacts.get("source_graph"), str)
+        self.assertIsInstance(artifacts.get("plot_topology_report"), str)
+
+        # Source contract fields directly in builder_input
+        self.assertIn("source_npc_names", builder_input)
+        self.assertIn("Adhagal", builder_input["source_npc_names"])
+        self.assertIn("Belrik Dumma-dhur", builder_input["source_npc_names"])
+        self.assertIn("Xaereal the Constructor", builder_input["source_npc_names"])
+
+        self.assertIn("source_location_names", builder_input)
+        self.assertIn("Charion Tamer", builder_input["source_location_names"])
+        self.assertIn("The Rookery", builder_input["source_location_names"])
+        self.assertIn("Handworks Guild", builder_input["source_location_names"])
+
+        self.assertIn("source_puzzle_ids", builder_input)
+        self.assertIn("skull_riddle", builder_input["source_puzzle_ids"])
+        self.assertIn("flooding_room", builder_input["source_puzzle_ids"])
+        self.assertIn("kill_the_dog_mindscape", builder_input["source_puzzle_ids"])
+
+        self.assertIn("source_tone", builder_input)
+        self.assertIn("quirky_character_driven_hidden_city", builder_input["source_tone"])
+
+        # Verify persisted builder_input.json carries the same fields
+        persisted_path = self.workspace / "builder_input.json"
+        self.assertTrue(persisted_path.exists(), "builder_input.json must be persisted")
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        self.assertIn("source_npc_names", persisted)
+        self.assertIn("Adhagal", persisted["source_npc_names"])
+        self.assertIn("source_location_names", persisted)
+        self.assertIn("Charion Tamer", persisted["source_location_names"])
+        self.assertIn("source_puzzle_ids", persisted)
+        self.assertIn("skull_riddle", persisted["source_puzzle_ids"])
+        self.assertIn("source_tone", persisted)
+        self.assertIn("quirky_character_driven_hidden_city", persisted["source_tone"])
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_blocked_blueprint_does_not_call_module_builder(self, mock_executor):
+        bp = _make_v2_blueprint(blueprint_status="blocked")
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(
+            json.dumps({"blueprint_status": "blocked"}), encoding="utf-8"
+        )
+
+        with patch(
+            "web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD",
+            True,
+        ):
+            result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("blueprint_not_ready", result.get("error", ""))
+        mock_executor.assert_not_called()
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_blocked_report_does_not_call_module_builder(self, mock_executor):
+        bp = _make_v2_blueprint(blueprint_status="ready")
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(
+            json.dumps({"blueprint_status": "blocked"}), encoding="utf-8"
+        )
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("blueprint_not_ready", result.get("error", ""))
+        mock_executor.assert_not_called()
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_empty_blueprint_fails_closed(self, mock_executor):
+        (self.workspace / "builder_blueprint.json").write_text("{}", encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(
+            json.dumps({"blueprint_status": "ready"}), encoding="utf-8"
+        )
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("blueprint_not_ready", result.get("error", ""))
+        mock_executor.assert_not_called()
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_legacy_non_source_path_routes_to_module_builder(self, mock_executor):
+        self._build_v2_workspace()
+        mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
+
+        with patch(
+            "web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF",
+            False,
+        ):
+            result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        self.assertEqual(result["build_mode"], "packet_workspace_v1")
+        mock_executor.assert_called_once()
+        builder_input = mock_executor.call_args[0][0]
+        self.assertNotIn("handoff_mode", builder_input)
+        self.assertNotIn("blueprint", builder_input)
+        self.assertNotIn("source_npc_names", builder_input)
+        self.assertNotIn("source_location_names", builder_input)
+        self.assertNotIn("source_puzzle_ids", builder_input)
+        self.assertNotIn("source_tone", builder_input)
 
 
 class TestDescribeBlueprintNotReady(unittest.TestCase):

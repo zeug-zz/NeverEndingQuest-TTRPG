@@ -566,6 +566,43 @@ def run_toolkit_homebrew_packet_build(
             builder_input["handoff_mode"] = "source_blueprint"
             builder_input["blueprint"] = blueprint_metadata
 
+        # Source contract: carry source-fidelity tokens from the blueprint
+        # so ModuleBuilder receives required NPCs, locations, puzzles, and tone
+        # guidance without needing to re-read the blueprint file.
+        if blueprint_metadata and isinstance(blueprint_artifact, dict) and blueprint_artifact:
+            _source_npc_names = [
+                n.get("name") or n.get("display_name", "")
+                for n in blueprint_artifact.get("npc_roster", [])
+                if isinstance(n, dict) and (n.get("name") or n.get("display_name"))
+            ]
+            if _source_npc_names:
+                builder_input["source_npc_names"] = _source_npc_names
+
+            _source_location_names = [
+                l.get("name") or l.get("display_name", "")
+                for l in blueprint_artifact.get("location_roster", [])
+                if isinstance(l, dict) and (l.get("name") or l.get("display_name"))
+            ]
+            if _source_location_names:
+                builder_input["source_location_names"] = _source_location_names
+
+            _source_puzzle_ids = [
+                p.get("puzzle_id") or p.get("chain_id") or p.get("title", "")
+                for p in blueprint_artifact.get("puzzle_graph", [])
+                if isinstance(p, dict) and (p.get("puzzle_id") or p.get("chain_id") or p.get("title"))
+            ]
+            if _source_puzzle_ids:
+                builder_input["source_puzzle_ids"] = _source_puzzle_ids
+
+            _raw_tone = blueprint_artifact.get("tone_requirements")
+            _source_tone: list = []
+            if isinstance(_raw_tone, str) and _raw_tone.strip():
+                _source_tone = [_raw_tone.strip()]
+            elif isinstance(_raw_tone, list):
+                _source_tone = [str(t) for t in _raw_tone if t]
+            if _source_tone:
+                builder_input["source_tone"] = _source_tone
+
         if not persist_builder_input_artifact(workspace, builder_input):
             return {
                 "status": "failed",

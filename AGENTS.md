@@ -6788,6 +6788,31 @@ Eliminate 20-35 second hangs when downloading adventure markdown for modules wit
 - `openspec validate toolkit-adventure-download-performance-fix` -> VALID
 - Module summaries regenerated: Into_the_Deepvault, The_Pumpkin_Kings_Curse, Xhalruuns_Masquerade, Night_of_the_Restless_Dead
 
+### Toolkit Accurate-Ingest ModuleBuilder Handoff (COMPLETED - 2026-05-25)
+
+**Status:** COMPLETED - Added deterministic source-contract handoff from the accurate-ingest blueprint to ModuleBuilder, ensuring required NPCs, locations, puzzles, and tone guidance enter `builder_input` before creative generation starts. Includes fail-closed guards for blocked/malformed blueprints and leakage guard for legacy-disabled paths.
+
+**Objective:**
+Ensure ModuleBuilder receives bounded source-contract fields (NPC names, location names, puzzle IDs, tone requirements, forbidden-invention guidance) for source-enhanced builds, while keeping legacy/concept paths clean.
+
+**Implementation Summary:**
+- `web/extensions/toolkit_homebrew_packet_builder.py` — Added source-contract extraction from `blueprint_artifact` (NPC `npc_roster`, location `location_roster`, `puzzle_graph`, `tone_requirements`) into 4 `builder_input` fields (`source_npc_names`, `source_location_names`, `source_puzzle_ids`, `source_tone`). Extraction gated behind `blueprint_metadata` to prevent leakage into legacy-disabled paths. Key alignment for production synthetic blueprint shape (`display_name`, `chain_id`, `title`, string/list tone).
+- `scripts/test_toolkit_homebrew_gui_unified_flow.py` — Added 8 tests across Sections 1-4: default handoff routing, explicit seed writer modes, source-contract presence with 12 assertions + persistence check, 3 fail-closed guards (blocked blueprint, blocked report, empty blueprint), and strengthened legacy path test asserting source fields absent under `ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF=False`.
+
+**Verification:**
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_homebrew_gui_unified_flow` -> 85/85 PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_v2_contract` -> 33/33 PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_end_to_end` -> 46/46 PASS (3 skipped)
+- `openspec validate toolkit-accurate-ingest-modulebuilder-handoff` -> VALID
+- No Numillian module artifacts modified.
+- Archived to `openspec/changes/archive/2026-05-25-toolkit-accurate-ingest-modulebuilder-handoff/`.
+
+**4 main specs synced during archive:**
+- `accurate-ingest-builder-input-source-contract`
+- `accurate-ingest-handoff-artifact-reporting`
+- `accurate-ingest-modulebuilder-default-handoff`
+- `accurate-ingest-seed-writer-explicit-support-role`
+
 ### Toolkit Accurate-Ingest Numillian NPC/Location/Puzzle Preservation (COMPLETED - 2026-05-24)
 
 **Status:** COMPLETED - Restored Numillian source-fidelity preservation (NPC 23/23, location 13/13, puzzle 3/3) after seed-writer mode changed from ModuleBuilder to support mode, and archived the OpenSpec change.
