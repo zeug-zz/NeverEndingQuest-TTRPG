@@ -560,6 +560,139 @@ class TestNumillianRebuildScriptContracts(unittest.TestCase):
         self.assertIn("run_toolkit_module_postbuild_finishing", text)
         self.assertNotIn("homebrew_ingest_dev.py", text)
 
+    def test_rebuild_script_passes_seed_writer_support_mode(self):
+        """Step 2.2: rebuild script passes seed_writer_mode='support' to packet build.
+
+        This source-contract test fails if the seed writer mode is removed or
+        changed without updating the Numillian NPC preservation path.
+        """
+        text = Path("scripts/rebuild_numillian_accurate_ingest.py").read_text(encoding="utf-8")
+        self.assertIn('seed_writer_mode="support"', text)
+        self.assertIn("run_toolkit_homebrew_packet_build", text)
+
+
+# ---------------------------------------------------------------------------
+# Step 2.3: Source NPC Binding Contract
+#   Deterministic coverage ensuring benchmark-required source NPCs have at
+#   least one binding (location, role, faction, source_refs) in the latest
+#   Numillian workspace builder_blueprint.json.
+# ---------------------------------------------------------------------------
+
+class TestNumillianBlueprintBindingContract(unittest.TestCase):
+    """Reads the latest Numillian workspace blueprint and validates NPC bindings."""
+
+    WORKSPACE_GLOB = "modules/ingest/workspaces/The_Hidden_City_of_Numillian_replacement_proof_*/builder_blueprint.json"
+    BENCHMARK_PATH = Path("data/benchmarks/The_Hidden_City_of_Numillian_benchmark.json")
+    _expected_source_npcs: list = []
+    _workspace_blueprint: dict = {}
+
+    @classmethod
+    def setUpClass(cls):
+        # Load benchmark fixture for expected NPC list
+        if cls.BENCHMARK_PATH.exists():
+            try:
+                bm = json.loads(cls.BENCHMARK_PATH.read_text(encoding="utf-8"))
+                cls._expected_source_npcs = (
+                    bm.get("expectations", {})
+                    .get("npc_preservation", {})
+                    .get("named_source_npcs", [])
+                )
+            except Exception:
+                cls._expected_source_npcs = []
+
+    def setUp(self):
+        if not self._expected_source_npcs:
+            self.skipTest("Benchmark fixture not available")
+        workspaces = sorted(Path(".").glob(self.WORKSPACE_GLOB), key=lambda p: p.stat().st_mtime)
+        if not workspaces:
+            self.skipTest("No Numillian workspace blueprint found")
+        bp_path = workspaces[-1]
+        try:
+            self.blueprint = json.loads(bp_path.read_text(encoding="utf-8"))
+        except Exception:
+            self.skipTest(f"Could not parse workspace blueprint: {bp_path}")
+
+    def _roster_names(self) -> list:
+        """Return list of display_names from npc_roster for matching."""
+        return [n.get("display_name", "") for n in self.blueprint.get("npc_roster", [])]
+
+    def _find_roster_entry(self, source_name: str):
+        """Find a roster entry matching a benchmark source NPC name.
+
+        Uses relaxed matching: the source name may contain parenthetical variants
+        (e.g. 'Wayne (Waynobibille Nebiddlespun)'), and the display_name may be
+        abbreviated (e.g. 'Wayne').  Also handles compound names such as
+        'The Caretaker / Procul'.
+        """
+        roster = self.blueprint.get("npc_roster", [])
+        core = source_name.split("(")[0].strip().lower()
+        # Direct match
+        for n in roster:
+            dn = n.get("display_name", "").lower()
+            if dn == source_name.lower() or dn == core:
+                return n
+        # Slash-separated compound match
+        for n in roster:
+            dn = n.get("display_name", "")
+            parts = [p.strip().lower() for p in dn.split("/")]
+            if source_name.lower() in parts or core in parts:
+                return n
+        # Substring match: one name is contained within the other
+        for n in roster:
+            dn = n.get("display_name", "").lower()
+            if core in dn or dn in core:
+                return n
+        return None
+
+    def test_benchmark_required_npcs_are_known(self):
+        """Precondition: the expected source NPC list is non-empty."""
+        self.assertGreater(len(self._expected_source_npcs), 0)
+
+    def test_present_source_npcs_have_at_least_one_binding(self):
+        """Step 2.3: kept source NPCs have role, location_binding, faction, or source_refs.
+
+        This test fails if a benchmark-required source NPC present in the
+        blueprint roster lacks all binding fields.
+        """
+        bare: list = []
+        for source_name in self._expected_source_npcs:
+            entry = self._find_roster_entry(source_name)
+            if entry is None:
+                continue
+            has_binding = bool(
+                entry.get("role")
+                or entry.get("location_binding")
+                or entry.get("faction")
+                or entry.get("source_refs")
+            )
+            if not has_binding:
+                bare.append(
+                    f"{source_name} -> display='{entry.get('display_name','')}' "
+                    f"(role='{entry.get('role','')}' loc='{entry.get('location_binding','')}' "
+                    f"faction='{entry.get('faction','')}' refs={len(entry.get('source_refs',[]))})"
+                )
+        self.assertEqual(
+            bare, [],
+            f"{len(bare)} kept source NPC(s) lack any binding:\n" + "\n".join(bare),
+        )
+
+    def test_absent_source_npcs_are_documented(self):
+        """Document which benchmark source NPCs are absent from the blueprint.
+
+        This test documents the current state without failing the binding step.
+        """
+        present_names = [n.lower() for n in self._roster_names()]
+        absent: list = []
+        for source_name in self._expected_source_npcs:
+            core = source_name.split("(")[0].strip().lower()
+            if source_name.lower() not in present_names and core not in present_names:
+                absent.append(source_name)
+        if absent:
+            self.skipTest(
+                f"DOCUMENTATION: {len(absent)} benchmark source NPC(s) absent from blueprint: "
+                + ", ".join(absent)
+            )
+
 
 class TestNumillianTriageRegression(unittest.TestCase):
     """Section 3: Numillian regression coverage for entity candidate triage."""

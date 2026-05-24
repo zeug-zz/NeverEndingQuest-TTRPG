@@ -342,11 +342,11 @@ class TestNumillianPuzzleBlockerDocumentation(unittest.TestCase):
             "puzzle_preservation pass threshold must be 1.0",
         )
 
-    def test_current_benchmark_report_shows_puzzle_blockers(self):
-        """SOURCE-CONTRACT: Current benchmark report shows puzzle_blocked status.
+    def test_current_benchmark_report_shows_puzzle_pass(self):
+        """SOURCE-CONTRACT: Current benchmark report shows puzzle pass (3/3).
 
-        After the production rebuild, the accurate_ingest_benchmark_report.json
-        shows puzzle_preservation as blocked with 1/3 found.
+        After the puzzle enrichment fix in the rebuild script, puzzle
+        preservation should be restored to 3/3 with all three puzzles matched.
         """
         report_path = Path(
             "modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json"
@@ -366,9 +366,170 @@ class TestNumillianPuzzleBlockerDocumentation(unittest.TestCase):
             self.skipTest("No puzzle_preservation category in benchmark report")
         puzzle = puzzle_cats[0]
         self.assertEqual(puzzle["status"], "pass")
-        self.assertIn("skull_riddle", puzzle.get("details", {}).get("matched", []))
+        self.assertEqual(puzzle["actual"], "3/3")
+        self.assertIn("flooding_room", puzzle.get("details", {}).get("matched", []))
         self.assertIn("kill_the_dog_mindscape", puzzle.get("details", {}).get("matched", []))
-        self.assertEqual(puzzle.get("details", {}).get("missing", []), [])
+        self.assertIn("skull_riddle", puzzle.get("details", {}).get("matched", []))
+
+
+# ---------------------------------------------------------------------------
+# Step 1.1: Numillian NPC Preservation Blocker Documentation
+#   Deterministic regression coverage locking the current 1/23 NPC
+#   preservation blocker with all 22 missing source NPC names.
+# ---------------------------------------------------------------------------
+
+class TestNumillianNpcPreservationBlockerDocumentation(unittest.TestCase):
+    """Reads the authoritative benchmark report and locks current NPC preservation."""
+
+    REPORT_PATH = Path("modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json")
+
+    EXPECTED_ALL_NPCS = [
+        "Adhagal",
+        "Belrik Dumma-dhur",
+        "Book-shut",
+        "Bramak Pakel",
+        "Celun Spackles",
+        "Chad",
+        "Deflation",
+        "Dog-Growl",
+        "Dwal",
+        "Elroy Browning",
+        "Irene Laughing-Eyes",
+        "Jam",
+        "Kobe",
+        "Procul",
+        "Qillasithe",
+        "Ragna Fitrill",
+        "Rollo",
+        "Shuluth",
+        "Strongrod Bildins",
+        "The Caretaker",
+        "Treever Klinhammer",
+        "Wayne (Waynobibille Nebiddlespun)",
+        "Xaereal the Constructor",
+    ]
+
+    def setUp(self) -> None:
+        if not self.REPORT_PATH.exists():
+            self.skipTest("Numillian benchmark report not found")
+        try:
+            import json
+            self.data = json.loads(self.REPORT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            self.skipTest("Numillian benchmark report could not be parsed")
+
+    def _get_npc_category(self):
+        cats = [
+            c for c in self.data.get("category_results", [])
+            if c.get("category") == "npc_preservation"
+        ]
+        if not cats:
+            self.skipTest("No npc_preservation category in benchmark report")
+        return cats[0]
+
+    def test_npc_preservation_status_is_pass(self):
+        """SOURCE-CONTRACT: Current NPC preservation is pass (23/23)."""
+        npc = self._get_npc_category()
+        self.assertEqual(npc["status"], "pass")
+
+    def test_npc_preservation_actual_is_23_of_23(self):
+        """SOURCE-CONTRACT: Current NPC preservation actual is 23/23."""
+        npc = self._get_npc_category()
+        self.assertEqual(npc["actual"], "23/23")
+
+    def test_npc_preservation_score_is_1(self):
+        """SOURCE-CONTRACT: Current NPC preservation score is 1.0."""
+        npc = self._get_npc_category()
+        self.assertAlmostEqual(npc["score"], 1.0)
+
+    def test_npc_preservation_matched_names(self):
+        """SOURCE-CONTRACT: All 23 expected source NPCs are matched."""
+        npc = self._get_npc_category()
+        details = npc.get("details", {})
+        matched = details.get("matched_names", [])
+        self.assertCountEqual(matched, self.EXPECTED_ALL_NPCS)
+
+    def test_npc_preservation_no_missing_names(self):
+        """SOURCE-CONTRACT: No source NPCs are missing."""
+        npc = self._get_npc_category()
+        details = npc.get("details", {})
+        missing = details.get("missing_names", [])
+        self.assertEqual(missing, [])
+
+
+# ---------------------------------------------------------------------------
+# Step 1.2: Numillian Location Preservation Blocker Documentation
+#   Deterministic regression coverage locking the current 0/13 location
+#   preservation blocker with all 13 missing source location names.
+# ---------------------------------------------------------------------------
+
+class TestNumillianLocationPreservationBlockerDocumentation(unittest.TestCase):
+    """Reads the authoritative benchmark report and locks current location preservation."""
+
+    REPORT_PATH = Path("modules/The_Hidden_City_of_Numillian/accurate_ingest_benchmark_report.json")
+
+    EXPECTED_ALL_LOCATIONS = [
+        "Charion Tamer",
+        "Shuluth's Tomb",
+        "The Rookery",
+        "The Grove",
+        "Garden House",
+        "Brooksteps Inn",
+        "Wizard's Tower",
+        "Vampire's House",
+        "Cat's House",
+        "Art Gallery",
+        "Temple of Broance",
+        "Cellar",
+        "Handworks Guild",
+    ]
+
+    def setUp(self) -> None:
+        if not self.REPORT_PATH.exists():
+            self.skipTest("Numillian benchmark report not found")
+        try:
+            import json
+            self.data = json.loads(self.REPORT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            self.skipTest("Numillian benchmark report could not be parsed")
+
+    def _get_location_category(self):
+        cats = [
+            c for c in self.data.get("category_results", [])
+            if c.get("category") == "location_preservation"
+        ]
+        if not cats:
+            self.skipTest("No location_preservation category in benchmark report")
+        return cats[0]
+
+    def test_location_preservation_status_is_pass(self):
+        """SOURCE-CONTRACT: Current location preservation is pass (13/13)."""
+        loc = self._get_location_category()
+        self.assertEqual(loc["status"], "pass")
+
+    def test_location_preservation_actual_is_13_of_13(self):
+        """SOURCE-CONTRACT: Current location preservation actual is 13/13."""
+        loc = self._get_location_category()
+        self.assertEqual(loc["actual"], "13/13")
+
+    def test_location_preservation_score_is_1(self):
+        """SOURCE-CONTRACT: Current location preservation score is 1.0."""
+        loc = self._get_location_category()
+        self.assertAlmostEqual(loc["score"], 1.0)
+
+    def test_location_preservation_matched_names(self):
+        """SOURCE-CONTRACT: All 13 expected source locations are matched."""
+        loc = self._get_location_category()
+        details = loc.get("details", {})
+        matched = details.get("matched_names", [])
+        self.assertEqual(matched, self.EXPECTED_ALL_LOCATIONS)
+
+    def test_location_preservation_no_missing_names(self):
+        """SOURCE-CONTRACT: No source locations are missing."""
+        loc = self._get_location_category()
+        details = loc.get("details", {})
+        missing = details.get("missing_names", [])
+        self.assertEqual(missing, [])
 
 
 class TestPlotTopologyReportAccess(unittest.TestCase):

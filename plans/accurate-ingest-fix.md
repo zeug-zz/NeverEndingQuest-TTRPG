@@ -916,6 +916,40 @@ Recommended chain: **10 OpenSpec changes**: one immediate stabilization change (
 
 Do not archive the current `toolkit-accurate-ingest-gui-builder-unification` as-is. Either supersede it with this chain or revise it only after the recovery chain is green.
 
+### Backstage Audit Assistant Integration
+
+The backstage agentic harness work described in `plans/backstage-agents.md` should not be folded into the current Numillian NPC/location preservation slice. Accurate-ingest recovery should first finish the deterministic preservation chain already in progress:
+
+- NPC preservation.
+- Location preservation.
+- Puzzle preservation regression repair.
+- Benchmark and publishability reassessment.
+
+After those gates are stable, add a separate read-only OpenSpec change:
+
+```text
+toolkit-accurate-ingest-backstage-audit-mvp
+```
+
+This first auditor should consume existing deterministic artifacts:
+
+- `accurate_ingest_benchmark_report.json`
+- `toolkit_build_report.json`
+- `validation_report.json`
+- `source_fidelity_report.json`
+- `build_fidelity_report.json`
+- Publishability audit JSON.
+
+It should produce an evidence-backed blocker/regression summary and next-step recommendation, but MUST NOT:
+
+- Mutate module artifacts.
+- Weaken source-fidelity gates.
+- Create waivers.
+- Replace benchmark or publishability scripts.
+- Become part of the live ModuleBuilder generation loop.
+
+The existing ModuleBuilder LLM calls remain the creative authoring worker. The backstage audit and builder assistants should wrap and inspect that workflow rather than turn `ModuleBuilder` itself into an autonomous ReAct loop.
+
 ### Execution Discipline
 
 For every change:
