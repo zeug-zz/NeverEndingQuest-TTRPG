@@ -1,3 +1,3 @@
 [tool.bandit]
 skips = ["B101", "B102", "B104", "B324", "B601", "B404", "B603", "B607", "B608"]
-exclude_dirs = [".venv", "backups", "memory-bank", "debug", "__pycache__"]
+exclude = [".venv", "backups", "memory-bank", "debug", "__pycache__"]

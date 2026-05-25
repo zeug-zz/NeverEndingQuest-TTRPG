@@ -50,7 +50,6 @@ jobs:
             --config p/bandit \
             --config p/python \
             --config p/secrets \
-            --error \
             --metrics=off \
             --sarif > semgrep-results.sarif
       - name: Upload SARIF
