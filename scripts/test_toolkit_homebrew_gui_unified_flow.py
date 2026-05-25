@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from web.extensions.toolkit_homebrew_packet_builder import (
     _classify_blueprint_handoff,
     _describe_blueprint_not_ready,
+    _execute_module_builder,
     run_toolkit_homebrew_packet_build,
     ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF,
     ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD,
@@ -329,6 +330,39 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
         mock_seed.assert_called_once()
 
     @patch("web.extensions.toolkit_homebrew_packet_builder._execute_seed_writer_build")
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_explicit_seed_writer_ignores_source_monster_refs_and_encounter_seeds(self, mock_executor, mock_seed):
+        """Explicit seed writer mode remains compatible with source monster/encounter fields."""
+        self._build_v2_workspace()
+        # Add source fields to packet and blueprint
+        packet_path = self.workspace / "normalized_packet.json"
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["monster_refs"] = ["Alhoon", "Illithid"]
+        packet["encounter_seeds"] = ["The skull riddle trial"]
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+        bp = json.loads((self.workspace / "builder_blueprint.json").read_text(encoding="utf-8"))
+        bp["monster_refs"] = ["Nothic", "Charion"]
+        bp["encounter_seeds"] = ["The flooding room puzzle"]
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+
+        mock_seed.return_value = {
+            "status": "success",
+            "seed_status": "success",
+            "coverage": {},
+            "warnings": [],
+        }
+
+        result = run_toolkit_homebrew_packet_build(
+            self.workspace, "test-job-001", seed_writer_mode="support",
+        )
+
+        self.assertEqual(result["build_mode"], "blueprint_seed_support")
+        self.assertEqual(result.get("seed_writer_mode"), "support")
+        self.assertEqual(result["seed_status"], "success")
+        mock_seed.assert_called_once()
+        mock_executor.assert_not_called()
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_seed_writer_build")
     def test_seed_writer_mode_explicit_fallback(self, mock_seed):
         self._build_v2_workspace()
         mock_seed.return_value = {
@@ -454,6 +488,123 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
         self.assertIn("quirky_character_driven_hidden_city", persisted["source_tone"])
 
     @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_handoff_includes_source_monster_refs_and_encounter_seeds(self, mock_executor):
+        """Builder input includes source_monster_refs and source_encounter_seeds."""
+        monster_refs = [
+            "Alhoon", "Illithid", "Homunculus",
+            "Kenku", "Nothic", "Charion",
+        ]
+        encounter_seeds = [
+            "The skull riddle trial challenges the party to answer the skull's questions",
+            "The flooding room puzzle requires solving water flow mechanisms",
+            "The dog test examines the party's compassion and resolve",
+            "A mindscape battle against psychic attackers and mental projections",
+        ]
+        # Populate normalized packet with source fields
+        packet_path = self.workspace / "normalized_packet.json"
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["monster_refs"] = monster_refs
+        packet["encounter_seeds"] = encounter_seeds
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+
+        bp = _make_v2_blueprint(
+            monster_refs=monster_refs,
+            encounter_seeds=encounter_seeds,
+        )
+        report = {"blueprint_status": "ready", "fidelity_status": "pass"}
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(json.dumps(report), encoding="utf-8")
+
+        mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        mock_executor.assert_called_once()
+        builder_input = mock_executor.call_args[0][0]
+
+        # Monster refs
+        self.assertIn("source_monster_refs", builder_input)
+        for ref in ["Alhoon", "Illithid", "Homunculus", "Kenku", "Nothic", "Charion"]:
+            self.assertIn(ref, builder_input["source_monster_refs"])
+
+        # Encounter seeds
+        self.assertIn("source_encounter_seeds", builder_input)
+        self.assertIn(
+            "The skull riddle trial challenges the party to answer the skull's questions",
+            builder_input["source_encounter_seeds"],
+        )
+        self.assertIn(
+            "The flooding room puzzle requires solving water flow mechanisms",
+            builder_input["source_encounter_seeds"],
+        )
+        self.assertIn(
+            "The dog test examines the party's compassion and resolve",
+            builder_input["source_encounter_seeds"],
+        )
+        self.assertIn(
+            "A mindscape battle against psychic attackers and mental projections",
+            builder_input["source_encounter_seeds"],
+        )
+
+        # Persistence assertions
+        persisted_path = self.workspace / "builder_input.json"
+        self.assertTrue(persisted_path.exists())
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        self.assertIn("source_monster_refs", persisted)
+        for ref in ["Alhoon", "Illithid", "Homunculus", "Kenku", "Nothic", "Charion"]:
+            self.assertIn(ref, persisted["source_monster_refs"])
+        self.assertIn("source_encounter_seeds", persisted)
+        for seed_text in [
+            "The skull riddle trial challenges the party to answer the skull's questions",
+            "The flooding room puzzle requires solving water flow mechanisms",
+            "The dog test examines the party's compassion and resolve",
+            "A mindscape battle against psychic attackers and mental projections",
+        ]:
+            self.assertIn(seed_text, persisted["source_encounter_seeds"])
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_packet_only_degraded_includes_source_monster_refs_and_encounter_seeds(self, mock_executor):
+        """Packet-only degraded source-enhanced path preserves monster refs and encounter seeds."""
+        # Write source fields into normalized packet
+        packet_path = self.workspace / "normalized_packet.json"
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["monster_refs"] = ["Alhoon", "Illithid"]
+        packet["encounter_seeds"] = ["The skull riddle trial"]
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+        # Degraded blueprint: empty blueprint, report with blocked fidelity
+        (self.workspace / "builder_blueprint.json").write_text("{}", encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(
+            json.dumps({"blueprint_status": "ready", "fidelity_status": "blocked"}),
+            encoding="utf-8",
+        )
+
+        mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-001")
+
+        self.assertEqual(result["build_mode"], "source_enhanced_modulebuilder")
+        mock_executor.assert_called_once()
+        builder_input = mock_executor.call_args[0][0]
+
+        # Source fields from packet only
+        self.assertIn("source_monster_refs", builder_input)
+        self.assertIn("Alhoon", builder_input["source_monster_refs"])
+        self.assertIn("Illithid", builder_input["source_monster_refs"])
+
+        self.assertIn("source_encounter_seeds", builder_input)
+        self.assertIn("The skull riddle trial", builder_input["source_encounter_seeds"])
+
+        # Persistence assertions
+        persisted_path = self.workspace / "builder_input.json"
+        self.assertTrue(persisted_path.exists())
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        self.assertIn("source_monster_refs", persisted)
+        self.assertIn("Alhoon", persisted["source_monster_refs"])
+        self.assertIn("Illithid", persisted["source_monster_refs"])
+        self.assertIn("source_encounter_seeds", persisted)
+        self.assertIn("The skull riddle trial", persisted["source_encounter_seeds"])
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
     def test_blocked_blueprint_does_not_call_module_builder(self, mock_executor):
         bp = _make_v2_blueprint(blueprint_status="blocked")
         (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
@@ -501,6 +652,16 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
     @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
     def test_legacy_non_source_path_routes_to_module_builder(self, mock_executor):
         self._build_v2_workspace()
+        # Add source fields to both packet and blueprint to verify no leakage
+        packet_path = self.workspace / "normalized_packet.json"
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["monster_refs"] = ["Alhoon", "Illithid"]
+        packet["encounter_seeds"] = ["The skull riddle trial"]
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+        bp = json.loads((self.workspace / "builder_blueprint.json").read_text(encoding="utf-8"))
+        bp["monster_refs"] = ["Nothic", "Charion"]
+        bp["encounter_seeds"] = ["The flooding room puzzle"]
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
         mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
 
         with patch(
@@ -518,6 +679,180 @@ class TestPacketBuilderV2Integration(unittest.TestCase):
         self.assertNotIn("source_location_names", builder_input)
         self.assertNotIn("source_puzzle_ids", builder_input)
         self.assertNotIn("source_tone", builder_input)
+        self.assertNotIn("source_monster_refs", builder_input)
+        self.assertNotIn("source_encounter_seeds", builder_input)
+
+    @patch("core.generators.module_builder.ModuleBuilder")
+    @patch("core.generators.module_builder.BuilderConfig")
+    def test_execute_module_builder_receives_source_enhanced_context(self, mock_config, mock_builder_cls):
+        """_execute_module_builder passes source context to ModuleBuilder build_module call."""
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        builder_input = {
+            "builder_narrative": "Test narrative for build",
+            "derived_builder_parameters": {
+                "module_name": "Test_Module",
+                "num_areas": 2,
+                "locations_per_area": 3,
+                "output_directory": "./modules/Test_Module",
+            },
+            "source_npc_names": ["Elara", "Thorn"],
+            "source_location_names": ["Dark Forest", "Crystal Cave"],
+            "source_puzzle_ids": ["riddle_of_the_ancients", "crystal_shard_puzzle"],
+            "source_tone": ["heroic", "mysterious"],
+            "source_monster_refs": ["Alhoon", "Illithid", "Beholder"],
+            "source_encounter_seeds": ["The skull riddle trial", "The flooding room puzzle"],
+            "blueprint": {
+                "source_lock": {
+                    "canonical_names_locked": True,
+                    "invented_major_entities_forbidden": True,
+                    "replacement_plotlines_forbidden": True,
+                    "puzzle_rule_rewrite_forbidden": True,
+                    "allowed_to_rewrite": False,
+                },
+            },
+        }
+
+        _execute_module_builder(builder_input)
+
+        mock_builder_cls.assert_called_once()
+        mock_builder.build_module.assert_called_once()
+        build_arg = mock_builder.build_module.call_args[0][0]
+
+        # These assertions verify source-enhanced context is appended before build_module.
+        self.assertIn("Elara", build_arg)
+        self.assertIn("Dark Forest", build_arg)
+        self.assertIn("riddle_of_the_ancients", build_arg)
+        self.assertIn("heroic", build_arg)
+        self.assertIn("Alhoon", build_arg)
+        self.assertIn("skull riddle trial", build_arg)
+
+        # Assert all required section labels are present
+        self.assertIn("NPCS:", build_arg)
+        self.assertIn("LOCATIONS:", build_arg)
+        self.assertIn("PUZZLES:", build_arg)
+        self.assertIn("TONE:", build_arg)
+        self.assertIn("MONSTERS:", build_arg)
+        self.assertIn("ENCOUNTER_SEEDS:", build_arg)
+        self.assertIn("SOURCE_LOCKS:", build_arg)
+
+        # Assert true source-lock rules appear
+        self.assertIn("canonical_names_locked", build_arg)
+        self.assertIn("invented_major_entities_forbidden", build_arg)
+        self.assertIn("replacement_plotlines_forbidden", build_arg)
+        self.assertIn("puzzle_rule_rewrite_forbidden", build_arg)
+
+        # Assert false source-lock rules are omitted
+        self.assertNotIn("allowed_to_rewrite", build_arg)
+
+    @patch("core.generators.module_builder.ModuleBuilder")
+    @patch("core.generators.module_builder.BuilderConfig")
+    @patch("utils.ai_client_factory.create_chat_client")
+    @patch("utils.ai_client_factory.get_model_config")
+    def test_execute_module_builder_source_context_provider_free(self, mock_config_factory, mock_client_factory, mock_builder_config, mock_builder_cls):
+        """_execute_module_builder source path does not trigger live provider calls."""
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_client_factory.side_effect = AssertionError("provider call blocked")
+        mock_config_factory.side_effect = AssertionError("provider config call blocked")
+
+        builder_input = {
+            "builder_narrative": "Test narrative for build",
+            "derived_builder_parameters": {
+                "module_name": "Test_Module",
+                "num_areas": 2,
+                "locations_per_area": 3,
+                "output_directory": "./modules/Test_Module",
+            },
+            "source_npc_names": ["Elara", "Thorn"],
+            "source_monster_refs": ["Alhoon"],
+        }
+
+        _execute_module_builder(builder_input)
+
+        mock_builder_cls.assert_called_once()
+        mock_builder.build_module.assert_called_once()
+        mock_client_factory.assert_not_called()
+        mock_config_factory.assert_not_called()
+
+        build_arg = mock_builder.build_module.call_args[0][0]
+        self.assertIn("Elara", build_arg)
+        self.assertIn("Alhoon", build_arg)
+
+    @patch("core.generators.module_builder.ModuleBuilder")
+    @patch("core.generators.module_builder.BuilderConfig")
+    def test_execute_module_builder_plain_narrative_without_source(self, mock_config, mock_builder_cls):
+        """_execute_module_builder passes plain narrative when no source fields present."""
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        builder_input = {
+            "builder_narrative": "Test narrative for build",
+            "derived_builder_parameters": {
+                "module_name": "Test_Module",
+                "num_areas": 2,
+                "locations_per_area": 3,
+                "output_directory": "./modules/Test_Module",
+            },
+        }
+
+        _execute_module_builder(builder_input)
+
+        mock_builder_cls.assert_called_once()
+        mock_builder.build_module.assert_called_once_with("Test narrative for build")
+
+    @patch("core.generators.module_builder.ModuleBuilder")
+    @patch("core.generators.module_builder.BuilderConfig")
+    def test_execute_module_builder_ignores_blank_source_values(self, mock_config, mock_builder_cls):
+        """_execute_module_builder omits source context when values are blank/whitespace."""
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        builder_input = {
+            "builder_narrative": "Test narrative for build",
+            "derived_builder_parameters": {
+                "module_name": "Test_Module",
+                "num_areas": 2,
+                "locations_per_area": 3,
+                "output_directory": "./modules/Test_Module",
+            },
+            "source_npc_names": ["   ", ""],
+            "source_encounter_seeds": [""],
+        }
+
+        _execute_module_builder(builder_input)
+
+        mock_builder_cls.assert_called_once()
+        mock_builder.build_module.assert_called_once_with("Test narrative for build")
+
+    @patch("core.generators.module_builder.ModuleBuilder")
+    @patch("core.generators.module_builder.BuilderConfig")
+    def test_execute_module_builder_source_context_ascii_only(self, mock_config, mock_builder_cls):
+        """Source context excludes non-ASCII characters via replacement."""
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        builder_input = {
+            "builder_narrative": "Test narrative for build",
+            "derived_builder_parameters": {
+                "module_name": "Test_Module",
+                "num_areas": 2,
+                "locations_per_area": 3,
+                "output_directory": "./modules/Test_Module",
+            },
+            "source_npc_names": ["Elara\u00e9", "Thorn"],
+        }
+
+        _execute_module_builder(builder_input)
+
+        mock_builder_cls.assert_called_once()
+        mock_builder.build_module.assert_called_once()
+        build_arg = mock_builder.build_module.call_args[0][0]
+
+        self.assertIn("Thorn", build_arg)
+        self.assertNotIn("\u00e9", build_arg)
+        self.assertIn("NPCS: ", build_arg)
 
 
 class TestDescribeBlueprintNotReady(unittest.TestCase):

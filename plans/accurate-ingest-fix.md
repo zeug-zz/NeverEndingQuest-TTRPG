@@ -1,6 +1,6 @@
 # Accurate Ingest GUI Builder Recovery Plan
 
-**Status:** Active roadmap; backstage audit MVP archived; next scaffold is builder-audit briefing  
+**Status:** Active roadmap; backstage audit MVP, builder-audit briefing, and ModuleBuilder handoff archived; next scaffold is generator source locks  
 **Created:** 2026-05-19  
 **Rewritten:** 2026-05-20  
 **Updated:** 2026-05-25  
@@ -31,6 +31,30 @@ Source MD/PDF
 ```
 
 The deterministic seed writer is not deleted. It is retained as support tooling: dry-run preview, fixture generation, fallback skeleton, source-vs-output comparator, and artifact repair helper. It is not the default authoring path for human adventure content.
+
+### Current Disposition After 2026-05-25 Archives
+
+The recovery chain has moved past audit scaffolding into generator-level hardening:
+
+- `toolkit-accurate-ingest-backstage-audit-mvp` is archived.
+- `toolkit-accurate-ingest-builder-audit-briefing` is archived.
+- `toolkit-accurate-ingest-modulebuilder-handoff` is archived.
+- Default accurate-ingest packet builds are now locked to the source-enhanced ModuleBuilder handoff path when no explicit seed writer mode is supplied.
+- `builder_input` now carries source NPC, location, puzzle/challenge, tone, source-lock, and artifact metadata before ModuleBuilder execution.
+
+The next recovery slice is `toolkit-accurate-ingest-generator-source-locks`. It should propagate the already-captured source contract into ModuleBuilder sub-generator prompt context and add the missing monster/encounter handoff fields required for later monster materialization.
+
+### Current Numillian Monster Gap
+
+Numillian currently has no `monsters/*.json` files because the completed preservation chain focused on NPC, location, puzzle, lore, and tone fidelity. The source pipeline sees monster-like references and encounter seeds, but the builder blueprint and seed artifacts do not yet convert those references into monster stat artifacts:
+
+- `normalized_packet.json` contains `monster_refs` such as `Duergar`, `Alhoon`, `Illithid`, `Homunculus`, `Kenku`, `Druid`, `Were-possum`, `Were-trout`, `Were-bear`, `Nothic`, `Vampire`, and `Charion`.
+- `normalized_packet.json` contains five `encounter_seeds`.
+- `builder_blueprint.json` has `encounter_plan` entries, but their `monsters` arrays are empty.
+- `monsters_seed.json` contains an empty `monsters` list.
+- `toolkit_build_report.json` reports `encounters_planned: 5`, `monsters_generated: 0`, and warns that enrichment should add monster stats.
+
+This is not currently caught by the Numillian benchmark because `accurate_ingest_benchmark_report.json` scores NPC, location, puzzle, lore, and tone preservation, not monster preservation. The generator source-lock slice should therefore add source monster/encounter handoff tests first; actual stat-file materialization can follow once the contract reaches the generator layer.
 
 ---
 

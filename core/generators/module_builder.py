@@ -72,6 +72,7 @@ class ModuleBuilder:
         self.context = ModuleContext()
         self.progress_callback = None  # For progress reporting
         self.per_area_locations = None  # For custom locations per area
+        self.source_lock_context = ""  # Accurate-ingest source lock block
         
         # Initialize generators
         self.module_gen = ModuleGenerator()
@@ -123,7 +124,15 @@ MODULE INDEPENDENCE RULES:
 
 """
         return header
-    
+
+    def _extract_source_lock_context(self, text: str) -> str:
+        """Extract source lock context block from text if present."""
+        marker = "=== SOURCE LOCK CONTEXT ==="
+        idx = text.find(marker)
+        if idx == -1:
+            return ""
+        return text[idx:].strip()
+
     def build_module(self, initial_concept: str):
         """Build a complete module from an initial concept"""
         self.log("Starting module build process...")
@@ -137,6 +146,7 @@ MODULE INDEPENDENCE RULES:
             # Get existing characters for context
             existing_characters = self.get_party_members()
             self.context_header = self.create_context_header(existing_characters)
+            self.source_lock_context = self._extract_source_lock_context(initial_concept)
             
             # Report progress
             if self.progress_callback:
@@ -159,6 +169,10 @@ MODULE INDEPENDENCE RULES:
             contextualized_concept += f"\n\nIMPORTANT: Generate exactly {self.config.num_areas} regions in the worldMap array."
             
             self.module_data = self.module_gen.generate_module(contextualized_concept, context=self.context)
+
+            # Propagate source lock context to downstream generators
+            if self.source_lock_context:
+                self.context_header += "\n\n" + self.source_lock_context
         except Exception as e:
             self.log(f"ERROR in build_module: {e}")
             import traceback
@@ -335,10 +349,13 @@ MODULE INDEPENDENCE RULES:
             prefix = self.get_location_prefix(i)
             
             # Generate area using AreaGenerator
+            module_data_for_area = self.module_data
+            if self.source_lock_context:
+                module_data_for_area = {**self.module_data, "_source_lock_context": self.source_lock_context}
             area_data = self.area_gen.generate_area(
                 region["regionName"],
                 area_id,
-                self.module_data,
+                module_data_for_area,
                 config,
                 prefix=prefix
             )

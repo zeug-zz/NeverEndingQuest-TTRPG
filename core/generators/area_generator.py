@@ -169,6 +169,10 @@ Please respond with ONLY a JSON array of names in the exact order listed above:
 
 No explanations, just the JSON array of thematic location names."""
 
+            _source_lock = area_context.get("_source_lock_context")
+            if _source_lock:
+                prompt += f"\n\nSOURCE CONSTRAINTS (MUST follow):\n{_source_lock}\n"
+
             client = create_chat_client()
             config = get_model_config("generate_thematic_names", DM_MAIN_MODEL)
             max_retries = 3
@@ -621,6 +625,8 @@ class AreaGenerator:
             "danger_level": config.danger_level,
             "recommended_level": config.recommended_level,
         }
+        if "_source_lock_context" in module_context:
+            area_context["_source_lock_context"] = module_context["_source_lock_context"]
 
         # Generate map layout with AI-powered thematic naming
         map_data = self.map_gen.generate_layout(

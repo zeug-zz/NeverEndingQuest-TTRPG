@@ -53,6 +53,88 @@ _SEED_BUILD_MODES = {
 }
 
 
+def _merge_source_string_values(*raw_values: Any) -> list:
+    """Merge non-empty strings from one or more sources, deduping order-preserving.
+
+    Each positional arg may be None, a string, or a list of strings.
+    Empty/whitespace-only entries are discarded.
+    """
+    seen: set = set()
+    result: list = []
+    for raw in raw_values:
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            items = [raw]
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            continue
+        for item in items:
+            val = str(item).strip()
+            if val and val not in seen:
+                seen.add(val)
+                result.append(val)
+    return result
+
+
+def _compact_source_text(value: Any, max_chars: int = 160) -> str:
+    """Normalize a source value to compact, ASCII-only, stripped text.
+
+    Returns empty string for blank/whitespace-only values.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.encode("ascii", "replace").decode("ascii")
+    return text[:max_chars]
+
+
+def _build_module_builder_source_context(builder_input: Dict[str, Any]) -> str:
+    """Build compact source-enhanced context string for ModuleBuilder.
+
+    Returns empty string when no source-enhanced fields are present.
+    """
+    lines: list = []
+    _append_if_present(lines, "NPCS", builder_input.get("source_npc_names"))
+    _append_if_present(lines, "LOCATIONS", builder_input.get("source_location_names"))
+    _append_if_present(lines, "PUZZLES", builder_input.get("source_puzzle_ids"))
+    _append_if_present(lines, "TONE", builder_input.get("source_tone"))
+    _append_if_present(lines, "MONSTERS", builder_input.get("source_monster_refs"))
+    _encounter_seeds = builder_input.get("source_encounter_seeds", [])
+    if _encounter_seeds:
+        seeds = []
+        for s in _encounter_seeds[:12]:
+            compact = _compact_source_text(s)
+            if compact:
+                seeds.append(f"- {compact}")
+        if seeds:
+            lines.append("ENCOUNTER_SEEDS:")
+            lines.extend(seeds)
+    _blueprint = builder_input.get("blueprint", {})
+    _source_lock = _blueprint.get("source_lock", {})
+    if _source_lock:
+        _locked = [k for k, v in _source_lock.items() if v is True]
+        if _locked:
+            lines.append(f"SOURCE_LOCKS: {', '.join(_locked)}")
+    if not lines:
+        return ""
+    return "=== SOURCE LOCK CONTEXT ===\n" + "\n".join(lines)
+
+
+def _append_if_present(dest: list, label: str, values: Any) -> None:
+    """Append a compact label: value line if values contain any non-blank entries."""
+    if not isinstance(values, list) or not values:
+        return
+    items = []
+    for v in values[:12]:
+        compact = _compact_source_text(v)
+        if compact:
+            items.append(compact)
+    if items:
+        dest.append(f"{label}: {', '.join(items)}")
+
+
 def _utc_now_iso() -> str:
     """Return UTC timestamp in ISO-8601 format."""
     from datetime import datetime, timezone
@@ -203,7 +285,13 @@ def _execute_module_builder(
 
         builder.log = _log_with_progress  # type: ignore[assignment]
 
-    builder.build_module(builder_input["builder_narrative"])
+    _source_context = _build_module_builder_source_context(builder_input)
+    if _source_context:
+        builder.build_module(
+            builder_input["builder_narrative"] + "\n\n" + _source_context
+        )
+    else:
+        builder.build_module(builder_input["builder_narrative"])
 
 
 def _execute_seed_writer_build(
@@ -342,7 +430,7 @@ def _classify_blueprint_handoff(
 
     # blocked_by_fidelity: blueprint was blocked by precheck findings but the
     # normalized packet and fidelity report are complete.  Accept as degraded
-    # v2 mode — seed writer handles whatever the packet contains.
+    # v2 mode - seed writer handles whatever the packet contains.
     if report_status == "blocked_by_fidelity":
         return "source_blueprint_v2_degraded"
 
@@ -602,6 +690,24 @@ def run_toolkit_homebrew_packet_build(
                 _source_tone = [str(t) for t in _raw_tone if t]
             if _source_tone:
                 builder_input["source_tone"] = _source_tone
+
+        # Source monster refs / encounter seeds for source-enhanced ModuleBuilder
+        # (packet-first, active for source-enhanced modes even without ready blueprint)
+        if _build_mode in ("source_enhanced_modulebuilder", "source_blueprint_modulebuilder"):
+            _source_blueprint = blueprint_artifact if isinstance(blueprint_artifact, dict) else {}
+            _source_monster_refs = _merge_source_string_values(
+                packet.get("monster_refs"),
+                _source_blueprint.get("monster_refs"),
+            )
+            if _source_monster_refs:
+                builder_input["source_monster_refs"] = _source_monster_refs
+
+            _source_encounter_seeds = _merge_source_string_values(
+                packet.get("encounter_seeds"),
+                _source_blueprint.get("encounter_seeds"),
+            )
+            if _source_encounter_seeds:
+                builder_input["source_encounter_seeds"] = _source_encounter_seeds
 
         if not persist_builder_input_artifact(workspace, builder_input):
             return {

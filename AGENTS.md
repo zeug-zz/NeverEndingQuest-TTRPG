@@ -1193,6 +1193,47 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Generator Source Locks (COMPLETED - 2026-05-26)
+
+**Status:** COMPLETED - Added source-lock prompt/context injection into ModuleBuilder sub-generators (module overview, area naming, location, plot) so accurate-ingest builds preserve required NPC names, location names, puzzle IDs, monster refs, encounter seeds, and tone guidance during creative LLM generation. All tests are provider-free; legacy path preserved.
+
+**Implementation Summary:**
+- `web/extensions/toolkit_homebrew_packet_builder.py` — Added `source_monster_refs` and `source_encounter_seeds` extraction into `builder_input` gated behind source-enhanced build modes. Added compact source-context serialization helpers (`_merge_source_string_values`, `_compact_source_text`, `_build_module_builder_source_context`, `_append_if_present`) and `_execute_module_builder(...)` source-context append with stable label format.
+- `core/generators/module_builder.py` — Added `source_lock_context`, `_extract_source_lock_context(...)` from `context_header`, and `_source_lock_context` pass-through to area generation.
+- `core/generators/area_generator.py` — Added `_source_lock_context` to `area_context`; `generate_thematic_names(...)` appends `SOURCE CONSTRAINTS` block when present.
+- `scripts/test_toolkit_homebrew_gui_unified_flow.py` — 85 tests (source-field handoff, legacy leakage, `_execute_module_builder` source context, provider tripwire).
+- `scripts/test_accurate_ingest_generator_source_locks.py` — 16 tests (ModuleGenerator, area/location, plot source-contract tests; ModuleBuilder extraction/propagation).
+- `scripts/test_toolkit_blueprint_v2_contract.py` — Confirmed (33 tests).
+- `openspec/changes/archive/2026-05-26-toolkit-accurate-ingest-generator-source-locks/` — Archived change with 4 delta specs.
+- `openspec/specs/` — 4 main specs synced during archive: `accurate-ingest-generator-prompt-source-locks`, `accurate-ingest-generator-source-contract`, `accurate-ingest-legacy-generator-compatibility`, `accurate-ingest-source-monster-encounter-handoff`.
+
+**Key Design Decisions:**
+- Source-field extraction gated by `_build_mode` (`source_enhanced_modulebuilder` / `source_blueprint_modulebuilder`) to prevent legacy leakage.
+- Packet values merged before blueprint values with order-preserving dedup.
+- Source context uses stable label format: `NPCS:`, `LOCATIONS:`, `PUZZLES:`, `TONE:`, `MONSTERS:`, `ENCOUNTER_SEEDS:`, `SOURCE_LOCKS:`.
+- `ModuleGenerator` overview receives source context via `initial_concept`; `ModuleBuilder` appends source context to `context_header` after overview for downstream location/plot prompts.
+- Area naming cannot use `context_header`, so `ModuleBuilder.generate_areas()` passes `_source_lock_context` through copied `module_data`.
+- Tests use `object.__new__(ModuleBuilder)` to avoid live `create_chat_client()` in helper-only extraction tests.
+
+**Verification:**
+- `.venv/bin/python -m py_compile` on all modified files -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_generator_source_locks` -> 16/16 PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_homebrew_gui_unified_flow scripts.test_toolkit_blueprint_v2_contract scripts.test_accurate_ingest_generator_source_locks` -> 142/142 PASS
+- `openspec validate --specs` -> 350/350 PASS
+
+**Files Modified:**
+- `web/extensions/toolkit_homebrew_packet_builder.py`
+- `core/generators/module_builder.py`
+- `core/generators/area_generator.py`
+- `scripts/test_toolkit_homebrew_gui_unified_flow.py`
+- `scripts/test_accurate_ingest_generator_source_locks.py`
+- `plans/accurate-ingest-fix.md`
+- `openspec/changes/archive/2026-05-26-toolkit-accurate-ingest-generator-source-locks/`
+- `openspec/specs/accurate-ingest-generator-prompt-source-locks/spec.md`
+- `openspec/specs/accurate-ingest-generator-source-contract/spec.md`
+- `openspec/specs/accurate-ingest-legacy-generator-compatibility/spec.md`
+- `openspec/specs/accurate-ingest-source-monster-encounter-handoff/spec.md`
+
 ### Toolkit Accurate-Ingest Builder Audit Briefing (COMPLETED - 2026-05-25)
 
 **Status:** COMPLETED - Implemented builder audit briefing pipeline that reads an existing backstage audit run directory and produces compact builder-facing artifacts. Covers input loading/validation, compact brief emission, markdown prompt context, schema/contract tests, lane classification, runtime-only safety, and no-mutating-workflow source-contract tests.
