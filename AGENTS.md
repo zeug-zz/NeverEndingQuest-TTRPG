@@ -85,7 +85,7 @@ The repository uses a 4-layer security audit pipeline. Status as of 2026-05-25:
 | Layer | Tool | Where | Status |
 |-------|------|-------|--------|
 | Secret detection | Gitleaks | Pre-commit + CI | PASS |
-| SAST (Python) | Bandit | Pre-commit + CI (`continue-on-error`) | PASS |
+| SAST (Python) | Bandit | Pre-commit + CI | PASS |
 | SAST (framework) | Semgrep | CI only (`continue-on-error`) | SARIF to CodeQL |
 | Dependency CVEs | pip-audit | CI only (`--strict`, gate-blocking) | 0 CVEs |
 | Supply chain | Dependabot | Weekly pip + actions | Active |
@@ -100,7 +100,7 @@ The repository uses a 4-layer security audit pipeline. Status as of 2026-05-25:
 
 **Audit reports**: `scripts/security/last-audit.json` (machine-readable). Markdown reports at `plans/security/audit_report-YYYYMMDD.md` (gitignored). Threat assessments at `plans/security/risk_assessment-YYYYMMDD.md` (gitignored).
 
-**Key policy**: `plans/security/` is gitignored — operational intelligence never shipped. `requests.get()` calls must include `timeout=`. API keys rotated every 90 days. Dependencies pinned in `requirements-lock.txt`. Semgrep and Bandit use `continue-on-error` in CI (full SARIF/artifact uploads to CodeQL) — severity-gating is deferred to v2 baseline triage.
+**Key policy**: `plans/security/` is gitignored — operational intelligence never shipped. `requests.get()` calls must include `timeout=`. API keys rotated every 90 days. Dependencies pinned in `requirements-lock.txt`. Semgrep uses `continue-on-error` in CI (full SARIF uploads to CodeQL) — severity-gating deferred to v2 baseline triage.
 
 ## Build/Lint/Test Commands
 
