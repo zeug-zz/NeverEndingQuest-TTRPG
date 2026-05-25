@@ -28,7 +28,7 @@ tiktoken>=0.5.0
 Pillow>=10.0.0
 
 # Proxy server for LM Studio mode and API call capture
-mitmproxy>=10.0.0
+mitmproxy>=12.2.3
 
 # PDF form filling
 pypdf>=4.0.0
