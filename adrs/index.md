@@ -39,6 +39,7 @@ Status legend:
 - 0027 V2 Prime Directive and Approval-Gated Canon Apply (Accepted)
 - 0028 Homebrew Wave 1 Birble Plan Deferred After Dev Ingest Validation (Deferred)
 - 0029 Archive Save/Restore Portability and Routing Contract (Accepted)
+- 0030 Selective Upstream Patch Porting (Accepted)
 
 ## Supersession Map
 

@@ -63,7 +63,7 @@ NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 co
 
 ### Tabletop Multiplayer Context
 
-**This repository is a merge-safe tabletop multiplayer plugin/modification** of the upstream [MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest) project.
+**This repository is a tabletop multiplayer extension** of [MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest). Core files have diverged through TABLETOP MODE additions; upstream commits are inspected individually and selectively ported when they add value (see ADR-0030).
 
 **Core Purpose:**
 - Designed for **local, in-person tabletop RPG sessions** (e.g., public library events, game stores)
@@ -73,9 +73,8 @@ NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 co
 - Maintains **full backward compatibility** with single-player mode
 
 **Plugin Architecture:**
-- **Minimal core file modifications** - Changes to `web_interface.py` and `game_interface.html` are clearly marked
+- **TABLETOP MODE: markers** - Changes to core files are clearly marked with `# TABLETOP MODE:` comments
 - **Encapsulated functionality** - New features in separate files (e.g., `tabletop_mode.js`, `multi_pc_combat.py`)
-- **Merge-safe design** - Easy to integrate upstream updates while preserving tabletop features
 - **State-driven activation** - Tabletop Mode activates when `partyMembers` in `party_tracker.json` has more than one entry
 
 ## Security Stack
@@ -324,13 +323,31 @@ Major subsystems use dedicated managers:
 - **Minimal Core Modifications**: Changes to upstream files marked with `# TABLETOP MODE:` comments
 - **Encapsulated Extensions**: New functionality in separate modules (`utils/pc_manager.py`, `web/static/js/tabletop_mode.js`)
 - **State Detection**: Tabletop features activate based on `party_tracker.json` state, not configuration flags
-- **Merge Safety**: Clear boundaries allow easy integration of upstream updates
+- **Merge Safety**: Clear boundaries allow easy porting of upstream fixes without broad merge conflicts. See ADR-0030 for upstream sync policy.
 
-#### Upstream Merge Guidelines
+#### Upstream Sync Policy (ADR-0030)
 
-**This repository extends NeverEndingQuest with TABLETOP MODE while maintaining upstream compatibility.**
+**Upstream commits are inspected individually and selectively ported** — not merged wholesale. Upstream ([MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)) is a read-only reference. The plugin architecture (ADR-0002, ADR-0003) remains the internal code discipline.
 
-**When merging upstream updates:**
+**Policy:**
+
+1. **Do not merge upstream branches.** `upstream/main` is read-only reference.
+2. **Inspect upstream commits one by one.** Review monthly or when GitHub shows upstream activity.
+3. **Classify each commit:** `already covered` (skip), `port manually` (reconcile and apply), `ignore` (not relevant), `investigate` (flag for later).
+4. **Merge-worthy when upstream touches:** security fixes, data corruption fixes, save/load reliability, provider/API compatibility, critical browser/runtime bugs.
+5. **Skip (manual port only) when upstream touches:** `web/web_interface.py`, `web/templates/game_interface.html`, `main.py`, combat flow, character state, module runtime, prompt/validation contracts. These areas are heavily modified here and need manual reconciliation.
+6. **Track skips and ports** in the Upstream Sync Log below.
+7. **Preserve single-player compatibility.** SP mode should be smoke-tested periodically.
+
+#### Upstream Sync Log
+
+| Date | Upstream Commit | Subject | Action | Reason |
+|------|----------------|---------|--------|--------|
+| 2026-05-26 | [`c149109`](https://github.com/MoonlightByte/NeverEndingQuest/commit/c149109a) | fix(#122): reconnect browser to live game and stop input busy-spin | **Skip** | Combat busy-spin already fixed by TABLETOP MODE idle-input hardening (2026-03-17). Browser reconnect already handled by `request_status` → `status_response` flow. |
+
+#### Upstream Merge Guidelines (Legacy — for reference only)
+
+**These guidelines are superseded by ADR-0030. They remain here as reference for internal code discipline (TABLETOP MODE markers, extension-over-modification, no-breaking-upstream-patterns). Do not use these for actual upstream merging.**
 
 1. **Preserve upstream features intact** - Accept all upstream HTML, CSS, JS, and Python as written. Don't remove, simplify, or restructure upstream features during the merge.
 
@@ -1007,7 +1024,7 @@ Phase 3 of multi-PC combat rebuild: Refactor monolithic `MultiPCCombatManager` i
 
 ### Core Philosophy: "Upstream First, Extend Second"
 
-This codebase maintains a plugin architecture that enables both **easy upstream merges** AND **future unification** of Single-Player (SP) and Multi-Player (MP) modes. The goal is to make MP feel like a natural extension of SP, not a separate codebase.
+This codebase maintains a plugin architecture for clear boundaries between SP and MP modes and for stable internal code discipline. The goal is to make MP feel like a natural extension of SP, not a separate codebase.
 
 ### Current State: Plugin Mode (Phase 1)
 
