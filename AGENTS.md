@@ -1152,6 +1152,24 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Backstage Audit MVP (COMPLETED - 2026-05-25)
+
+**Status:** COMPLETED - Implemented read-only backstage audit MVP for accurate-ingest. Collects existing deterministic evidence (source-fidelity, build-fidelity, validation, readiness, publishability) and produces `run.json`, `evidence.json`, `audit_report.json`, `recommendation.json` in a runtime-only output directory. Groups findings by domain, detects report-consistency disagreements, and recommends next action. Commands run in read-only JSON mode without mutating module artifacts.
+
+**Implementation Summary:**
+- `utils/accurate_ingest_backstage_audit.py` — Evidence collection, audit findings builder, recommendation builder, helper utilities (SHA-256 hashing, JSON parsing, counts by severity, evidence refs collection).
+- `scripts/run_backstage_agent.py` — CLI entrypoint (`audit` subcommand, `--module`, `--output-dir`, `--include-benchmark-command`, `--include-publishability-command`). Orchestrates evidence collection, finding generation, and four JSON file emission.
+- `scripts/test_accurate_ingest_backstage_audit.py` — 78 tests across 7 test classes: evidence collection, audit findings, command evidence (benchmark/publishability), runtime output contract (4 files, no module mutation), report schema (grouped findings, consistency summary, next-step recommendation), Numillian fixture disagreement, and command failure findings.
+- `.gitignore` — Added `data/agent_runs/` for runtime audit artifact isolation.
+- `data/agent_runs/` — Default output base for audit run artifacts (`<output_dir>/<task_id>/` pattern).
+- 4 main specs synced during archive: `accurate-ingest-backstage-audit-inputs`, `accurate-ingest-backstage-audit-readonly-safety`, `accurate-ingest-backstage-audit-report`, `accurate-ingest-backstage-audit-script-parity`.
+
+**Verification:**
+- `.venv/bin/python -m py_compile` on all modified Python files -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_backstage_audit` -> 78/78 PASS
+- `.venv/bin/python -m unittest -q scripts.test_audit_module_publishability` -> 26/26 PASS
+- `openspec validate --specs` -> 342/342 PASS
+
 ### Toolkit Numillian Source-Fidelity Bridge Fix (COMPLETED - 2026-05-23)
 
 **Status:** COMPLETED - Narrow bridge fix for Numillian source-fidelity blockers: punctuation-normalized build-fidelity matching, puzzle preservation via plot topology, and prose-phrase actor filtering via entity candidate triage. Benchmark shows puzzle preservation now pass (3/3); NPC (1/23) and location (0/13) preservation remain blocked, deferred to broader structural fix in `plans/accurate-ingest-fix.md`.
