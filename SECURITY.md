@@ -12,10 +12,10 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| main    | :white_check_mark: |
-| < 1.0   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| main    | ✅        |
+| < 1.0   | ❌        |
 
 ## Reporting a Vulnerability
 
@@ -25,6 +25,7 @@ Use GitHub's private vulnerability reporting:
 https://github.com/zeug-zz/NeverEndingQuest-TTRPG/security/advisories/new
 
 Expect a response within 72 hours. Please include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Affected versions
@@ -33,24 +34,25 @@ Expect a response within 72 hours. Please include:
 ## Scope
 
 This policy covers:
+
 - Application code and its dependencies
 - API key handling and configuration management
 - CI/CD pipeline security
 - Dependency supply chain
-- MCP/agent tool definitions (`.opencode/`)
+- Agent and automation tooling
 
 ---
 
 ## Defense Layers
 
-| Layer | Tool | Where |
-|-------|------|-------|
-| Secret detection | Gitleaks | Pre-commit + CI |
-| SAST (Python) | Bandit | Pre-commit + CI |
-| SAST (framework) | Semgrep (Flask, Python) | CI only |
-| Dependency CVEs | pip-audit | CI only |
-| Supply chain updates | Dependabot | Weekly (pip + Actions) |
-| Threat intelligence | threat-monitor skill | On-demand |
+| Layer                | Tool                    | Where                  |
+| -------------------- | ----------------------- | ---------------------- |
+| Secret detection     | Gitleaks                | Pre-commit + CI        |
+| SAST (Python)        | Bandit                  | Pre-commit + CI        |
+| SAST (framework)     | Semgrep (Flask, Python) | CI only                |
+| Dependency CVEs      | pip-audit               | CI only                |
+| Supply chain updates | Dependabot              | Weekly (pip + Actions) |
+| Threat intelligence  | threat-monitor skill    | On-demand              |
 
 ---
 
@@ -86,15 +88,14 @@ This policy covers:
 
 ## Key Rotation Policy
 
-| Key | Location | Rotation |
-|-----|----------|----------|
-| OpenAI API key | `config.py` | Every 90 days or after suspected exposure |
-| OpenRouter API key | `config.py` | Every 90 days or after suspected exposure |
-| Context7 API key | `~/.config/opencode/opencode.json` | Every 90 days (outside workspace — manual) |
+| Key          | Location      | Rotation                                  |
+| ------------ | ------------- | ----------------------------------------- |
+| All API keys | `config.py` | Every 90 days or after suspected exposure |
 
 Rotation procedure:
+
 1. Generate new key at provider portal
-2. Update `config.py` (or `opencode.json`)
+2. Update `config.py`
 3. Verify application starts and makes API calls
 4. Revoke old key at provider portal
 5. Run `gitleaks detect` to confirm old key is not in git history
@@ -103,25 +104,25 @@ Rotation procedure:
 
 ## Audit Cadence
 
-| Activity | Frequency | Trigger |
-|----------|-----------|---------|
-| Pre-commit scan | Every commit | Automatic (gitleaks + bandit) |
-| Full security audit | Weekly | `audit security` |
-| Audit report | After audit | `audit report` |
-| Dependency CVE scan | Weekly (CI) + on-demand | CI pipeline + `audit dependencies` |
-| Threat intelligence check | Every 3 days | `threat check` + `threat report` |
-| Threat landscape report | With audit reports | Auto-refreshed if >3 days stale |
-| Key rotation | Every 90 days | Manual |
+| Activity                  | Frequency               | Trigger                              |
+| ------------------------- | ----------------------- | ------------------------------------ |
+| Pre-commit scan           | Every commit            | Automatic (gitleaks + bandit)        |
+| Full security audit       | Weekly                  | `audit security`                   |
+| Audit report              | After audit             | `audit report`                     |
+| Dependency CVE scan       | Weekly (CI) + on-demand | CI pipeline +`audit dependencies`  |
+| Threat intelligence check | Every 3 days            | `threat check` + `threat report` |
+| Threat landscape report   | With audit reports      | Auto-refreshed if >3 days stale      |
+| Key rotation              | Every 90 days           | Manual                               |
 
 ---
 
 ## Accepted Risks
 
-| Date | Finding | Severity | Rationale |
-|------|---------|----------|-----------|
-| 2026-05-25 | allow_unsafe_werkzeug=True | MEDIUM | Required for Flask-SocketIO; local-only app. Review during v2 client hardening. |
-| 2026-05-25 | 0.0.0.0 binding | MEDIUM | Required for local network access. Tracked in `plans/version-2/client_network.md`. |
-| 2026-05-25 | python-engineio CORS | LOW | Flask-SocketIO default; review with v2 CORS hardening. |
+| Date       | Finding                    | Severity | Rationale                                                                            |
+| ---------- | -------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| 2026-05-25 | allow_unsafe_werkzeug=True | MEDIUM   | Required for Flask-SocketIO; local-only app. Review during v2 client hardening.      |
+| 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Required for local network access. Tracked in `plans/version-2/client_network.md`. |
+| 2026-05-25 | python-engineio CORS       | LOW      | Flask-SocketIO default; review with v2 CORS hardening.                               |
 
 ---
 
@@ -137,6 +138,5 @@ Threat assessments: `plans/security/risk_assessment-YYYYMMDD.md` (gitignored)
 
 - `plans/version-2/client_network.md` — v2 client hardening plan (CORS, TLS, network segmentation)
 - `plans/version-2/client-web.md` — v2 web client security review
-- `~/.config/opencode/skills/security-audit/SKILL.md` — Security audit skill definition
-- `~/.config/opencode/skills/threat-monitor/SKILL.md` — Threat intelligence skill definition
 - `.github/workflows/security-audit.yml` — CI security pipeline
+- `docs/security/` — Security tooling documentation (gitignored)
