@@ -32,7 +32,7 @@ jobs:
       - name: Install Bandit
         run: pip install bandit
       - name: Bandit scan
-        run: bandit -r . -c pyproject.toml -iii -f json -o bandit-results.json
+        run: bandit -r . -c pyproject.toml -lll -f json -o bandit-results.json
       - name: Upload results
         uses: actions/upload-artifact@v7
         with:
