@@ -1,8 +1,9 @@
 # Accurate Ingest GUI Builder Recovery Plan
 
-**Status:** Draft for review  
+**Status:** Active roadmap; backstage audit MVP archived; next scaffold is builder-audit briefing  
 **Created:** 2026-05-19  
 **Rewritten:** 2026-05-20  
+**Updated:** 2026-05-25  
 **Scope:** Recover Module Builder GUI ingest by enhancing the existing LLM ModuleBuilder orchestration with accurate-ingest source truth, not replacing it with a deterministic template writer.  
 **Primary Source Case:** `Local_Docs/modules/hombrew/modules/The Hidden City of Numillian.md`  
 **Target Module:** `modules/The_Hidden_City_of_Numillian/`
@@ -1410,122 +1411,109 @@ Exit gate:
 
 ---
 
-## Next OpenSpec Builder Handoff (2026-05-22)
+## Next OpenSpec Builder Handoff (2026-05-25)
 
 ### Current Disposition
 
-The remaining dirty Numillian module files are held and MUST NOT be committed while source fidelity is blocked.
+The previous Numillian source-fidelity blocker chain, source-enhanced ModuleBuilder handoff, and read-only backstage audit MVP are complete and archived.
 
-Current blocker summary:
+Current source-fidelity state:
 
-- `source_fidelity_status`: `blocked`
-- Build-fidelity blocker: required NPCs `Red Skull:`, `Blue Skull:`, and `Yellow Skull:` not found in module.
-- Current module artifacts contain `Red Skull`, `Blue Skull`, and `Yellow Skull` without trailing colons.
-- Benchmark blocker remains puzzle preservation: `skull_riddle` and `kill_the_dog_mindscape` are missing from benchmark-visible module artifacts.
-- Entity pollution risk remains: `but this is not true` must not be promoted into NPC/module actor output.
-- `openspec/changes/toolkit-accurate-ingest-llm-blueprint-enrichment` has been archived and should be treated as completed background work.
+- `source_fidelity_status`: `pass`
+- `npc_preservation`: `pass`, `23/23`
+- `location_preservation`: `pass`, `13/13`
+- `puzzle_preservation`: `pass`, `3/3`
+- `lore_preservation`: `pass`, `2/2`
+- `tone_preservation`: `pass`
+- Active OpenSpec changes: none.
+- Dirty Numillian module artifacts remain intentionally uncommitted until the user explicitly requests module publication.
+
+Completed background changes:
+
+- `toolkit-accurate-ingest-llm-blueprint-enrichment` is archived background work.
+- `toolkit-accurate-ingest-numillian-source-fidelity-fix` is archived background work.
+- `toolkit-accurate-ingest-numillian-npc-location-preservation` is archived background work and restored Numillian benchmark source fidelity to pass.
+- `toolkit-accurate-ingest-modulebuilder-handoff` is archived background work and restored the default accurate-ingest GUI route to source-enhanced ModuleBuilder handoff with explicit seed-writer support modes.
+- `toolkit-accurate-ingest-backstage-audit-mvp` is archived background work and provides a read-only audit artifact set: `run.json`, `evidence.json`, `audit_report.json`, and `recommendation.json` under `data/agent_runs/accurate_ingest_audit/<task_id>/`.
+
+### How The LLM Builder Should Use Backstage Audits
+
+Backstage audits should become the LLM Builder's diagnostic briefing layer, not another authoring engine.
+
+The safe pattern is:
+
+```text
+Backstage audit run artifacts
+  -> deterministic builder briefing
+  -> OpenSpec/patch proposal prompt context
+  -> human/plan verification
+  -> one narrow builder task
+```
+
+An LLM Builder can use audit outputs to:
+
+- See which deterministic gate is failing without rereading the whole module.
+- Distinguish real source-fidelity blockers from stale toolkit/report disagreements.
+- Select the next work lane: report refresh, artifact repair, OpenSpec design, or no action.
+- Cite evidence references in its patch proposal instead of relying on vague narrative summaries.
+- Avoid touching module artifacts when the audit only says reports disagree.
+
+An LLM Builder must not use audit outputs to:
+
+- Override benchmark, validation, readiness, or publishability gates.
+- Treat `recommendation.json` as authorization to mutate files.
+- Enter the live ModuleBuilder generation loop.
+- Create waivers or weaken source-fidelity gates.
+- Rewrite module content directly from a report summary.
 
 ### Next Change To Scaffold
 
 Create the next focused OpenSpec change:
 
 ```text
-toolkit-accurate-ingest-numillian-source-fidelity-fix
+toolkit-accurate-ingest-builder-audit-briefing
 ```
 
-This is a narrow bridge change before full `toolkit-accurate-ingest-numillian-release-proof`.
+This change turns the completed read-only backstage audit artifacts into a compact, deterministic builder briefing that an LLM Builder can consume before proposing the next implementation step.
 
 Purpose:
 
-- Remove the current source-fidelity blockers without weakening accurate-ingest gates.
-- Prove punctuation-safe source atom matching for markdown labels such as `Red Skull:`.
-- Preserve Numillian's required skull riddle and dog mindscape trials in benchmark-visible module artifacts.
-- Prevent prose emphasis phrases such as `but this is not true` from becoming actors.
-- Rebuild and reassess Numillian only after tests and pipeline fixes are in place.
+- Read an existing backstage audit run directory.
+- Validate `task_id` consistency across the four audit artifacts.
+- Produce a compact `builder_brief.json` and `builder_prompt_context.md` in the runtime audit directory.
+- Preserve evidence references and deterministic statuses.
+- Recommend a builder lane without mutating module artifacts or refreshing reports.
 
 ### Required Capabilities
 
 The OpenSpec scaffold SHOULD include these capability specs:
 
-1. `numillian-skull-trial-entity-canonicalization`
-2. `numillian-required-puzzle-preservation`
-3. `accurate-ingest-punctuation-normalized-build-fidelity`
-4. `accurate-ingest-prose-phrase-actor-filtering`
-5. `numillian-rebuild-publication-reassessment`
+1. `accurate-ingest-builder-audit-brief-inputs`
+2. `accurate-ingest-builder-audit-brief-output`
+3. `accurate-ingest-builder-audit-brief-safety`
+4. `accurate-ingest-builder-audit-next-step-routing`
 
 ### MUST Contract For The Change
 
-- Build fidelity SHALL match source atom labels with trailing markdown/table punctuation such as `Red Skull:` to canonical generated names such as `Red Skull`.
-- Punctuation normalization SHALL NOT weaken matching enough to collapse distinct source names.
-- The First Trial skull riddle SHALL be preserved as a puzzle/trial or equivalent benchmark-visible source-fidelity artifact.
-- The False Third Trial dog mindscape SHALL be preserved as a puzzle/trial, plot beat, location instruction, or equivalent benchmark-visible source-fidelity artifact.
-- `but this is not true` SHALL NOT appear as an NPC, monster, scene actor, semantic NPC authority entry, or seed actor.
-- The three skulls SHALL NOT be converted into hostile/combat monsters unless the source explicitly requires combat behavior.
-- The production Numillian rebuild SHALL be run only after deterministic tests cover the blocker classes.
-- No commit or push SHALL happen until source fidelity is no longer blocked and the user explicitly requests publication.
+- The brief generator SHALL consume an existing audit run directory containing `run.json`, `evidence.json`, `audit_report.json`, and `recommendation.json`.
+- The brief generator SHALL validate task identity consistency before producing output.
+- The brief generator SHALL write only to the audit run directory, never to `modules/<slug>/`.
+- The brief SHALL preserve recommendation action, reason, evidence references, grouped finding counts, and report-consistency summary.
+- The brief SHALL classify the next builder lane as one of: `diagnose_reports`, `repair_artifacts`, `openspec_work`, `review_warnings`, or `no_action`.
+- The brief SHALL NOT call LLM providers, ModuleBuilder, seed writer, benchmark refresh, publishability refresh, or module finishing.
+- The brief SHALL NOT mark a module publishable or source-faithful by itself.
 
 ### SHOULD Guidance
 
-- Prefer canonicalization and source-classification fixes over hand-editing generated Numillian artifacts.
-- Prefer source graph, blueprint, and benchmark-visible artifact fixes over changing benchmark thresholds.
-- Keep `monsters_seed.json` as a media/materialization support artifact unless a source entity is truly a combat monster.
-- Treat the skulls as puzzle/scene actors or puzzle components, not ordinary NPCs, if that better fits source truth and existing gates can see them.
-- If synthetic blueprint fallback remains in `scripts/rebuild_numillian_accurate_ingest.py`, it should carry puzzle/clue graph data forward instead of emitting `puzzle_graph=[]`.
+- Prefer a narrow script entrypoint such as `scripts/prepare_builder_from_backstage_audit.py` before extracting a shared harness.
+- Keep the output small enough to paste into a builder prompt.
+- Include evidence keys and artifact paths, not full report bodies.
+- Use temp fixture tests; do not read real Numillian module artifacts.
+- Treat future GUI surfacing or shared `core/agents/backstage/` extraction as later work.
 
 ### Initial Builder Prompt
 
-```text
-Implement OpenSpec `toolkit-accurate-ingest-numillian-source-fidelity-fix` Step 0 only.
-
-Goal: Scaffold the focused OpenSpec change from `plans/accurate-ingest-fix.md` and add deterministic regression locks for the current Numillian fidelity blockers before repairing the pipeline or module artifacts.
-
-Allowed:
-- `openspec/changes/toolkit-accurate-ingest-numillian-source-fidelity-fix/**`
-- `scripts/test_toolkit_build_fidelity.py`
-- `scripts/test_toolkit_blueprint_enrichment_patches.py`
-- `scripts/test_accurate_ingest_numillian_benchmark.py`
-- Add one new focused `scripts/test_*.py` file only if the existing test files are a poor fit.
-
-Forbidden:
-- Do not edit `modules/The_Hidden_City_of_Numillian/**` in this step.
-- Do not edit production pipeline code in this step except tests.
-- Do not change benchmark thresholds to make blocked output pass.
-- Do not weaken source-fidelity gates.
-- Do not commit, push, archive, or stage files.
-- Do not revert existing dirty Numillian files.
-
-Required MUSTs:
-- Create OpenSpec artifacts: `proposal.md`, `design.md`, `tasks.md`, and delta specs for the five capabilities listed in `plans/accurate-ingest-fix.md`.
-- The scaffold MUST state that `toolkit-accurate-ingest-llm-blueprint-enrichment` is archived background work.
-- Add regression coverage proving `Red Skull:`, `Blue Skull:`, and `Yellow Skull:` are the current build-fidelity punctuation/canonicalization blocker class.
-- Add regression coverage requiring punctuation-normalized matching to treat `Red Skull:` and `Red Skull` as the same identity while preserving distinct meaningful names.
-- Add regression coverage proving `but this is not true` must not be emitted as NPC/actor output.
-- Add regression coverage documenting the current benchmark blockers for `skull_riddle` and `kill_the_dog_mindscape`.
-- Tests MUST be deterministic and provider-free.
-
-SHOULD guidance:
-- Use source-contract tests if implementation changes are deferred to Step 1.
-- Keep tests small and targeted; do not run the full Numillian rebuild in Step 0.
-- Reuse existing fixture/report snippets when possible rather than copying large production JSON fixtures.
-
-Edit Strategy: Apply one anchored patch at a time. Run `py_compile` after touching Python tests. Do not use broad regex/script rewrites in indentation-sensitive files.
-
-Verify:
-- `.venv/bin/python -m py_compile scripts/test_toolkit_build_fidelity.py scripts/test_toolkit_blueprint_enrichment_patches.py scripts/test_accurate_ingest_numillian_benchmark.py`
-- `.venv/bin/python -m unittest -q scripts.test_toolkit_build_fidelity`
-- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_enrichment_patches`
-- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark`
-- `openspec validate toolkit-accurate-ingest-numillian-source-fidelity-fix`
-
-Report:
-- Files changed.
-- OpenSpec capabilities created.
-- Commands run and results.
-- Whether regression locks pass as source-contract tests or intentionally fail pending Step 1 implementation.
-- Confirm no Numillian module artifacts were modified.
-
-Stop: Do not implement canonicalization or rebuild Numillian in Step 0.
-```
+See `openspec/changes/toolkit-accurate-ingest-builder-audit-briefing/builder_prompts.md` for the Step 1.1 full-variant builder prompt.
 
 ### Chain-Level Archive Policy
 

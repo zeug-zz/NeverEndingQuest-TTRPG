@@ -1176,6 +1176,23 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Builder Audit Briefing (COMPLETED - 2026-05-25)
+
+**Status:** COMPLETED - Implemented builder audit briefing pipeline that reads an existing backstage audit run directory and produces compact builder-facing artifacts. Covers input loading/validation, compact brief emission, markdown prompt context, schema/contract tests, lane classification, runtime-only safety, and no-mutating-workflow source-contract tests.
+
+**Implementation Summary:**
+- `scripts/prepare_builder_from_backstage_audit.py` — Loads and validates the four audit artifacts (`run.json`, `evidence.json`, `audit_report.json`, `recommendation.json`) with task-identity consistency checks. Builds compact `builder_brief.json` with task_id, module_slug, recommended_action, reason, evidence_refs, grouped finding counts, top_findings (bounded messages), report-consistency summary, source artifact paths, and classified builder_lane. Generates `builder_prompt_context.md` with module summary, recommendation, lane rationale, finding summary, top findings, report-consistency summary, and advisory warning. Writes both artifacts atomically inside the audit run directory.
+- `scripts/test_builder_audit_briefing.py` — 94 tests across 10 test classes: loader validation (8), brief output (13), grouped finding counts (4), prompt context (17), lane text helper (4), lane classification (14), schema/contract (18), runtime-only (6), no-mutating-workflows (10).
+- `scripts/run_backstage_agent.py` — Existing backstage audit MVP (78 tests, 100% compatibility).
+- `openspec/specs/` — 4 main specs synced during archive: `accurate-ingest-builder-audit-brief-inputs`, `accurate-ingest-builder-audit-brief-output`, `accurate-ingest-builder-audit-brief-safety`, `accurate-ingest-builder-audit-next-step-routing`.
+
+**Key Design Decisions:**
+- Deterministic builder-lane classification from recommendation action (5 known lanes + diagnose_reports fallback for unknown).
+- Compact evidence merging preserves ordered unique refs from audit report and recommendation.
+- Top findings bounded at 240 chars per message to avoid embedding full raw report bodies.
+- Runtime-only guarantee: outputs stay in audit run directory, module files never touched (SHA-256 hash invariant).
+- No provider, ModuleBuilder, seed writer, benchmark, publishability, readiness, media, or finisher calls in the briefing script.
+
 ### Toolkit Accurate-Ingest Backstage Audit MVP (COMPLETED - 2026-05-25)
 
 **Status:** COMPLETED - Implemented read-only backstage audit MVP for accurate-ingest. Collects existing deterministic evidence (source-fidelity, build-fidelity, validation, readiness, publishability) and produces `run.json`, `evidence.json`, `audit_report.json`, `recommendation.json` in a runtime-only output directory. Groups findings by domain, detects report-consistency disagreements, and recommends next action. Commands run in read-only JSON mode without mutating module artifacts.
