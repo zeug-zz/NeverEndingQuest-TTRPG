@@ -407,6 +407,46 @@ Recommended slices:
 - Verification and smoke criteria for multi-browser LAN testing
 - Ensure host and client surfaces coexist without regression
 
+## Security Hardening Notes (from security-audit.md)
+
+These items were identified during the security-audit stack plan (`plans/security-audit.md`) and should be addressed in Phase 2 (Post-MVP UX Hardening) or Phase 3 (Internet-Ready Thin Client) of the client roadmap.
+
+### Current Risky Configuration
+
+`web/web_interface.py` line ~6639:
+```python
+socketio.run(app, host="0.0.0.0", port=8357, allow_unsafe_werkzeug=True)
+```
+
+1. **`0.0.0.0` binding:** Binds to all network interfaces. Intentional for LAN tabletop play but means any network the host machine is connected to can reach the server. Acceptable for MVP (trusted LAN), should be configurable per-interface in Phase 2.
+
+2. **`allow_unsafe_werkzeug=True`:** Required for WebSocket support on Werkzeug dev server. Flask-SocketIO documentation states this flag "bypasses Werkzeug's security protections" and the Werkzeug dev server is "not for production." Acceptable for MVP (local-only), must be replaced before internet deployment.
+
+### Phase 2 Hardening (Post-MVP)
+
+- Bind to specific LAN interface instead of `0.0.0.0` when possible:
+  ```python
+  host = "127.0.0.1" if local_only else "192.168.1.x"
+  ```
+- Document that Werkzeug dev server is not for production use
+- Add CORS policy restricting origins to known client domains
+
+### Phase 3 Hardening (Internet-Ready)
+
+- Replace Werkzeug dev server with production WSGI server (gunicorn, waitress):
+  ```python
+  from waitress import serve
+  serve(app, host="127.0.0.1", port=8357)
+  ```
+- Add TLS termination (nginx reverse proxy or built-in)
+- Add rate limiting on login and input endpoints
+- Add per-client connection limits
+- Consider binding to `127.0.0.1` and using a reverse proxy for internet exposure (defense in depth)
+
+### Relationship to This Plan
+
+These hardening items do not change the MVP architecture decisions. They become requirements when the `CLIENT_ACCESS_PASSWORD` alone is insufficient — specifically when the server moves from trusted-LAN to internet deployment in Phase 3.
+
 ## Recommended Next Step
 After review and refinement of this plan:
 

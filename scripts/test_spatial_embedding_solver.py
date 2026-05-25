@@ -97,7 +97,7 @@ class TestTier1ConstraintSolver(unittest.TestCase):
         g = {}
         for i in range(N):
             g[f'R{i}'] = []
-        # Fully connected — impossible to embed on grid
+        # Fully connected - impossible to embed on grid
         for i in range(N):
             for j in range(i + 1, N):
                 g[f'R{i}'].append(f'R{j}')
@@ -123,7 +123,7 @@ class TestTier2CellExpansion(unittest.TestCase):
         for i in range(N - 1):
             g[f'R{i}'].append(f'R{i+1}')
             g[f'R{i+1}'].append(f'R{i}')
-        # Build bad coordinates (all rooms at same y, staggered x — some non-adjacent)
+        # Build bad coordinates (all rooms at same y, staggered x - some non-adjacent)
         bad = {f'R{i}': f'X{10 + i*2}Y10' for i in range(N)}
         start = time.perf_counter()
         expanded = _relax_with_expansion(dict(bad), g)

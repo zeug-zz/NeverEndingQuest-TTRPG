@@ -3069,7 +3069,7 @@ def get_module_adventure_markdown(module_name):
             module_dir.mkdir(parents=True, exist_ok=True)
             summary_path.write_text(md, encoding="utf-8")
         except OSError:
-            pass  # Non-blocking — file is optional cache
+            pass  # Non-blocking - file is optional cache
 
         response = app.make_response(md)
         response.headers['Content-Type'] = 'text/markdown; charset=utf-8'

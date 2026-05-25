@@ -309,6 +309,17 @@ After review, the likely OpenSpec sequence should be:
 - `remote-client-claim-assignment-model`
 - internet hardening.
 
+## Security Hardening Notes (from security-audit.md)
+
+The current server binds to `0.0.0.0` with `allow_unsafe_werkzeug=True`. This is acceptable for MVP (local/trusted-LAN use) but must be hardened before internet deployment. See `plans/version-2/client_network.md` Section "Security Hardening Notes" for the full remediation path.
+
+Key items for this roadmap:
+- **Phase 1 (MVP):** No change. Current config is intentional for LAN tabletop use.
+- **Phase 2 (Post-MVP):** Document Werkzeug limitations, consider interface-specific binding.
+- **Phase 3 (Internet-Ready):** Replace Werkzeug dev server with production WSGI server, add TLS, add rate limiting.
+
+Full details in `plans/security-audit.md` Section 13.
+
 ## Recommended Next Step
 Use `plans/version-2/client_network.md` as the MVP architecture contract and this file as the staged roadmap.
 

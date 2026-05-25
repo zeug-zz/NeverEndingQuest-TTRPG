@@ -2025,7 +2025,7 @@ class MultiPCCombatManager:
             except (ValueError, TypeError):
                 return False, None, "Death save roll must be a number 1-20."
 
-        # "roll 3", "i roll 3" — extract first number
+        # "roll 3", "i roll 3" - extract first number
         natural_match = re.fullmatch(r"(?:i\s+)?roll\s+(\d{1,2})", text)
         if natural_match:
             try:

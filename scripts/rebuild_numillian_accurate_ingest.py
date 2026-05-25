@@ -134,7 +134,7 @@ def _build_synthetic_puzzle_graph(
 
     Calls _get_synthetic_puzzle_source_candidates() for source priority,
     then converts each raw entry into a blueprint puzzle_graph entry.
-    Does not invent content — preserves source-provided fields only.
+    Does not invent content - preserves source-provided fields only.
     """
     candidates = _get_synthetic_puzzle_source_candidates(packet, plot_topology_report)
     puzzle_graph: List[Dict[str, Any]] = []
@@ -590,7 +590,7 @@ def rebuild_numillian(dry_run: bool = False) -> Dict[str, Any]:
     bp_report_status = str(blueprint_report.get("blueprint_status") or "").strip()
     bp_report_fidelity = str(blueprint_report.get("fidelity_status") or "").strip()
 
-    # blocklisted blueprint report statuses — these indicate the pipeline itself failed,
+    # blocklisted blueprint report statuses - these indicate the pipeline itself failed,
     # not just fidelity findings
     if bp_report_status in ("failed", "generation_failed"):
         return {
@@ -602,7 +602,7 @@ def rebuild_numillian(dry_run: bool = False) -> Dict[str, Any]:
             "blueprint_report": blueprint_report,
         }
 
-    # blueprint may be None/empty when fidelity blocked; that is acceptable —
+    # blueprint may be None/empty when fidelity blocked; that is acceptable -
     # run_toolkit_homebrew_packet_build has its own fidelity tolerances
     if blueprint and isinstance(blueprint, dict) and "v2" not in str(blueprint.get("blueprint_version", "")).lower():
         return {
@@ -617,7 +617,7 @@ def rebuild_numillian(dry_run: bool = False) -> Dict[str, Any]:
     # report-only: log fidelity block as info, not a hard failure
     if bp_report_status == "blocked_by_fidelity" or bp_report_fidelity == "blocked":
         info(
-            f"[rebuild_numillian] Blueprint fidelity blocked — building synthetic blueprint from packet. "
+            f"[rebuild_numillian] Blueprint fidelity blocked - building synthetic blueprint from packet. "
             f"report_status={bp_report_status} fidelity_status={bp_report_fidelity}",
             category="accurate_ingest",
         )
