@@ -16,7 +16,7 @@ jsonschema>=4.17.0
 termcolor>=2.3.0
 
 # Progress bars for long operations
-tqdm>=4.65.0
+tqdm>=4.67.3
 
 # HTTP requests for web interactions
 requests>=2.31.0
