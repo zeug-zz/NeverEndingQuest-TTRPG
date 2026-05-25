@@ -21,7 +21,8 @@
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Email: zeug (GitHub)
+Use GitHub's private vulnerability reporting:
+https://github.com/zeug-zz/NeverEndingQuest-TTRPG/security/advisories/new
 
 Expect a response within 72 hours. Please include:
 - Description of the vulnerability
