@@ -1,0 +1,11 @@
+# Gitleaks allowlist — suppress false positives
+# Installed by: security-audit skill
+
+[allowlist]
+  description = "Allowlist for config templates, test fixtures, and prompt examples"
+  paths = [
+    '''config_template\.py''',
+    '''scripts/test_.*\.py''',
+    '''prompts/.*\.txt''',
+    '''\.gitleaks\.toml''',
+  ]

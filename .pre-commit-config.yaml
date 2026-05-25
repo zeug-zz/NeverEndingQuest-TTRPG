@@ -6,3 +6,17 @@ repos:
         entry: python3 scripts/check_ascii_compliance.py --summary-only
         language: system
         pass_filenames: false
+
+  # Secret detection — blocks accidental commits of API keys, tokens, credentials
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.0
+    hooks:
+      - id: gitleaks
+
+  # Python security analysis — blocks unsafe patterns (pickle, yaml.load, hardcoded passwords, shell=True)
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml", "-ll"]
+        exclude: "^tests/|^scripts/test_"

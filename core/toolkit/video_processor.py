@@ -408,7 +408,7 @@ class VideoProcessor:
         try:
             # Download video to temp file
             print(f"Downloading video from {url}...")
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, timeout=120)
             response.raise_for_status()
             
             # Save to temp file

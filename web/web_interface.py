@@ -3936,7 +3936,7 @@ def handle_generate_image(data):
                 save_success = True
                 print(f"Saved image (base64) to: {filepath}")
             elif image_source == "url":
-                img_response = requests.get(browser_source)
+                img_response = requests.get(browser_source, timeout=30)
                 if img_response.status_code == 200:
                     with open(filepath, 'wb') as f:
                         f.write(img_response.content)
@@ -6216,7 +6216,7 @@ def handle_generate_unified_assets(data):
                                 info(f"Using image object from NPC generator for {asset_name}")
                             # Otherwise download from URL
                             elif result.get('image_url') and result['image_url'] != 'base64_image':
-                                response = requests.get(result['image_url'])
+                                response = requests.get(result['image_url'], timeout=30)
                                 img = Image.open(BytesIO(response.content))
                                 info(f"Downloaded image from URL for {asset_name}")
 

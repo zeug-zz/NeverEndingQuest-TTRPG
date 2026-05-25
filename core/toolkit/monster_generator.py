@@ -218,7 +218,7 @@ class MonsterGenerator:
                 image_data = base64.b64decode(b64_json)
                 img = Image.open(BytesIO(image_data))
             elif image_url:
-                img_response = requests.get(image_url)
+                img_response = requests.get(image_url, timeout=30)
                 img = Image.open(BytesIO(img_response.content))
             else:
                 raise Exception("No image data in response")

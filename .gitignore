@@ -485,6 +485,10 @@ NeverEndingQuest.code-workspace
 modules/The_Thornwood_Watch/images/image_metadata.json
 # plans/  # NOTE: Commented out - plans/ should be committed for developer access
 
+# Security audit artifacts — operational intelligence, never publish
+# Contains repo-specific vulnerability analysis, file paths, and action items
+plans/security/
+
 # Personal documentation
 Local_Docs/
 data/bestiary/npc_compendium.json

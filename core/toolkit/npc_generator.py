@@ -218,7 +218,7 @@ class NPCGenerator:
                 # For consistency, set a placeholder URL
                 image_url = "base64_image"
             elif image_url:
-                img_response = requests.get(image_url)
+                img_response = requests.get(image_url, timeout=30)
                 img = Image.open(BytesIO(img_response.content))
             else:
                 return {
