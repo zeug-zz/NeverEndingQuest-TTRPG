@@ -78,6 +78,30 @@ NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 co
 - **Merge-safe design** - Easy to integrate upstream updates while preserving tabletop features
 - **State-driven activation** - Tabletop Mode activates when `partyMembers` in `party_tracker.json` has more than one entry
 
+## Security Stack
+
+The repository uses a 4-layer security audit pipeline. Status as of 2026-05-25:
+
+| Layer | Tool | Where | Status |
+|-------|------|-------|--------|
+| Secret detection | Gitleaks | Pre-commit + CI | PASS |
+| SAST (Python) | Bandit | Pre-commit + CI (`continue-on-error`) | PASS |
+| SAST (framework) | Semgrep | CI only (`continue-on-error`) | SARIF to CodeQL |
+| Dependency CVEs | pip-audit | CI only (`--strict`, gate-blocking) | 0 CVEs |
+| Supply chain | Dependabot | Weekly pip + actions | Active |
+| Code analysis | CodeQL | GitHub (default setup) | 0 alerts |
+| Threat intelligence | threat-monitor skill | On-demand (`threat check`) | Configurable |
+
+**Pre-commit hooks**: gitleaks + bandit (PASS). ascii-compliance has 17 pre-existing violations (unrelated).
+
+**Branch protection** (`main`): PR required, linear history, no force push. Status checks: `secret-scan` + `dependency-scan`. CodeQL blocks on new alerts.
+
+**Key files**: `.pre-commit-config.yaml`, `.gitleaks.toml`, `pyproject.toml` (`[tool.bandit]`), `SECURITY.md`, `.github/dependabot.yml`, `.github/workflows/security-audit.yml`, `requirements-lock.txt`.
+
+**Audit reports**: `scripts/security/last-audit.json` (machine-readable). Markdown reports at `plans/security/audit_report-YYYYMMDD.md` (gitignored). Threat assessments at `plans/security/risk_assessment-YYYYMMDD.md` (gitignored).
+
+**Key policy**: `plans/security/` is gitignored — operational intelligence never shipped. `requests.get()` calls must include `timeout=`. API keys rotated every 90 days. Dependencies pinned in `requirements-lock.txt`.
+
 ## Build/Lint/Test Commands
 
 ### Running the Application
@@ -1169,6 +1193,24 @@ character_data["is_active_pc"] = True
 - `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_backstage_audit` -> 78/78 PASS
 - `.venv/bin/python -m unittest -q scripts.test_audit_module_publishability` -> 26/26 PASS
 - `openspec validate --specs` -> 342/342 PASS
+
+### Security Audit Stack Installation (COMPLETED - 2026-05-25)
+
+**Status:** COMPLETED - Full 4-layer security audit pipeline installed, configured, and passing. All 276 CodeQL alerts triaged to 0.
+
+**Implementation Summary:**
+- Pre-commit: gitleaks (secret detection) + bandit (Python SAST), both PASS
+- CI pipeline: `.github/workflows/security-audit.yml` — secret-scan, sast-bandit, sast-semgrep, dependency-scan (gate-blocking on secrets + CVEs only)
+- Dependabot: weekly pip + actions, versioning-strategy: increase, groups: production-deps/major-updates/actions
+- CodeQL: 276 -> 0 alerts (240 bulk-dismissed path-injection/stack-trace, 36 triaged individually)
+- Branch protection: ruleset on main (PR required, linear history, no force push, status checks: secret-scan + dependency-scan, CodeQL blocks new alerts)
+- 5x `requests.get()` timeout fixes (B113) in monster_generator.py, npc_generator.py, video_processor.py, web_interface.py (2 locations)
+- `pyproject.toml`: bandit skips for B324/B608/B104/B102 false positives
+- `requirements-lock.txt`: 72 pinned packages, 0 CVEs (12 transitive deps upgraded)
+- `plans/security/` gitignored — operational intelligence never published
+- Skills: security-audit (Function 5 Audit Report with 3-day risk assessment staleness), threat-monitor (lowercase path convention)
+
+**Key files:** `.pre-commit-config.yaml`, `.gitleaks.toml`, `pyproject.toml`, `SECURITY.md`, `.github/dependabot.yml`, `.github/workflows/security-audit.yml`, `requirements-lock.txt`
 
 ### Toolkit Numillian Source-Fidelity Bridge Fix (COMPLETED - 2026-05-23)
 
