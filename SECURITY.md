@@ -129,7 +129,7 @@ Rotation procedure:
 ## Audit Trail
 
 Structured audit data: `scripts/security/last-audit.json`
-Markdown audit reports: `scripts/security/audit_report-YYYYMMDD.md` (gitignored)
+Markdown audit reports: `plans/security/audit_report-YYYYMMDD.md` (gitignored)
 Threat assessments: `plans/security/risk_assessment-YYYYMMDD.md` (gitignored)
 
 ---
