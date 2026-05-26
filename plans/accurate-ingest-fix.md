@@ -1,6 +1,6 @@
 # Accurate Ingest GUI Builder Recovery Plan
 
-**Status:** Active roadmap; backstage audit MVP, builder-audit briefing, ModuleBuilder handoff, and generator source locks archived; next scaffold is monster/encounter materialization
+**Status:** Active roadmap; backstage audit MVP, builder-audit briefing, ModuleBuilder handoff, generator source locks, and monster/encounter materialization archived; next scaffold TBD
 **Created:** 2026-05-19  
 **Rewritten:** 2026-05-20  
 **Updated:** 2026-05-26
@@ -34,17 +34,21 @@ The deterministic seed writer is not deleted. It is retained as support tooling:
 
 ### Current Disposition After 2026-05-26 Archives
 
-The recovery chain has moved past audit scaffolding and generator-level source-lock hardening into source monster/encounter materialization:
+The recovery chain has moved past audit scaffolding, generator-level source-lock hardening, and source monster/encounter materialization:
 
 - `toolkit-accurate-ingest-backstage-audit-mvp` is archived.
 - `toolkit-accurate-ingest-builder-audit-briefing` is archived.
 - `toolkit-accurate-ingest-modulebuilder-handoff` is archived.
 - `toolkit-accurate-ingest-generator-source-locks` is archived.
+- `toolkit-accurate-ingest-monster-encounter-materialization` is archived.
 - Default accurate-ingest packet builds are now locked to the source-enhanced ModuleBuilder handoff path when no explicit seed writer mode is supplied.
 - `builder_input` now carries source NPC, location, puzzle/challenge, monster reference, encounter seed, tone, source-lock, and artifact metadata before ModuleBuilder execution.
 - ModuleBuilder and sub-generator prompts now receive compact source-lock context for overview, area naming, location, and plot generation.
+- Provider-free `materialize_source_monsters()` and `bind_encounter_monsters()` exist in `utils/accurate_ingest_monster_materialization.py` with 50 tests.
+- Source monster refs resolve reuse-first against module-local `monsters/*.json` with schema-sufficiency validation.
+- Encounter seeds bind to resolution log entries via deterministic token-substring matching.
 
-The next recovery slice is `toolkit-accurate-ingest-monster-encounter-materialization`. It should convert the now-visible source monster references and encounter seeds into provider-free monster materialization/binding contracts before any production Numillian rebuild.
+The next recovery slice should convert the now-materializable monster references into actual module-local `monsters/*.json` artifacts and wire binding results into post-build toolkit reports.
 
 ### Current Numillian Monster Gap
 
@@ -57,7 +61,7 @@ Numillian currently has no `monsters/*.json` files because the completed preserv
 - `monsters_seed.json` may still contain an empty `monsters` list.
 - `toolkit_build_report.json` reports `encounters_planned: 5`, `monsters_generated: 0`, and warns that enrichment should add monster stats.
 
-This is not currently caught by the Numillian benchmark because `accurate_ingest_benchmark_report.json` scores NPC, location, puzzle, lore, and tone preservation, not monster preservation. The next slice should add deterministic monster materialization and encounter binding tests first, then generate/reuse module-local monster artifacts without changing benchmark thresholds or scanner logic.
+This is not currently caught by the Numillian benchmark because `accurate_ingest_benchmark_report.json` scores NPC, location, puzzle, lore, and tone preservation, not monster preservation. The completed `toolkit-accurate-ingest-monster-encounter-materialization` slice added deterministic monster materialization and encounter binding with provider-free tests (50 tests). The next slice should wire these helpers into the production build pipeline to generate/reuse module-local monster artifacts without changing benchmark thresholds or scanner logic.
 
 ---
 
