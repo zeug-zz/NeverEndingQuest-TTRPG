@@ -1234,6 +1234,41 @@ character_data["is_active_pc"] = True
 - `openspec/specs/accurate-ingest-legacy-generator-compatibility/spec.md`
 - `openspec/specs/accurate-ingest-source-monster-encounter-handoff/spec.md`
 
+### Toolkit Accurate-Ingest Monster Encounter Materialization (COMPLETED - 2026-05-26)
+
+**Status:** COMPLETED - Implemented provider-free source monster materialization and encounter seed binding for accurate-ingest builds. Reuse-first resolution of source monster refs against module-local `monsters/*.json`, with schema-sufficiency validation, per-ref resolution logging, and encounter seed binding.
+
+**Implementation Summary:**
+- `utils/accurate_ingest_monster_materialization.py` — `materialize_source_monsters()` resolves source refs against module-local files; `bind_encounter_monsters()` matches encounter seeds to resolution log entries via token-substring matching.
+- `scripts/test_accurate_ingest_monster_materialization.py` — 50 tests covering materialization, binding, unresolved diagnostics, no-source compatibility, report fields, and determinism.
+- `plans/accurate-ingest-fix.md` — Updated roadmap from generator source locks to monster/encounter materialization.
+- `openspec/changes/archive/2026-05-26-toolkit-accurate-ingest-monster-encounter-materialization/` — Archived change with 4 delta specs.
+- `openspec/specs/` — 4 main specs synced during archive: `accurate-ingest-source-monster-materialization`, `accurate-ingest-encounter-plan-monster-binding`, `accurate-ingest-monster-materialization-compatibility`, `accurate-ingest-monster-materialization-reporting`.
+
+**Key Design Decisions:**
+- Provider-free throughout; local regex normalization avoids runtime imports that trigger chat-client init.
+- Reuse-first: checks `module_dir/monsters/<normalized>.json` before any generation path.
+- Schema-sufficiency requires `size`, `alignment`, `armorClass` — parity with hydration contract.
+- Binding uses word-boundary token matching (`f" {norm_ref} " in f" {norm_seed} "`) for deterministic cross-referencing.
+- All previously-skipped stub tests now execute and pass; no production module artifacts were mutated.
+
+**Verification:**
+- `.venv/bin/python -m py_compile` on all modified files -> PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_monster_materialization` -> 50/50 PASS
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_homebrew_gui_unified_flow scripts.test_toolkit_blueprint_v2_contract` -> 126/126 PASS
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark scripts.test_accurate_ingest_numillian_end_to_end` -> 153/153 PASS (3 skipped)
+- `openspec validate --specs` -> 354/354 PASS
+
+**Files Modified:**
+- `utils/accurate_ingest_monster_materialization.py`
+- `scripts/test_accurate_ingest_monster_materialization.py`
+- `plans/accurate-ingest-fix.md`
+- `openspec/changes/archive/2026-05-26-toolkit-accurate-ingest-monster-encounter-materialization/`
+- `openspec/specs/accurate-ingest-source-monster-materialization/spec.md`
+- `openspec/specs/accurate-ingest-encounter-plan-monster-binding/spec.md`
+- `openspec/specs/accurate-ingest-monster-materialization-compatibility/spec.md`
+- `openspec/specs/accurate-ingest-monster-materialization-reporting/spec.md`
+
 ### Toolkit Accurate-Ingest Builder Audit Briefing (COMPLETED - 2026-05-25)
 
 **Status:** COMPLETED - Implemented builder audit briefing pipeline that reads an existing backstage audit run directory and produces compact builder-facing artifacts. Covers input loading/validation, compact brief emission, markdown prompt context, schema/contract tests, lane classification, runtime-only safety, and no-mutating-workflow source-contract tests.

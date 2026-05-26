@@ -1,9 +1,9 @@
 # Accurate Ingest GUI Builder Recovery Plan
 
-**Status:** Active roadmap; backstage audit MVP, builder-audit briefing, and ModuleBuilder handoff archived; next scaffold is generator source locks  
+**Status:** Active roadmap; backstage audit MVP, builder-audit briefing, ModuleBuilder handoff, and generator source locks archived; next scaffold is monster/encounter materialization
 **Created:** 2026-05-19  
 **Rewritten:** 2026-05-20  
-**Updated:** 2026-05-25  
+**Updated:** 2026-05-26
 **Scope:** Recover Module Builder GUI ingest by enhancing the existing LLM ModuleBuilder orchestration with accurate-ingest source truth, not replacing it with a deterministic template writer.  
 **Primary Source Case:** `Local_Docs/modules/hombrew/modules/The Hidden City of Numillian.md`  
 **Target Module:** `modules/The_Hidden_City_of_Numillian/`
@@ -32,29 +32,32 @@ Source MD/PDF
 
 The deterministic seed writer is not deleted. It is retained as support tooling: dry-run preview, fixture generation, fallback skeleton, source-vs-output comparator, and artifact repair helper. It is not the default authoring path for human adventure content.
 
-### Current Disposition After 2026-05-25 Archives
+### Current Disposition After 2026-05-26 Archives
 
-The recovery chain has moved past audit scaffolding into generator-level hardening:
+The recovery chain has moved past audit scaffolding and generator-level source-lock hardening into source monster/encounter materialization:
 
 - `toolkit-accurate-ingest-backstage-audit-mvp` is archived.
 - `toolkit-accurate-ingest-builder-audit-briefing` is archived.
 - `toolkit-accurate-ingest-modulebuilder-handoff` is archived.
+- `toolkit-accurate-ingest-generator-source-locks` is archived.
 - Default accurate-ingest packet builds are now locked to the source-enhanced ModuleBuilder handoff path when no explicit seed writer mode is supplied.
-- `builder_input` now carries source NPC, location, puzzle/challenge, tone, source-lock, and artifact metadata before ModuleBuilder execution.
+- `builder_input` now carries source NPC, location, puzzle/challenge, monster reference, encounter seed, tone, source-lock, and artifact metadata before ModuleBuilder execution.
+- ModuleBuilder and sub-generator prompts now receive compact source-lock context for overview, area naming, location, and plot generation.
 
-The next recovery slice is `toolkit-accurate-ingest-generator-source-locks`. It should propagate the already-captured source contract into ModuleBuilder sub-generator prompt context and add the missing monster/encounter handoff fields required for later monster materialization.
+The next recovery slice is `toolkit-accurate-ingest-monster-encounter-materialization`. It should convert the now-visible source monster references and encounter seeds into provider-free monster materialization/binding contracts before any production Numillian rebuild.
 
 ### Current Numillian Monster Gap
 
-Numillian currently has no `monsters/*.json` files because the completed preservation chain focused on NPC, location, puzzle, lore, and tone fidelity. The source pipeline sees monster-like references and encounter seeds, but the builder blueprint and seed artifacts do not yet convert those references into monster stat artifacts:
+Numillian currently has no `monsters/*.json` files because the completed preservation chain focused on NPC, location, puzzle, lore, and tone fidelity. The source pipeline sees monster-like references and encounter seeds, and the archived generator-source-lock slice now propagates them into `builder_input` and ModuleBuilder context. The remaining gap is materialization and binding:
 
 - `normalized_packet.json` contains `monster_refs` such as `Duergar`, `Alhoon`, `Illithid`, `Homunculus`, `Kenku`, `Druid`, `Were-possum`, `Were-trout`, `Were-bear`, `Nothic`, `Vampire`, and `Charion`.
 - `normalized_packet.json` contains five `encounter_seeds`.
-- `builder_blueprint.json` has `encounter_plan` entries, but their `monsters` arrays are empty.
-- `monsters_seed.json` contains an empty `monsters` list.
+- `builder_input.json` carries source monster refs and encounter seeds for source-enhanced builds.
+- `builder_blueprint.json` may still have `encounter_plan` entries whose `monsters` arrays are empty.
+- `monsters_seed.json` may still contain an empty `monsters` list.
 - `toolkit_build_report.json` reports `encounters_planned: 5`, `monsters_generated: 0`, and warns that enrichment should add monster stats.
 
-This is not currently caught by the Numillian benchmark because `accurate_ingest_benchmark_report.json` scores NPC, location, puzzle, lore, and tone preservation, not monster preservation. The generator source-lock slice should therefore add source monster/encounter handoff tests first; actual stat-file materialization can follow once the contract reaches the generator layer.
+This is not currently caught by the Numillian benchmark because `accurate_ingest_benchmark_report.json` scores NPC, location, puzzle, lore, and tone preservation, not monster preservation. The next slice should add deterministic monster materialization and encounter binding tests first, then generate/reuse module-local monster artifacts without changing benchmark thresholds or scanner logic.
 
 ---
 
@@ -1263,44 +1266,51 @@ Exit gate:
 
 - Generator prompts no longer treat source-enhanced builds as generic blank-concept generation.
 
-### Change 6: `toolkit-accurate-ingest-seed-writer-support-role`
+### Change 6: `toolkit-accurate-ingest-monster-encounter-materialization`
 
-Purpose: Preserve seed writer value while preventing silent replacement of ModuleBuilder.
+Purpose: Convert source monster references and encounter seeds into module-local monster artifacts and encounter-plan bindings without replacing ModuleBuilder.
 
 Scope:
 
-- Reclassify seed writer build modes.
-- Keep seed writer for preview/fallback/fixture/comparator/support artifacts.
-- Improve failure semantics and support artifact output.
+- Materialize source monster references from source-enhanced accurate-ingest artifacts into `monsters/*.json` or explicit unresolved blockers.
+- Bind encounter seed references to canonical source monster identities before post-build reports run.
+- Preserve ModuleBuilder as the creative authoring path and use Python only for reuse-first stat artifact closure.
+- Keep deterministic seed writer in support role only.
 
 Primary files:
 
-- `utils/toolkit_blueprint_seed_writer.py`
 - `web/extensions/toolkit_homebrew_packet_builder.py`
-- `scripts/test_toolkit_blueprint_seed_writer.py`
+- `utils/module_monster_authority.py` or a new accurate-ingest monster helper if needed.
+- `utils/toolkit_build_fidelity.py` if report consumption needs narrow expansion.
+- `scripts/rebuild_numillian_accurate_ingest.py` only for test-harness wiring, not production rebuild by default.
+- Accurate-ingest GUI, blueprint, and Numillian test suites.
 
 Key MUSTs:
 
-- Seed writer SHALL NOT be the default GUI authoring path.
-- Seed writer SHALL emit honest `success`, `degraded`, or `failed` status.
-- Required write failures SHALL block continuation.
-- Seed writer support artifacts SHALL preserve source refs and criticality.
+- Source monster references SHALL be materialized by reuse-first resolution or reported as explicit unresolved blockers.
+- Encounter seeds SHALL retain monster bindings when source monster refs are present and unambiguous.
+- The implementation SHALL NOT invent replacement monsters to satisfy counts.
+- NPC/source-character names SHALL NOT be converted into monster artifacts unless source evidence marks them as monsters or combatants.
+- Legacy concept builds and non-source accurate-ingest paths SHALL remain compatible.
+- Tests SHALL be provider-free and SHALL NOT require a production Numillian rebuild.
 
 Suggested tasks:
 
-1. Add explicit build modes: `blueprint_seed_preview`, `blueprint_seed_fallback`, `blueprint_seed_support`.
-2. Harden required file write failures.
-3. Ensure `npcs_seed.json`, `monsters_seed.json`, and `seed_source_report.json` are complete support artifacts.
-4. Add tests for no default GUI seed path.
+1. Add provider-free tests proving source monster refs and encounter seeds reach the materialization helper.
+2. Add reuse-first monster materialization for existing SRD/module/bestiary-compatible monster names.
+3. Add unresolved-blocker reporting for unmatched source monster refs.
+4. Bind encounter seeds to canonical monster refs where source refs are unambiguous.
+5. Verify legacy/no-source paths do not emit monster materialization artifacts.
 
 Verification:
 
-- `.venv/bin/python -m py_compile utils/toolkit_blueprint_seed_writer.py web/extensions/toolkit_homebrew_packet_builder.py`
-- `.venv/bin/python -m unittest -q scripts.test_toolkit_blueprint_seed_writer`
+- `.venv/bin/python -m py_compile web/extensions/toolkit_homebrew_packet_builder.py utils/module_monster_authority.py utils/toolkit_build_fidelity.py`
+- `.venv/bin/python -m unittest -q scripts.test_toolkit_homebrew_gui_unified_flow scripts.test_toolkit_blueprint_v2_contract`
+- `.venv/bin/python -m unittest -q scripts.test_accurate_ingest_numillian_benchmark scripts.test_accurate_ingest_numillian_end_to_end`
 
 Exit gate:
 
-- Seed writer survives as useful tooling without hijacking ModuleBuilder.
+- Source monster refs and encounter seeds no longer disappear between source-enhanced handoff and module artifact/report generation.
 
 ### Change 7: `toolkit-accurate-ingest-source-fidelity-publication-propagation`
 
@@ -1435,11 +1445,11 @@ Exit gate:
 
 ---
 
-## Next OpenSpec Builder Handoff (2026-05-25)
+## Next OpenSpec Builder Handoff (2026-05-26)
 
 ### Current Disposition
 
-The previous Numillian source-fidelity blocker chain, source-enhanced ModuleBuilder handoff, and read-only backstage audit MVP are complete and archived.
+The previous Numillian source-fidelity blocker chain, source-enhanced ModuleBuilder handoff, read-only backstage audit MVP, builder-audit briefing, and generator source-lock slice are complete and archived.
 
 Current source-fidelity state:
 
@@ -1449,6 +1459,7 @@ Current source-fidelity state:
 - `puzzle_preservation`: `pass`, `3/3`
 - `lore_preservation`: `pass`, `2/2`
 - `tone_preservation`: `pass`
+- Source monster refs and encounter seeds are now visible in source-enhanced `builder_input` and ModuleBuilder source context.
 - Active OpenSpec changes: none.
 - Dirty Numillian module artifacts remain intentionally uncommitted until the user explicitly requests module publication.
 
@@ -1459,6 +1470,8 @@ Completed background changes:
 - `toolkit-accurate-ingest-numillian-npc-location-preservation` is archived background work and restored Numillian benchmark source fidelity to pass.
 - `toolkit-accurate-ingest-modulebuilder-handoff` is archived background work and restored the default accurate-ingest GUI route to source-enhanced ModuleBuilder handoff with explicit seed-writer support modes.
 - `toolkit-accurate-ingest-backstage-audit-mvp` is archived background work and provides a read-only audit artifact set: `run.json`, `evidence.json`, `audit_report.json`, and `recommendation.json` under `data/agent_runs/accurate_ingest_audit/<task_id>/`.
+- `toolkit-accurate-ingest-builder-audit-briefing` is archived background work and produces compact builder-facing audit briefs.
+- `toolkit-accurate-ingest-generator-source-locks` is archived background work and propagates source locks plus monster/encounter source fields into generator prompt context.
 
 ### How The LLM Builder Should Use Backstage Audits
 
@@ -1495,49 +1508,48 @@ An LLM Builder must not use audit outputs to:
 Create the next focused OpenSpec change:
 
 ```text
-toolkit-accurate-ingest-builder-audit-briefing
+toolkit-accurate-ingest-monster-encounter-materialization
 ```
 
-This change turns the completed read-only backstage audit artifacts into a compact, deterministic builder briefing that an LLM Builder can consume before proposing the next implementation step.
+This change turns the now-visible source monster references and encounter seeds into deterministic module artifact/report contracts before any production Numillian rebuild.
 
 Purpose:
 
-- Read an existing backstage audit run directory.
-- Validate `task_id` consistency across the four audit artifacts.
-- Produce a compact `builder_brief.json` and `builder_prompt_context.md` in the runtime audit directory.
-- Preserve evidence references and deterministic statuses.
-- Recommend a builder lane without mutating module artifacts or refreshing reports.
+- Materialize source monster references into module-local `monsters/*.json` artifacts when reuse-first resolution can identify a valid monster.
+- Preserve unresolved source monster refs as explicit blockers instead of silently dropping them.
+- Bind encounter seeds/encounter plans to canonical source monster identities when unambiguous.
+- Report planned, generated, reused, and unresolved monster/encounter counts deterministically.
+- Preserve legacy concept builds and no-source accurate-ingest paths.
 
 ### Required Capabilities
 
 The OpenSpec scaffold SHOULD include these capability specs:
 
-1. `accurate-ingest-builder-audit-brief-inputs`
-2. `accurate-ingest-builder-audit-brief-output`
-3. `accurate-ingest-builder-audit-brief-safety`
-4. `accurate-ingest-builder-audit-next-step-routing`
+1. `accurate-ingest-source-monster-materialization`
+2. `accurate-ingest-encounter-plan-monster-binding`
+3. `accurate-ingest-monster-materialization-reporting`
+4. `accurate-ingest-monster-materialization-compatibility`
 
 ### MUST Contract For The Change
 
-- The brief generator SHALL consume an existing audit run directory containing `run.json`, `evidence.json`, `audit_report.json`, and `recommendation.json`.
-- The brief generator SHALL validate task identity consistency before producing output.
-- The brief generator SHALL write only to the audit run directory, never to `modules/<slug>/`.
-- The brief SHALL preserve recommendation action, reason, evidence references, grouped finding counts, and report-consistency summary.
-- The brief SHALL classify the next builder lane as one of: `diagnose_reports`, `repair_artifacts`, `openspec_work`, `review_warnings`, or `no_action`.
-- The brief SHALL NOT call LLM providers, ModuleBuilder, seed writer, benchmark refresh, publishability refresh, or module finishing.
-- The brief SHALL NOT mark a module publishable or source-faithful by itself.
+- Source monster references SHALL be materialized by reuse-first resolution or recorded as explicit unresolved blockers.
+- Encounter seeds SHALL retain source monster bindings when refs are present and unambiguous.
+- The implementation SHALL NOT invent replacement monsters, weaken benchmark thresholds, or change scanner logic.
+- NPC/source-character names SHALL NOT be materialized as monster artifacts unless source evidence marks them as monsters or combatants.
+- Legacy concept builds and accurate-ingest jobs with no source monster refs SHALL remain compatible and SHALL NOT emit false blocker reports.
+- Tests SHALL be provider-free and SHALL NOT require a production Numillian rebuild.
 
 ### SHOULD Guidance
 
-- Prefer a narrow script entrypoint such as `scripts/prepare_builder_from_backstage_audit.py` before extracting a shared harness.
-- Keep the output small enough to paste into a builder prompt.
-- Include evidence keys and artifact paths, not full report bodies.
-- Use temp fixture tests; do not read real Numillian module artifacts.
-- Treat future GUI surfacing or shared `core/agents/backstage/` extraction as later work.
+- Prefer a small helper around existing monster authority/hydration utilities before introducing new builder architecture.
+- Start with tests around source refs, encounter seeds, and reporting shape before broad materialization behavior.
+- Use temp module/workspace fixtures where possible; keep production Numillian artifact mutation out of this scaffold.
+- Reuse existing monster schemas/templates and validation helpers instead of hand-writing large stat blocks.
+- Treat MMG/media generation as later work.
 
 ### Initial Builder Prompt
 
-See `openspec/changes/toolkit-accurate-ingest-builder-audit-briefing/builder_prompts.md` for the Step 1.1 full-variant builder prompt.
+See `openspec/changes/toolkit-accurate-ingest-monster-encounter-materialization/builder_prompts.md` for the Step 1.1 full-variant builder prompt.
 
 ### Chain-Level Archive Policy
 
