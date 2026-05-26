@@ -3037,9 +3037,20 @@ def get_module_adventure_markdown(module_name):
     legacy modules that predate the builder hook. The generated result is
     cached to disk for subsequent requests.
     """
+    import re
     from pathlib import Path
 
-    module_dir = Path("modules") / module_name
+    module_name = str(module_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_ \-]+", module_name):
+        return jsonify({"error": "Invalid module name"}), 400
+
+    module_name = module_name.replace("-", "_").replace(" ", "_")
+
+    modules_root = Path("modules").resolve()
+    module_dir = (modules_root / module_name).resolve()
+    if not module_dir.is_relative_to(modules_root):
+        return jsonify({"error": "Invalid module name"}), 400
+
     summary_path = module_dir / "MODULE_SUMMARY.md"
 
     # Try serving pre-generated file first
@@ -3066,8 +3077,8 @@ def get_module_adventure_markdown(module_name):
 
         # Cache to disk for future requests
         try:
-            module_dir.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(md, encoding="utf-8")
+            if module_dir.is_dir():
+                summary_path.write_text(md, encoding="utf-8")
         except OSError:
             pass  # Non-blocking - file is optional cache
 
