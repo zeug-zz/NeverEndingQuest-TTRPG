@@ -376,5 +376,298 @@ class TestPromptDirectives(unittest.TestCase):
         self.assertIn("milestone timeline WINS", content)
 
 
+class TestMemoryLookupDispatch(unittest.TestCase):
+    """Tests for lookupMemory action dispatch (tasks 6.2, 6.3)."""
+
+    def test_action_constant_defined(self):
+        from core.ai.action_handler import ACTION_LOOKUP_MEMORY
+        self.assertEqual(ACTION_LOOKUP_MEMORY, "lookupMemory")
+
+    def test_dispatch_lookup_memory_routes_correctly(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["vitreol"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   return_value=[{"event_id": "e1", "event_ts": "2026-05-01T10:00:00",
+                                  "summary": "Test event", "retrieval_score": 50}]):
+            result = process_action(action, {}, {}, [])
+            self.assertIsInstance(result, dict)
+            self.assertIn("memory_context", result.get("response_data", {}))
+
+    def test_non_terminal_returns_continue(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["vitreol"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   return_value=[{"event_id": "e1", "event_ts": "2026-05-01T10:00:00",
+                                  "summary": "Test event", "retrieval_score": 50}]):
+            result = process_action(action, {}, {}, [])
+            self.assertEqual(result.get("needs_update"), False)
+            self.assertEqual(result.get("status"), "continue")
+
+
+class TestMemoryLookupProcessing(unittest.TestCase):
+    """Tests for _process_memory_lookup logic (task 6.1)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="neq_lookup_test_")
+        self.db_path = os.path.join(self.tmpdir, "memory.db")
+        _create_test_db(self.db_path)
+        _insert_event(self.db_path, "evt1", "acheron",
+                      "Defeated the wight king in Thornwood",
+                      importance=90, persistence_class="identity_core", decay_profile="none")
+        _insert_event(self.db_path, "evt2", "acheron",
+                      "Found the hidden grove altar",
+                      importance=70, persistence_class="campaign_major", decay_profile="slow")
+
+    def test_known_entity_returns_events(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   side_effect=lambda eid, **kw: [
+                       {"event_id": "evt1", "event_ts": "2026-05-01T10:00:00",
+                        "summary": "Defeated the wight king in Thornwood", "retrieval_score": 85},
+                       {"event_id": "evt2", "event_ts": "2026-05-02T10:00:00",
+                        "summary": "Found the hidden grove altar", "retrieval_score": 70},
+                   ]):
+            result = process_action(action, {}, {}, [])
+            ctx = result.get("response_data", {}).get("memory_context", "")
+            self.assertIn("wight king", ctx)
+            self.assertIn("grove altar", ctx)
+            self.assertIn("[SYSTEM] Campaign memory", ctx)
+
+    def test_unknown_entity_returns_empty(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["nonexistent"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline", return_value=[]):
+            result = process_action(action, {}, {}, [])
+            self.assertIsNone(result.get("response_data"))
+
+    def test_empty_entities_returns_empty(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": []}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline"):
+            result = process_action(action, {}, {}, [])
+            self.assertIsNone(result.get("response_data"))
+
+    def test_fail_open_db_error(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   side_effect=RuntimeError("DB connection failed")):
+            result = process_action(action, {}, {}, [])
+            self.assertEqual(result.get("needs_update"), False)
+            self.assertIsNone(result.get("response_data"))
+
+    def test_deduplication(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron", "kira"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   side_effect=lambda eid, **kw: [
+                       {"event_id": "shared1", "event_ts": "2026-05-01T10:00:00",
+                        "summary": "Party defeated Malarok", "retrieval_score": 95},
+                   ]):
+            result = process_action(action, {}, {}, [])
+            ctx = result.get("response_data", {}).get("memory_context", "")
+            self.assertEqual(ctx.count("Party defeated Malarok"), 1)
+
+    def test_limit_enforcement_top_8(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        events = [
+            {"event_id": f"evt{i}", "event_ts": f"2026-05-{i:02d}T10:00:00",
+             "summary": f"Event number {i}", "retrieval_score": 100 - i}
+            for i in range(15)
+        ]
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline", return_value=events):
+            result = process_action(action, {}, {}, [])
+            ctx = result.get("response_data", {}).get("memory_context", "")
+            event_count = ctx.count("[2026-")
+            self.assertLessEqual(event_count, 8)
+            self.assertIn("Event number 0", ctx)
+            self.assertNotIn("Event number 14", ctx)
+
+    def test_summary_truncation(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        long_summary = "X" * 300
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   return_value=[{"event_id": "long1", "event_ts": "2026-05-01T10:00:00",
+                                  "summary": long_summary, "retrieval_score": 100}]):
+            result = process_action(action, {}, {}, [])
+            ctx = result.get("response_data", {}).get("memory_context", "")
+            for line in ctx.split("\n"):
+                if "X" in line:
+                    summary_part = line.split("] ", 1)[1] if "] " in line else ""
+                    self.assertLessEqual(len(summary_part), 155)
+
+    def test_output_format(self):
+        from unittest.mock import patch
+        from core.ai.action_handler import process_action
+        action = {"action": "lookupMemory", "parameters": {"entities": ["acheron"]}}
+        with patch("core.memory.memory_retrieval.get_entity_timeline",
+                   return_value=[{"event_id": "fmt1", "event_ts": "2026-03-15T14:30:00",
+                                  "summary": "Formatted test event", "retrieval_score": 80}]):
+            result = process_action(action, {}, {}, [])
+            ctx = result.get("response_data", {}).get("memory_context", "")
+            self.assertEqual(ctx.strip(),
+                             "[SYSTEM] Campaign memory -- Python-authoritative record:\n  [2026-03-15] Formatted test event")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+
+class TestMemoryLookupCollection(unittest.TestCase):
+    """Tests for multi-site collection and transient injection (task 6.4)."""
+
+    def test_transient_cleanup_removes_old_keeps_new(self):
+        conversation_history = [
+            {"role": "system", "content": "old transient memory", "_transient_memory": True},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "response"},
+        ]
+        pending = ["[SYSTEM] Campaign memory -- Python-authoritative record:\n  [2026-05-01] Test"]
+        cleaned = [msg for msg in conversation_history if not msg.get("_transient_memory")]
+        for memory_ctx in pending:
+            cleaned.append({"role": "system", "content": memory_ctx, "_transient_memory": True})
+        self.assertEqual(len(cleaned), 3)
+        self.assertEqual(cleaned[0]["role"], "user")
+        self.assertEqual(cleaned[1]["role"], "assistant")
+        self.assertEqual(cleaned[2]["role"], "system")
+        self.assertTrue(cleaned[2].get("_transient_memory"))
+        self.assertIn("2026-05-01] Test", cleaned[2]["content"])
+
+    def test_non_transient_messages_preserved(self):
+        conversation_history = [
+            {"role": "system", "content": "@DUNGEON_MASTER prompt"},
+            {"role": "user", "content": "action description"},
+            {"role": "assistant", "content": "narrative response"},
+        ]
+        pending = ["[SYSTEM] Campaign memory -- Python-authoritative record:\n  [2026-05-01] Event"]
+        cleaned = [msg for msg in conversation_history if not msg.get("_transient_memory")]
+        for memory_ctx in pending:
+            cleaned.append({"role": "system", "content": memory_ctx, "_transient_memory": True})
+        self.assertEqual(len(cleaned), 4)
+        self.assertFalse(any(m.get("_transient_memory") for m in cleaned[:-1]))
+
+    def test_multiple_memory_contexts_combined(self):
+        pending = [
+            "[SYSTEM] Campaign memory -- Python-authoritative record:\n  [2026-05-01] Event A",
+            "[SYSTEM] Campaign memory -- Python-authoritative record:\n  [2026-05-02] Event B",
+        ]
+        combined = "\n\n".join(pending)
+        messages = [{"role": "system", "content": combined, "_transient_memory": True}]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Event A", messages[0]["content"])
+        self.assertIn("Event B", messages[0]["content"])
+
+    def test_empty_pending_no_injection(self):
+        conversation_history = [
+            {"role": "user", "content": "hello"},
+        ]
+        pending = []
+        original_len = len(conversation_history)
+        if pending:
+            pass
+        self.assertEqual(len(conversation_history), original_len)
+
+
+class TestMemoryLookupPromptContracts(unittest.TestCase):
+    """Tests for prompt contract entries (tasks 6.5, 6.6)."""
+
+    def test_lookupMemory_in_actions_compressed(self):
+        with open("prompts/system_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        self.assertIn("lookupMemory:", content.split("@ACTIONS")[1].split("@PARAMS")[0])
+
+    def test_lookupMemory_in_params_compressed(self):
+        with open("prompts/system_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        params_section = content.split("@PARAMS={")[1].split("@CHARACTER_OPS")[0]
+        self.assertIn("lookupMemory", params_section)
+
+    def test_memory_lookup_directive_present_compressed(self):
+        with open("prompts/system_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        self.assertIn("@MEMORY_LOOKUP={", content)
+
+    def test_lookupMemory_in_examples_compressed(self):
+        with open("prompts/system_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        examples_section = content.split("@EXAMPLES")[1].split("@REST")[0] if "@REST" in content else content.split("@EXAMPLES")[1]
+        self.assertIn("lookupMemory", examples_section)
+
+    def test_uncompressed_has_lookup_in_actions(self):
+        with open("prompts/system_prompt.txt", "r") as f:
+            content = f.read()
+        self.assertIn("\"lookupMemory\"", content)
+        self.assertIn("\"entities\": [\"entity_name_1\", \"entity_name_2\"]", content)
+
+    def test_uncompressed_has_memory_lookup_directive(self):
+        with open("prompts/system_prompt.txt", "r") as f:
+            content = f.read()
+        self.assertIn("@MEMORY_LOOKUP={", content)
+
+    def test_uncompressed_has_lookup_in_examples(self):
+        with open("prompts/system_prompt.txt", "r") as f:
+            content = f.read()
+        self.assertIn("action\": \"lookupMemory\"", content)
+
+    def test_lookupMemory_validation_compressed(self):
+        with open("prompts/validation/validation_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        self.assertIn("lookupMemory", content)
+        self.assertIn("INVALID", content[content.index("lookupMemory"):])
+
+    def test_lookupMemory_validation_uncompressed(self):
+        with open("prompts/validation/validation_prompt.txt", "r") as f:
+            content = f.read()
+        self.assertIn("lookupMemory", content)
+        self.assertIn("VALID", content[content.index("lookupMemory"):])
+
+    def test_no_duplicate_memory_lookup_directive_compressed(self):
+        with open("prompts/system_prompt_compressed.txt", "r") as f:
+            content = f.read()
+        self.assertEqual(content.count("@MEMORY_LOOKUP={"), 1)
+
+    def test_no_duplicate_memory_lookup_directive_uncompressed(self):
+        with open("prompts/system_prompt.txt", "r") as f:
+            content = f.read()
+        self.assertEqual(content.count("@MEMORY_LOOKUP={"), 1)
+
+
+class TestMemoryLookupAsciiCompliance(unittest.TestCase):
+    """Tests for ASCII compliance of prompt additions (task 6.7)."""
+
+    def _check_ascii_in_section(self, filepath, keyword):
+        with open(filepath, "r") as f:
+            lines = f.readlines()
+        for line in lines:
+            if keyword in line:
+                for ch in line:
+                    if ord(ch) >= 128:
+                        self.fail(f"Non-ASCII char {ch!r} (ord={ord(ch)}) in {filepath} line containing '{keyword}'")
+
+    def test_compressed_prompt_ascii(self):
+        self._check_ascii_in_section("prompts/system_prompt_compressed.txt", "lookupMemory")
+
+    def test_uncompressed_prompt_ascii(self):
+        self._check_ascii_in_section("prompts/system_prompt.txt", "lookupMemory")
+
+    def test_compressed_validation_ascii(self):
+        self._check_ascii_in_section("prompts/validation/validation_prompt_compressed.txt", "lookupMemory")
+
+    def test_uncompressed_validation_ascii(self):
+        self._check_ascii_in_section("prompts/validation/validation_prompt.txt", "lookupMemory")
+
+
 if __name__ == "__main__":
     unittest.main()

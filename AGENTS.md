@@ -1235,7 +1235,37 @@ character_data["is_active_pc"] = True
 - `openspec/specs/narrator-memory-milestone-injection/spec.md`
 - `openspec/specs/narrator-memory-milestone-prompt-contract/spec.md`
 
-**Note:** Phase 2 (`lookupMemory` action) is deferred. The plan file at `plans/narrator_memory_update.md` documents both phases.
+### Narrator Memory Lookup Action (COMPLETED - 2026-05-30)
+
+**Status:** COMPLETED - Implemented Phase 2 `lookupMemory` action as a pull-based mechanism for the narrator to request detailed campaign history for specific entities. Complements the Phase 1 push-based milestone injection with on-demand retrieval from the memory DB.
+
+**Implementation Summary:**
+- `core/ai/action_handler.py` — Added `ACTION_LOOKUP_MEMORY` constant, `_process_memory_lookup()` function with entity name normalization, `get_entity_timeline()` retrieval, deduplication by `event_id`, sort by `retrieval_score`, top-8 limit, `MAX_LOOKUP_CHARS` truncation, and fail-open exception handling.
+- `main.py` — Added `_pending_memory_contexts` collection list, collection from all 6 `process_action()` call sites, transient system message injection with `_transient_memory: True` tag, and cleanup of stale transient messages.
+- `prompts/system_prompt_compressed.txt` — Added `lookupMemory` to `@ACTIONS`, `@PARAMS`, new `@MEMORY_LOOKUP` directive with `when`, `constraints`, and `example` fields, and example in `@EXAMPLES`. All ASCII-only.
+- `prompts/system_prompt.txt` — Added `lookupMemory` to action reference list, `@MEMORY_LOOKUP` directive, and example section (uncompressed parity).
+- `prompts/validation/validation_prompt_compressed.txt` — Added lookupMemory validation rules (valid single/combined, invalid multiple/no-entities) and param contract.
+- `prompts/validation/validation_prompt.txt` — Added lookupMemory validation rules section (uncompressed parity).
+- `scripts/test_narrator_memory_milestones.py` — Added 28 tests across 5 test classes covering dispatch, processing, collection/injection, prompt contracts, and ASCII compliance.
+
+**Verification:**
+- `.venv/bin/python -m unittest scripts.test_narrator_memory_milestones` -> 63/63 PASS
+- `openspec validate narrator-memory-lookup-action` -> VALID
+- All 76 non-ASCII characters fixed across 3 prompt files (Windows cp1252 safety).
+
+**Files Modified:**
+- `core/ai/action_handler.py`
+- `main.py`
+- `scripts/test_narrator_memory_milestones.py`
+- `prompts/system_prompt_compressed.txt`
+- `prompts/system_prompt.txt`
+- `prompts/validation/validation_prompt.txt`
+- `openspec/changes/archive/2026-05-30-narrator-memory-lookup-action/`
+- `openspec/specs/narrator-memory-lookup-action-dispatch/spec.md`
+- `openspec/specs/narrator-memory-lookup-retrieval/spec.md`
+- `openspec/specs/narrator-memory-lookup-collection/spec.md`
+- `openspec/specs/narrator-memory-lookup-injection/spec.md`
+- `openspec/specs/narrator-memory-lookup-prompt-contract/spec.md`
 
 ### Toolkit Accurate-Ingest Generator Source Locks (COMPLETED - 2026-05-26)
 

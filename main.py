@@ -4027,6 +4027,9 @@ def process_ai_response(
 ):
     global needs_conversation_history_update
 
+    # TABLETOP MODE: Collect memory contexts from action handlers
+    _pending_memory_contexts = []
+
     # TABLETOP MODE: Check if we're in character creation mode and this is the final JSON
     if is_creation_mode_active():
         creation_status = handle_character_creation_response(
@@ -4133,6 +4136,9 @@ def process_ai_response(
                         return {"role": "system", "content": f"[SYSTEM] {error_msg}"}
                     if result.get("needs_update"):
                         needs_conversation_history_update = True
+                    # TABLETOP MODE: Collect memory context from transition actions
+                    if isinstance(result, dict) and result.get("response_data", {}).get("memory_context"):
+                        _pending_memory_contexts.append(result["response_data"]["memory_context"])
                     # Check if we need to generate a DM response (e.g., after module creation)
                     if result.get("needs_dm_response"):
                         # Save current assistant response first
@@ -4510,6 +4516,9 @@ def process_ai_response(
                     needs_conversation_history_update = True
                 elif isinstance(result, bool) and result:
                     needs_conversation_history_update = True
+                # TABLETOP MODE: Collect memory context from character updates
+                if isinstance(result, dict) and result.get("response_data", {}).get("memory_context"):
+                    _pending_memory_contexts.append(result["response_data"]["memory_context"])
 
         # Track pending archive info for delayed processing
         pending_archive_info = None
@@ -4651,8 +4660,28 @@ def process_ai_response(
                 return "exit"
             elif isinstance(result, bool) and result:
                 needs_conversation_history_update = True
+            # TABLETOP MODE: Collect memory context from other actions
+            if isinstance(result, dict) and result.get("response_data", {}).get("memory_context"):
+                _pending_memory_contexts.append(result["response_data"]["memory_context"])
 
-        # TABLETOP MODE: 3.3 Emit deferred narration after successful action processing
+        # TABLETOP MODE: Inject collected memory contexts as transient system messages
+        if _pending_memory_contexts:
+            # Remove old transient memory messages
+            conversation_history[:] = [
+                msg for msg in conversation_history
+                if not msg.get("_transient_memory")
+            ]
+            # Inject new memory contexts
+            for memory_ctx in _pending_memory_contexts:
+                conversation_history.append({
+                    "role": "system",
+                    "content": memory_ctx,
+                    "_transient_memory": True
+                })
+            needs_conversation_history_update = True
+            info(f"MEMORY_LOOKUP: Injected {len(_pending_memory_contexts)} memory contexts", category="narrator_memory")
+
+        # TABLETOP MODE: Emit deferred narration after successful action processing
         # This prevents combat narration from being shown when createEncounter fails
         if not narration_emitted and narration_deferred:
             print(

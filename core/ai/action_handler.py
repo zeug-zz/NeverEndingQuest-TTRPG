@@ -153,6 +153,7 @@ ACTION_DELETE_SAVE = "deleteSave"
 ACTION_REST = "rest"
 ACTION_RESURRECT = "resurrectCharacter"
 ACTION_REQUEST_ROLL = "requestRoll"
+ACTION_LOOKUP_MEMORY = "lookupMemory"
 
 # Module conversation segmentation has been moved to conversation_utils.py
 # to work with the regular conversation update cycle
@@ -1379,6 +1380,56 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
         if response_data:
             result["response_data"] = response_data
         return result
+
+    def _process_memory_lookup(parameters: dict) -> dict:
+        """Process a narrator memory lookup request.
+
+        Returns memory context via response_data for main.py to collect.
+        Uses create_return() to match existing action handler conventions.
+        """
+        try:
+            from core.memory.memory_retrieval import get_entity_timeline, MAX_LOOKUP_CHARS
+            from updates.update_character_info import normalize_character_name
+
+            entities = parameters.get("entities", [])
+            if not entities:
+                return create_return(needs_update=False)
+
+            all_events = []
+            seen_ids = set()
+
+            for entity_name in entities:
+                entity_id = normalize_character_name(str(entity_name))
+                events = get_entity_timeline(entity_id, limit=5)
+                for event in events:
+                    eid = event.get("event_id", "")
+                    if eid and eid not in seen_ids:
+                        seen_ids.add(eid)
+                        all_events.append(event)
+
+            if not all_events:
+                return create_return(needs_update=False)
+
+            all_events.sort(key=lambda e: e.get("retrieval_score", 0), reverse=True)
+            top_events = all_events[:8]
+
+            lines = ["[SYSTEM] Campaign memory -- Python-authoritative record:"]
+            for event in top_events:
+                ts = str(event.get("event_ts", ""))[:10]
+                summary = str(event.get("summary", ""))[:MAX_LOOKUP_CHARS]
+                lines.append(f"  [{ts}] {summary}")
+
+            memory_context = "\n".join(lines)
+
+            info(f"MEMORY_LOOKUP: Retrieved {len(top_events)} events for {entities}", category="narrator_memory")
+            return create_return(
+                needs_update=False,
+                response_data={"memory_context": memory_context}
+            )
+
+        except Exception as e:
+            warning(f"MEMORY_LOOKUP: Failed: {e}", category="narrator_memory")
+            return create_return(needs_update=False)
 
     global needs_conversation_history_update
     needs_conversation_history_update = False
@@ -3617,6 +3668,9 @@ Please use a valid location that exists in the current area ({current_area_id}) 
             print(f"ERROR: Exception while processing resurrectCharacter: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    elif action_type == ACTION_LOOKUP_MEMORY:
+        return _process_memory_lookup(parameters)
 
     else:
         print(f"WARNING: Unknown action type: {action_type}")

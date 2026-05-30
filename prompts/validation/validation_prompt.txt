@@ -1064,7 +1064,7 @@ An NPC is considered "off-location" if they are NOT currently in the party roste
 
 ## Scene Follower State Synchronization Validation Rules
 
-When the AI DM uses updateSceneFollower, the update MUST ground a durable scene follower from deterministic Python-authoritative sources: module NPC authority, module monster authority, existing follower records, or active party NPC identity. External world entity introduction (traders, ambassadors, dragons, etc.) belongs to the v2 Titan background pipeline — the Narrator does not self-authorize followers outside deterministic sources.
+When the AI DM uses updateSceneFollower, the update MUST ground a durable scene follower from deterministic Python-authoritative sources: module NPC authority, module monster authority, existing follower records, or active party NPC identity. External world entity introduction (traders, ambassadors, dragons, etc.) belongs to the v2 Titan background pipeline -- the Narrator does not self-authorize followers outside deterministic sources.
 
 ### Required Conditions:
 1. The entity must be grounded by module monster authority, module NPC authority, existing scene follower state, or active party NPC identity.
@@ -1152,3 +1152,13 @@ Result: INVALID - location-exclusive present-scene contradiction.
 Narration: "The path to B02 is blocked and impassable."
 Current connectivity still includes B02 and no deterministic blocker support present.
 Result: INVALID - unsupported route-block claim.
+
+## LOOKUPMEMORY VALIDATION RULES
+
+When the AI DM uses the lookupMemory action, validate according to these rules:
+
+### Validation Rules:
+- **VALID**: Single lookupMemory action with entities list parameter
+- **VALID**: lookupMemory combined with other actions in the same response (non-terminal)
+- **INVALID**: Multiple lookupMemory actions in the same response
+- **INVALID**: lookupMemory without entities parameter

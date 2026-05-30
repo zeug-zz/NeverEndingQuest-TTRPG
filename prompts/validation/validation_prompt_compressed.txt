@@ -56,6 +56,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
   listSaves: list available saves
   deleteSave: remove saved game
   requestRoll: explicit player-facing save/check request action; pause before contingent outcome
+  lookupMemory: request campaign memory context lookups for specific entities
 }
 
 @STRUCTURED_OPS={
@@ -258,6 +259,14 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
     note: State sync prevents regression and enables travel gating to treat location as resolved
 }
 
+@LOOKUPMEMORY_VALIDATION={
+  valid_single: Single lookupMemory action with entities list is VALID
+  valid_combined: lookupMemory combined with other actions is VALID (non-terminal)
+  invalid_multiple: Multiple lookupMemory actions in same response is INVALID
+  invalid_no_entities: lookupMemory without entities parameter is INVALID
+  note: Non-terminal means other actions in same response proceed normally
+}
+
 @VALIDATION_EXAMPLES={
   true_valid: {"valid":true,"reason":"Correctly uses updateCharacterInfo for inventory after pickup"}
   true_inventory_check: {"valid":true,"reason":"Player asks 'How many arrows?' - correctly narrates counts without updateCharacterInfo"}
@@ -317,6 +326,7 @@ CRITICAL: Actually PARSE the JSON in the assistant response. Do NOT hallucinate 
   restoreGame: {"saveFolder":str}
   listSaves: {}
   deleteSave: {"saveFolder":str}
+  lookupMemory: {"entities":[string]}
 }
 
 @OUTPUT_CONSTRAINTS={
