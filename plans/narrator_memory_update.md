@@ -1,6 +1,6 @@
 # Narrator Long-Term Memory Integration
 
-**Status:** COMPLETED (Phase 1)
+**Status:** COMPLETED (Phase 1+2)
 **Priority:** High (Narrative Continuity)
 **Effort:** Medium (~2-3 days for Phase 1+2)
 **Plan Date:** 2026-05-28
@@ -11,24 +11,28 @@
 ## Implementation Summary
 
 **Phase 1 COMPLETED** — Campaign milestone injection into narrator prompts.
+**Phase 2 COMPLETED** — On-demand narrator memory lookup via `lookupMemory` action.
 
-**What was built:**
+**Phase 1 — Milestone Injection (2026-05-30):**
 - `build_campaign_milestones()` function in `core/memory/memory_retrieval.py`
 - Entity ID resolution from `party_tracker.json` (PCs + NPCs)
 - Transient injection into narrator payload in `main.py:get_ai_response()` after singularity guard
 - `@CAMPAIGN_MILESTONES_USAGE` directive in both system prompts (compressed + uncompressed)
 - 33 passing tests covering builder, resolver, injection, and prompt directives
-- All files compile, ASCII compliant, TABLETOP MODE markers present
 
-**What was NOT implemented (Phase 2 deferred):**
-- `lookupMemory` action dispatch in `action_handler.py`
-- Multi-site memory context collection in `process_ai_response()`
-- `@MEMORY_LOOKUP` directive and examples in prompts
-- Phase 2 tests
+**Phase 2 — Memory Lookup Action (2026-05-30):**
+- `ACTION_LOOKUP_MEMORY` constant and `_process_memory_lookup()` in `action_handler.py`
+- Multi-site memory context collection in `process_ai_response()` across all 6 call sites
+- Transient system message injection with `_transient_memory: True` tag and stale message cleanup
+- `lookupMemory` in `@ACTIONS`, `@PARAMS`, new `@MEMORY_LOOKUP` directive, and `@EXAMPLES` in prompts
+- Validation rules in both compressed and uncompressed validation prompts
+- 76 non-ASCII characters fixed across 3 prompt files (Windows cp1252 safety)
+- 28 additional tests (63 total) for dispatch, processing, collection/injection, prompt contracts, ASCII
 
 **OpenSpec:**
 - Change `narrator-memory-milestone-injection` archived to `openspec/changes/archive/2026-05-30-narrator-memory-milestone-injection/`
-- 3 main specs synced: `narrator-memory-milestone-builder`, `narrator-memory-milestone-injection`, `narrator-memory-milestone-prompt-contract`
+- Change `narrator-memory-lookup-action` archived to `openspec/changes/archive/2026-05-30-narrator-memory-lookup-action/`
+- 8 main specs synced
 
 ---
 
@@ -36,25 +40,31 @@
 
 ```bash
 # Compilation
-.venv/bin/python -m py_compile core/memory/memory_retrieval.py main.py  # PASS
+.venv/bin/python -m py_compile core/memory/memory_retrieval.py core/ai/action_handler.py main.py  # PASS
 
 # Tests
-.venv/bin/python -m unittest scripts.test_narrator_memory_milestones  # 33/33 PASS
+.venv/bin/python -m unittest scripts.test_narrator_memory_milestones  # 63/63 PASS
   - TestBuildCampaignMilestones: 15 tests PASS
   - TestEntityIdResolver: 5 tests PASS
   - TestMilestoneInjection: 6 tests PASS
   - TestPromptDirectiveContracts: 7 tests PASS
+  - TestMemoryLookupDispatch: 3 tests PASS
+  - TestMemoryLookupProcessing: 9 tests PASS
+  - TestMemoryLookupCollection: 4 tests PASS
+  - TestMemoryLookupPromptContracts: 9 tests PASS
+  - TestMemoryLookupAsciiCompliance: 4 tests PASS (all prompts ASCII-clean)
+  - TestResolvePartyEntityIds: 5 tests PASS
 
 # Memory foundation regression
 .venv/bin/python scripts/test_memory_foundation.py  # PASS (5/5)
 
 # OpenSpec validation
-openspec validate narrator-memory-milestone-injection  # VALID
+openspec validate narrator-memory-milestone-injection  # VALID (archived)
+openspec validate narrator-memory-lookup-action  # VALID (archived)
 
 # Archive
 openspec archive narrator-memory-milestone-injection --yes  # SUCCESS
-  - 3 specs synced to main (22 lines added)
-  - Archived as 2026-05-30-narrator-memory-milestone-injection
+openspec archive narrator-memory-lookup-action  # SUCCESS (specs synced to main)
 ```
 
 ---
@@ -242,13 +252,13 @@ Tests:
 
 ---
 
-## Phase 2: On-Demand Memory Lookup (NOT IMPLEMENTED — Deferred)
+## Phase 2: On-Demand Memory Lookup (IMPLEMENTED)
 
 **Goal:** Let the narrator request specific campaign memories on the fly when it's unsure about history. Python acts as the "subagent" — deterministic retrieval, no extra LLM calls.
 
 **Effort:** ~1-2 days
 
-**Status:** Deferred until Phase 1 proves its value in live gameplay testing.
+**Status:** Completed 2026-05-30 alongside Phase 1. Both phases shipped together.
 
 ### Architecture
 
@@ -563,36 +573,60 @@ openspec archive narrator-memory-milestone-injection --yes  # SUCCESS
 
 ---
 
-### Change 2: `narrator-memory-lookup-action` (NOT STARTED — Deferred)
+### Change 2: `narrator-memory-lookup-action` ✅ COMPLETED
 
 **Scope:** Phase 2 — On-demand memory lookup via `lookupMemory` action
 
-**Status:** Deferred until Phase 1 proves its value in live gameplay testing.
+**Status:** Completed 2026-05-30 alongside Phase 1.
 
-**Why:** Phase 1 milestones provide a skeleton timeline, but the narrator sometimes needs detailed history for specific entities (e.g., "how did Vitreol die?"). We need a pull-based mechanism where the narrator can explicitly request campaign memories on the fly, with Python acting as a deterministic subagent (no extra LLM calls).
+**What Changed:**
+- Add `ACTION_LOOKUP_MEMORY = "lookupMemory"` constant in `core/ai/action_handler.py`
+- Add `_process_memory_lookup()` function with entity name normalization, `get_entity_timeline()` retrieval, deduplication by `event_id`, sort by `retrieval_score`, top-8 limit, `MAX_LOOKUP_CHARS` truncation, and fail-open exception handling
+- Add dispatch `elif action_type == ACTION_LOOKUP_MEMORY: return _process_memory_lookup(parameters)` to the action elif chain
+- Add `_pending_memory_contexts` collection list at the top of `process_ai_response()` in `main.py`
+- Add collection from all 6 `process_action()` call sites (3 collection blocks, 1 for each path: transition, char update, other actions)
+- Add transient injection after all action loops complete: cleanup stale `_transient_memory` messages, inject new memory contexts, set `needs_conversation_history_update`
+- Add `lookupMemory` to `@ACTIONS`, `@PARAMS`, new `@MEMORY_LOOKUP` directive, and `@EXAMPLES` in `prompts/system_prompt_compressed.txt`
+- Add uncompressed parity in `prompts/system_prompt.txt`
+- Add lookupMemory validation rules in `prompts/validation/validation_prompt_compressed.txt`
+- Add uncompressed parity in `prompts/validation/validation_prompt.txt`
+- Fix 76 non-ASCII characters across 3 prompt files (Windows cp1252 safety)
+- Route through sequential `other_actions` loop (naturally, since it doesn't match `updateCharacterInfo` filter)
+- Add 28 tests across 5 test classes covering dispatch, processing, collection/injection, prompt contracts, ASCII compliance
 
-**What Changes:**
-- Add `lookupMemory` action to action dispatch in `core/ai/action_handler.py` (elif chain at line ~1389)
-- Add `_process_memory_lookup()` function returning memory context via `response_data` dict
-- Add `ACTION_LOOKUP_MEMORY` constant
-- Collect memory context from all 6 `process_action()` call sites in `main.py:process_ai_response()`
-- Inject collected memory results as transient system message after all action loops complete (line ~4560)
-- Add `lookupMemory` to `@ACTIONS`, `@PARAMS`, new `@MEMORY_LOOKUP` directive in system prompts
-- Add `lookupMemory` validation rule to validation prompts (always valid, any entity name)
-- Add example to `@EXAMPLES` showing memory lookup usage
-- Route `lookupMemory` through sequential `other_actions` loop (not concurrent `ThreadPoolExecutor`)
-- Transient cleanup: keep only latest memory results, remove previous transient messages
-- Non-terminal action: returns `create_return(needs_update=False)`, other actions proceed normally
+**Capabilities:**
+- `narrator-memory-lookup-action-dispatch`: Action handler routing with `create_return()` contract and `response_data` pattern
+- `narrator-memory-lookup-retrieval`: Bounded entity timeline retrieval (8 events max, 150 chars per summary)
+- `narrator-memory-lookup-collection`: Multi-site action result collection in `process_ai_response()`
+- `narrator-memory-lookup-injection`: Transient system message injection with cleanup semantics
+- `narrator-memory-lookup-prompt-contract`: System prompt directive, validation rule, and usage example
 
-**Dependencies:** Requires Change 1 (`narrator-memory-milestone-injection`) for shared retrieval infrastructure and constants
+**Mandatory Constraints (all met):**
+- ✅ MUST use `create_return()` contract matching existing action handler conventions
+- ✅ MUST be non-terminal (returns `needs_update=False`, other actions proceed)
+- ✅ MUST route through sequential loop (not concurrent `ThreadPoolExecutor`)
+- ✅ MUST collect from all 6 `process_action()` call sites
+- ✅ MUST inject after all action loops complete, before recursive narrator calls
+- ✅ MUST cleanup stale `_transient_memory` messages before injecting new ones
+- ✅ MUST fail-open on any error (DB missing, query failure, empty results)
+- ✅ MUST maintain ASCII-only output
+- ✅ MUST preserve uncompressed prompt parity
+
+**Verification:**
+```bash
+.venv/bin/python -m py_compile core/ai/action_handler.py main.py  # PASS
+.venv/bin/python -m unittest scripts.test_narrator_memory_milestones  # 63/63 PASS
+openspec validate narrator-memory-lookup-action  # VALID
+openspec archive narrator-memory-lookup-action  # SUCCESS (5 specs synced to main)
+```
 
 ---
 
 ### Implementation Order
 
-1. **Change 1 first** — Establishes retrieval infrastructure, shared constants, and entity ID resolution ✅ DONE
-2. **Change 2 second** — Builds on Change 1's foundation, adds action dispatch and multi-site collection ⏸️ DEFERRED
+1. **Change 1 first** — Establishes retrieval infrastructure, shared constants, and entity ID resolution ✅ DONE (2026-05-30)
+2. **Change 2 second** — Builds on Change 1's foundation, adds action dispatch and multi-site collection ✅ DONE (2026-05-30)
 
-Both changes are independently archivable. Change 1 can ship alone (push-based milestones only). Change 2 requires Change 1 but adds pull-based lookup capability.
+Both changes were implemented and archived on the same day. Change 1 (push-based milestones) and Change 2 (pull-based lookup) now ship together.
 
 **Phase 3 (future):** `narrator-memory-automatic-context` — Automatic context memory injection before every narrator call. Deferred until Phase 1+2 prove retrieval quality in live gameplay.
