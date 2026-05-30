@@ -23,6 +23,9 @@ from core.memory.memory_db import DEFAULT_MEMORY_DB_PATH
 
 MIN_LIMIT = 1
 MAX_LIMIT = 100
+MAX_MILESTONE_CHARS = 120
+MAX_LOOKUP_CHARS = 150
+MILESTONE_SCORE_THRESHOLD = 30
 
 
 def _utc_now_iso() -> str:
@@ -103,6 +106,65 @@ def _log_retrieval_audit(
         )
     except sqlite3.OperationalError:
         return
+
+
+def build_campaign_milestones(
+    party_entity_ids: List[str],
+    max_events: int = 15,
+    max_chars_per_entry: int = MAX_MILESTONE_CHARS,
+    db_path: str = DEFAULT_MEMORY_DB_PATH,
+) -> str:
+    if not party_entity_ids:
+        return ""
+
+    try:
+        collected: List[Dict[str, Any]] = []
+        seen: Dict[str, str] = {}
+
+        for entity_id in party_entity_ids:
+            events = get_entity_timeline(
+                entity_id, limit=5, db_path=db_path, enable_audit=False
+            )
+            for event in events:
+                eid = event.get("event_id", "")
+                if eid and eid not in seen:
+                    seen[eid] = entity_id
+                    collected.append(event)
+
+        qualified = [
+            ev for ev in collected
+            if ev.get("retrieval_score", 0) >= MILESTONE_SCORE_THRESHOLD or ev.get("pinned", 0) == 1
+        ]
+
+        qualified.sort(
+            key=lambda ev: (-ev.get("retrieval_score", 0), ev.get("event_ts", "") or ""),
+        )
+
+        top = qualified[:max_events]
+
+        if not top:
+            return ""
+
+        lines: List[str] = []
+        for ev in top:
+            date_part = (ev.get("event_ts") or "")[:10]
+            eid = seen.get(ev.get("event_id", ""), "")
+            if not eid:
+                continue
+            summary = (ev.get("summary") or "")
+            summary = summary[:max_chars_per_entry]
+            summary = summary.encode("ascii", errors="replace").decode("ascii")
+            line = f"    [{date_part}] {eid}: {summary}"
+            lines.append(line)
+
+        if not lines:
+            return ""
+
+        body = "\n".join(lines)
+        return f"@CAMPAIGN_MILESTONES={{\n  events: [\n{body}\n  ]\n}}"
+    except Exception:
+        error("build_campaign_milestones failed", category="narrator_memory")
+        return ""
 
 
 def get_entity_timeline(

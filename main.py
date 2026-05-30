@@ -5024,6 +5024,37 @@ def _sanitize_narrator_payload(
 
     return sanitized_messages
 
+def _resolve_party_entity_ids(party_tracker_data):
+    """Resolve party members and NPCs to normalized entity IDs for memory queries."""
+    try:
+        from updates.update_character_info import normalize_character_name
+
+        entity_ids = set()
+
+        # Extract PCs from partyMembers
+        for member in party_tracker_data.get("partyMembers", []):
+            if isinstance(member, str):
+                normalized = normalize_character_name(member)
+                if normalized:
+                    entity_ids.add(normalized)
+
+        # Extract NPCs from partyNPCs (handles both string and dict forms)
+        for npc in party_tracker_data.get("partyNPCs", []):
+            if isinstance(npc, str):
+                normalized = normalize_character_name(npc)
+                if normalized:
+                    entity_ids.add(normalized)
+            elif isinstance(npc, dict):
+                name = npc.get("name", "")
+                if name:
+                    normalized = normalize_character_name(name)
+                    if normalized:
+                        entity_ids.add(normalized)
+
+        return list(entity_ids)
+    except Exception:
+        return []
+
 
 def get_ai_response(
     conversation_history, validation_retry_count=0, transient_correction=None
@@ -5245,6 +5276,25 @@ def get_ai_response(
             f"PROMPT_GUARD: Failed to apply main prompt singularity dedupe; continuing fail-open: {e}",
             category="conversation_management",
         )
+
+    # TABLETOP MODE: Campaign milestone injection (after singularity guard)
+    if validation_retry_count == 0:
+        try:
+            party_entity_ids = _resolve_party_entity_ids(party_tracker_data)
+            if party_entity_ids:
+                from core.memory.memory_retrieval import build_campaign_milestones
+
+                milestones_block = build_campaign_milestones(party_entity_ids)
+                if milestones_block:
+                    for i, msg in enumerate(messages_to_send):
+                        if msg.get("role") == "system" and "@DUNGEON_MASTER" in msg.get("content", ""):
+                            messages_to_send[i]["content"] += "\n\n" + milestones_block
+                            break
+        except Exception as e:
+            warning(
+                f"MILESTONE_INJECT: Failed to build milestones: {e}",
+                category="narrator_memory",
+            )
 
     # TABLETOP MODE: Step 3.2 - Inject transient correction note without polluting conversation history
     # This correction is passed to the AI for this request only, not persisted

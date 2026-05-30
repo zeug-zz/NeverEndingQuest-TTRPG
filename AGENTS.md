@@ -1193,6 +1193,50 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Narrator Memory Milestone Injection (COMPLETED - 2026-05-30)
+
+**Status:** COMPLETED - Implemented Phase 1 campaign milestone injection into narrator prompts. The narrator LLM now receives a compact timeline of major campaign events from the memory DB on every narrator call, solving the long-term campaign amnesia problem.
+
+**Implementation Summary:**
+- `core/memory/memory_retrieval.py` — Added `build_campaign_milestones()` function with bounded retrieval (15 events, ~500 tokens), retrieval-score filtering (`>= 30 OR pinned == 1`), and deduplication. Added shared constants (`MAX_MILESTONE_CHARS`, `MAX_LOOKUP_CHARS`, `MILESTONE_SCORE_THRESHOLD`).
+- `core/memory/__init__.py` — Export `build_campaign_milestones` in `__all__`.
+- `main.py` — Added `_resolve_party_entity_ids()` helper and milestone injection after singularity guard (appends to existing main system prompt, not separate message). Skip on retry (`validation_retry_count == 0`). Transient-only (not persisted).
+- `prompts/system_prompt_compressed.txt` — Added `@CAMPAIGN_MILESTONES_USAGE` directive near `@CHRONICLE_RULES`.
+- `prompts/system_prompt.txt` — Added `@CAMPAIGN_MILESTONES_USAGE` (uncompressed parity).
+- `scripts/test_narrator_memory_milestones.py` — 33 tests covering builder (15), resolver (5), injection (6), and prompt directive contracts (7).
+
+**Key Design Decisions:**
+- Append to existing main system prompt (not separate message) to avoid singularity guard stripping.
+- Transient-only injection: milestones rebuilt fresh each call from memory DB, not persisted to conversation history.
+- Fail-open everywhere: missing DB, query errors, or empty results never block narration.
+- Retrieval-score filtering (`>= 30`) instead of importance/persistence_class (which aren't in result set).
+- Skip on retry: injection only on `validation_retry_count == 0` (first attempt only).
+
+**Verification:**
+- `.venv/bin/python -m py_compile core/memory/memory_retrieval.py main.py` -> PASS
+- `.venv/bin/python -m unittest scripts.test_narrator_memory_milestones` -> 33/33 PASS
+  - TestBuildCampaignMilestones: 15 tests PASS
+  - TestEntityIdResolver: 5 tests PASS
+  - TestMilestoneInjection: 6 tests PASS
+  - TestPromptDirectiveContracts: 7 tests PASS
+- `.venv/bin/python scripts/test_memory_foundation.py` -> PASS (5/5, memory foundation regression)
+- `openspec validate narrator-memory-milestone-injection` -> VALID
+- `openspec archive narrator-memory-milestone-injection --yes` -> SUCCESS (3 specs synced, archived as `2026-05-30-narrator-memory-milestone-injection`)
+
+**Files Modified:**
+- `core/memory/memory_retrieval.py`
+- `core/memory/__init__.py`
+- `main.py`
+- `prompts/system_prompt_compressed.txt`
+- `prompts/system_prompt.txt`
+- `scripts/test_narrator_memory_milestones.py`
+- `openspec/changes/archive/2026-05-30-narrator-memory-milestone-injection/`
+- `openspec/specs/narrator-memory-milestone-builder/spec.md`
+- `openspec/specs/narrator-memory-milestone-injection/spec.md`
+- `openspec/specs/narrator-memory-milestone-prompt-contract/spec.md`
+
+**Note:** Phase 2 (`lookupMemory` action) is deferred. The plan file at `plans/narrator_memory_update.md` documents both phases.
+
 ### Toolkit Accurate-Ingest Generator Source Locks (COMPLETED - 2026-05-26)
 
 **Status:** COMPLETED - Added source-lock prompt/context injection into ModuleBuilder sub-generators (module overview, area naming, location, plot) so accurate-ingest builds preserve required NPC names, location names, puzzle IDs, monster refs, encounter seeds, and tone guidance during creative LLM generation. All tests are provider-free; legacy path preserved.

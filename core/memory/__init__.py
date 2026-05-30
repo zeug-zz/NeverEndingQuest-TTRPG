@@ -20,6 +20,7 @@ from core.memory.memory_db import (
 )
 from core.memory.memory_ingest import backfill_memory_db_from_histories, ingest_journal_entry, ingest_journal_file
 from core.memory.memory_retrieval import (
+    build_campaign_milestones,
     get_context_memories,
     get_entity_timeline,
     get_retirement_return_memories,
@@ -66,6 +67,7 @@ __all__ = [
     "ingest_journal_entry",
     "ingest_journal_file",
     "backfill_memory_db_from_histories",
+    "build_campaign_milestones",
     "get_entity_timeline",
     "get_context_memories",
     "get_retirement_return_memories",
