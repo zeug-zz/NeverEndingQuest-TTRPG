@@ -6253,7 +6253,7 @@
             homebrewUploadMessage.textContent = getHomebrewStatusWithGuidance(type, message);
             if (homebrewConsoleIsWorking) {
                 const cursor = document.createElement('span');
-                cursor.textContent = ' █';
+                cursor.textContent = ' [|';
                 cursor.style.opacity = '0.9';
                 cursor.style.animation = 'homebrewCursorBlink 1s step-end infinite';
                 homebrewUploadMessage.appendChild(cursor);
@@ -6488,6 +6488,67 @@
             return lines.join('\n');
         }
 
+        // TABLETOP MODE: Extract report-agreement status from multi-report payloads.
+        // Distinguishes source_fidelity_status from playable_publication_status.
+        function formatReportAgreementSection(rawPayload) {
+            const _obj = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
+            if (!_obj || Object.keys(_obj).length === 0) {
+                return '';
+            }
+
+            // Search nested payloads for report_agreement data
+            const candidates = [
+                _obj,
+                _obj.result || {},
+                (_obj.stages || {}).report_agreement || {},
+                ((_obj.result || {}).stages || {}).report_agreement || {},
+                _obj.report_agreement || {},
+                (_obj.result || {}).report_agreement || {},
+            ];
+
+            let ra = null;
+            for (const c of candidates) {
+                if (c && typeof c === 'object' && (c.blockers || c.playable_publication_status || c.internal_coherent !== undefined)) {
+                    ra = c;
+                    break;
+                }
+            }
+            if (!ra) {
+                return '';
+            }
+
+            const lines = [];
+            const sf = ra.source_fidelity_status || _obj.source_fidelity_status || 'unknown';
+            const pp = ra.playable_publication_status || _obj.playable_publication_status || 'unknown';
+            const ic = ra.internal_coherent !== undefined ? ra.internal_coherent : null;
+            const blockers = Array.isArray(ra.blockers) ? ra.blockers : [];
+            const stale = Array.isArray(ra.stale_reports) ? ra.stale_reports : [];
+            const missing = Array.isArray(ra.missing_reports) ? ra.missing_reports : [];
+
+            lines.push('Report Agreement:');
+            lines.push(`- Status: ${ra.status || 'unknown'}`);
+            lines.push(`- Internal Coherent: ${ic === true ? 'yes' : ic === false ? 'no' : 'unknown'}`);
+            lines.push(`- Source Fidelity: ${sf}`);
+            lines.push(`- Validation: ${ra.validation_status || 'unknown'}`);
+            lines.push(`- Readiness: ${ra.ready_status || 'unknown'}`);
+            lines.push(`- Publishability: ${ra.publishable_status || 'unknown'}`);
+            lines.push(`- Effective Publishable: ${ra.effective_publishable_status || 'unknown'}`);
+            lines.push(`- Playable Publication: ${pp}`);
+
+            if (blockers.length > 0) {
+                lines.push(`- Blockers (${blockers.length}):`);
+                blockers.forEach(function(b) { lines.push(`  * ${b}`); });
+            }
+            if (stale.length > 0) {
+                lines.push(`- Stale Reports: ${stale.join(', ')}`);
+            }
+            if (missing.length > 0) {
+                lines.push(`- Missing Reports: ${missing.join(', ')}`);
+            }
+
+            return lines.join('\n');
+        }
+
         function formatHomebrewHydrationSummary(payload, job) {
             const summary = resolveHomebrewHydrationSummary(payload, job);
             const hasSummary =
@@ -6560,8 +6621,12 @@
             const hydrationSummaryText = formatHomebrewHydrationSummary(payload, job);
             const semanticRemediationText = formatSemanticRemediationSection(rawPayload);
             const mediaRemediationText = formatMediaRemediationSection(rawPayload, summary);
+            const reportAgreementText = formatReportAgreementSection(rawPayload);
             const rawJson = JSON.stringify(rawPayload, null, 2);
             const sections = [];
+            if (reportAgreementText) {
+                sections.push(reportAgreementText);
+            }
             if (semanticRemediationText) {
                 sections.push(semanticRemediationText);
             }
@@ -7945,7 +8010,17 @@
                         setHomebrewReviewPanelVisible(false);
                         const result = job.result || {};
                         const moduleSlug = result.module_slug || result.module_name || job.module_name || 'unknown';
-                        const details = JSON.stringify(result, null, 2);
+                        // TABLETOP MODE: Include playable_publication_status for GUI distinction
+                        const playableStatus = result.playable_publication_status || '';
+                        const raStatus = result.report_agreement_status || '';
+                        let extraLines = '';
+                        if (playableStatus) {
+                            extraLines += `Playable Publication: ${playableStatus}\n`;
+                        }
+                        if (raStatus) {
+                            extraLines += `Report Agreement: ${raStatus}\n`;
+                        }
+                        const details = extraLines + JSON.stringify(result, null, 2);
 
                         renderHomebrewUploadStatus('success', `Homebrew upload finished successfully for module '${moduleSlug}'.`, details);
 

@@ -1,0 +1,1172 @@
+{
+  "report_version": "toolkit_seed_source_report.v1",
+  "source": "builder_blueprint.v2",
+  "blueprint_version": "source_faithful_builder_blueprint.v2",
+  "module_title": "The Hidden City of Numillian",
+  "source_hash": "9ab641d95aed6decf81323679c94dc878401c17e735ba320e90be573abe67786",
+  "coverage": {
+    "locations_count": 18,
+    "npcs_count": 43,
+    "plot_beats_count": 10,
+    "puzzles_count": 0,
+    "clues_count": 0,
+    "encounters_count": 5,
+    "items_count": 0,
+    "locations_in_blueprint": 18,
+    "npcs_in_blueprint": 43,
+    "plot_beats_in_blueprint": 10,
+    "puzzles_in_blueprint": 0,
+    "clues_in_blueprint": 0,
+    "encounters_in_blueprint": 5,
+    "items_in_blueprint": 0
+  },
+  "locations": [
+    {
+      "source_order": 0,
+      "atom_id": "loc_1",
+      "display_name": "Numillian / The Hidden City",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "An abandoned elven city in the western Karrnwood, concealed by illusion, wards, and memory magic."
+        }
+      ]
+    },
+    {
+      "source_order": 1,
+      "atom_id": "loc_2",
+      "display_name": "Stone Watchtower",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A small tower at the city edge where Shuluth meets visitors and conducts the trials."
+        }
+      ]
+    },
+    {
+      "source_order": 2,
+      "atom_id": "loc_3",
+      "display_name": "Shuluth's Tomb",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Shuluth’s laboratory-tomb where it studies exotica and teaches mind-trapping magic."
+        }
+      ]
+    },
+    {
+      "source_order": 3,
+      "atom_id": "loc_4",
+      "display_name": "The Rookery",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Former infirmary now home to three kenku composing through Qualith."
+        }
+      ]
+    },
+    {
+      "source_order": 4,
+      "atom_id": "loc_5",
+      "display_name": "The Grove",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A grove on the town edge tended by three lycanthropic druids plotting revenge and seeking a patsy."
+        }
+      ]
+    },
+    {
+      "source_order": 5,
+      "atom_id": "loc_6",
+      "display_name": "Garden House",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A repaired manor with a greenhouse of exotic flowers cultivated by Ragna Fitrill."
+        }
+      ]
+    },
+    {
+      "source_order": 6,
+      "atom_id": "loc_7",
+      "display_name": "Brooksteps Inn",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "The main inn and common social hub, attached to Treever Klinhammer’s smithy."
+        }
+      ]
+    },
+    {
+      "source_order": 7,
+      "atom_id": "loc_8",
+      "display_name": "Wizard's Tower",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Xaereal the Constructor’s tower for original spell research."
+        }
+      ]
+    },
+    {
+      "source_order": 8,
+      "atom_id": "loc_9",
+      "display_name": "Vampire's House",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "The home of Celun Spackles, a man who insists he is a vampire."
+        }
+      ]
+    },
+    {
+      "source_order": 9,
+      "atom_id": "loc_10",
+      "display_name": "Cat's House",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Irene Laughing-Eyes’ home, where a cat-form wizard lives in depression after a body swap."
+        }
+      ]
+    },
+    {
+      "source_order": 10,
+      "atom_id": "loc_11",
+      "display_name": "Art Gallery",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Elroy Browning’s house of uncanny paintings, including one sealed, dangerous canvas."
+        }
+      ]
+    },
+    {
+      "source_order": 11,
+      "atom_id": "loc_12",
+      "display_name": "Temple of Broance",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A cult-like gym-temple where Strongrod Bildins and others preach the Way of Gideon and the Broance Code."
+        }
+      ]
+    },
+    {
+      "source_order": 12,
+      "atom_id": "loc_13",
+      "display_name": "Cellar",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A hidden vault beneath the city containing guarded magical items watched by The Caretaker."
+        }
+      ]
+    },
+    {
+      "source_order": 13,
+      "atom_id": "loc_14",
+      "display_name": "Handworks Guild",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "Belrik’s home, guild hall, and mayoral office; secret seat of the Silent Sisters assassins guild."
+        }
+      ]
+    },
+    {
+      "source_order": 14,
+      "atom_id": "loc_15",
+      "display_name": "Charion Tamer",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": "A small cottage home to Bramak Pakel, the Charion Tamer. The Charion is a feline creature that can grow to about two meters in size and has thin rough white fur."
+        }
+      ]
+    },
+    {
+      "source_order": 15,
+      "atom_id": "loc_16",
+      "display_name": "Rookery",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": ""
+        }
+      ]
+    },
+    {
+      "source_order": 16,
+      "atom_id": "loc_17",
+      "display_name": "Grove",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": ""
+        }
+      ]
+    },
+    {
+      "source_order": 17,
+      "atom_id": "loc_18",
+      "display_name": "Brokensteps Inn",
+      "aliases": [],
+      "parent_area": "The Hidden City of Numillian",
+      "criticality": "required",
+      "source_refs": [
+        {
+          "excerpt": ""
+        }
+      ]
+    }
+  ],
+  "npcs": [
+    {
+      "source_order": 0,
+      "atom_id": "npc_1",
+      "display_name": "Shuluth",
+      "aliases": [],
+      "role": "Alhoon guardian of the hidden city; conducts the trials and protects Numillian with magic and memory alteration",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 1,
+      "atom_id": "npc_2",
+      "display_name": "Belrik Dumma-dhur",
+      "aliases": [],
+      "role": "Duergar assassin and leader of the Silent Sisters; founder of the city’s hidden security pact",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 2,
+      "atom_id": "npc_3",
+      "display_name": "Wayne",
+      "aliases": [],
+      "role": "Gnome innkeeper at the Brooksteps Inn",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 3,
+      "atom_id": "npc_4",
+      "display_name": "Treever Klinhammer",
+      "aliases": [],
+      "role": "Smithy behind the inn; forges and repairs weapons and armor",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 4,
+      "atom_id": "npc_5",
+      "display_name": "Adhagal",
+      "aliases": [],
+      "role": "Friendly merchant of magic items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 5,
+      "atom_id": "npc_6",
+      "display_name": "Bramak Pakel",
+      "aliases": [],
+      "role": "Charion tamer and animal lover with an animal sanctuary",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 6,
+      "atom_id": "npc_7",
+      "display_name": "Xaereal the Constructor",
+      "aliases": [],
+      "role": "Wizard researching original spells",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 7,
+      "atom_id": "npc_8",
+      "display_name": "Irene Laughing-Eyes",
+      "aliases": [],
+      "role": "Cat-bodied wizard seeking her runaway familiar in her former body",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 8,
+      "atom_id": "npc_9",
+      "display_name": "Strongrod Bildins",
+      "aliases": [],
+      "role": "Dwarf barbarian priest of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 9,
+      "atom_id": "npc_10",
+      "display_name": "Ragna Fitrill",
+      "aliases": [],
+      "role": "Dragonborn fighter obsessed with finding the most beautiful flower",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 10,
+      "atom_id": "npc_11",
+      "display_name": "The Caretaker / Procul",
+      "aliases": [],
+      "role": "Friendly sane Nothic guarding the vault and magical items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 11,
+      "atom_id": "npc_12",
+      "display_name": "Celun Spackles",
+      "aliases": [],
+      "role": "Human who insists he is a vampire",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 12,
+      "atom_id": "npc_13",
+      "display_name": "Elroy Browning",
+      "aliases": [],
+      "role": "Painter of horrors and forbidden vistas",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 13,
+      "atom_id": "npc_14",
+      "display_name": "Jam",
+      "aliases": [],
+      "role": "Priest of the Temple of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 14,
+      "atom_id": "npc_15",
+      "display_name": "Chad",
+      "aliases": [],
+      "role": "Priest of the Temple of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 15,
+      "atom_id": "npc_16",
+      "display_name": "Red Skull",
+      "aliases": [],
+      "role": "speaks: “My coins where earned by others.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 16,
+      "atom_id": "npc_17",
+      "display_name": "Blue Skull",
+      "aliases": [],
+      "role": "speaks: “Every day I watched the fools perform.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 17,
+      "atom_id": "npc_18",
+      "display_name": "Yellow Skull",
+      "aliases": [],
+      "role": "speaks: “I must ask rather than demand.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 18,
+      "atom_id": "npc_20",
+      "display_name": "The Caretaker",
+      "aliases": [],
+      "role": "Friendly Nothic; guards the Vault below the town, protecting dangerous magic items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 19,
+      "atom_id": "npc_21",
+      "display_name": "Dog-Growl",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 20,
+      "atom_id": "npc_22",
+      "display_name": "Book-shut",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 21,
+      "atom_id": "npc_23",
+      "display_name": "Deflation",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 22,
+      "atom_id": "npc_24",
+      "display_name": "Rollo",
+      "aliases": [],
+      "role": "were-possum who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 23,
+      "atom_id": "npc_25",
+      "display_name": "Qillasithe",
+      "aliases": [],
+      "role": "were-trout who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 24,
+      "atom_id": "npc_26",
+      "display_name": "Dwal",
+      "aliases": [],
+      "role": "were-bear who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 25,
+      "atom_id": "npc_27",
+      "display_name": "Waynobibille Nebiddlespun",
+      "aliases": [],
+      "role": "greasy gnome innkeeper of Brooksteps Inn, called Wayne by most everyone",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 26,
+      "atom_id": "npc_28",
+      "display_name": "Procul",
+      "aliases": [],
+      "role": "surprisingly sane Nothic who guards the artifacts within the loamy vault of Numillian",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 27,
+      "atom_id": "npc_29",
+      "display_name": "Belrik's",
+      "aliases": [],
+      "role": "home, guild hall, and mayoral office in one; the Handworks Guild Hall",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 28,
+      "atom_id": "npc_30",
+      "display_name": "Red",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 29,
+      "atom_id": "npc_31",
+      "display_name": "Wiseman",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 30,
+      "atom_id": "npc_32",
+      "display_name": "Book",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 31,
+      "atom_id": "npc_33",
+      "display_name": "Blue",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 32,
+      "atom_id": "npc_34",
+      "display_name": "Beggar",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 33,
+      "atom_id": "npc_35",
+      "display_name": "Red Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 34,
+      "atom_id": "npc_36",
+      "display_name": "Blue Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 35,
+      "atom_id": "npc_37",
+      "display_name": "Yellow Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 36,
+      "atom_id": "npc_38",
+      "display_name": "Alms-plate",
+      "aliases": [],
+      "role": "receptacle for a skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 37,
+      "atom_id": "npc_39",
+      "display_name": "Yellow",
+      "aliases": [],
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 38,
+      "atom_id": "npc_40",
+      "display_name": "King",
+      "aliases": [],
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 39,
+      "atom_id": "npc_41",
+      "display_name": "Crown",
+      "aliases": [],
+      "role": "receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 40,
+      "atom_id": "npc_42",
+      "display_name": "Red Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 41,
+      "atom_id": "npc_43",
+      "display_name": "Blue Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "source_order": 42,
+      "atom_id": "npc_44",
+      "display_name": "Yellow Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    }
+  ],
+  "plot_beats": [
+    {
+      "source_order": 0,
+      "beat_id": "PP001",
+      "title": "The city’s history is explained: siege, betrayal, plague, abandonment, and later concealment by bandits and Shuluth.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 1,
+      "beat_id": "PP002",
+      "title": "Visitors notice the false outer ruins unless they succeed on a perception check.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 2,
+      "beat_id": "PP003",
+      "title": "Shuluth meets the party and tests their character with three trials.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 3,
+      "beat_id": "PP004",
+      "title": "The first trial is a logic riddle using colored skulls and hidden ownership clues.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 4,
+      "beat_id": "PP005",
+      "title": "The second trial is a flooding room puzzle with escape routes and hidden items.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 5,
+      "beat_id": "PP006",
+      "title": "The false third trial probes the party’s morality with a fabricated dog.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 6,
+      "beat_id": "PP007",
+      "title": "The true third trial reveals the party is still inside Shuluth’s shared mindscape.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 7,
+      "beat_id": "PP008",
+      "title": "Shuluth introduces the party to the city and its notable residents.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 8,
+      "beat_id": "PP009",
+      "title": "A crisis erupts when attackers appear and seek the Vault and Shuluth.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    },
+    {
+      "source_order": 9,
+      "beat_id": "PP010",
+      "title": "The final trial becomes a battle in which the party must protect Kobe and keep the Vault secret.",
+      "trigger": "",
+      "dependencies": [],
+      "required_location": "",
+      "required_npc": "",
+      "outcome": "",
+      "failure_state": "",
+      "beat_type": "mainline",
+      "criticality": "required",
+      "source_refs": []
+    }
+  ],
+  "puzzles": [],
+  "clues": [],
+  "encounters": [
+    {
+      "source_order": 0,
+      "atom_id": "enc_1",
+      "name": "Encounter 1",
+      "location": "",
+      "purpose": "Riddle trial involving colored skulls and mismatched receptacles",
+      "monsters": [],
+      "monster_names": [],
+      "avoidable": false,
+      "social": false,
+      "criticality": "major",
+      "source_refs": []
+    },
+    {
+      "source_order": 1,
+      "atom_id": "enc_2",
+      "name": "Encounter 2",
+      "location": "",
+      "purpose": "Flooding barracks puzzle with hidden compartments, illusionary windows, and a trapped door",
+      "monsters": [],
+      "monster_names": [],
+      "avoidable": false,
+      "social": false,
+      "criticality": "major",
+      "source_refs": []
+    },
+    {
+      "source_order": 2,
+      "atom_id": "enc_3",
+      "name": "Encounter 3",
+      "location": "",
+      "purpose": "False third trial involving a dog and moral pressure",
+      "monsters": [],
+      "monster_names": [],
+      "avoidable": false,
+      "social": false,
+      "criticality": "major",
+      "source_refs": []
+    },
+    {
+      "source_order": 3,
+      "atom_id": "enc_4",
+      "name": "Encounter 4",
+      "location": "",
+      "purpose": "Mindscape battle with waves of attackers seeking the Vault",
+      "monsters": [],
+      "monster_names": [],
+      "avoidable": false,
+      "social": false,
+      "criticality": "major",
+      "source_refs": []
+    },
+    {
+      "source_order": 4,
+      "atom_id": "enc_5",
+      "name": "Encounter 5",
+      "location": "",
+      "purpose": "Combat or social pressure from enemies demanding Shuluth's location or the Vault's location",
+      "monsters": [],
+      "monster_names": [],
+      "avoidable": false,
+      "social": false,
+      "criticality": "major",
+      "source_refs": []
+    }
+  ],
+  "items": [],
+  "normalization_diagnostics": {
+    "party_tracker": {
+      "worldConditions.month": {
+        "source_value": "None",
+        "normalized_value": "Firstmonth",
+        "reason": "schema_month_normalization"
+      }
+    }
+  },
+  "plot_location_reconciliation": {
+    "total_beats": 19,
+    "resolved": 13,
+    "unresolved": 0,
+    "skipped": 6,
+    "mappings": [
+      {
+        "original_location": "A15",
+        "required_location": "",
+        "plot_id": "PP001",
+        "plot_title": "Charion Tamer",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A15",
+        "error": null
+      },
+      {
+        "original_location": "A03",
+        "required_location": "",
+        "plot_id": "PP002",
+        "plot_title": "Shuluth's Tomb",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A03",
+        "error": null
+      },
+      {
+        "original_location": "A04",
+        "required_location": "",
+        "plot_id": "PP003",
+        "plot_title": "The Rookery",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A04",
+        "error": null
+      },
+      {
+        "original_location": "A05",
+        "required_location": "",
+        "plot_id": "PP004",
+        "plot_title": "The Grove",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A05",
+        "error": null
+      },
+      {
+        "original_location": "A06",
+        "required_location": "",
+        "plot_id": "PP005",
+        "plot_title": "Garden House",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A06",
+        "error": null
+      },
+      {
+        "original_location": "A07",
+        "required_location": "",
+        "plot_id": "PP006",
+        "plot_title": "Brooksteps Inn",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A07",
+        "error": null
+      },
+      {
+        "original_location": "A08",
+        "required_location": "",
+        "plot_id": "PP007",
+        "plot_title": "Wizard's Tower",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A08",
+        "error": null
+      },
+      {
+        "original_location": "A09",
+        "required_location": "",
+        "plot_id": "PP008",
+        "plot_title": "Vampire's House",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A09",
+        "error": null
+      },
+      {
+        "original_location": "A10",
+        "required_location": "",
+        "plot_id": "PP009",
+        "plot_title": "Cat's House",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A10",
+        "error": null
+      },
+      {
+        "original_location": "A11",
+        "required_location": "",
+        "plot_id": "PP010",
+        "plot_title": "Art Gallery",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A11",
+        "error": null
+      },
+      {
+        "original_location": "A12",
+        "required_location": "",
+        "plot_id": "PP011",
+        "plot_title": "Temple of Broance",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A12",
+        "error": null
+      },
+      {
+        "original_location": "A13",
+        "required_location": "",
+        "plot_id": "PP012",
+        "plot_title": "Cellar",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A13",
+        "error": null
+      },
+      {
+        "original_location": "A14",
+        "required_location": "",
+        "plot_id": "PP013",
+        "plot_title": "Handworks Guild",
+        "resolution_method": "exact_location_id",
+        "resolved_location": "A14",
+        "error": null
+      },
+      {
+        "plot_id": "TRIAL000",
+        "plot_title": "Trial at the Door",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      },
+      {
+        "plot_id": "TRIAL001",
+        "plot_title": "The First Trial - Skull Riddle",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      },
+      {
+        "plot_id": "TRIAL002",
+        "plot_title": "The Second Trial - Flooding Room",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      },
+      {
+        "plot_id": "TRIAL003",
+        "plot_title": "The False Third Trial - Kill the Dog",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      },
+      {
+        "plot_id": "TRIAL004",
+        "plot_title": "The True Third Trial - City of the Mind",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      },
+      {
+        "plot_id": "TRIAL005",
+        "plot_title": "The Final Trial - No-Win Scenario with Kobe",
+        "original_location": "A01",
+        "required_location": "",
+        "resolution_method": "trial_preserved",
+        "resolved_location": "A01"
+      }
+    ],
+    "unresolved_refs": []
+  }
+}

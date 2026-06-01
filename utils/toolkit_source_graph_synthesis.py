@@ -31,7 +31,7 @@ def build_identity_resolution_report(
     adjudication_model_output: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build an identity_resolution_report.json from mechanical graph atoms
-    and section extraction facts.  Model‑supplied adjudication decisions
+    and section extraction facts.  Model-supplied adjudication decisions
     are merged when present but never trusted over mechanical rules."""
 
     atoms = source_graph.get("atoms", [])
@@ -264,7 +264,7 @@ def synthesize_normalized_packet(
     plot_topology: Dict[str, Any],
     legacy_model_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build a review‑compatible normalized packet from source graph and
+    """Build a review-compatible normalized packet from source graph and
     synthesis reports.  Falls back to legacy model payload for fields that
     cannot be synthesized from mechanical evidence."""
 

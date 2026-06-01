@@ -1,0 +1,205 @@
+{
+  "mapName": "The Hidden City of Numillian Map",
+  "mapId": "MAP_A000",
+  "totalRooms": 18,
+  "startRoom": "A01",
+  "rooms": [
+    {
+      "id": "A01",
+      "name": "Numillian / The Hidden City",
+      "connections": [
+        "A02"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A02",
+      "name": "Stone Watchtower",
+      "connections": [
+        "A01",
+        "A03"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A03",
+      "name": "Shuluth's Tomb",
+      "connections": [
+        "A02",
+        "A04"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A04",
+      "name": "The Rookery",
+      "connections": [
+        "A03",
+        "A05"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A05",
+      "name": "The Grove",
+      "connections": [
+        "A04",
+        "A06"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A06",
+      "name": "Garden House",
+      "connections": [
+        "A05",
+        "A07"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A07",
+      "name": "Brooksteps Inn",
+      "connections": [
+        "A06",
+        "A08"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A08",
+      "name": "Wizard's Tower",
+      "connections": [
+        "A07",
+        "A09"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A09",
+      "name": "Vampire's House",
+      "connections": [
+        "A08",
+        "A10"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A10",
+      "name": "Cat's House",
+      "connections": [
+        "A09",
+        "A11"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A11",
+      "name": "Art Gallery",
+      "connections": [
+        "A10",
+        "A12"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A12",
+      "name": "Temple of Broance",
+      "connections": [
+        "A11",
+        "A13"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A13",
+      "name": "Cellar",
+      "connections": [
+        "A12",
+        "A14"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A14",
+      "name": "Handworks Guild",
+      "connections": [
+        "A13",
+        "A15"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A15",
+      "name": "Charion Tamer",
+      "connections": [
+        "A14",
+        "A16"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A16",
+      "name": "Rookery",
+      "connections": [
+        "A15",
+        "A17"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A17",
+      "name": "Grove",
+      "connections": [
+        "A16",
+        "A18"
+      ],
+      "coordinates": "X0Y0"
+    },
+    {
+      "id": "A18",
+      "name": "Brokensteps Inn",
+      "connections": [
+        "A17"
+      ],
+      "coordinates": "X0Y0"
+    }
+  ],
+  "layout": [
+    [
+      "A01",
+      "A02",
+      "A03",
+      "A04",
+      "A05"
+    ],
+    [
+      "A06",
+      "A07",
+      "A08",
+      "A09",
+      "A10"
+    ],
+    [
+      "A11",
+      "A12",
+      "A13",
+      "A14",
+      "A15"
+    ],
+    [
+      "A16",
+      "A17",
+      "A18",
+      "   ",
+      "   "
+    ],
+    [
+      "   ",
+      "   ",
+      "   ",
+      "   ",
+      "   "
+    ]
+  ]
+}

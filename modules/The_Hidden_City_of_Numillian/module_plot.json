@@ -6,7 +6,7 @@
       "id": "PP001",
       "title": "Charion Tamer",
       "description": "This small cottage is home to **Bramak Pakel**, the Charion Tamer. The Charion is a feline creature that can grow to about two meters in size. They have a thin rough white fur, wide webbed feet and keen eyes for hunting in the white sands of the Kindling Desert. For various societies, they are prized for their fur and their meat, which is often served as a delicacy, as well as a trophy to symbolize one's prowess as a hunter of hunters. As civilizations grew, Charion were hunted relentlessly, raising the value of these creatures to astronomical heights. Enter Pakel, known by legend as the only successful Charion Tamer in the land. In the past he owned a natural reserve for Charion to prosper so as to protect these creatures. But as more poachers came from cities worldwide and attempts on his own life were made, the reserve became impossible to maintain. So he abandoned it and he took whatever Charion he could get to follow him to the Secret City. Here he lives with the last Charion in the land, safe from all who would harm them.",
-      "location": "THE01",
+      "location": "A15",
       "nextPoints": [
         "PP002"
       ],
@@ -18,7 +18,7 @@
       "id": "PP002",
       "title": "Shuluth's Tomb",
       "description": "Achieving undeath means Shuluth no longer requires to devour the brains of sentient species, but using arcane magic resulted in exile from its colony. When Shuluth is not guarding the city, it is often found researching exotica in the tomb it has converted to a laboratory.  Obsessed with preserving knowledge after death, Shuluth will teach the players how to trap a sentient being's mind for 24 hours in a 500gp diamond. It dislikes being interrupted, fools, and has several bowls of frogs throughout its tomb it raises as undead minions to use as messangers and carry out small tasks.",
-      "location": "THE02",
+      "location": "A03",
       "nextPoints": [
         "PP003"
       ],
@@ -30,7 +30,7 @@
       "id": "PP003",
       "title": "The Rookery",
       "description": "Do you know why they call it the Rookery? Cause that's where you go if you're a'raven! This building was once an infirmary for those unsound of mind, but now it's inhabited by **Dog-Growl**, **Book-shut**, and **Deflation**, three Kenku who learned Qualith from Shuluth in return for never attempting to compose sounds out loud again. They use a dried mind flayer tentacle to impart their compositions on parchment. Though the kenku cannot compose original music, the residual knowledge in the quill can. They are living the dream.",
-      "location": "THE03",
+      "location": "A04",
       "nextPoints": [
         "PP004"
       ],
@@ -42,7 +42,7 @@
       "id": "PP004",
       "title": "The Grove",
       "description": "Avoided by most other citizens of Numillian, the grove on the edge of the town is tended by three human druids, each affected by a different form of lycanthropy. **Rollo**, **Qillasithe**, and **Dwal** spend most of their time plotting revenge against society in general, and government officials in particular. They're working on creating a Jar of Delayed Spike Growth, and want a patsy to plant one at a nearby town's postal office.",
-      "location": "THE04",
+      "location": "A05",
       "nextPoints": [
         "PP005"
       ],
@@ -54,7 +54,7 @@
       "id": "PP005",
       "title": "Garden House",
       "description": "This small manor is in excellent repair, except for the complete collapse of one of the walls. The open side of the structure has been converted into a greenhouse, with dozens of exotic flowers inside. Several are singular breeds created by **Ragna Fitrill**, the dragonborn fighter who lives here. He's spent the last five years of his life breeding and cross-breeding flowers after falling victim to an overpowered charm spell, and is unable to stop seeking \"the most beautiful flower of all\" to return it to the sorceress that charmed him.",
-      "location": "THE05",
+      "location": "A06",
       "nextPoints": [
         "PP006"
       ],
@@ -66,7 +66,7 @@
       "id": "PP006",
       "title": "Brooksteps Inn",
       "description": "A rambling two-story structure with tiny rooms and narrow halls, the Brooksteps is an inn in a city with few visitors. Many of the residents of Numillian live in the tiny rooms upstairs, and do chores or trade favors to earn their keep. Card games take place daily, and both chores and favors are wagered as commonly as hard currency. The innkeeper is a greasy gnome named **Waynobibille Nebiddlespun**, but most everyone calls him **Wayne**. A smithy is attached behind the inn, and **Treever Klinhammer**, a middle-aged dwarf, can forge and repair most any weapon or armor.",
-      "location": "THE06",
+      "location": "A07",
       "nextPoints": [
         "PP007"
       ],
@@ -78,7 +78,7 @@
       "id": "PP007",
       "title": "Wizard's Tower",
       "description": "Here dwells **Xaereal the Constructor**, a high-elven wizard on the forefront of magical research and weave manipulation. Banished by fearful lawmen from his prestigious position at a distant college, now he works night and day to create original spells in his tower. If the characters trouble him unduly, he will offer to pay them handsomely for non-existent reagents like \"hen's teeth,\" hoping to keep them away for a while.",
-      "location": "THE07",
+      "location": "A08",
       "nextPoints": [
         "PP008"
       ],
@@ -90,7 +90,7 @@
       "id": "PP008",
       "title": "Vampire's House",
       "description": "This wooden building is painted a dark blue, but **Celun Spackles**, the slender human who lives inside, will insist that it's black. He will also insist that he's a vampire, and mock anyone who doesn't believe him. He is not, and his attempts to goad the party into stabbing him if they don't believe in his powers will end disastrously.",
-      "location": "THE08",
+      "location": "A09",
       "nextPoints": [
         "PP009"
       ],
@@ -102,7 +102,7 @@
       "id": "PP009",
       "title": "Cat's House",
       "description": "This is the home of **Irene Laughing-Eyes**, a small dun colored cat that spends most of its time lying forlornly on a pillow. Homunculi tend to her every need, but she is deeply depressed. She was once a powerful wizard, but changed bodies with her familiar in an experiment. Her familiar ran away on all fours in her body, and she has never been able to track it down.",
-      "location": "THE09",
+      "location": "A10",
       "nextPoints": [
         "PP010"
       ],
@@ -114,7 +114,7 @@
       "id": "PP010",
       "title": "Art Gallery",
       "description": "**Elroy Browning** lives in this run down house, painting horrors from beyond the material plane. Devils, demons, and detailed paintings of the negative planes fill the house, and he doesn't remember painting a single one. But nervous little Elroy keeps one painting covered with a thick cloth, locked in trunk. It's said that he once painted the unknowable realm *outside* of the known planes, and that viewing the painting would drive a man mad.",
-      "location": "THE10",
+      "location": "A11",
       "nextPoints": [
         "PP011"
       ],
@@ -126,7 +126,7 @@
       "id": "PP011",
       "title": "Temple of Broance",
       "description": "Within the large temple, three large men lead a dubious looking group of well-muscled dwarves, humans, and one very ripped gnome in some sort of yoga class. **Strongrod Bildins**, **Jam**, and **Chad** are the priests of the temple, such as they are, and they will gladly expound on the Way of Gideon, and the Path, and Broance Code. They sought solitude to keep from the distractions and follies that cause one to skip leg day, but then got lonely and starting a small cult. They spend most of their time working out, studying the Code, or drinking. They love to drink.",
-      "location": "THE11",
+      "location": "A12",
       "nextPoints": [
         "PP012"
       ],
@@ -138,7 +138,7 @@
       "id": "PP012",
       "title": "Cellar",
       "description": "Beneath a trapdoor, cunningly hidden with dirt and foliage, a ladder leads down into a earthen-walled hallway. Niches are dug into the walls, and resting on top of the dirt shelves are magical items of varying importance. Some are kept here to keep them safe from those who would destroy them, while others are kept here to keep them from being used to destroy. All are watched over by The Caretaker, a surprisingly sane Nothic named **Procul**. He guards the artifacts within the loamy vault of Numillian partially because he hopes to find some cure for his condition, and partially because he cannot bear to leave it.",
-      "location": "THE12",
+      "location": "A13",
       "nextPoints": [
         "PP013"
       ],
@@ -150,11 +150,99 @@
       "id": "PP013",
       "title": "Handworks Guild",
       "description": "**Belrik's** home, guild hall, and mayoral office, all in one. The Handworks Guild Hall is the secret home of the Silent Sisters assassins guild, and Belrik conducts their business from here. Within Numillian, her judgment is accorded absolute difference, though she is not frequently sought out to handle disputes, as her solutions are often harsh, to encourage residents to solve their own problems.",
-      "location": "THE13",
+      "location": "A14",
       "nextPoints": [],
       "status": "not started",
       "plotImpact": "Challenge room progression",
       "source_room_number": 13
+    },
+    {
+      "id": "TRIAL000",
+      "title": "Trial at the Door",
+      "description": "Characters approach a wall of rubble and impenetrable vegetation (DC16 Perception reveals it as an illusion hiding a 20ft stone wall with anti-flight wards). Shuluth walks out to meet them and leads them to a small stone watchtower. The illithid explains they must prove worthy of knowledge of Numillian through a series of tests of character. If they agree, Shuluth bars the tower door and draws their consciousness into a shared mindscape.",
+      "prerequisites": [],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL001"
+      ],
+      "status": "not started",
+      "plotImpact": "Trial at the Door"
+    },
+    {
+      "id": "TRIAL001",
+      "title": "The First Trial - Skull Riddle",
+      "description": "A 30x30 stone room with torches. A copper plate inscription reads: The skull of a Beggar, a Wise man, and King. Three receptacles: crown, alms plate, book. Three colored skulls speak: Red (coins earned by others), Blue (watched fools perform), Yellow (ask rather than demand). The trick: each skull lies - place each in the receptacle the clue does NOT indicate. Correct: Red/Wiseman/Book, Blue/Beggar/Alms-plate, Yellow/King/Crown. Wrong: DC15 Wisdom save or 2d8 psychic damage.",
+      "prerequisites": [
+        "TRIAL000"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL002"
+      ],
+      "status": "not started",
+      "plotImpact": "The First Trial - Skull Riddle"
+    },
+    {
+      "id": "TRIAL002",
+      "title": "The Second Trial - Flooding Room",
+      "description": "A 60x20ft barracks with iron ceiling grates, cabinets, small high windows, six beds, and a banded iron door. After 60 seconds, water floods from the ceiling rising 2ft per turn. Escape options: false cabinet back (DC15 Investigation) hiding compartment for two, illusionary windows concealing a ring of water-breathing, iron door (DC10 pick or DC20 break) leading to Bag of Holding, Portable Hole, and ruined book 100 Ways to Die.",
+      "prerequisites": [
+        "TRIAL001"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL003"
+      ],
+      "status": "not started",
+      "plotImpact": "The Second Trial - Flooding Room"
+    },
+    {
+      "id": "TRIAL003",
+      "title": "The False Third Trial - Kill the Dog",
+      "description": "Each character alone in a fabricated room with a small dog. Shuluth instructs: Kill the dog. Players hand responses silently. No wrong answer - Shuluth observes character through their choice. Complex actions (detect magic, etc.) should twist the trial to reveal character rather than dodge intent.",
+      "prerequisites": [
+        "TRIAL002"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL004"
+      ],
+      "status": "not started",
+      "plotImpact": "The False Third Trial - Kill the Dog"
+    },
+    {
+      "id": "TRIAL004",
+      "title": "The True Third Trial - City of the Mind",
+      "description": "Shuluth creates the impression the party is no longer in the mindscape, but this is NOT true. Characters appear seated around the tower table as Shuluth removes its tentacles. The illithid congratulates them and leads them into a flawless mindscape of Numillian, populated by Homunculi. Shuluth scans thoughts and introduces NPCs that appeal to self-interest, hurrying past any they linger with. The city is meticulously clean with shapely marble blocks.",
+      "prerequisites": [
+        "TRIAL003"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL005"
+      ],
+      "status": "not started",
+      "plotImpact": "The True Third Trial - City of the Mind"
+    },
+    {
+      "id": "TRIAL005",
+      "title": "The Final Trial - No-Win Scenario with Kobe",
+      "description": "Alarm spells activate, screaming erupts. A young girl named Kobe is visible on a flat-topped tower; attackers batter the door. Kobe is indwelt by powerful magic. Shuluth hides in the Vault. Party must protect Kobe, bring her to the vault, and never reveal vault location. Enemies attack in waves. If attackers reach Kobe, they slay her. Mindscape clues: NPCs call characters by name unknown, repeat phrases verbatim, swap gender/race, forget enemies. DC16 Wisdom save grants advantage on all actions. Succeeds if all fall without revealing vault OR majority declares mindscape unreal. Only failure: revealing vault location.",
+      "prerequisites": [
+        "TRIAL004"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL005"
+      ],
+      "status": "not started",
+      "plotImpact": "The Final Trial - No-Win Scenario with Kobe"
     }
   ],
   "import_metadata": {

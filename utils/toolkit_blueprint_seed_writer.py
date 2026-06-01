@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from utils.file_operations import safe_write_json
+from utils.enhanced_logger import error
 
 SEED_REPORT_VERSION = "blueprint_seed_report.v1"
 STATUS_SEED_REFUSED = "refused"
@@ -142,6 +143,225 @@ def _generate_area_id(index: int) -> str:
 def _generate_location_id(area_id: str, index: int) -> str:
     prefix = "".join(c for c in area_id if c.isalpha())
     return f"{prefix}{index+1:02d}"
+
+
+def _normalize_lookup_text(value: Any) -> str:
+    """Normalize a display name for location matching.
+
+    Lowercase, trim, collapse whitespace, normalize apostrophes/quotes.
+    Strips leading 'the ' only for secondary alias matching.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return _normalize_lookup_text(str(value))
+    text = value.strip().lower()
+    text = " ".join(text.split())
+    text = text.replace("'", "").replace('"', "").replace("\u2018", "").replace("\u2019", "")
+    return text
+
+
+def _build_emitted_location_resolution_index(
+    area_ids: Dict[str, str],
+    area_locations: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Build a resolution index mapping lookup keys to emitted location IDs.
+
+    Each index value is {"entry": location_entry, "kind": key_kind}.
+    key_kind values: emitted_id, display_name, alias, source_id,
+    location_id, atom_id, map_key.
+    """
+    index: Dict[str, Dict[str, Any]] = {}
+
+    for area_name, locs in area_locations.items():
+        area_id = area_ids.get(area_name, "")
+        if not area_id:
+            continue
+        for i, loc in enumerate(locs):
+            lid = _generate_location_id(area_id, i)
+            dname = loc.get("display_name") or loc.get("name", "")
+            if not dname:
+                continue
+
+            entry = {
+                "emitted_location_id": lid,
+                "display_name": dname,
+                "area_id": area_id,
+                "area_name": area_name,
+                "source_index": i,
+            }
+
+            def _add(key: str, kind: str) -> None:
+                kn = _normalize_lookup_text(key)
+                if kn and kn not in index:
+                    index[kn] = {"entry": entry, "kind": kind}
+
+            # Index by emitted ID
+            _add(lid, "emitted_id")
+            # Index by display name
+            _add(dname, "display_name")
+            # Index aliases
+            for alias in loc.get("aliases", []):
+                _add(alias, "alias")
+            # Index explicit source metadata
+            for key in ("source_id", "location_id", "atom_id", "map_key"):
+                val = loc.get(key, "")
+                if val and isinstance(val, str):
+                    _add(val, key)
+
+    return index
+
+
+def _resolve_plot_location_ref(
+    beat: Dict[str, Any],
+    index: Dict[str, Dict[str, Any]],
+    emitted_ids: Set[str],
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Resolve a plot beat location to an emitted room ID.
+
+    Returns (emitted_location_id_or_None, diagnostic_dict).
+    """
+    raw_loc = beat.get("location") or ""
+    req_loc = beat.get("required_location") or ""
+    raw_loc = str(raw_loc) if raw_loc else ""
+    req_loc = str(req_loc) if req_loc else ""
+    original = raw_loc.strip() if raw_loc.strip() else req_loc.strip()
+
+    diag: Dict[str, Any] = {
+        "original_location": original,
+        "required_location": req_loc.strip(),
+        "plot_id": beat.get("id", beat.get("beat_id", "")),
+        "plot_title": beat.get("title", ""),
+        "resolution_method": "",
+        "resolved_location": None,
+        "error": None,
+    }
+
+    def _resolve_idx(key_norm: str, kind_label: str) -> Optional[str]:
+        """Try index lookup and set diagnostic method from kind."""
+        idx_entry = index.get(key_norm)
+        if idx_entry is None:
+            return None
+        entry = idx_entry["entry"]
+        kind = idx_entry.get("kind", "")
+        # Map index kind to resolution method
+        method_map = {
+            "emitted_id": "exact_location_id",
+            "display_name": "display_name_match",
+            "alias": "alias_match",
+            "source_id": "explicit_source_id",
+            "location_id": "explicit_location_id",
+            "atom_id": "explicit_atom_id",
+            "map_key": "explicit_map_key",
+        }
+        diag["resolution_method"] = method_map.get(kind, kind_label)
+        diag["resolved_location"] = entry["emitted_location_id"]
+        return entry["emitted_location_id"]
+
+    # 1. Match original against full index
+    orig_norm = _normalize_lookup_text(original)
+    if orig_norm:
+        resolved = _resolve_idx(orig_norm, "location_ref_index_match")
+        if resolved is not None:
+            return resolved, diag
+
+    # 2. Match required_location in index
+    if req_loc.strip():
+        req_norm = _normalize_lookup_text(req_loc)
+        if req_norm:
+            resolved = _resolve_idx(req_norm, "required_location_name")
+            if resolved is not None:
+                return resolved, diag
+
+    # 3. Match by plot title
+    title = beat.get("title", "")
+    if title and isinstance(title, str):
+        title_norm = _normalize_lookup_text(title)
+        if title_norm:
+            resolved = _resolve_idx(title_norm, "title_name_match")
+            if resolved is not None:
+                return resolved, diag
+
+    # 4. Match by explicit source metadata on the beat
+    for match_key in ("source_id", "location_id", "map_key", "atom_id"):
+        source_val = beat.get(match_key, "")
+        if source_val and isinstance(source_val, str):
+            source_norm = _normalize_lookup_text(source_val)
+            if source_norm:
+                idx_entry = index.get(source_norm)
+                if idx_entry:
+                    entry = idx_entry["entry"]
+                    diag["resolution_method"] = f"explicit_{match_key}"
+                    diag["resolved_location"] = entry["emitted_location_id"]
+                    return entry["emitted_location_id"], diag
+
+    # 5. Unresolved - fail closed if original was non-empty
+    if original.strip():
+        diag["error"] = f"unresolved_location_ref: {original}"
+    return None, diag
+
+
+def _reconcile_module_plot_locations(
+    plot_points: List[Dict[str, Any]],
+    area_ids: Dict[str, str],
+    area_locations: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Reconcile plot point location refs to emitted room IDs.
+
+    Returns (reconciled_plot_points, diagnostics).
+    Diagnostics include mapping details and unresolved refs.
+    """
+    index = _build_emitted_location_resolution_index(area_ids, area_locations)
+    emitted_ids: Set[str] = {
+        idx["entry"]["emitted_location_id"].lower()
+        for idx in index.values()
+    }
+    diagnostics: Dict[str, Any] = {
+        "plot_location_reconciliation": {
+            "total_beats": len(plot_points),
+            "resolved": 0,
+            "unresolved": 0,
+            "skipped": 0,
+            "mappings": [],
+            "unresolved_refs": [],
+        }
+    }
+
+    reconciled: List[Dict[str, Any]] = []
+    for beat in plot_points:
+        bid = beat.get("id", beat.get("beat_id", "?"))
+        is_trial = beat.get("isTrial", False)
+
+        if is_trial or (isinstance(bid, str) and bid.startswith("TRIAL")):
+            diag = {
+                "plot_id": bid,
+                "plot_title": beat.get("title", ""),
+                "original_location": beat.get("location", ""),
+                "required_location": beat.get("required_location", ""),
+                "resolution_method": "trial_preserved",
+                "resolved_location": beat.get("location", ""),
+            }
+            diagnostics["plot_location_reconciliation"]["skipped"] += 1
+            diagnostics["plot_location_reconciliation"]["mappings"].append(diag)
+            reconciled.append(dict(beat))
+            continue
+
+        loc, diag = _resolve_plot_location_ref(beat, index, emitted_ids)
+        updated = dict(beat)
+        updated["location"] = loc if loc else beat.get("location", "")
+
+        diagnostics["plot_location_reconciliation"]["mappings"].append(diag)
+        if diag.get("error"):
+            diagnostics["plot_location_reconciliation"]["unresolved"] += 1
+            diagnostics["plot_location_reconciliation"]["unresolved_refs"].append(diag)
+        elif loc:
+            diagnostics["plot_location_reconciliation"]["resolved"] += 1
+        else:
+            diagnostics["plot_location_reconciliation"]["skipped"] += 1
+
+        reconciled.append(updated)
+
+    return reconciled, diagnostics
 
 
 def _group_locations_by_area(
@@ -427,27 +647,17 @@ def _build_module_plot(
     plot_graph: List[Dict[str, Any]],
     area_ids: Dict[str, str],
     area_locations: Dict[str, List[Dict[str, Any]]],
-) -> Dict[str, Any]:
-    """Build module_plot.json from blueprint plot_graph."""
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build module_plot.json from blueprint plot_graph.
+
+    Returns (plot_data, reconciliation_diagnostics).
+    """
     mod = blueprint.get("module", {})
     plot_title = mod.get("title", "Unknown Module") + " - Plot"
     main_objective = mod.get("summary", "")
 
     plot_points: List[Dict[str, Any]] = []
     for i, beat in enumerate(plot_graph):
-        req_loc = beat.get("required_location", "")
-        location_str = ""
-        if req_loc:
-            for area_name, locs in area_locations.items():
-                for loc in locs:
-                    if loc.get("display_name", "").lower().strip() == req_loc.lower().strip():
-                        area_id = area_ids.get(area_name, "")
-                        if area_id:
-                            location_str = f"{area_id}:{req_loc}"
-                        break
-                if location_str:
-                    break
-
         next_points: List[str] = []
         deps = beat.get("dependencies", [])
         for dep in deps:
@@ -459,7 +669,12 @@ def _build_module_plot(
             "id": beat.get("beat_id", f"PP{i+1:03d}"),
             "title": beat.get("title", ""),
             "description": beat.get("outcome", ""),
-            "location": location_str,
+            "location": beat.get("location", ""),
+            "required_location": beat.get("required_location", ""),
+            "source_id": beat.get("source_id", ""),
+            "location_id": beat.get("location_id", ""),
+            "map_key": beat.get("map_key", ""),
+            "atom_id": beat.get("atom_id", ""),
             "nextPoints": next_points,
             "status": "not started",
             "plotImpact": "",
@@ -467,11 +682,15 @@ def _build_module_plot(
         }
         plot_points.append(pp)
 
+    reconciled_pp, diag = _reconcile_module_plot_locations(
+        plot_points, area_ids, area_locations,
+    )
+
     return {
         "plotTitle": plot_title,
         "mainObjective": main_objective,
-        "plotPoints": plot_points,
-    }
+        "plotPoints": reconciled_pp,
+    }, diag
 
 
 def _build_area_file(
@@ -741,25 +960,97 @@ def _build_monsters_seed(
     }
 
 
+def _normalize_schema_month(source_month: Any) -> str:
+    """Normalize a world calendar month to a schema-valid party tracker value.
+
+    Handles None, non-string, empty, whitespace, unknown strings, known
+    Forgotten Realms months, and schema-valid months. Fallback: Firstmonth.
+    """
+    if source_month is None:
+        return "Firstmonth"
+    if not isinstance(source_month, str):
+        return "Firstmonth"
+    cleaned = source_month.strip()
+    if not cleaned:
+        return "Firstmonth"
+    mapping = {
+        # Schema months (identity mapping)
+        "firstmonth": "Firstmonth",
+        "coldmonth": "Coldmonth",
+        "thawmonth": "Thawmonth",
+        "springmonth": "Springmonth",
+        "bloommonth": "Bloommonth",
+        "sunmonth": "Sunmonth",
+        "heatmonth": "Heatmonth",
+        "harvestmonth": "Harvestmonth",
+        "autumnmonth": "Autumnmonth",
+        "fademonth": "Fademonth",
+        "frostmonth": "Frostmonth",
+        "yearend": "Yearend",
+        # Forgotten Realms months
+        "hammer": "Firstmonth",
+        "midwinter": "Coldmonth",
+        "alturiak": "Coldmonth",
+        "ches": "Thawmonth",
+        "tarsakh": "Thawmonth",
+        "mithral": "Springmonth",
+        "mirtul": "Springmonth",
+        "kythorn": "Springmonth",
+        "flamerule": "Bloommonth",
+        "eleasis": "Sunmonth",
+        "eleint": "Heatmonth",
+        "marpenoth": "Harvestmonth",
+        "marpenot": "Harvestmonth",
+        "uktar": "Autumnmonth",
+        "nightal": "Fademonth",
+        "the feast of the moon": "Fademonth",
+    }
+    return mapping.get(cleaned.lower(), "Firstmonth")
+
+
 def _build_party_tracker_backup(
     module_name: str,
     area_ids: Dict[str, str],
     area_locations: Dict[str, List[Dict[str, Any]]],
-) -> Dict[str, Any]:
-    """Build canonical starting party tracker backup for seeded modules."""
+    source_month: Any = None,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build canonical starting party tracker backup for seeded modules.
+
+    Returns (tracker_dict, normalization_diagnostics).
+    """
     first_area_name = next(iter(area_locations.keys()), "")
     first_area_id = area_ids.get(first_area_name, "")
     first_location: Dict[str, Any] = {}
     if first_area_name and area_locations.get(first_area_name):
         first_location = area_locations[first_area_name][0] or {}
 
-    return {
+    src_month = source_month if source_month is not None else "Hammer"
+    normalized_month = _normalize_schema_month(source_month)
+    src_display = str(source_month) if source_month is not None else "None"
+
+    # Reason: identity if the normalized value is the same string as a cleaned source
+    is_identity = (
+        source_month is not None
+        and isinstance(source_month, str)
+        and source_month.strip().lower() == normalized_month.lower()
+    )
+    diagnostics: Dict[str, Any] = {
+        "party_tracker": {
+            "worldConditions.month": {
+                "source_value": src_display,
+                "normalized_value": normalized_month,
+                "reason": "schema_month_identity" if is_identity else "schema_month_normalization",
+            }
+        }
+    }
+
+    tracker = {
         "module": module_name,
         "partyMembers": [],
         "partyNPCs": [],
         "worldConditions": {
             "year": 1492,
-            "month": "Hammer",
+            "month": normalized_month,
             "day": 1,
             "time": "08:00:00",
             "weather": "Clear",
@@ -779,6 +1070,7 @@ def _build_party_tracker_backup(
         },
         "activeQuests": [],
     }
+    return tracker, diagnostics
 
 
 def _build_seed_source_report(
@@ -1069,11 +1361,33 @@ def materialize_module_from_blueprint(
     _safe_write_json(module_path / "module_context.json", context, created_files, skipped_files)
     _safe_write_json(module_path / "module_context_BU.json", context, created_files, skipped_files)
 
-    plot_data = _build_module_plot(blueprint, plot_graph, area_ids, area_locations)
+    plot_data, plot_diag = _build_module_plot(blueprint, plot_graph, area_ids, area_locations)
+    plot_rec = plot_diag.get("plot_location_reconciliation", {})
+    unresolved = plot_rec.get("unresolved", 0)
+    if unresolved > 0:
+        return {
+            "seed_status": STATUS_SEED_REFUSED,
+            "validation": {"valid": False, "reason": "plot_location_unresolved"},
+            "module_name": module_name,
+            "module_dir": str(module_path),
+            "created_files": created_files,
+            "skipped_files": skipped_files,
+            "coverage": {},
+            "warnings": [],
+            "blockers": [{
+                "category": "plot_location_unresolved",
+                "severity": "blocker",
+                "message": f"Plot location reconciliation has {unresolved} unresolved refs",
+                "unresolved_refs": plot_rec.get("unresolved_refs", []),
+            }],
+            "diagnostics": {"plot_location_reconciliation": plot_rec},
+        }
     _safe_write_json(module_path / "module_plot.json", plot_data, created_files, skipped_files)
     _safe_write_json(module_path / "module_plot_BU.json", plot_data, created_files, skipped_files)
 
-    party_tracker_bu = _build_party_tracker_backup(module_name, area_ids, area_locations)
+    party_tracker_bu, pt_normalization_diag = _build_party_tracker_backup(
+        module_name, area_ids, area_locations,
+    )
     _safe_write_json(module_path / "party_tracker_BU.json", party_tracker_bu, created_files, skipped_files)
 
     npc_loc_map = _build_npc_location_map(npc_roster, location_roster)
@@ -1103,6 +1417,8 @@ def materialize_module_from_blueprint(
         blueprint, area_plan, location_roster, npc_roster,
         plot_graph, puzzle_graph, clue_graph, encounter_plan, item_roster,
     )
+    seed_source_report_data["normalization_diagnostics"] = pt_normalization_diag
+    seed_source_report_data["plot_location_reconciliation"] = plot_rec
     _safe_write_json(module_path / "seed_source_report.json", seed_source_report_data, created_files, skipped_files)
 
     unassigned_npcs = _find_unassigned_npcs(npc_roster, location_roster)
@@ -1179,4 +1495,8 @@ def materialize_module_from_blueprint(
         },
         "warnings": seed_warnings,
         "blockers": seed_blockers,
+        "diagnostics": {
+            "plot_location_reconciliation": plot_rec,
+            "normalization_diagnostics": pt_normalization_diag,
+        },
     }

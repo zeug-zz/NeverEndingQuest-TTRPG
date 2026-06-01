@@ -24,6 +24,10 @@ from utils.toolkit_blueprint_seed_writer import (
     NPC_SEED_VERSION,
     MONSTER_SEED_VERSION,
     SEED_SOURCE_REPORT_VERSION,
+    _normalize_schema_month,
+    _build_party_tracker_backup,
+    _build_emitted_location_resolution_index,
+    _reconcile_module_plot_locations,
 )
 
 # ---------------------------------------------------------------------------
@@ -303,6 +307,7 @@ def _make_numillian_blueprint(**overrides) -> Dict[str, Any]:
     bp = _make_sample_blueprint(
         area_plan=area_plan,
         location_roster=location_roster,
+        plot_graph=[],
         npc_roster=[
             {"atom_id": "npc_primus", "display_name": "Archivus Primus", "aliases": [],
              "role": "loremaster", "faction": "Numillian Archivists",
@@ -1106,6 +1111,224 @@ class TestSeedSourceReportExtra(unittest.TestCase):
         self.assertTrue(amulet["required"])
         scroll = next(i for i in items if i["display_name"] == "Ancient Scroll")
         self.assertFalse(scroll["required"])
+
+
+class TestSchemaMonthNormalization(unittest.TestCase):
+
+    def test_hammer_normalizes_to_firstmonth(self):
+        self.assertEqual(_normalize_schema_month("Hammer"), "Firstmonth")
+
+    def test_hammer_lowercase_normalizes(self):
+        self.assertEqual(_normalize_schema_month("hammer"), "Firstmonth")
+
+    def test_unknown_month_falls_back_to_firstmonth(self):
+        self.assertEqual(_normalize_schema_month("FlimFlam"), "Firstmonth")
+
+    def test_empty_string_falls_back(self):
+        self.assertEqual(_normalize_schema_month(""), "Firstmonth")
+
+    def test_whitespace_only_falls_back(self):
+        self.assertEqual(_normalize_schema_month("   "), "Firstmonth")
+
+    def test_none_falls_back(self):
+        self.assertEqual(_normalize_schema_month(None), "Firstmonth")
+
+    def test_non_string_falls_back(self):
+        self.assertEqual(_normalize_schema_month(42), "Firstmonth")
+        self.assertEqual(_normalize_schema_month(True), "Firstmonth")
+
+    def test_valid_schema_month_unchanged(self):
+        self.assertEqual(_normalize_schema_month("Harvestmonth"), "Harvestmonth")
+        self.assertEqual(_normalize_schema_month("Bloommonth"), "Bloommonth")
+        self.assertEqual(_normalize_schema_month("Firstmonth"), "Firstmonth")
+
+    def test_known_fr_month_normalizes_correctly(self):
+        self.assertEqual(_normalize_schema_month("Mirtul"), "Springmonth")
+        self.assertEqual(_normalize_schema_month("Flamerule"), "Bloommonth")
+        self.assertEqual(_normalize_schema_month("Nightal"), "Fademonth")
+
+    def test_built_tracker_uses_normalized_month(self):
+        tracker, diag = _build_party_tracker_backup("TestModule", {}, {})
+        month = tracker.get("worldConditions", {}).get("month")
+        self.assertEqual(month, "Firstmonth")
+        self.assertIn("party_tracker", diag)
+        pt = diag["party_tracker"]["worldConditions.month"]
+        self.assertEqual(pt["normalized_value"], "Firstmonth")
+        self.assertEqual(pt["reason"], "schema_month_normalization")
+
+    def test_built_tracker_with_source_month_mirtul(self):
+        tracker, diag = _build_party_tracker_backup("TestModule", {}, {}, source_month="Mirtul")
+        month = tracker.get("worldConditions", {}).get("month")
+        self.assertEqual(month, "Springmonth")
+        pt = diag["party_tracker"]["worldConditions.month"]
+        self.assertEqual(pt["normalized_value"], "Springmonth")
+        self.assertEqual(pt["source_value"], "Mirtul")
+        self.assertEqual(pt["reason"], "schema_month_normalization")
+
+    def test_built_tracker_with_source_month_none(self):
+        tracker, diag = _build_party_tracker_backup("TestModule", {}, {}, source_month=None)
+        month = tracker.get("worldConditions", {}).get("month")
+        self.assertEqual(month, "Firstmonth")
+        pt = diag["party_tracker"]["worldConditions.month"]
+        self.assertEqual(pt["source_value"], "None")
+        self.assertEqual(pt["reason"], "schema_month_normalization")
+
+    def test_diagnostics_record_identity_for_valid_month(self):
+        tracker, diag = _build_party_tracker_backup("TestModule", {}, {}, source_month="Harvestmonth")
+        pt = diag["party_tracker"]["worldConditions.month"]
+        self.assertEqual(pt["reason"], "schema_month_identity")
+
+
+class TestPlotLocationReconciliation(unittest.TestCase):
+    """Tests for _build_emitted_location_resolution_index, _resolve_plot_location_ref,
+    and _reconcile_module_plot_locations."""
+
+    def _mini_fixture(self):
+        """Mini Numillian-like fixture with preface locations before source-table rooms."""
+        area_ids = {"Numillian": "A000"}
+        area_locations = {
+            "Numillian": [
+                {"display_name": "Numillian / The Hidden City"},
+                {"display_name": "Stone Watchtower"},
+                {"display_name": "Shuluth's Tomb"},
+                {"display_name": "The Rookery"},
+                {"display_name": "The Grove"},
+            ],
+        }
+        plot_beats = [
+            {"id": "PP001", "title": "Shuluth's Tomb", "location": "THE02", "description": "", "nextPoints": [], "status": "not started"},
+            {"id": "PP002", "title": "The Rookery", "location": "THE03", "description": "", "nextPoints": [], "status": "not started"},
+            {"id": "PP003", "title": "The Grove", "location": "THE04", "description": "", "nextPoints": [], "status": "not started"},
+            {"id": "TRIAL001", "title": "First Trial - Skull Riddle", "location": "A01", "description": "", "isTrial": True, "nextPoints": [], "status": "not started"},
+        ]
+        return area_ids, area_locations, plot_beats
+
+    def test_title_match_resolves_by_source_name_not_numeric(self):
+        area_ids, area_locations, beats = self._mini_fixture()
+        reconciled, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        pp1 = reconciled[0]
+        self.assertEqual(pp1["id"], "PP001")
+        self.assertEqual(pp1["location"], "A03")
+        pp2 = reconciled[1]
+        self.assertEqual(pp2["id"], "PP002")
+        self.assertEqual(pp2["location"], "A04")
+
+    def test_trial_points_preserved(self):
+        area_ids, area_locations, beats = self._mini_fixture()
+        reconciled, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        trial = reconciled[3]
+        self.assertEqual(trial["id"], "TRIAL001")
+        self.assertIn("Skull Riddle", trial["title"])
+        diag_mappings = diag["plot_location_reconciliation"]["mappings"]
+        trial_diag = next(m for m in diag_mappings if m["plot_id"] == "TRIAL001")
+        self.assertEqual(trial_diag["resolution_method"], "trial_preserved")
+
+    def test_exact_location_id_passes_through(self):
+        area_ids, area_locations, beats = self._mini_fixture()
+        beats[0]["location"] = "A03"
+        reconciled, _ = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        self.assertEqual(reconciled[0]["location"], "A03")
+
+    def test_unresolved_ref_tracked_in_diagnostics(self):
+        area_ids, area_locations, beats = self._mini_fixture()
+        beats[0]["location"] = "THE99"
+        beats[0]["title"] = "Nonexistent Place"
+        _, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        self.assertGreater(diag["plot_location_reconciliation"]["unresolved"], 0)
+
+    def test_required_location_maps_when_title_differs(self):
+        area_ids, area_locations = {
+            "Dungeon": "A000"
+        }, {
+            "Dungeon": [
+                {"display_name": "Entrance Hall"},
+                {"display_name": "Throne Room"},
+            ],
+        }
+        beats = [{
+            "id": "PP001", "title": "Enter the Temple",
+            "required_location": "Entrance Hall",
+            "location": "", "description": "", "nextPoints": [], "status": "not started",
+        }]
+        reconciled, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        self.assertEqual(reconciled[0]["location"], "A01")
+        methods = [m.get("resolution_method") for m in diag["plot_location_reconciliation"]["mappings"]]
+        self.assertIn("display_name_match", methods)
+
+    def test_fail_closed_when_unresolved_refs_exist(self):
+        """Unresolved non-empty location refs must be detectable as blockers."""
+        area_ids, area_locations, beats = self._mini_fixture()
+        # Remove matching titles so THE02 can't resolve
+        beats[0]["title"] = "Unknown Room"
+        beats[0]["location"] = "THE99"
+        _, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        rec = diag["plot_location_reconciliation"]
+        self.assertGreater(rec["unresolved"], 0)
+        self.assertGreater(len(rec["unresolved_refs"]), 0)
+
+    def test_source_order_fallback_not_used_without_metadata(self):
+        """THE01 must not resolve to A01 just from source_order if no explicit metadata."""
+        area_ids, area_locations, beats = self._mini_fixture()
+        beats[0]["title"] = "Unknown Place"
+        beats[0]["location"] = "THE02"
+        _, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        rec = diag["plot_location_reconciliation"]
+        self.assertGreater(rec["unresolved"], 0)
+
+    def test_explicit_source_key_matches(self):
+        area_ids = {"Dungeon": "A000"}
+        area_locations = {
+            "Dungeon": [
+                {"display_name": "Entrance", "source_id": "THE01"},
+            ],
+        }
+        beats = [{
+            "id": "PP001", "title": "Entrance Room",
+            "location": "THE01", "description": "", "nextPoints": [], "status": "not started",
+        }]
+        reconciled, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        self.assertEqual(reconciled[0]["location"], "A01")
+        # The beat location "THE01" matched via loc.source_id indexed in the full index
+        methods = [m for m in diag["plot_location_reconciliation"]["mappings"]
+                   if m.get("plot_id") == "PP001"]
+        valid_methods = ("explicit_source_id", "exact_location_id", "display_name_match")
+        self.assertTrue(any(m.get("resolution_method") in valid_methods for m in methods),
+                       f"Expected one of {valid_methods}, got: {[m.get('resolution_method') for m in methods]}")
+
+    def test_diagnostics_include_mapping_details(self):
+        area_ids, area_locations, beats = self._mini_fixture()
+        _, diag = _reconcile_module_plot_locations(beats, area_ids, area_locations)
+        rec = diag["plot_location_reconciliation"]
+        self.assertIn("total_beats", rec)
+        self.assertIn("resolved", rec)
+        self.assertIn("unresolved", rec)
+        self.assertIn("mappings", rec)
+        methods = [m.get("resolution_method") for m in rec["mappings"]]
+        # At least one match by title or display name
+        has_match = any(m in methods for m in ("title_name_match", "display_name_match", "exact_location_id"))
+        self.assertTrue(has_match, f"Expected title/display match in: {methods}")
+        self.assertIn("trial_preserved", methods)
+
+    def test_materialization_fail_closed_contract(self):
+        """Unresolved plot location refs must fail closed with correct return shape."""
+        bp = _make_sample_blueprint(
+            plot_graph=[
+                {"beat_id": "PP001", "title": "Unmapped Room",
+                 "location": "THE99", "required_location": "Nonexistent", "dependencies": []},
+            ],
+        )
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "module_output"
+            result = materialize_module_from_blueprint(bp, str(target), overwrite=False, dry_run=False)
+            self.assertIn(result.get("seed_status"), (STATUS_SEED_REFUSED, STATUS_SEED_FAILED))
+            blockers = result.get("blockers", [])
+            self.assertTrue(any("plot_location_unresolved" in str(b.get("category", ""))
+                               for b in blockers),
+                            f"No plot_location_unresolved blocker in: {blockers}")
+            plot_path = target / "module_plot.json"
+            self.assertFalse(plot_path.exists(),
+                             "module_plot.json must not be written on unresolved refs")
 
 
 if __name__ == "__main__":

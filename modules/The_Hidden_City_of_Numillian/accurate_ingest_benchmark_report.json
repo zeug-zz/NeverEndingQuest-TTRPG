@@ -1,19 +1,16 @@
 {
-  "source_fidelity_status": "blocked",
+  "source_fidelity_status": "pass",
   "category_results": [
     {
       "category": "npc_preservation",
-      "status": "blocked",
-      "score": 0.043478260869565216,
+      "status": "pass",
+      "score": 1.0,
       "expected": 0.9,
-      "actual": "1/23",
+      "actual": "23/23",
       "details": {
         "total_source_npcs": 23,
-        "found_in_module": 1,
+        "found_in_module": 23,
         "matched_names": [
-          "Jam"
-        ],
-        "missing_names": [
           "Adhagal",
           "Belrik Dumma-dhur",
           "Book-shut",
@@ -25,6 +22,7 @@
           "Dwal",
           "Elroy Browning",
           "Irene Laughing-Eyes",
+          "Jam",
           "Kobe",
           "Procul",
           "Qillasithe",
@@ -36,20 +34,20 @@
           "Treever Klinhammer",
           "Wayne (Waynobibille Nebiddlespun)",
           "Xaereal the Constructor"
-        ]
+        ],
+        "missing_names": []
       }
     },
     {
       "category": "location_preservation",
-      "status": "blocked",
-      "score": 0.0,
+      "status": "pass",
+      "score": 1.0,
       "expected": 1.0,
-      "actual": "0/13",
+      "actual": "13/13",
       "details": {
         "total_source_locations": 13,
-        "found_in_module": 0,
-        "matched_names": [],
-        "missing_names": [
+        "found_in_module": 13,
+        "matched_names": [
           "Charion Tamer",
           "Shuluth's Tomb",
           "The Rookery",
@@ -63,7 +61,8 @@
           "Temple of Broance",
           "Cellar",
           "Handworks Guild"
-        ]
+        ],
+        "missing_names": []
       }
     },
     {
@@ -85,37 +84,36 @@
     },
     {
       "category": "lore_preservation",
-      "status": "degraded",
-      "score": 0.5,
+      "status": "pass",
+      "score": 1.0,
       "expected": 1.0,
-      "actual": "1/2",
+      "actual": "2/2",
       "details": {
         "total_source_lore_elements": 2,
-        "found_in_module": 1,
+        "found_in_module": 2,
         "matched": [
+          "gatepact",
           "kobe_protection"
         ],
-        "missing": [
-          "gatepact"
-        ]
+        "missing": []
       }
     },
     {
       "category": "tone_preservation",
-      "status": "degraded",
+      "status": "pass",
       "score": null,
       "expected": "quirky_character_driven_hidden_city",
-      "actual": "The Hidden City of Numillian",
+      "actual": "quirky_character_driven_hidden_city",
       "details": {
         "expected_tone": "quirky_character_driven_hidden_city",
         "blocked_replacement": "generic_conspiracy_thriller",
-        "actual_tone_sample": "The Hidden City of Numillian"
+        "actual_tone_sample": "quirky_character_driven_hidden_city"
       }
     }
   ],
-  "passed": false,
+  "passed": true,
   "degraded": false,
-  "blocked": true,
+  "blocked": false,
   "benchmark_version": "numillian_benchmark.v1",
   "module_slug": "The_Hidden_City_of_Numillian",
   "fixture_source_path": "Local_Docs/modules/hombrew/modules/The Hidden City of Numillian.md"

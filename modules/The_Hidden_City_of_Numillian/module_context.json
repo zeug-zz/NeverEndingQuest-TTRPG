@@ -1,446 +1,1826 @@
 {
   "module_name": "The Hidden City of Numillian",
-  "module_id": "The_Hidden_City_of_Numillian",
+  "module_id": "the_hidden_city_of_numillian",
   "areas": {
-    "VCA001": {
-      "name": "Veiled Coast Approach",
+    "A000": {
+      "name": "The Hidden City of Numillian",
       "type": "dungeon",
-      "locations": [],
-      "npcs": [
-        "Lethariel Vaun, a wary wardkeeper scout",
-        "Ilyra Fen, a frightened witness with fragmented memories",
-        "Elarion Sableleaf, a diplomatic wardkeeper envoy",
-        "Thalan Deepcurrent, a trapped maintenance mage",
-        "Maerith the Unseen, cabal strategist",
-        "High Warden Selvaris, final authority over the vault wards",
-        "Sister Aelwyn, a masked city oracle",
-        "Arannis Vey, keeper of the trial chambers",
-        "Mirael of the Third Reflection, an illusion-bound examiner"
+      "locations": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10",
+        "A11",
+        "A12",
+        "A13",
+        "A14",
+        "A15",
+        "A16",
+        "A17",
+        "A18"
       ],
-      "plot_points": [
-        "PP001",
-        "PP002",
-        "PP003",
-        "PP004"
-      ]
-    },
-    "HMT002": {
-      "name": "Hall of Memory Trials",
-      "type": "mixed",
-      "locations": [],
-      "npcs": [
-        "Arannis Vey, keeper of the trial chambers",
-        "Mirael of the Third Reflection, an illusion-bound examiner",
-        "Thalan Deepcurrent, a trapped maintenance mage",
-        "Archivist Nymora, custodian of forbidden records",
-        "High Warden Caldorin, master of the seal lattice"
-      ],
-      "plot_points": [
-        "PP001",
-        "PP002",
-        "PP003",
-        "PP004"
-      ]
-    },
-    "ICN003": {
-      "name": "Inner City of Numillian",
-      "type": "town",
-      "locations": [],
-      "npcs": [
-        "Ilyra Fen, a frightened witness with fragmented memories",
-        "Veyra Moonquill, a dissident scholar",
-        "Captain Soryn Thal, leader of the city watch",
-        "Maerith the Unseen, if still at large"
-      ],
-      "plot_points": [
-        "PP001",
-        "PP002",
-        "PP003",
-        "PP004"
-      ]
-    },
-    "SWD004": {
-      "name": "Submerged Wardworks",
-      "type": "town",
-      "locations": [],
-      "npcs": [
-        "Orven Tideglass, a drowned-path ferryman",
-        "Ilyra Fen, a frightened witness with fragmented memories",
-        "Veyra Moonquill, a dissident scholar",
-        "Thalan Deepcurrent, a trapped maintenance mage",
-        "Elarion Sableleaf, a diplomatic wardkeeper envoy"
-      ],
-      "plot_points": [
-        "PP001",
-        "PP002",
-        "PP003",
-        "PP004"
-      ]
-    },
-    "FVS005": {
-      "name": "Forbidden Vault Sanctum",
-      "type": "town",
-      "locations": [],
-      "npcs": [
-        "Sister Aelwyn, a masked city oracle",
-        "Arannis Vey, keeper of the trial chambers",
-        "Veyra Moonquill, a dissident scholar",
-        "Ilyra Fen, a frightened witness with fragmented memories",
-        "Thalan Deepcurrent, a trapped maintenance mage",
-        "Maerith the Unseen, cabal strategist",
-        "Elarion Sableleaf, a diplomatic wardkeeper envoy"
-      ],
-      "plot_points": [
-        "PP001",
-        "PP002",
-        "PP003",
-        "PP004"
-      ]
+      "npcs": [],
+      "plot_points": []
     }
   },
   "npcs": {
-    "lethariel_vaun_a_wary_wardkeeper_scout": {
-      "name": "Lethariel Vaun, a wary wardkeeper scout",
-      "role": "",
+    "shuluth": {
+      "name": "Shuluth",
+      "role": "Alhoon guardian of the hidden city; conducts the trials and protects Numillian with magic and memory alteration",
       "faction": "",
-      "description": "A cautious scout stationed here to watch for intruders who follow the wrong memories. She marks safe stone with chalk and warns that the corridor's inscriptions can be trusted only after they are spoken aloud.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G01"
-        }
-      ],
-      "aliases": [
-        "Lethariel Vaun, a wary wardkeeper scout"
-      ]
+      "appears_in": []
     },
-    "orven_tideglass_a_drowned_path_ferryman": {
-      "name": "Orven Tideglass, a drowned-path ferryman",
-      "role": "",
+    "belrik_dumma_dhur": {
+      "name": "Belrik Dumma-dhur",
+      "role": "Duergar assassin and leader of the Silent Sisters; founder of the city’s hidden security pact",
       "faction": "",
-      "description": "A reed-thin ferryman with waterlogged boots and a lantern sealed in blue glass. He knows which canals are safe, which are watched, and which voices in the water are not human.",
-      "appears_in": [
-        {
-          "area": "SWD004",
-          "location": "G01"
-        }
-      ],
-      "aliases": [
-        "Orven Tideglass, a drowned-path ferryman"
-      ]
+      "appears_in": []
     },
-    "sister_aelwyn_a_masked_city_oracle": {
-      "name": "Sister Aelwyn, a masked city oracle",
-      "role": "",
+    "wayne": {
+      "name": "Wayne",
+      "role": "Gnome innkeeper at the Brooksteps Inn",
       "faction": "",
-      "description": "A masked oracle who speaks in tidal metaphors and reveals answers only when the party asks the right question. She understands the chamber's riddles and warns that incorrect certainty is more dangerous than ignorance.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G04"
-        },
-        {
-          "area": "FVS005",
-          "location": "G01"
-        }
-      ],
-      "aliases": [
-        "Sister Aelwyn, a masked city oracle"
-      ]
+      "appears_in": []
     },
-    "arannis_vey_keeper_of_the_trial_chambers": {
-      "name": "Arannis Vey, keeper of the trial chambers",
-      "role": "",
+    "treever_klinhammer": {
+      "name": "Treever Klinhammer",
+      "role": "Smithy behind the inn; forges and repairs weapons and armor",
       "faction": "",
-      "description": "The chamber's official overseer, responsible for judging whether an answer is sincere, clever, or merely stolen. Arannis watches from the dais or a side alcove and may offer a trial instead of a fight.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G04"
-        },
-        {
-          "area": "HMT002",
-          "location": "G01"
-        },
-        {
-          "area": "FVS005",
-          "location": "G01"
-        }
-      ],
-      "aliases": [
-        "Arannis Vey, keeper of the trial chambers"
-      ]
+      "appears_in": []
     },
-    "mirael_of_the_third_reflection_an_illusion_bound_examiner": {
-      "name": "Mirael of the Third Reflection, an illusion-bound examiner",
-      "role": "",
+    "adhagal": {
+      "name": "Adhagal",
+      "role": "Friendly merchant of magic items",
       "faction": "",
-      "description": "An examiner bound to the chamber's mirrored judgments, appearing in a surface of still water or polished stone. Mirael tests the party with layered illusions and can reveal hidden truths if properly engaged.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G04"
-        },
-        {
-          "area": "HMT002",
-          "location": "G02"
-        }
-      ],
-      "aliases": [
-        "Mirael of the Third Reflection, an illusion-bound examiner"
-      ]
+      "appears_in": []
     },
-    "thalan_deepcurrent_a_trapped_maintenance_mage": {
-      "name": "Thalan Deepcurrent, a trapped maintenance mage",
-      "role": "",
+    "bramak_pakel": {
+      "name": "Bramak Pakel",
+      "role": "Charion tamer and animal lover with an animal sanctuary",
       "faction": "",
-      "description": "Trapped behind a collapsed service grate, Thalan can describe the vault's maintenance routes and hidden fail-safes. He is anxious, brilliant, and desperate to be freed before the wards recycle the chamber.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G02"
-        },
-        {
-          "area": "HMT002",
-          "location": "G03"
-        },
-        {
-          "area": "SWD004",
-          "location": "G03"
-        },
-        {
-          "area": "FVS005",
-          "location": "G03"
-        }
-      ],
-      "aliases": [
-        "Thalan Deepcurrent, a trapped maintenance mage"
-      ]
+      "appears_in": []
     },
-    "elarion_sableleaf_a_diplomatic_wardkeeper_envoy": {
-      "name": "Elarion Sableleaf, a diplomatic wardkeeper envoy",
-      "role": "",
+    "xaereal_the_constructor": {
+      "name": "Xaereal the Constructor",
+      "role": "Wizard researching original spells",
       "faction": "",
-      "description": "An envoy tasked with preserving the vault's social protocols as carefully as its seals. He insists that any tribute taken must be balanced by a spoken oath or a returned favor.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G02"
-        },
-        {
-          "area": "SWD004",
-          "location": "G04"
-        },
-        {
-          "area": "FVS005",
-          "location": "G04"
-        }
-      ],
-      "aliases": [
-        "Elarion Sableleaf, a diplomatic wardkeeper envoy"
-      ]
+      "appears_in": []
     },
-    "veyra_moonquill_a_dissident_scholar": {
-      "name": "Veyra Moonquill, a dissident scholar",
-      "role": "",
+    "irene_laughing_eyes": {
+      "name": "Irene Laughing-Eyes",
+      "role": "Cat-bodied wizard seeking her runaway familiar in her former body",
       "faction": "",
-      "description": "A hidden guest posing as a cousin, quietly comparing the house's erased portraits to old civic records and memory-lore.",
-      "appears_in": [
-        {
-          "area": "ICN003",
-          "location": "G02"
-        },
-        {
-          "area": "SWD004",
-          "location": "G02"
-        },
-        {
-          "area": "FVS005",
-          "location": "G02"
-        }
-      ],
-      "aliases": [
-        "Veyra Moonquill, a dissident scholar"
-      ]
+      "appears_in": []
     },
-    "captain_soryn_thal_leader_of_the_city_watch": {
-      "name": "Captain Soryn Thal, leader of the city watch",
-      "role": "",
+    "strongrod_bildins": {
+      "name": "Strongrod Bildins",
+      "role": "Dwarf barbarian priest of Broance",
       "faction": "",
-      "description": "A disciplined watch captain overseeing crowd control, flood response, and the quiet suppression of rumors.",
-      "appears_in": [
-        {
-          "area": "ICN003",
-          "location": "G03"
-        }
-      ],
-      "aliases": [
-        "Captain Soryn Thal, leader of the city watch"
-      ]
+      "appears_in": []
     },
-    "maerith_the_unseen_cabal_strategist": {
-      "name": "Maerith the Unseen, cabal strategist",
-      "role": "",
+    "ragna_fitrill": {
+      "name": "Ragna Fitrill",
+      "role": "Dragonborn fighter obsessed with finding the most beautiful flower",
       "faction": "",
-      "description": "A hidden strategist who has already infiltrated the vault's periphery and now manipulates events through projected whispers and false reflections. Maerith is never where they seem to be, but their plans are written across the room's mirrored surfaces.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G03"
-        },
-        {
-          "area": "FVS005",
-          "location": "G04"
-        }
-      ],
-      "aliases": [
-        "Maerith the Unseen, cabal strategist"
-      ]
+      "appears_in": []
     },
-    "high_warden_caldorin_master_of_the_seal_lattice": {
-      "name": "High Warden Caldorin, master of the seal lattice",
-      "role": "",
+    "the_caretaker_procul": {
+      "name": "The Caretaker / Procul",
+      "role": "Friendly sane Nothic guarding the vault and magical items",
       "faction": "",
-      "description": "The stern architect of the archive's sealing system, present here to inspect the ward lattice and determine whether the hidden vault should remain closed.",
-      "appears_in": [
-        {
-          "area": "HMT002",
-          "location": "G04"
-        }
-      ],
-      "aliases": [
-        "High Warden Caldorin, master of the seal lattice"
-      ]
+      "appears_in": []
     },
-    "ilyra_fen_a_frightened_witness_with_fragmented_memories": {
-      "name": "Ilyra Fen, a frightened witness with fragmented memories",
-      "role": "",
+    "celun_spackles": {
+      "name": "Celun Spackles",
+      "role": "Human who insists he is a vampire",
       "faction": "",
-      "description": "Ilyra clutches a broken shell pendant and repeatedly loses track of which passage she came from. She can describe flashes of hidden doors, but only if the party calms her and helps piece together her memories.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G01"
-        },
-        {
-          "area": "ICN003",
-          "location": "G02"
-        },
-        {
-          "area": "SWD004",
-          "location": "G02"
-        },
-        {
-          "area": "FVS005",
-          "location": "G02"
-        }
-      ],
-      "aliases": [
-        "Ilyra Fen, a frightened witness with fragmented memories"
-      ]
+      "appears_in": []
     },
-    "high_warden_selvaris_final_authority_over_the_vault_wards": {
-      "name": "High Warden Selvaris, final authority over the vault wards",
-      "role": "",
+    "elroy_browning": {
+      "name": "Elroy Browning",
+      "role": "Painter of horrors and forbidden vistas",
       "faction": "",
-      "description": "The ultimate voice of the vault's security, appearing here in person or as a ward-projected overseer depending on how the party arrives. Selvaris will demand identification, then test whether the intruders are thieves, petitioners, or liabilities.",
-      "appears_in": [
-        {
-          "area": "VCA001",
-          "location": "G03"
-        }
-      ],
-      "aliases": [
-        "High Warden Selvaris, final authority over the vault wards"
-      ]
+      "appears_in": []
     },
-    "archivist_nymora_custodian_of_forbidden_records": {
-      "name": "Archivist Nymora, custodian of forbidden records",
-      "role": "",
+    "jam": {
+      "name": "Jam",
+      "role": "Priest of the Temple of Broance",
       "faction": "",
-      "description": "A meticulous archivist in layered ink-stained robes, guarding restricted tablets and cataloguing which memories must never be spoken aloud.",
-      "appears_in": [
-        {
-          "area": "HMT002",
-          "location": "G04"
-        }
-      ],
-      "aliases": [
-        "Archivist Nymora, custodian of forbidden records"
-      ]
+      "appears_in": []
     },
-    "maerith_the_unseen_if_still_at_large": {
-      "name": "Maerith the Unseen, if still at large",
-      "role": "",
+    "chad": {
+      "name": "Chad",
+      "role": "Priest of the Temple of Broance",
       "faction": "",
-      "description": "A hidden cabal strategist who may appear here only in disguise, using the guildhall's records to erase or redirect evidence.",
-      "appears_in": [
-        {
-          "area": "ICN003",
-          "location": "G04"
-        }
-      ],
-      "aliases": [
-        "Maerith the Unseen, if still at large"
-      ]
+      "appears_in": []
+    },
+    "red_skull": {
+      "name": "Red Skull",
+      "role": "puzzle statue voice",
+      "faction": "",
+      "appears_in": []
+    },
+    "blue_skull": {
+      "name": "Blue Skull",
+      "role": "puzzle statue voice",
+      "faction": "",
+      "appears_in": []
+    },
+    "yellow_skull": {
+      "name": "Yellow Skull",
+      "role": "puzzle statue voice",
+      "faction": "",
+      "appears_in": []
+    },
+    "the_caretaker": {
+      "name": "The Caretaker",
+      "role": "Friendly Nothic; guards the Vault below the town, protecting dangerous magic items",
+      "faction": "",
+      "appears_in": []
+    },
+    "dog_growl": {
+      "name": "Dog-Growl",
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "appears_in": []
+    },
+    "book_shut": {
+      "name": "Book-shut",
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "appears_in": []
+    },
+    "deflation": {
+      "name": "Deflation",
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "appears_in": []
+    },
+    "rollo": {
+      "name": "Rollo",
+      "role": "were-possum who plots revenge against society and government officials",
+      "faction": "",
+      "appears_in": []
+    },
+    "qillasithe": {
+      "name": "Qillasithe",
+      "role": "were-trout who plots revenge against society and government officials",
+      "faction": "",
+      "appears_in": []
+    },
+    "dwal": {
+      "name": "Dwal",
+      "role": "were-bear who plots revenge against society and government officials",
+      "faction": "",
+      "appears_in": []
+    },
+    "waynobibille_nebiddlespun": {
+      "name": "Waynobibille Nebiddlespun",
+      "role": "greasy gnome innkeeper of Brooksteps Inn, called Wayne by most everyone",
+      "faction": "",
+      "appears_in": []
+    },
+    "procul": {
+      "name": "Procul",
+      "role": "surprisingly sane Nothic who guards the artifacts within the loamy vault of Numillian",
+      "faction": "",
+      "appears_in": []
+    },
+    "belrik_s": {
+      "name": "Belrik's",
+      "role": "home, guild hall, and mayoral office in one; the Handworks Guild Hall",
+      "faction": "",
+      "appears_in": []
+    },
+    "red": {
+      "name": "Red",
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "appears_in": []
+    },
+    "wiseman": {
+      "name": "Wiseman",
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "appears_in": []
+    },
+    "book": {
+      "name": "Book",
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "appears_in": []
+    },
+    "blue": {
+      "name": "Blue",
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "appears_in": []
+    },
+    "beggar": {
+      "name": "Beggar",
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "appears_in": []
+    },
+    "alms_plate": {
+      "name": "Alms-plate",
+      "role": "receptacle for a skull in the First Trial",
+      "faction": "",
+      "appears_in": []
+    },
+    "yellow": {
+      "name": "Yellow",
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "appears_in": []
+    },
+    "king": {
+      "name": "King",
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "appears_in": []
+    },
+    "crown": {
+      "name": "Crown",
+      "role": "receptacle label in the First Trial",
+      "faction": "",
+      "appears_in": []
+    },
+    "kobe": {
+      "name": "Kobe",
+      "type": "npc",
+      "npcType": "Humanoid",
+      "description": "A young girl indwelt by powerful magic. The party must protect her from attackers seeking to capture or kill her for the magic she holds. She appears as the objective of Shuluth final no-win trial.",
+      "role": "Final trial objective",
+      "faction": "Numillian",
+      "conditions": []
     }
   },
-  "locations": {},
+  "locations": {
+    "A01": {
+      "name": "Numillian / The Hidden City",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A02": {
+      "name": "Stone Watchtower",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A03": {
+      "name": "Shuluth's Tomb",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A04": {
+      "name": "The Rookery",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A05": {
+      "name": "The Grove",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A06": {
+      "name": "Garden House",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A07": {
+      "name": "Brooksteps Inn",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A08": {
+      "name": "Wizard's Tower",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A09": {
+      "name": "Vampire's House",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A10": {
+      "name": "Cat's House",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A11": {
+      "name": "Art Gallery",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A12": {
+      "name": "Temple of Broance",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A13": {
+      "name": "Cellar",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A14": {
+      "name": "Handworks Guild",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A15": {
+      "name": "Charion Tamer",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A16": {
+      "name": "Rookery",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A17": {
+      "name": "Grove",
+      "aliases": [],
+      "area": "A000"
+    },
+    "A18": {
+      "name": "Brokensteps Inn",
+      "aliases": [],
+      "area": "A000"
+    }
+  },
   "plot_scopes": {
-    "PP001": "FVS005",
-    "PP002": "FVS005",
-    "PP003": "FVS005",
-    "PP004": "FVS005"
+    "PP001": "A000",
+    "PP002": "A000",
+    "PP003": "A000",
+    "PP004": "A000",
+    "PP005": "A000",
+    "PP006": "A000",
+    "PP007": "A000",
+    "PP008": "A000",
+    "PP009": "A000",
+    "PP010": "A000"
   },
   "references": {
-    "npc:Lethariel Vaun, a wary wardkeeper scout": [
+    "npc:Shuluth": [
       "module:plotStages"
     ],
-    "npc:Orven Tideglass, a drowned-path ferryman": [
+    "npc:Belrik Dumma-dhur": [
       "module:plotStages"
     ],
-    "npc:Sister Aelwyn, a masked city oracle": [
+    "npc:Wayne": [
       "module:plotStages"
     ],
-    "npc:Arannis Vey, keeper of the trial chambers": [
+    "npc:Treever Klinhammer": [
       "module:plotStages"
     ],
-    "npc:Mirael of the Third Reflection, an illusion-bound examiner": [
+    "npc:Adhagal": [
       "module:plotStages"
     ],
-    "npc:Thalan Deepcurrent, a trapped maintenance mage": [
+    "npc:Bramak Pakel": [
       "module:plotStages"
     ],
-    "npc:Elarion Sableleaf, a diplomatic wardkeeper envoy": [
+    "npc:Xaereal the Constructor": [
       "module:plotStages"
     ],
-    "npc:Veyra Moonquill, a dissident scholar": [
+    "npc:Irene Laughing-Eyes": [
       "module:plotStages"
     ],
-    "npc:Captain Soryn Thal, leader of the city watch": [
+    "npc:Strongrod Bildins": [
       "module:plotStages"
     ],
-    "npc:Maerith the Unseen, cabal strategist": [
+    "npc:Ragna Fitrill": [
       "module:plotStages"
     ],
-    "npc:High Warden Caldorin, master of the seal lattice": [
+    "npc:The Caretaker / Procul": [
       "module:plotStages"
     ],
-    "npc:Ilyra Fen, a frightened witness with fragmented memories": [
+    "npc:Celun Spackles": [
       "module:plotStages"
     ],
-    "npc:High Warden Selvaris, final authority over the vault wards": [
+    "npc:Elroy Browning": [
       "module:plotStages"
     ],
-    "npc:Archivist Nymora, custodian of forbidden records": [
+    "npc:Jam": [
       "module:plotStages"
     ],
-    "npc:Maerith the Unseen, if still at large": [
+    "npc:Chad": [
+      "module:plotStages"
+    ],
+    "npc:Red Skull": [
+      "module:plotStages"
+    ],
+    "npc:Blue Skull": [
+      "module:plotStages"
+    ],
+    "npc:Yellow Skull": [
+      "module:plotStages"
+    ],
+    "npc:The Caretaker": [
+      "module:plotStages"
+    ],
+    "npc:Dog-Growl": [
+      "module:plotStages"
+    ],
+    "npc:Book-shut": [
+      "module:plotStages"
+    ],
+    "npc:Deflation": [
+      "module:plotStages"
+    ],
+    "npc:Rollo": [
+      "module:plotStages"
+    ],
+    "npc:Qillasithe": [
+      "module:plotStages"
+    ],
+    "npc:Dwal": [
+      "module:plotStages"
+    ],
+    "npc:Waynobibille Nebiddlespun": [
+      "module:plotStages"
+    ],
+    "npc:Procul": [
+      "module:plotStages"
+    ],
+    "npc:Belrik's": [
+      "module:plotStages"
+    ],
+    "npc:Red": [
+      "module:plotStages"
+    ],
+    "npc:Wiseman": [
+      "module:plotStages"
+    ],
+    "npc:Book": [
+      "module:plotStages"
+    ],
+    "npc:Blue": [
+      "module:plotStages"
+    ],
+    "npc:Beggar": [
+      "module:plotStages"
+    ],
+    "npc:Alms-plate": [
+      "module:plotStages"
+    ],
+    "npc:Yellow": [
+      "module:plotStages"
+    ],
+    "npc:King": [
+      "module:plotStages"
+    ],
+    "npc:Crown": [
       "module:plotStages"
     ]
   },
-  "validation_issues": [],
-  "author": "",
-  "license": "",
-  "generated_at": "2026-05-23T07:45:46.072487"
+  "tone": "quirky_character_driven_hidden_city",
+  "classification_metadata": {
+    "classified_by": "gpt-5.4-mini-2026-03-17",
+    "classified_at": "2026-06-01T03:37:43.973010",
+    "entity_count": 0,
+    "destination_count": 1,
+    "npc_count": 0,
+    "provenance": "llm_classification",
+    "feature_flag": "ENABLE_LLM_CLASSIFICATION"
+  },
+  "continuity": {
+    "continuity_version": "v1",
+    "entry_state_variants": {
+      "cold_start": {
+        "summary": "Party enters The Hidden City of Numillian with no prior continuity context. Present the opening conflict and immediate objective clearly."
+      },
+      "partial_context": {
+        "summary": "Party enters The Hidden City of Numillian with partial prior context. Reinforce known clues before branch-critical decisions."
+      },
+      "late_arc": {
+        "summary": "Party enters The Hidden City of Numillian in late-arc state. Provide compact recap and preserve ending accessibility."
+      }
+    },
+    "cross_module_refs": [],
+    "standalone_fallback": {
+      "enabled": true,
+      "clue_sources": [
+        "module_context",
+        "module_plot"
+      ],
+      "notes": "The_Hidden_City_of_Numillian remains playable as a standalone module when cross-module continuity is unavailable."
+    }
+  },
+  "semantic_authority": {
+    "version": "v1",
+    "module_slug": "The_Hidden_City_of_Numillian",
+    "location_aliases": {
+      "art gallery": {
+        "status": "resolved",
+        "location_id": "A11",
+        "location_name": "Art Gallery",
+        "candidate_location_ids": [
+          "A11"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A11].name"
+        ]
+      },
+      "brokensteps inn": {
+        "status": "resolved",
+        "location_id": "A18",
+        "location_name": "Brokensteps Inn",
+        "candidate_location_ids": [
+          "A18"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A18].name"
+        ]
+      },
+      "brooksteps inn": {
+        "status": "resolved",
+        "location_id": "A07",
+        "location_name": "Brooksteps Inn",
+        "candidate_location_ids": [
+          "A07"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A07].name"
+        ]
+      },
+      "cats house": {
+        "status": "resolved",
+        "location_id": "A10",
+        "location_name": "Cat's House",
+        "candidate_location_ids": [
+          "A10"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A10].name"
+        ]
+      },
+      "cellar": {
+        "status": "resolved",
+        "location_id": "A13",
+        "location_name": "Cellar",
+        "candidate_location_ids": [
+          "A13"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A13].name"
+        ]
+      },
+      "charion tamer": {
+        "status": "resolved",
+        "location_id": "A15",
+        "location_name": "Charion Tamer",
+        "candidate_location_ids": [
+          "A15"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A15].name"
+        ]
+      },
+      "garden house": {
+        "status": "resolved",
+        "location_id": "A06",
+        "location_name": "Garden House",
+        "candidate_location_ids": [
+          "A06"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A06].name"
+        ]
+      },
+      "grove": {
+        "status": "ambiguous",
+        "candidate_location_ids": [
+          "A05",
+          "A17"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A05].name",
+          "areas/A000.json#locations[A17].name"
+        ]
+      },
+      "handworks guild": {
+        "status": "resolved",
+        "location_id": "A14",
+        "location_name": "Handworks Guild",
+        "candidate_location_ids": [
+          "A14"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A14].name"
+        ]
+      },
+      "numillian the hidden city": {
+        "status": "resolved",
+        "location_id": "A01",
+        "location_name": "Numillian / The Hidden City",
+        "candidate_location_ids": [
+          "A01"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A01].name"
+        ]
+      },
+      "rookery": {
+        "status": "ambiguous",
+        "candidate_location_ids": [
+          "A04",
+          "A16"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A04].name",
+          "areas/A000.json#locations[A16].name"
+        ]
+      },
+      "shuluths tomb": {
+        "status": "resolved",
+        "location_id": "A03",
+        "location_name": "Shuluth's Tomb",
+        "candidate_location_ids": [
+          "A03"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A03].name"
+        ]
+      },
+      "stone watchtower": {
+        "status": "resolved",
+        "location_id": "A02",
+        "location_name": "Stone Watchtower",
+        "candidate_location_ids": [
+          "A02"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A02].name"
+        ]
+      },
+      "temple of broance": {
+        "status": "resolved",
+        "location_id": "A12",
+        "location_name": "Temple of Broance",
+        "candidate_location_ids": [
+          "A12"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A12].name"
+        ]
+      },
+      "the grove": {
+        "status": "resolved",
+        "location_id": "A05",
+        "location_name": "The Grove",
+        "candidate_location_ids": [
+          "A05"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A05].name"
+        ]
+      },
+      "the rookery": {
+        "status": "resolved",
+        "location_id": "A04",
+        "location_name": "The Rookery",
+        "candidate_location_ids": [
+          "A04"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A04].name"
+        ]
+      },
+      "vampires house": {
+        "status": "resolved",
+        "location_id": "A09",
+        "location_name": "Vampire's House",
+        "candidate_location_ids": [
+          "A09"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A09].name"
+        ]
+      },
+      "wizards tower": {
+        "status": "resolved",
+        "location_id": "A08",
+        "location_name": "Wizard's Tower",
+        "candidate_location_ids": [
+          "A08"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A08].aliases",
+          "areas/A000.json#locations[A08].name"
+        ]
+      }
+    },
+    "destination_phrases": {
+      "art gallery": {
+        "status": "resolved",
+        "location_id": "A11",
+        "candidate_location_ids": [
+          "A11"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A11].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "brokensteps inn": {
+        "status": "resolved",
+        "location_id": "A18",
+        "candidate_location_ids": [
+          "A18"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A18].name"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "brooksteps inn": {
+        "status": "resolved",
+        "location_id": "A07",
+        "candidate_location_ids": [
+          "A07"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A07].name"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "cats house": {
+        "status": "resolved",
+        "location_id": "A10",
+        "candidate_location_ids": [
+          "A10"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A10].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "cellar": {
+        "status": "resolved",
+        "location_id": "A13",
+        "candidate_location_ids": [
+          "A13"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A13].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "charion tamer": {
+        "status": "resolved",
+        "location_id": "A15",
+        "candidate_location_ids": [
+          "A15"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A15].name",
+          "module_plot.json#plotPoints[PP001].description"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 1
+      },
+      "garden house": {
+        "status": "resolved",
+        "location_id": "A06",
+        "candidate_location_ids": [
+          "A06"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A06].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "grove": {
+        "status": "ambiguous",
+        "candidate_location_ids": [
+          "A05",
+          "A17"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A05].name",
+          "areas/A000.json#locations[A17].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "handworks guild": {
+        "status": "resolved",
+        "location_id": "A14",
+        "candidate_location_ids": [
+          "A14"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A14].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "numillian the hidden city": {
+        "status": "resolved",
+        "location_id": "A01",
+        "candidate_location_ids": [
+          "A01"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A01].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "rookery": {
+        "status": "ambiguous",
+        "candidate_location_ids": [
+          "A04",
+          "A16"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A04].name",
+          "areas/A000.json#locations[A16].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "shuluths tomb": {
+        "status": "resolved",
+        "location_id": "A03",
+        "candidate_location_ids": [
+          "A03"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A03].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "stone watchtower": {
+        "status": "resolved",
+        "location_id": "A02",
+        "candidate_location_ids": [
+          "A02"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A02].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "temple of broance": {
+        "status": "resolved",
+        "location_id": "A12",
+        "candidate_location_ids": [
+          "A12"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A12].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "the grove": {
+        "status": "resolved",
+        "location_id": "A05",
+        "candidate_location_ids": [
+          "A05"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A05].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "the rookery": {
+        "status": "resolved",
+        "location_id": "A04",
+        "candidate_location_ids": [
+          "A04"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A04].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "vampires house": {
+        "status": "resolved",
+        "location_id": "A09",
+        "candidate_location_ids": [
+          "A09"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A09].name"
+        ],
+        "observed": false,
+        "player_facing": false,
+        "observation_count": 0
+      },
+      "wizards tower": {
+        "status": "resolved",
+        "location_id": "A08",
+        "candidate_location_ids": [
+          "A08"
+        ],
+        "sources": [
+          "areas/A000.json#locations[A08].aliases",
+          "areas/A000.json#locations[A08].name"
+        ],
+        "observed": true,
+        "player_facing": true,
+        "observation_count": 2
+      }
+    },
+    "npc_scene_authority": {
+      "Adhagal": {
+        "name_slug": "adhagal",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.adhagal"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      },
+      "Alms-plate": {
+        "name_slug": "alms plate",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.alms_plate",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Beggar": {
+        "name_slug": "beggar",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.beggar",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Belrik Dumma-dhur": {
+        "name_slug": "belrik dumma dhur",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.belrik_dumma_dhur"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      },
+      "Belrik's": {
+        "name_slug": "belriks",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A14",
+            "source": "module_plot.json#plotPoints[PP013].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.belrik_s",
+          "module_plot.json#plotPoints[PP013].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP013].description"
+        ]
+      },
+      "Blue": {
+        "name_slug": "blue",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A09",
+            "source": "module_plot.json#plotPoints[PP008].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.blue",
+          "module_plot.json#plotPoints[PP008].description",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 2,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP008].description",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Blue Skull": {
+        "name_slug": "blue skull",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.blue_skull"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      },
+      "Book": {
+        "name_slug": "book",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL002].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A04",
+            "source": "module_plot.json#plotPoints[PP003].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.book",
+          "module_plot.json#plotPoints[PP003].description",
+          "module_plot.json#plotPoints[TRIAL001].description",
+          "module_plot.json#plotPoints[TRIAL002].description"
+        ],
+        "authored_mentions_count": 3,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP003].description",
+          "module_plot.json#plotPoints[TRIAL001].description",
+          "module_plot.json#plotPoints[TRIAL002].description"
+        ]
+      },
+      "Book-shut": {
+        "name_slug": "book shut",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A04",
+            "source": "module_plot.json#plotPoints[PP003].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.book_shut",
+          "module_plot.json#plotPoints[PP003].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP003].description"
+        ]
+      },
+      "Bramak Pakel": {
+        "name_slug": "bramak pakel",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A15",
+            "source": "module_plot.json#plotPoints[PP001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.bramak_pakel",
+          "module_plot.json#plotPoints[PP001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP001].description"
+        ]
+      },
+      "Celun Spackles": {
+        "name_slug": "celun spackles",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A09",
+            "source": "module_plot.json#plotPoints[PP008].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.celun_spackles",
+          "module_plot.json#plotPoints[PP008].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP008].description"
+        ]
+      },
+      "Chad": {
+        "name_slug": "chad",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A12",
+            "source": "module_plot.json#plotPoints[PP011].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.chad",
+          "module_plot.json#plotPoints[PP011].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP011].description"
+        ]
+      },
+      "Crown": {
+        "name_slug": "crown",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.crown",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Deflation": {
+        "name_slug": "deflation",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A04",
+            "source": "module_plot.json#plotPoints[PP003].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.deflation",
+          "module_plot.json#plotPoints[PP003].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP003].description"
+        ]
+      },
+      "Dog-Growl": {
+        "name_slug": "dog growl",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A04",
+            "source": "module_plot.json#plotPoints[PP003].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.dog_growl",
+          "module_plot.json#plotPoints[PP003].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP003].description"
+        ]
+      },
+      "Dwal": {
+        "name_slug": "dwal",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A05",
+            "source": "module_plot.json#plotPoints[PP004].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.dwal",
+          "module_plot.json#plotPoints[PP004].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP004].description"
+        ]
+      },
+      "Elroy Browning": {
+        "name_slug": "elroy browning",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A11",
+            "source": "module_plot.json#plotPoints[PP010].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.elroy_browning",
+          "module_plot.json#plotPoints[PP010].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP010].description"
+        ]
+      },
+      "Irene Laughing-Eyes": {
+        "name_slug": "irene laughing eyes",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A10",
+            "source": "module_plot.json#plotPoints[PP009].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A15",
+            "source": "module_plot.json#plotPoints[PP001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.irene_laughing_eyes",
+          "module_plot.json#plotPoints[PP001].description",
+          "module_plot.json#plotPoints[PP009].description"
+        ],
+        "authored_mentions_count": 2,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP001].description",
+          "module_plot.json#plotPoints[PP009].description"
+        ]
+      },
+      "Jam": {
+        "name_slug": "jam",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A12",
+            "source": "module_plot.json#plotPoints[PP011].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.jam",
+          "module_plot.json#plotPoints[PP011].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP011].description"
+        ]
+      },
+      "King": {
+        "name_slug": "king",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.king",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Kobe": {
+        "name_slug": "kobe",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL005].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL005].plotImpact",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL005].title",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.kobe",
+          "module_plot.json#plotPoints[TRIAL005].description",
+          "module_plot.json#plotPoints[TRIAL005].plotImpact",
+          "module_plot.json#plotPoints[TRIAL005].title"
+        ],
+        "authored_mentions_count": 3,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL005].description",
+          "module_plot.json#plotPoints[TRIAL005].plotImpact",
+          "module_plot.json#plotPoints[TRIAL005].title"
+        ]
+      },
+      "Procul": {
+        "name_slug": "procul",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A13",
+            "source": "module_plot.json#plotPoints[PP012].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.procul",
+          "module_plot.json#plotPoints[PP012].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP012].description"
+        ]
+      },
+      "Qillasithe": {
+        "name_slug": "qillasithe",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A05",
+            "source": "module_plot.json#plotPoints[PP004].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.qillasithe",
+          "module_plot.json#plotPoints[PP004].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP004].description"
+        ]
+      },
+      "Ragna Fitrill": {
+        "name_slug": "ragna fitrill",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A06",
+            "source": "module_plot.json#plotPoints[PP005].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.ragna_fitrill",
+          "module_plot.json#plotPoints[PP005].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP005].description"
+        ]
+      },
+      "Red": {
+        "name_slug": "red",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.red",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Red Skull": {
+        "name_slug": "red skull",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.red_skull"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      },
+      "Rollo": {
+        "name_slug": "rollo",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A05",
+            "source": "module_plot.json#plotPoints[PP004].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.rollo",
+          "module_plot.json#plotPoints[PP004].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP004].description"
+        ]
+      },
+      "Shuluth": {
+        "name_slug": "shuluth",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL000].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL003].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL004].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL005].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A03",
+            "source": "module_plot.json#plotPoints[PP002].description",
+            "reason": "authored_text_reference"
+          },
+          {
+            "location_id": "A04",
+            "source": "module_plot.json#plotPoints[PP003].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.shuluth",
+          "module_plot.json#plotPoints[PP002].description",
+          "module_plot.json#plotPoints[PP003].description",
+          "module_plot.json#plotPoints[TRIAL000].description",
+          "module_plot.json#plotPoints[TRIAL003].description",
+          "module_plot.json#plotPoints[TRIAL004].description",
+          "module_plot.json#plotPoints[TRIAL005].description"
+        ],
+        "authored_mentions_count": 6,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP002].description",
+          "module_plot.json#plotPoints[PP003].description",
+          "module_plot.json#plotPoints[TRIAL000].description",
+          "module_plot.json#plotPoints[TRIAL003].description",
+          "module_plot.json#plotPoints[TRIAL004].description",
+          "module_plot.json#plotPoints[TRIAL005].description"
+        ]
+      },
+      "Strongrod Bildins": {
+        "name_slug": "strongrod bildins",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A12",
+            "source": "module_plot.json#plotPoints[PP011].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.strongrod_bildins",
+          "module_plot.json#plotPoints[PP011].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP011].description"
+        ]
+      },
+      "The Caretaker": {
+        "name_slug": "the caretaker",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A13",
+            "source": "module_plot.json#plotPoints[PP012].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.the_caretaker",
+          "module_plot.json#plotPoints[PP012].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP012].description"
+        ]
+      },
+      "The Caretaker / Procul": {
+        "name_slug": "the caretaker procul",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.the_caretaker_procul"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      },
+      "Treever Klinhammer": {
+        "name_slug": "treever klinhammer",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A07",
+            "source": "module_plot.json#plotPoints[PP006].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.treever_klinhammer",
+          "module_plot.json#plotPoints[PP006].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP006].description"
+        ]
+      },
+      "Wayne": {
+        "name_slug": "wayne",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A07",
+            "source": "module_plot.json#plotPoints[PP006].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.wayne",
+          "module_plot.json#plotPoints[PP006].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP006].description"
+        ]
+      },
+      "Waynobibille Nebiddlespun": {
+        "name_slug": "waynobibille nebiddlespun",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A07",
+            "source": "module_plot.json#plotPoints[PP006].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.waynobibille_nebiddlespun",
+          "module_plot.json#plotPoints[PP006].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP006].description"
+        ]
+      },
+      "Wiseman": {
+        "name_slug": "wiseman",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.wiseman",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Xaereal the Constructor": {
+        "name_slug": "xaereal the constructor",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A08",
+            "source": "module_plot.json#plotPoints[PP007].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.xaereal_the_constructor",
+          "module_plot.json#plotPoints[PP007].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[PP007].description"
+        ]
+      },
+      "Yellow": {
+        "name_slug": "yellow",
+        "visible_location_ids": [],
+        "reveal_bindings": [
+          {
+            "location_id": "A01",
+            "source": "module_plot.json#plotPoints[TRIAL001].description",
+            "reason": "authored_text_reference"
+          }
+        ],
+        "sources": [
+          "module_context.json#npcs.yellow",
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ],
+        "authored_mentions_count": 1,
+        "authored_mention_sources": [
+          "module_plot.json#plotPoints[TRIAL001].description"
+        ]
+      },
+      "Yellow Skull": {
+        "name_slug": "yellow skull",
+        "visible_location_ids": [],
+        "reveal_bindings": [],
+        "sources": [
+          "module_context.json#npcs.yellow_skull"
+        ],
+        "authored_mentions_count": 0,
+        "authored_mention_sources": []
+      }
+    },
+    "diagnostics": {
+      "duplicate_location_aliases": [
+        {
+          "phrase": "grove",
+          "candidate_location_ids": [
+            "A05",
+            "A17"
+          ],
+          "sources": [
+            "areas/A000.json#locations[A05].name",
+            "areas/A000.json#locations[A17].name"
+          ]
+        },
+        {
+          "phrase": "rookery",
+          "candidate_location_ids": [
+            "A04",
+            "A16"
+          ],
+          "sources": [
+            "areas/A000.json#locations[A04].name",
+            "areas/A000.json#locations[A16].name"
+          ]
+        }
+      ],
+      "ambiguous_destination_phrases": [
+        {
+          "phrase": "grove",
+          "candidate_location_ids": [
+            "A05",
+            "A17"
+          ],
+          "sources": [
+            "areas/A000.json#locations[A05].name",
+            "areas/A000.json#locations[A17].name"
+          ],
+          "player_facing": false
+        },
+        {
+          "phrase": "rookery",
+          "candidate_location_ids": [
+            "A04",
+            "A16"
+          ],
+          "sources": [
+            "areas/A000.json#locations[A04].name",
+            "areas/A000.json#locations[A16].name"
+          ],
+          "player_facing": false
+        }
+      ],
+      "unresolved_destination_phrases": [],
+      "normalized_shortform_destination_phrases": [],
+      "missing_npc_authority": [
+        {
+          "npc": "Adhagal",
+          "name_slug": "adhagal",
+          "sources": [
+            "module_context.json#npcs.adhagal"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        },
+        {
+          "npc": "Belrik Dumma-dhur",
+          "name_slug": "belrik dumma dhur",
+          "sources": [
+            "module_context.json#npcs.belrik_dumma_dhur"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        },
+        {
+          "npc": "Blue Skull",
+          "name_slug": "blue skull",
+          "sources": [
+            "module_context.json#npcs.blue_skull"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        },
+        {
+          "npc": "Red Skull",
+          "name_slug": "red skull",
+          "sources": [
+            "module_context.json#npcs.red_skull"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        },
+        {
+          "npc": "The Caretaker / Procul",
+          "name_slug": "the caretaker procul",
+          "sources": [
+            "module_context.json#npcs.the_caretaker_procul"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        },
+        {
+          "npc": "Yellow Skull",
+          "name_slug": "yellow skull",
+          "sources": [
+            "module_context.json#npcs.yellow_skull"
+          ],
+          "authored_mentions_count": 0,
+          "authored_mention_sources": []
+        }
+      ]
+    },
+    "summary": {
+      "location_count": 18,
+      "location_alias_count": 18,
+      "destination_phrase_count": 18,
+      "npc_count": 38,
+      "ambiguous_destination_count": 2,
+      "normalized_shortform_destination_count": 0,
+      "missing_npc_authority_count": 6
+    }
+  }
 }

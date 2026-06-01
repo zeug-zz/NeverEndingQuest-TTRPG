@@ -1,0 +1,8 @@
+{
+  "schema_version": "toolkit_monster_seed.v1",
+  "source": "builder_blueprint.v2",
+  "blueprint_version": "source_faithful_builder_blueprint.v2",
+  "module_title": "The Hidden City of Numillian",
+  "source_hash": "9ab641d95aed6decf81323679c94dc878401c17e735ba320e90be573abe67786",
+  "monsters": []
+}

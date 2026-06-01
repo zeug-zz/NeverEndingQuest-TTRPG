@@ -32,17 +32,76 @@ class TestToolkitModuleFinisher(unittest.TestCase):
         self.module_dir = self.repo_root / "modules" / self.module_slug
         self.module_dir.mkdir(parents=True, exist_ok=True)
         (self.module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
         (self.module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+        # TABLETOP MODE: Write a pass validation report so report-agreement
+        # stage doesn't block on missing reports in test stubs.
+        (self.module_dir / "validation_report.json").write_text(
+            json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+        )
+        (self.module_dir / "source_fidelity_report.json").write_text(
+            json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+        )
         self.original_continuity = finisher._run_continuity_stage
         self.original_registry = finisher._run_registry_stage
         self.original_materialization = finisher._run_monster_materialization_stage
         self.original_publishability = finisher._run_publishability_stage
+        self.original_semantic_auth = finisher._run_semantic_authority_stage
+
+        # Mock semantic authority to no-op (test stub modules have empty data)
+        finisher._run_semantic_authority_stage = lambda *args, **kwargs: {
+            "status": "success",
+            "changed": False,
+            "semantic_authority": {},
+            "warnings": [],
+            "errors": [],
+        }
+
+        # Disable LLM classification in test stubs
+        import model_config
+        self._orig_llm_classification = model_config.ENABLE_LLM_CLASSIFICATION
+        model_config.ENABLE_LLM_CLASSIFICATION = False
+
+        # Ensure _sf_report_persisted is True in test stubs by wrapping
+        # safe_write_json to always return True while still writing files,
+        # and stubbing _build_source_fidelity_report_artifact.
+        self._orig_safe_write = finisher.safe_write_json
+        def _force_success_safe_write(path, data, **kw):
+            self._orig_safe_write(path, data, **kw)
+            return True
+        finisher.safe_write_json = _force_success_safe_write
+
+        self._orig_sf_artifact_builder = None
+        try:
+            import scripts.audit_module_publishability as sap
+            self._orig_sf_artifact_builder = sap._build_source_fidelity_report_artifact
+            sap._build_source_fidelity_report_artifact = (
+                lambda module_slug, module_path, publishability_report: {
+                    "source_fidelity_status": "pass",
+                    "module": module_slug,
+                }
+            )
+        except Exception:
+            pass
 
     def tearDown(self) -> None:
         finisher._run_continuity_stage = self.original_continuity
         finisher._run_registry_stage = self.original_registry
         finisher._run_monster_materialization_stage = self.original_materialization
         finisher._run_publishability_stage = self.original_publishability
+        finisher._run_semantic_authority_stage = self.original_semantic_auth
+        finisher.safe_write_json = self._orig_safe_write
+
+        if self._orig_sf_artifact_builder:
+            try:
+                import scripts.audit_module_publishability as sap
+                sap._build_source_fidelity_report_artifact = self._orig_sf_artifact_builder
+            except Exception:
+                pass
+
+        import model_config
+        model_config.ENABLE_LLM_CLASSIFICATION = self._orig_llm_classification
 
         os.chdir(self.original_cwd)
         self.temp_dir.cleanup()
@@ -64,6 +123,13 @@ class TestToolkitModuleFinisher(unittest.TestCase):
             "status": "success",
             "ready_status": "pass",
             "publishable_status": "pass",
+            "report": {
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "source_fidelity_status": "pass",
+                "source_fidelity_categories": [],
+                "effective_publishable_status": "pass",
+            },
         }
 
         result = finisher.run_toolkit_module_postbuild_finishing(
@@ -107,6 +173,13 @@ class TestToolkitModuleFinisher(unittest.TestCase):
             "status": "success",
             "ready_status": "pass",
             "publishable_status": "pass",
+            "report": {
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "source_fidelity_status": "pass",
+                "source_fidelity_categories": [],
+                "effective_publishable_status": "pass",
+            },
         }
 
         result = finisher.run_toolkit_module_postbuild_finishing(
@@ -218,6 +291,13 @@ class TestToolkitModuleFinisher(unittest.TestCase):
                 "status": "success",
                 "ready_status": "pass",
                 "publishable_status": "pass",
+                "report": {
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "source_fidelity_status": "pass",
+                    "source_fidelity_categories": [],
+                    "effective_publishable_status": "pass",
+                },
             }
 
         finisher._run_publishability_stage = _tracking_publishability
@@ -264,6 +344,13 @@ class TestToolkitModuleFinisher(unittest.TestCase):
             "status": "success",
             "ready_status": "pass",
             "publishable_status": "pass",
+            "report": {
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "source_fidelity_status": "pass",
+                "source_fidelity_categories": [],
+                "effective_publishable_status": "pass",
+            },
         }
 
         with patch.object(finisher, "safe_write_json", _tracking_safe_write):
@@ -937,6 +1024,858 @@ class TestToolkitPublicationParitySourceContracts(unittest.TestCase):
         self.assertIn("_execute_seed_writer_build", source)
 
 
+class TestReportAgreementComposer(unittest.TestCase):
+    """Provider-free tests for report-agreement contradiction detection."""
+
+    def test_all_pass_produces_playable_pass(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+        )
+        self.assertEqual(result.get("status"), "pass")
+        self.assertEqual(result.get("playable_publication_status"), "pass")
+        self.assertTrue(result.get("internal_coherent"))
+
+    def test_source_fidelity_pass_validation_fail_blocks_playable(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="fail",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertEqual(result.get("playable_publication_status"), "blocked")
+        self.assertFalse(result.get("internal_coherent"))
+        blockers = result.get("blockers", [])
+        self.assertTrue(
+            any("source_fidelity_pass_validation_fail" in b for b in blockers),
+            "Expected contradiction block not found in " + str(blockers),
+        )
+
+    def test_validation_pass_publishability_fail_blocks_playable(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="fail",
+            effective_publishable_status="fail",
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertEqual(result.get("playable_publication_status"), "blocked")
+        self.assertFalse(result.get("internal_coherent"))
+        blockers = result.get("blockers", [])
+        self.assertTrue(
+            any("validation_pass_publishability_fail" in b for b in blockers),
+            "Expected validation/publishability contradiction not found in " + str(blockers),
+        )
+
+    def test_toolkit_failed_effective_pass_blocks_playable(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+            toolkit_top_level_status="failed",
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertFalse(result.get("internal_coherent"))
+        blockers = result.get("blockers", [])
+        self.assertTrue(
+            any("toolkit_failed_effective_pass" in b for b in blockers),
+            "Expected toolkit_failed_effective_pass block not found in " + str(blockers),
+        )
+        self.assertTrue(
+            any("toolkit_failed_publishable_pass" in b for b in blockers),
+            "Expected toolkit_failed_publishable_pass block not found in " + str(blockers),
+        )
+
+    def test_toolkit_pass_nested_publishability_fail_blocks(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="fail",
+            effective_publishable_status="fail",
+            toolkit_top_level_status="pass",
+            toolkit_publishability_stage_status="blocked",
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertFalse(result.get("internal_coherent"))
+        blockers = result.get("blockers", [])
+        self.assertTrue(
+            any("toolkit_pass_nested_publishability_fail" in b for b in blockers),
+            "Expected nested publishability contradiction not found in " + str(blockers),
+        )
+
+    def test_missing_reports_produces_blocked_or_stale(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="unknown",
+            validation_status="unknown",
+            ready_status="unknown",
+            publishable_status="unknown",
+            missing_reports=["validation", "source_fidelity"],
+        )
+        self.assertIn(result.get("status"), {"blocked", "stale"})
+        self.assertNotEqual(result.get("playable_publication_status"), "pass")
+
+    def test_stale_freshness_produces_blocked(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+            report_freshness_states={
+                "validation": "stale",
+                "source_fidelity": "current",
+            },
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertEqual(result.get("playable_publication_status"), "blocked")
+        self.assertIn("validation", result.get("stale_reports", []))
+
+    def test_effective_pass_publishability_fail_blocks(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="fail",
+            effective_publishable_status="pass",
+        )
+        self.assertEqual(result.get("status"), "blocked")
+        self.assertFalse(result.get("internal_coherent"))
+        blockers = result.get("blockers", [])
+        self.assertTrue(
+            any("effective_pass_publishability_fail" in b for b in blockers),
+            "Expected effective/publishability contradiction not found in " + str(blockers),
+        )
+
+    def test_playable_separates_source_fidelity_from_playable(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="degraded",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+        )
+        self.assertNotEqual(
+            result.get("source_fidelity_status"),
+            result.get("playable_publication_status"),
+            "source_fidelity_status must differ from playable_publication_status when degraded",
+        )
+        self.assertEqual(result.get("playable_publication_status"), "blocked")
+
+    def test_finisher_includes_report_agreement_stage(self):
+        import os, tempfile
+        from pathlib import Path
+
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "RATestModule"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "pass",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            result = finisher.run_toolkit_module_postbuild_finishing(
+                "RATestModule", strict=True
+            )
+
+            stages = result.get("stages", {})
+            self.assertIn("report_agreement", stages,
+                          "Finisher must include report_agreement stage")
+            self.assertIn("playable_publication_status", result,
+                          "Finisher report must include playable_publication_status")
+            self.assertIn("report_agreement_status", result,
+                          "Finisher report must include report_agreement_status")
+            self.assertIn("report_agreement_internal_coherent", result,
+                          "Finisher report must include report_agreement_internal_coherent")
+
+            ra_stage = stages["report_agreement"]
+            self.assertIn("blockers", ra_stage)
+            self.assertIn("diagnostics", ra_stage)
+        finally:
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_toolkit_template_has_report_agreement_formatting(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("formatReportAgreementSection", source)
+        self.assertIn("Playable Publication", source)
+        self.assertIn("Report Agreement:", source)
+        self.assertIn("Internal Coherent", source)
+
+    def test_toolkit_degraded_with_all_gates_pass_remains_playable(self):
+        from utils.toolkit_report_agreement import compose_report_agreement
+
+        result = compose_report_agreement(
+            source_fidelity_status="pass",
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+            toolkit_top_level_status="degraded",
+        )
+
+        self.assertEqual(result.get("status"), "pass")
+        self.assertTrue(result.get("internal_coherent"))
+        self.assertEqual(result.get("playable_publication_status"), "pass")
+        self.assertEqual(result.get("blockers"), [])
+        self.assertEqual(result.get("stale_reports"), [])
+        self.assertEqual(result.get("missing_reports"), [])
+
+    # ---- compose_report_agreement_from_module_dir tests ----
+
+    def test_disk_composer_all_pass_reports_yields_playable_pass(self):
+        import os, tempfile
+        from pathlib import Path
+
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "DiskTestAllPass"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+            )
+            (module_dir / "toolkit_build_report.json").write_text(
+                json.dumps({
+                    "status": "complete",
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                }),
+                encoding="utf-8",
+            )
+
+            res = compose_report_agreement_from_module_dir(module_dir)
+            self.assertEqual(res["status"], "pass")
+            self.assertEqual(res["playable_publication_status"], "pass")
+            self.assertTrue(res["internal_coherent"])
+            self.assertEqual(res["stale_reports"], [])
+            self.assertEqual(res["missing_reports"], [])
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_disk_composer_validation_fail_blocks_playable(self):
+        import os, tempfile
+        from pathlib import Path
+
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "DiskTestValFail"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 3}}), encoding="utf-8"
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+            )
+            (module_dir / "toolkit_build_report.json").write_text(
+                json.dumps({
+                    "status": "complete",
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                }),
+                encoding="utf-8",
+            )
+
+            res = compose_report_agreement_from_module_dir(module_dir)
+            self.assertNotEqual(res["playable_publication_status"], "pass")
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_disk_composer_legacy_no_freshness_not_stale(self):
+        import os, tempfile
+        from pathlib import Path
+
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "DiskTestNoFresh"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            # Reports without freshness metadata but with valid status
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}, "timestamp": "2024-01-01"}),
+                encoding="utf-8",
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}),
+                encoding="utf-8",
+            )
+            (module_dir / "toolkit_build_report.json").write_text(
+                json.dumps({
+                    "status": "complete",
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                }),
+                encoding="utf-8",
+            )
+
+            res = compose_report_agreement_from_module_dir(module_dir)
+            self.assertEqual(res["stale_reports"], [],
+                             f"Legacy reports without freshness metadata must not be stale: {res['stale_reports']}")
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_disk_composer_explicit_stale_still_blocks(self):
+        import os, tempfile
+        from pathlib import Path
+
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "DiskTestStale"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({
+                    "summary": {"total_failed": 0},
+                    "freshness_state": "stale",
+                }),
+                encoding="utf-8",
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+            )
+            (module_dir / "toolkit_build_report.json").write_text(
+                json.dumps({
+                    "status": "complete",
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                }),
+                encoding="utf-8",
+            )
+
+            res = compose_report_agreement_from_module_dir(module_dir)
+            self.assertNotEqual(res["status"], "pass",
+                                f"Explicit stale freshness must block: {res}")
+            self.assertGreater(len(res["stale_reports"]), 0,
+                               "Stale reports must be listed")
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_disk_composer_missing_required_report_blocks(self):
+        import os, tempfile
+        from pathlib import Path
+
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "DiskTestMissing"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            # No validation_report.json -- missing required report
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+            )
+            (module_dir / "toolkit_build_report.json").write_text(
+                json.dumps({
+                    "status": "complete",
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                }),
+                encoding="utf-8",
+            )
+
+            res = compose_report_agreement_from_module_dir(module_dir)
+            self.assertGreater(len(res["missing_reports"]), 0,
+                               "Missing required reports must be listed")
+            self.assertNotEqual(res["playable_publication_status"], "pass",
+                                "Missing reports must block playable status")
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    # ---- Context BU parity test ----
+
+    def test_finisher_llm_classification_syncs_context_backup(self):
+        """After classification_metadata is written to module_context.json,
+        module_context_BU.json must be synced to the same payload."""
+        import os, tempfile
+        from pathlib import Path
+
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "ParityContextTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            # Pre-populate both files with identical baseline
+            base_context = {"npcs": {"test_npc": {"name": "Test"}}, "module_slug": "ParityContextTest"}
+            (module_dir / "module_context.json").write_text(
+                json.dumps(base_context), encoding="utf-8"
+            )
+            (module_dir / "module_context_BU.json").write_text(
+                json.dumps(base_context), encoding="utf-8"
+            )
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+
+            # Run the finisher, which will call _run_llm_classification_stage
+            # (llm classification is disabled by default in test environment
+            #  so it'll be skipped, but the BU sync helper is always tested)
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "pass",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            result = finisher.run_toolkit_module_postbuild_finishing(
+                "ParityContextTest", strict=True
+            )
+
+            # After finisher, context and BU must be identical
+            live = json.loads((module_dir / "module_context.json").read_text(encoding="utf-8"))
+            backup = json.loads((module_dir / "module_context_BU.json").read_text(encoding="utf-8"))
+            self.assertEqual(live, backup,
+                             "module_context.json and module_context_BU.json must have exact parity")
+
+            # If classification_metadata existed in live, it must exist in backup too
+            if "classification_metadata" in live:
+                self.assertIn("classification_metadata", backup,
+                              "classification_metadata must appear in BU backup")
+                self.assertEqual(
+                    live["classification_metadata"],
+                    backup["classification_metadata"],
+                    "classification_metadata must be identical in both files",
+                )
+        finally:
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    # ---- Edge-case hardening tests ----
+
+    def test_finisher_blocks_playable_when_source_fidelity_report_not_persisted(self):
+        """If source_fidelity_report.json cannot be written to disk,
+        playable_publication_status must be blocked."""
+        import os, tempfile
+        from pathlib import Path
+
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+        self.orig_semantic_auth = finisher._run_semantic_authority_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "SFBlockTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_semantic_authority_stage = lambda *a, **kw: {
+                "status": "success",
+                "changed": False,
+                "semantic_authority": {},
+                "warnings": [],
+                "errors": [],
+            }
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "pass",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            # Patch safe_write_json to return False ONLY for source_fidelity_report.json
+            original_safe_write = finisher.safe_write_json
+            def _fail_sf_report(path, data, **kw):
+                if "source_fidelity_report.json" in str(path):
+                    return False
+                return original_safe_write(path, data, **kw)
+
+            with patch.object(finisher, "safe_write_json", _fail_sf_report):
+                result = finisher.run_toolkit_module_postbuild_finishing(
+                    "SFBlockTest", strict=True
+                )
+
+            self.assertNotEqual(
+                result.get("playable_publication_status"), "pass",
+                "Must block playable when source_fidelity_report not persisted",
+            )
+            self.assertIn(
+                result.get("report_agreement_status"), {"blocked", "stale", "failed"},
+                "Report agreement must be blocked/stale/failed when SF report fails",
+            )
+            ra = result.get("report_agreement", {})
+            self.assertIn(
+                "source_fidelity", ra.get("missing_reports", []),
+                "source_fidelity must appear in missing_reports when persistence fails",
+            )
+        finally:
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            finisher._run_semantic_authority_stage = self.orig_semantic_auth
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_finisher_blocks_playable_when_context_backup_mismatches(self):
+        """If module_context.json and module_context_BU.json differ,
+        playable_publication_status must be blocked.
+
+        The LLM classification stage auto-heals BU sync during normal operation.
+        This test disables classification sync and semantic authority to prove
+        the parity gate catches unaided mismatch.
+        """
+        import os, tempfile
+        from pathlib import Path
+
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+        self.orig_semantic_auth = finisher._run_semantic_authority_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "CtxMismatchTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            # Deliberately different payloads
+            (module_dir / "module_context.json").write_text(
+                json.dumps({"npcs": {"a": 1}}), encoding="utf-8"
+            )
+            (module_dir / "module_context_BU.json").write_text(
+                json.dumps({"npcs": {"b": 2}}), encoding="utf-8"
+            )
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+
+            # Disable LLM classification to prevent auto-healing BU sync
+            # and mock semantic authority to no-op.
+            import model_config
+            orig_classification_flag = model_config.ENABLE_LLM_CLASSIFICATION
+            model_config.ENABLE_LLM_CLASSIFICATION = False
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_semantic_authority_stage = lambda *a, **kw: {
+                "status": "success",
+                "changed": False,
+                "semantic_authority": {},
+                "warnings": [],
+                "errors": [],
+            }
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "pass",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            result = finisher.run_toolkit_module_postbuild_finishing(
+                "CtxMismatchTest", strict=True
+            )
+
+            self.assertEqual(
+                result.get("stages", {}).get("context_backup_parity", {}).get("status"),
+                "failed",
+                "Context backup parity must detect mismatch",
+            )
+            self.assertNotEqual(
+                result.get("playable_publication_status"), "pass",
+                "Must block playable when context backup mismatch",
+            )
+            self.assertEqual(
+                result.get("report_agreement_status"), "blocked",
+                "Report agreement must be blocked when pipeline fails",
+            )
+        finally:
+            model_config.ENABLE_LLM_CLASSIFICATION = orig_classification_flag
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            finisher._run_semantic_authority_stage = self.orig_semantic_auth
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_context_backup_sync_helper_copies_classification_metadata(self):
+        """_sync_context_backup must copy classification_metadata to BU."""
+        import os, tempfile
+        from pathlib import Path
+
+        from web.extensions.toolkit_module_finisher import _sync_context_backup
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "SyncTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+
+            live_payload = {
+                "npcs": {"foo": "bar"},
+                "classification_metadata": {
+                    "classified_by": "test-model",
+                    "classified_at": "2026-06-01T00:00:00Z",
+                    "entity_count": 5,
+                    "destination_count": 3,
+                },
+            }
+            bu_payload = {"npcs": {"foo": "bar"}}
+
+            (module_dir / "module_context.json").write_text(
+                json.dumps(live_payload), encoding="utf-8"
+            )
+            (module_dir / "module_context_BU.json").write_text(
+                json.dumps(bu_payload), encoding="utf-8"
+            )
+
+            ok = _sync_context_backup(module_dir, "SyncTest")
+            self.assertTrue(ok, "sync must succeed")
+
+            live = json.loads((module_dir / "module_context.json").read_text(encoding="utf-8"))
+            backup = json.loads((module_dir / "module_context_BU.json").read_text(encoding="utf-8"))
+            self.assertEqual(live, backup, "Exact JSON equality required after sync")
+            self.assertIn("classification_metadata", backup,
+                          "classification_metadata must be copied to BU")
+            self.assertEqual(
+                live["classification_metadata"],
+                backup["classification_metadata"],
+                "classification_metadata must be identical in both files",
+            )
+        finally:
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+    def test_finisher_blocks_playable_when_source_fidelity_report_write_fails_even_if_old_report_exists(self):
+        """Stale source_fidelity_report.json from prior run must not mask
+        a failed current-run write. Playable must be blocked."""
+        import os, tempfile
+        from pathlib import Path
+
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+        self.orig_semantic_auth = finisher._run_semantic_authority_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "SFStaleTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+            # Stale SF report from a prior run
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+            )
+
+            import model_config
+            orig_class_flag = model_config.ENABLE_LLM_CLASSIFICATION
+            model_config.ENABLE_LLM_CLASSIFICATION = False
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_semantic_authority_stage = lambda *a, **kw: {
+                "status": "success", "changed": False,
+                "semantic_authority": {}, "warnings": [], "errors": [],
+            }
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success", "ready_status": "pass", "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "pass", "source_fidelity_categories": [],
+                    "ready_status": "pass", "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            # Patch safe_write_json to return False for SF report only
+            original_safe_write = finisher.safe_write_json
+            def _fail_sf_report(path, data, **kw):
+                if "source_fidelity_report.json" in str(path):
+                    return False
+                return original_safe_write(path, data, **kw)
+
+            with patch.object(finisher, "safe_write_json", _fail_sf_report):
+                result = finisher.run_toolkit_module_postbuild_finishing(
+                    "SFStaleTest", strict=True
+                )
+
+            self.assertNotEqual(
+                result.get("playable_publication_status"), "pass",
+                "Must block playable when current SF report write fails",
+            )
+            self.assertIn(
+                result.get("report_agreement_status"), {"blocked", "stale", "failed"},
+                "Report agreement must be blocked when SF report write fails",
+            )
+            ra = result.get("report_agreement", {})
+            self.assertIn(
+                "source_fidelity", ra.get("missing_reports", []),
+                "source_fidelity must appear in missing_reports",
+            )
+        finally:
+            model_config.ENABLE_LLM_CLASSIFICATION = orig_class_flag
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            finisher._run_semantic_authority_stage = self.orig_semantic_auth
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+
 class TestSourceFidelityReportPersistence(unittest.TestCase):
     """Behavioral tests for source_fidelity_report.json mirroring in finisher build report."""
 
@@ -950,7 +1889,35 @@ class TestSourceFidelityReportPersistence(unittest.TestCase):
         self.module_dir = self.repo_root / "modules" / self.module_slug
         self.module_dir.mkdir(parents=True, exist_ok=True)
         (self.module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
         (self.module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+        (self.module_dir / "validation_report.json").write_text(
+            json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+        )
+        (self.module_dir / "source_fidelity_report.json").write_text(
+            json.dumps({"source_fidelity_status": "pass"}), encoding="utf-8"
+        )
+
+        # Stub safe_write_json and _build_source_fidelity_report_artifact
+        self._orig_safe_write = finisher.safe_write_json
+        def _force_success_safe_write(path, data, **kw):
+            self._orig_safe_write(path, data, **kw)
+            return True
+        finisher.safe_write_json = _force_success_safe_write
+
+        self._orig_sf_artifact_builder = None
+        try:
+            import scripts.audit_module_publishability as sap
+            self._orig_sf_artifact_builder = sap._build_source_fidelity_report_artifact
+            sap._build_source_fidelity_report_artifact = (
+                lambda module_slug, module_path, publishability_report: {
+                    "source_fidelity_status": "pass",
+                    "module": module_slug,
+                }
+            )
+        except Exception:
+            pass
 
         # Save originals
         self.orig_continuity = finisher._run_continuity_stage
@@ -969,6 +1936,15 @@ class TestSourceFidelityReportPersistence(unittest.TestCase):
         finisher._run_registry_stage = self.orig_registry
         finisher._run_monster_materialization_stage = self.orig_materialization
         finisher._run_publishability_stage = self.orig_publishability
+        finisher.safe_write_json = self._orig_safe_write
+
+        if self._orig_sf_artifact_builder:
+            try:
+                import scripts.audit_module_publishability as sap
+                sap._build_source_fidelity_report_artifact = self._orig_sf_artifact_builder
+            except Exception:
+                pass
+
         os.chdir(self.original_cwd)
         self.temp_dir.cleanup()
 

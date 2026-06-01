@@ -1,608 +1,253 @@
 {
-  "plotTitle": "The Hidden City of Numillian: The Veil, the Wards, and the Forbidden Vault",
-  "mainObjective": "Uncover Numillian\u2019s hidden access routes, survive its memory trials and flooding ward systems, and prevent rival factions from seizing or unleashing the forbidden power sealed beneath the city.",
+  "plotTitle": "The_Hidden_City_of_Numillian Adventure",
+  "mainObjective": "",
   "plotPoints": [
     {
       "id": "PP001",
-      "title": "Arrival at the Veiled Coast Reliquary",
-      "description": "The party travels to the mist-choked shoreline of the Veiled Coast Reliquary, a weather-worn gateway built into black cliffs above hidden coves. Local guides claim the fog is not natural, but a warded veil concealing Numillian ruins beneath the surf. Fragments of a seal lattice have begun surfacing in tide pools, and signs suggest someone is deliberately drawing intruders toward the old stone corridors below the coast. The party can gain access by negotiating with wary wardkeepers, sneaking in through half-sunk wreck tunnels, or forcing entry past coastal sentries and living wards. Clues recovered here point onward to deeper memory-warded passages that connect the coast to the city\u2019s buried trial districts.",
-      "location": "VCA001",
+      "title": "Charion Tamer",
+      "description": "This small cottage is home to **Bramak Pakel**, the Charion Tamer. The Charion is a feline creature that can grow to about two meters in size. They have a thin rough white fur, wide webbed feet and keen eyes for hunting in the white sands of the Kindling Desert. For various societies, they are prized for their fur and their meat, which is often served as a delicacy, as well as a trophy to symbolize one's prowess as a hunter of hunters. As civilizations grew, Charion were hunted relentlessly, raising the value of these creatures to astronomical heights. Enter Pakel, known by legend as the only successful Charion Tamer in the land. In the past he owned a natural reserve for Charion to prosper so as to protect these creatures. But as more poachers came from cities worldwide and attempts on his own life were made, the reserve became impossible to maintain. So he abandoned it and he took whatever Charion he could get to follow him to the Secret City. Here he lives with the last Charion in the land, safe from all who would harm them.",
+      "location": "A15",
       "nextPoints": [
         "PP002"
       ],
       "status": "not started",
-      "plotImpact": "Introduces the Veiled Coast as the module\u2019s opening destination and establishes the broken seal lattice as the first sign that Numillian\u2019s hidden defenses are failing.",
-      "sideQuests": [
-        {
-          "id": "SQ001",
-          "title": "Follow the Gulls Through the Fog",
-          "description": "Track unusual gull formations that circle the cliffs and lead to a concealed stair carved into the stone. The birds are drawn to residual ward magic, and following them can reveal a safer route into the dungeon.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides a stealthier entry route and may avoid an early combat encounter."
-        },
-        {
-          "id": "SQ002",
-          "title": "Salvage from the Half-Sunk Wreck",
-          "description": "Explore a wreck lodged in a cove to recover a tide-stained chart or ward key that identifies the Reliquary\u2019s hidden doors. The wreck is haunted by territorial shore-dwellers or restless drowned dead.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Yields an advantage for navigating the coast\u2019s stone corridors and may reveal a shortcut to later areas."
-        }
-      ]
+      "plotImpact": "Introduction room progression",
+      "source_room_number": 1
     },
     {
       "id": "PP002",
-      "title": "The Corridors of Salted Memory",
-      "description": "Inside the Veiled Coast, the party enters a network of stone corridors and chambers lined with shell-inlaid inscriptions, flooded thresholds, and memory-echoing wards. The dungeon\u2019s magic tests visitors with visions of Numillian\u2019s final days, forcing the party to distinguish truth from illusion while navigating shifting passages. Here they discover that the coast was once a sealing site for a hidden archive, and that the wards are destabilizing because someone has been feeding them false memories. The party must choose whether to preserve the fragile ward structure, bypass it through force, or repair it using clues from the inscriptions. Success here can reveal the first reliable route from the coast into Numillian\u2019s deeper trial districts.",
-      "location": "VCA001",
+      "title": "Shuluth's Tomb",
+      "description": "Achieving undeath means Shuluth no longer requires to devour the brains of sentient species, but using arcane magic resulted in exile from its colony. When Shuluth is not guarding the city, it is often found researching exotica in the tomb it has converted to a laboratory.  Obsessed with preserving knowledge after death, Shuluth will teach the players how to trap a sentient being's mind for 24 hours in a 500gp diamond. It dislikes being interrupted, fools, and has several bowls of frogs throughout its tomb it raises as undead minions to use as messangers and carry out small tasks.",
+      "location": "A03",
       "nextPoints": [
         "PP003"
       ],
       "status": "not started",
-      "plotImpact": "Deepens the mystery and turns the coast into both an exploration challenge and a lore-based trial. Choices here affect the state of the ward network and the difficulty of the later city-bound investigations.",
-      "sideQuests": [
-        {
-          "id": "SQ003",
-          "title": "Recover the Echo-Slate",
-          "description": "Search a submerged chamber for an ancient slate that records the true sequence of the seal\u2019s creation. The slate is guarded by animated stone remnants and memory-warping hazards.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Clarifies the history of the Veiled Coast and weakens illusion-based defenses later."
-        },
-        {
-          "id": "SQ004",
-          "title": "Free the Trapped Maintenance Mage",
-          "description": "A maintenance mage trapped in a collapsed side hall knows how the corridor wards can be stabilized. The party must decide whether to rescue them, bargain for their knowledge, or leave them behind to save time.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Can provide a practical route through the dungeon or a future ally, but may cost time and resources."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 2
     },
     {
       "id": "PP003",
-      "title": "The Chamber of the False Tide",
-      "description": "At the heart of the Veiled Coast lies a chamber where seawater rises and falls in impossible rhythms around a central seal engine. The party discovers that a hidden saboteur has been using the fog-veils and memory wards to mask a ritual that will either open Numillian\u2019s buried passage or collapse it entirely. Social confrontation becomes possible here, as the saboteur\u2019s agents may be persuaded, exposed, or turned against their leader. The party must decide whether to repair the seal, seize control of the engine, or let the chamber fail to expose what lies beneath. The result determines whether the hidden route to Numillian\u2019s interior remains stable or becomes a dangerous breach leading into the city\u2019s trial districts.",
-      "location": "VCA001",
+      "title": "The Rookery",
+      "description": "Do you know why they call it the Rookery? Cause that's where you go if you're a'raven! This building was once an infirmary for those unsound of mind, but now it's inhabited by **Dog-Growl**, **Book-shut**, and **Deflation**, three Kenku who learned Qualith from Shuluth in return for never attempting to compose sounds out loud again. They use a dried mind flayer tentacle to impart their compositions on parchment. Though the kenku cannot compose original music, the residual knowledge in the quill can. They are living the dream.",
+      "location": "A04",
       "nextPoints": [
         "PP004"
       ],
       "status": "not started",
-      "plotImpact": "Raises the stakes from exploration to direct conflict over the fate of Numillian\u2019s concealed defenses. Player choices determine whether the transition to the city is controlled, disrupted, or catastrophic.",
-      "sideQuests": [
-        {
-          "id": "SQ005",
-          "title": "Unmask the Fog-Bound Informant",
-          "description": "A frightened informant among the chamber attendants knows who is orchestrating the sabotage but fears retaliation. The party can protect, interrogate, or deceive them to gain leverage.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals the enemy\u2019s plan and may expose a hidden ally or traitor."
-        },
-        {
-          "id": "SQ006",
-          "title": "Seal the Breach in the Tide Engine",
-          "description": "A crack in the chamber\u2019s central mechanism is releasing dangerous surges of saltwater and ward energy. Repairing it requires skill challenges under pressure while hostile forces close in.",
-          "involvedLocations": [
-            "VCA001"
-          ],
-          "status": "not started",
-          "plotImpact": "Reduces hazards in the climax and may prevent reinforcements from arriving."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 3
     },
     {
       "id": "PP004",
-      "title": "Arrival at the Threshold of the Memory Trials Expanse",
-      "description": "With the Veiled Coast\u2019s route exposed, the party reaches the edge of Numillian\u2019s buried districts: a haunted stretch of broken stone halls, wind-scoured causeways, and shrine-courts known as the Memory Trials Expanse. A warded archway, half-swallowed by dust and thorn, marks the first stable entrance beyond the coast. Whispering echoes repeat the characters\u2019 own words with slight distortions, hinting that the expanse is not merely cursed but actively testing intruders. Signs of recent passage suggest someone has already entered seeking the heart of the trials, and the area\u2019s shifting illusions begin to separate truth from suggestion.",
-      "location": "HMT002",
+      "title": "The Grove",
+      "description": "Avoided by most other citizens of Numillian, the grove on the edge of the town is tended by three human druids, each affected by a different form of lycanthropy. **Rollo**, **Qillasithe**, and **Dwal** spend most of their time plotting revenge against society in general, and government officials in particular. They're working on creating a Jar of Delayed Spike Growth, and want a patsy to plant one at a nearby town's postal office.",
+      "location": "A05",
       "nextPoints": [
         "PP005"
       ],
       "status": "not started",
-      "plotImpact": "Introduces the expanse as a sentient trial-ground and establishes the central mystery: the ruins are awakening because someone is manipulating the memory wards.",
-      "sideQuests": [
-        {
-          "id": "SQ007",
-          "title": "Echoes That Know Your Name",
-          "description": "Investigate the threshold echoes to learn which memories the expanse is using against the party. Success reveals a safe path through the first warded corridor and grants insight into the nature of the trials; failure draws a hostile memory-echo encounter.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides a mechanical advantage in later illusion and fear-based challenges, and foreshadows that the expanse adapts to the party\u2019s regrets."
-        },
-        {
-          "id": "SQ008",
-          "title": "The Broken Marker Stones",
-          "description": "Recover or reassemble ancient waystones near the entrance to reveal the original route through the expanse. The stones are guarded by animated rubble and memory-haunted scavengers.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Unlocks a shorter route to the Hall of Memory Trials and reduces the danger of wandering into looping terrain."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 4
     },
     {
       "id": "PP005",
-      "title": "The Hall of Memory Trials",
-      "description": "Deeper inside the expanse, the party reaches a vast chamber complex of shattered halls and forgotten shrines where each room reenacts a different moral or personal trial. Illusions force the characters to confront old failures, while real hazards hide inside false recollections. Here they can encounter Arannis Vey, keeper of the trial chambers, and Mirael of the Third Reflection, an illusion-bound examiner, both of whom may be willing to negotiate if the party proves they understand the purpose of the trials. The party must decide whether to endure the chamber\u2019s tests, bargain for passage, or force their way through by destroying the ward anchors.",
-      "location": "HMT002",
+      "title": "Garden House",
+      "description": "This small manor is in excellent repair, except for the complete collapse of one of the walls. The open side of the structure has been converted into a greenhouse, with dozens of exotic flowers inside. Several are singular breeds created by **Ragna Fitrill**, the dragonborn fighter who lives here. He's spent the last five years of his life breeding and cross-breeding flowers after falling victim to an overpowered charm spell, and is unable to stop seeking \"the most beautiful flower of all\" to return it to the sorceress that charmed him.",
+      "location": "A06",
       "nextPoints": [
         "PP006"
       ],
       "status": "not started",
-      "plotImpact": "Shifts the adventure from approach and discovery into active trial-solving, and reveals that the expanse was built to filter minds as much as bodies.",
-      "sideQuests": [
-        {
-          "id": "SQ009",
-          "title": "The Examiner\u2019s Bargain",
-          "description": "Convince Mirael or Arannis to grant the party a sealed memory-token in exchange for helping stabilize a failing trial chamber. This may require a mix of social skill checks and a controlled combat or hazard sequence.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Earns a token that can bypass one major illusion barrier later in the adventure."
-        },
-        {
-          "id": "SQ010",
-          "title": "The Chamber of Regret",
-          "description": "Enter a side chamber that manifests each character\u2019s greatest regret as a tactical obstacle. Defeating the manifestation yields hidden lore about the origin of the trials and a clue to the final seal.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals that the final ward is keyed to acceptance rather than force, changing how the climax can be approached."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 5
     },
     {
       "id": "PP006",
-      "title": "The Archive Beneath the Whispering Shrines",
-      "description": "Beyond the trial halls lies a buried archive of stone tablets, sealed alcoves, and memory prisms where the true history of the expanse is recorded in fragments. Archivist Nymora may appear here, offering forbidden knowledge in exchange for protection or a recovered relic. The party learns that the expanse was designed to contain a dangerous memory engine capable of rewriting testimony, identity, and allegiance. A rival force has entered the archive to seize that power, and the ward network is failing under their intrusion. The party must choose whether to preserve the archive, seize its secrets, or destroy the most dangerous records before they can be used.",
-      "location": "HMT002",
+      "title": "Brooksteps Inn",
+      "description": "A rambling two-story structure with tiny rooms and narrow halls, the Brooksteps is an inn in a city with few visitors. Many of the residents of Numillian live in the tiny rooms upstairs, and do chores or trade favors to earn their keep. Card games take place daily, and both chores and favors are wagered as commonly as hard currency. The innkeeper is a greasy gnome named **Waynobibille Nebiddlespun**, but most everyone calls him **Wayne**. A smithy is attached behind the inn, and **Treever Klinhammer**, a middle-aged dwarf, can forge and repair most any weapon or armor.",
+      "location": "A07",
       "nextPoints": [
         "PP007"
       ],
       "status": "not started",
-      "plotImpact": "Raises the stakes by revealing the true purpose of the site and the enemy\u2019s larger goal: weaponizing memory itself.",
-      "sideQuests": [
-        {
-          "id": "SQ011",
-          "title": "Nymora\u2019s Missing Tablet",
-          "description": "Recover a stolen tablet from a trapped scribe-vault before rival intruders destroy it. The tablet contains the keyphrase needed to open the final seal chamber.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides the exact means to access the final chamber without triggering the strongest ward defenses."
-        },
-        {
-          "id": "SQ012",
-          "title": "The Archive Firebreak",
-          "description": "Prevent a cascade of collapsing memory-prisms from igniting the entire archive. This is a timed environmental challenge that can be solved through athletics, arcana, and quick decisions under pressure.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Saves valuable lore and prevents the final battle from occurring under worsening magical instability."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 6
     },
     {
       "id": "PP007",
-      "title": "The Seal of the Last Recollection",
-      "description": "At the heart of the Memory Trials Expanse lies a hidden seal chamber where the memory engine is anchored beneath concentric rings of stone and illusion. Here the party confronts the force behind the corruption: a rival agent or cabal emissary trying to overwrite the region\u2019s collective memory and turn the trials into a weapon of obedience. The climax should combine combat with a final choice: destroy the memory engine, claim it, or rebind it to preserve the expanse\u2019s purpose. High Warden Caldorin\u2019s authority, the surviving examiners, and the accumulated evidence from the archive can all influence the outcome. The final encounter should challenge both the party\u2019s resilience and their willingness to let painful truths remain intact. Success here can also reveal the hidden route onward to Numillian\u2019s inner ward and the deeper vault network below the city.",
-      "location": "HMT002",
+      "title": "Wizard's Tower",
+      "description": "Here dwells **Xaereal the Constructor**, a high-elven wizard on the forefront of magical research and weave manipulation. Banished by fearful lawmen from his prestigious position at a distant college, now he works night and day to create original spells in his tower. If the characters trouble him unduly, he will offer to pay them handsomely for non-existent reagents like \"hen's teeth,\" hoping to keep them away for a while.",
+      "location": "A08",
       "nextPoints": [
         "PP008"
       ],
       "status": "not started",
-      "plotImpact": "Concludes the Memory Trials arc with a decisive confrontation over memory, identity, and control of Numillian\u2019s hidden legacy.",
-      "sideQuests": [
-        {
-          "id": "SQ013",
-          "title": "The Final Ward Alignment",
-          "description": "Before the climax, align the seal lattice by activating ancient memory pylons in the correct sequence. Doing so weakens the enemy\u2019s defenses or strengthens the chamber against collapse, depending on the party\u2019s choices.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Changes the difficulty and shape of the final encounter."
-        },
-        {
-          "id": "SQ014",
-          "title": "Judgment of the Remembered",
-          "description": "Free trapped echoes of previous trial-winners whose memories have been bound into the seal. Convincing them to aid the party can provide allies, clues, or a nonviolent path to ending the conflict.",
-          "involvedLocations": [
-            "HMT002"
-          ],
-          "status": "not started",
-          "plotImpact": "Offers a potential diplomatic resolution and reinforces the theme that memory can be preserved without being controlled."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 7
     },
     {
       "id": "PP008",
-      "title": "Lanterns Over the Inner Ward of Numillian",
-      "description": "The party arrives in the crowded Inner Ward of Numillian, where merchants, guild factors, and city watch patrols all seem to be watching the same rain-slick streets for different reasons. A string of coded lantern signals has begun flashing from rooftops above the market squares, and those who follow them vanish into alleyways before they can speak. The heroes must navigate local politics, question wary witnesses, and determine whether the signals are a smuggler\u2019s route, a secret watch operation, or something far more dangerous tied to the city\u2019s hidden wards. Evidence from the Memory Trials suggests the lanterns are part of a wider effort to synchronize a breach into the vault network below the city.",
-      "location": "ICN003",
+      "title": "Vampire's House",
+      "description": "This wooden building is painted a dark blue, but **Celun Spackles**, the slender human who lives inside, will insist that it's black. He will also insist that he's a vampire, and mock anyone who doesn't believe him. He is not, and his attempts to goad the party into stabbing him if they don't believe in his powers will end disastrously.",
+      "location": "A09",
       "nextPoints": [
         "PP009"
       ],
       "status": "not started",
-      "plotImpact": "Introduces the city-level investigation and establishes the tension between law, commerce, and secrecy in Numillian\u2019s inner district.",
-      "sideQuests": [
-        {
-          "id": "SQ015",
-          "title": "The Watchman\u2019s Dilemma",
-          "description": "A junior watch sergeant asks the party to quietly identify who is bribing patrols without causing a public scandal. The players can investigate the patrol routes, tail suspicious couriers, or confront the sergeant's own superior if they suspect an internal cover-up.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Gains the party access to watch records and a lawful ally, or makes the city watch more hostile if handled poorly."
-        },
-        {
-          "id": "SQ016",
-          "title": "Missing from the Market Ledger",
-          "description": "A guild clerk insists that several names have been erased from the market ledger as if the people never existed. The party can recover the altered books from a counting house, expose the forger, or learn that the missing names match residents last seen near the lantern signals.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals the first concrete link between the disappearances and a deliberate effort to hide movement through the ward."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 8
     },
     {
       "id": "PP009",
-      "title": "Secrets in the Guildhalls",
-      "description": "Following the trail from the markets, the party uncovers a struggle among the guildhalls: one faction wants to expose the lantern route, another wants to protect trade at any cost, and a third is secretly funneling people and goods toward a sealed district beneath the Inner Ward. The heroes must attend a tense guild meeting, infiltrate a records chamber, or bargain with a nervous clerk who knows the route's destination. Their findings point to an old ward-key and a hidden entrance beneath an abandoned counting house. Clues from the earlier trial districts make it clear that the conspiracy here is trying to exploit the same ward logic that governs Numillian\u2019s memory and seal systems.",
-      "location": "ICN003",
+      "title": "Cat's House",
+      "description": "This is the home of **Irene Laughing-Eyes**, a small dun colored cat that spends most of its time lying forlornly on a pillow. Homunculi tend to her every need, but she is deeply depressed. She was once a powerful wizard, but changed bodies with her familiar in an experiment. Her familiar ran away on all fours in her body, and she has never been able to track it down.",
+      "location": "A10",
       "nextPoints": [
         "PP010"
       ],
       "status": "not started",
-      "plotImpact": "Moves the investigation from street-level rumors to an organized conspiracy, and reveals the hidden access point leading below the ward.",
-      "sideQuests": [
-        {
-          "id": "SQ017",
-          "title": "The Forged Writ of Passage",
-          "description": "The party can obtain, steal, or counterfeit a guild writ that allows passage through restricted doors and watch checkpoints. Doing so may require social maneuvering with a guild factor, stealth through a scribe's office, or a brief fight with hired enforcers guarding the paperwork.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides a legitimate or forged means to enter the hidden route without immediate arrest."
-        },
-        {
-          "id": "SQ018",
-          "title": "The Quiet Auction",
-          "description": "An illegal auction is being held after dark to sell ward keys, blackmail notes, and half-burned maps of the city. The party can bid, bluff, or break in to secure the ward-key needed to reach the sealed entrance.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Yields the key item needed to open the concealed way below the Inner Ward."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 9
     },
     {
       "id": "PP010",
-      "title": "The Sealed Way Beneath the Ward",
-      "description": "The hidden entrance leads into an old service passage and a forgotten chamber of Numillian\u2019s ward lattice, where cracked seals, trapped corridors, and unstable enchantments protect something the city once buried. The party must descend through a mix of exploration hazards, magical locks, and guardians awakened by the recent tampering. In the depths, they discover that the lantern signals are being used to synchronize a breach in the warding network, and that someone is preparing to open a route into a forbidden vault beneath the city. The route below connects the Inner Ward\u2019s civic secrets to the older, more dangerous systems buried under the Vaultlands.",
-      "location": "ICN003",
+      "title": "Art Gallery",
+      "description": "**Elroy Browning** lives in this run down house, painting horrors from beyond the material plane. Devils, demons, and detailed paintings of the negative planes fill the house, and he doesn't remember painting a single one. But nervous little Elroy keeps one painting covered with a thick cloth, locked in trunk. It's said that he once painted the unknowable realm *outside* of the known planes, and that viewing the painting would drive a man mad.",
+      "location": "A11",
       "nextPoints": [
         "PP011"
       ],
       "status": "not started",
-      "plotImpact": "Reveals the true scale of the threat and confirms that the conspiracy is aimed at breaching a sealed vault connected to the city\u2019s hidden history.",
-      "sideQuests": [
-        {
-          "id": "SQ019",
-          "title": "Rescue in the Maintenance Shafts",
-          "description": "A trapped maintenance mage or lost worker is heard calling from a collapsed side tunnel. The party can divert time and resources to rescue them, earning a witness who can explain the ward system, or ignore them and press on at the cost of leaving someone to the depths.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides critical lore about the ward lattice and may reveal a safer path to the final chamber."
-        },
-        {
-          "id": "SQ020",
-          "title": "The Broken Seal Node",
-          "description": "One of the seal nodes is flickering and can be repaired, redirected, or shattered. Fixing it stabilizes the descent and weakens the final enemy's control; breaking it may open a faster route but releases dangerous ward backlash.",
-          "involvedLocations": [
-            "ICN003"
-          ],
-          "status": "not started",
-          "plotImpact": "Changes the difficulty and conditions of the final confrontation by altering the integrity of the ward network."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 10
     },
     {
       "id": "PP011",
-      "title": "Arrival in the Submerged Ward",
-      "description": "The party travels to the half-flooded district known as the Submerged Ward, where black canals cut through drowned streets and ward-stones pulse with sickly blue light beneath the water. Orven Tideglass, a wary ferryman, offers passage through the flooded lanes and warns that something has begun answering the ward-stones from below. The players must earn his trust, navigate unstable rooftops and submerged crossings, and decide whether to investigate the strange lights, help terrified residents evacuate, or follow rumors of a hidden access route into the old ward network. The flood appears linked to the same ward systems that now threaten the city\u2019s deeper vaults.",
-      "location": "SWD004",
+      "title": "Temple of Broance",
+      "description": "Within the large temple, three large men lead a dubious looking group of well-muscled dwarves, humans, and one very ripped gnome in some sort of yoga class. **Strongrod Bildins**, **Jam**, and **Chad** are the priests of the temple, such as they are, and they will gladly expound on the Way of Gideon, and the Path, and Broance Code. They sought solitude to keep from the distractions and follies that cause one to skip leg day, but then got lonely and starting a small cult. They spend most of their time working out, studying the Code, or drinking. They love to drink.",
+      "location": "A12",
       "nextPoints": [
         "PP012"
       ],
       "status": "not started",
-      "plotImpact": "Establishes the Submerged Ward as a critical route into the lower ward network and reveals that the flood is being manipulated, not merely failing.",
-      "sideQuests": [
-        {
-          "id": "SQ021",
-          "title": "Lost on the Floodline",
-          "description": "A child or courier has gone missing between flooded alleys. The party can search by boat or rooftop, finding clues left by something that drags victims under the water without leaving ripples.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals that the canals conceal an intelligent predator or controlled construct."
-        },
-        {
-          "id": "SQ022",
-          "title": "The Ferryman's Toll",
-          "description": "Orven will guide the party deeper only if they recover a stolen charm taken by canal-thieves from a wrecked shrine. The thieves may be bribed, threatened, or ambushed.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Secures local aid and introduces a moral choice: negotiate with desperate survivors or force the issue."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 11
     },
     {
       "id": "PP012",
-      "title": "The Whispering Canals",
-      "description": "Investigating the ward reveals that the canal whispers are not superstition: submerged ward-lines are carrying encoded messages, and the blue-lit stones are relaying commands from an unseen source. The party must explore sunken intersections, decipher ward-script, and confront drowned guardians or waterlogged constructs that defend the district\u2019s sealed infrastructure. Socially, they can question frightened residents, bargain with scavengers, or persuade a masked city oracle to interpret the ward-patterns. The evidence points to a hidden maintenance chamber where the flood control lattice is being overridden from within, and where the route into the deeper wardworks likely begins.",
-      "location": "SWD004",
+      "title": "Cellar",
+      "description": "Beneath a trapdoor, cunningly hidden with dirt and foliage, a ladder leads down into a earthen-walled hallway. Niches are dug into the walls, and resting on top of the dirt shelves are magical items of varying importance. Some are kept here to keep them safe from those who would destroy them, while others are kept here to keep them from being used to destroy. All are watched over by The Caretaker, a surprisingly sane Nothic named **Procul**. He guards the artifacts within the loamy vault of Numillian partially because he hopes to find some cure for his condition, and partially because he cannot bear to leave it.",
+      "location": "A13",
       "nextPoints": [
         "PP013"
       ],
       "status": "not started",
-      "plotImpact": "Confirms the flood is being weaponized through the ward network and identifies a deeper access point beneath the district.",
-      "sideQuests": [
-        {
-          "id": "SQ023",
-          "title": "Blue Light Beneath the Tide",
-          "description": "A cluster of ward-stones flickers in a repeating sequence. If the party restores the correct pattern, they can open a sealed route; if they fail, the stones awaken a defensive surge.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides an alternate route and reveals that the ward network still recognizes authorized command phrases."
-        },
-        {
-          "id": "SQ024",
-          "title": "The Oracle in the Flood",
-          "description": "A masked oracle offers a cryptic reading in exchange for a favor: recover a drowned tablet from a submerged home or protect her while she communes with the ward-stones.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Yields a prophecy about who is controlling the ward lattice and what price will be paid if it is not stopped."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 12
     },
     {
       "id": "PP013",
-      "title": "The Wardworks Below",
-      "description": "The party descends into the hidden Submerged Wardworks, a maintenance complex of flooded tunnels, pressure valves, and broken seal-machines beneath the town. Here they discover that someone has been rerouting the flood to expose or conceal access to a forbidden vault route. Thalan Deepcurrent, a trapped maintenance mage, can explain the system if freed, but his testimony may conflict with that of a rival wardkeeper envoy. The players must choose whether to preserve the failing flood barriers, shut down the wardworks entirely, or overload them to force open the path to the source of the corruption. This decision changes how much of the district survives the final confrontation and how safely the lower routes can be used to reach Numillian\u2019s deepest seals.",
-      "location": "SWD004",
-      "nextPoints": [
-        "PP014"
-      ],
-      "status": "not started",
-      "plotImpact": "Reveals the mechanism behind the flood and gives the party a direct path toward the controlling force behind the ward failure.",
-      "sideQuests": [
-        {
-          "id": "SQ025",
-          "title": "Free the Trapped Mage",
-          "description": "Thalan is pinned behind a jammed seal gate while the chamber floods. The party can rescue him quickly, reroute the water, or abandon him to gain time.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Thalan can provide the layout of the final route and identify the magical signature behind the sabotage."
-        },
-        {
-          "id": "SQ026",
-          "title": "The Broken Pump House",
-          "description": "A secondary pump station can stabilize part of the district if repaired. Doing so requires hazardous exploration, tool work, and possibly parley with scavengers already stripping the machinery for parts.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Determines whether the final battle occurs amid rising floodwaters or in a partially stabilized ward."
-        }
-      ]
-    },
-    {
-      "id": "PP014",
-      "title": "The Heart of the Drowned Ward",
-      "description": "At the deepest sealed chamber, the party confronts the entity or conspirator using the ward lattice to drown the district into a living lock. The climax can be a battle against a cabal agent, a corrupted ward engine, or a submerged guardian animated by stolen command-runes. During the encounter, the players may choose to destroy the ward-heart, seize control of it, or redirect its power to save the Submerged Ward at a terrible cost. Their earlier choices determine whether allies arrive, whether the flood is partially contained, and how difficult the final ritual or fight becomes. If they succeed, the ward-stones go dark or stabilize, and the district is saved from being pulled fully beneath the tide. The route below can also serve as the last safe approach to the forbidden vaultlands if the party still needs to confront the source of the citywide breach.",
-      "location": "SWD004",
-      "nextPoints": [
-        "PP015"
-      ],
-      "status": "not started",
-      "plotImpact": "Resolves the mystery of the Submerged Ward and determines the fate of the district, its survivors, and the hidden ward network beneath it.",
-      "sideQuests": [
-        {
-          "id": "SQ027",
-          "title": "Seal or Sever",
-          "description": "Before the final confrontation, the party can choose to reinforce the ancient seals or cut them loose, affecting the battlefield and the long-term safety of the ward.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Creates a strategic choice that changes the final encounter's terrain and aftermath."
-        },
-        {
-          "id": "SQ028",
-          "title": "The Last Message in the Water",
-          "description": "A final whisper from the canals carries a hidden plea from someone trapped inside the ward lattice. Recovering the speaker may reveal the true mastermind or a redeemable reason for the catastrophe.",
-          "involvedLocations": [
-            "SWD004"
-          ],
-          "status": "not started",
-          "plotImpact": "Offers a nonviolent resolution path or a moral complication before the climax."
-        }
-      ]
-    },
-    {
-      "id": "PP015",
-      "title": "Arrival at the Forbidden Vaultlands",
-      "description": "The party reaches a bleak settlement built around sealed stone vaults half-buried in dust and ruin. Green light seeps from ancient seams at night, and the locals insist that anyone who lingers after dusk risks being taken by the vaults themselves. The characters must secure lodging, gather rumors, and decide whether to trust the fearful wardkeepers, the desperate witnesses, or the suspicious city watch presence that keeps the streets unnaturally quiet. By now, evidence from the city, the floodworks, and the memory trials should make clear that the vaultlands are the final threshold before Numillian\u2019s deepest secret.",
-      "location": "FVS005",
-      "nextPoints": [
-        "PP016"
-      ],
-      "status": "not started",
-      "plotImpact": "Introduces the Vaultlands, establishes the eerie rules of the town, and points the party toward the source of the nightly vanishings.",
-      "sideQuests": [
-        {
-          "id": "SQ029",
-          "title": "Question the Vanishing Witness",
-          "description": "Track down a fragmented survivor who saw green light and heard screaming beneath the streets before their memory shattered. Helping them recover a key detail may reveal which vault district is active after dark.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides a clue to the most active sealed vault and a safer route into the investigation."
-        },
-        {
-          "id": "SQ030",
-          "title": "The Wardkeeper's Curfew",
-          "description": "A local wardkeeper asks the party to respect the night seal and escort frightened townsfolk indoors before curfew. Doing so earns trust, but refusing may expose the party to the town's hidden panic and secret watchers.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Influences local trust and determines whether the wardkeepers treat the party as allies or threats."
-        }
-      ]
-    },
-    {
-      "id": "PP016",
-      "title": "The Sealed Streets Investigation",
-      "description": "Following clues through narrow streets and warded alleys, the party investigates why every road seems to end at a locked stone door. They discover that several vault seals are failing in a coordinated pattern, and that someone has been feeding power into the old wards from hidden access points beneath the town. This point mixes social pressure, exploration of abandoned civic buildings, and encounters with guardians or cult agents trying to keep the truth buried. The investigation also reveals that the Vaultlands are tied into the same broader ward lattice that connects Numillian\u2019s coast, trial halls, and submerged districts.",
-      "location": "FVS005",
-      "nextPoints": [
-        "PP017"
-      ],
-      "status": "not started",
-      "plotImpact": "Reveals that the disappearances are not random and that the vault network is being manipulated from within the settlement.",
-      "sideQuests": [
-        {
-          "id": "SQ031",
-          "title": "The Watchman's Contradiction",
-          "description": "A city watch captain publicly claims the vaults are secure, but a hidden ledger or witness statement suggests otherwise. The party can expose the lie, negotiate for access, or let the watch remain an uneasy ally.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Changes the party's relationship with the town guard and may open or block access to restricted vault sites."
-        },
-        {
-          "id": "SQ032",
-          "title": "The Green Seep",
-          "description": "A street-level breach leaks strange green radiance from a cracked seam beneath a shuttered building. Investigating the seep can reveal a shortcut into the underworks or unleash vault-guard constructs that have awakened to contain the leak.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Gives the party a hidden route forward and a sample of the ward-energy driving the haunting."
-        }
-      ]
-    },
-    {
-      "id": "PP017",
-      "title": "Descent into the Vault Network",
-      "description": "The party gains entry to the lower vault corridors beneath the town, where sealed chambers, old trial niches, and maintenance passages interlock like a prison built over a secret. Here they confront the truth that the vaults are not merely storage chambers: they are part of a living seal lattice designed to contain something ancient and intelligent. The party must navigate traps, negotiate with trapped keepers and archivists, and survive the vault guardians that awaken when the seals are disturbed. The deeper they go, the more it becomes clear that the same hidden power sought through Numillian\u2019s coast, memory trials, and flooded wards has been waiting here all along.",
-      "location": "FVS005",
-      "nextPoints": [
-        "PP018"
-      ],
-      "status": "not started",
-      "plotImpact": "Confirms the vaults are a containment system and reveals the mechanism behind the vanishings, raising the stakes to a full breach scenario.",
-      "sideQuests": [
-        {
-          "id": "SQ033",
-          "title": "Recover the Lost Key-Sigil",
-          "description": "A damaged ward-key is needed to open the deepest chamber safely. The party can retrieve it from a collapsed maintenance route, but doing so may require freeing a trapped mage or battling the constructs guarding the route.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Provides safer access to the final chamber and reduces the danger of the climactic seal confrontation."
-        },
-        {
-          "id": "SQ034",
-          "title": "The Archivist's Hidden Record",
-          "description": "An archivist offers forbidden records showing that the vaults were built to imprison a faction within the town itself. The party must decide whether to preserve the record, destroy it, or use it to turn the town against its leaders.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Reveals the political truth behind the vault network and creates a choice that affects the ending."
-        }
-      ]
-    },
-    {
-      "id": "PP018",
-      "title": "The Night of the Green Seal",
-      "description": "At the deepest vault, the party confronts the force behind the nightly disappearances: a hidden cabal or corrupted seal-warden attempting to break the ancient prison and release what lies beneath the Forbidden Vaultlands. As the seals flare and the town trembles, the characters must choose whether to reinforce the lattice, destroy the vault engine, or redirect the release to a controlled outcome. The climax combines combat against guardians and conspirators, desperate skill checks to stabilize the seal network, and a final social decision about who should inherit the truth of the vaults. The outcome determines whether Numillian\u2019s hidden city remains protected, becomes exposed, or enters a new era shaped by the party\u2019s choices across every district.",
-      "location": "FVS005",
+      "title": "Handworks Guild",
+      "description": "**Belrik's** home, guild hall, and mayoral office, all in one. The Handworks Guild Hall is the secret home of the Silent Sisters assassins guild, and Belrik conducts their business from here. Within Numillian, her judgment is accorded absolute difference, though she is not frequently sought out to handle disputes, as her solutions are often harsh, to encourage residents to solve their own problems.",
+      "location": "A14",
       "nextPoints": [],
       "status": "not started",
-      "plotImpact": "Resolves the central mystery, determines the fate of the town, and decides whether the Vaultlands remain a prison, become a ruin, or transform into something new.",
-      "sideQuests": [
-        {
-          "id": "SQ035",
-          "title": "Choose the Sealbearer",
-          "description": "A surviving wardkeeper, scholar, or reluctant local leader offers to help anchor the final ritual, but only one can safely bear the burden. The party must choose who to trust, knowing the decision will shape the town's future authority.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Determines which ally gains influence over the Vaultlands after the climax."
-        },
-        {
-          "id": "SQ036",
-          "title": "Bargain with the Thing Below",
-          "description": "The entity trapped beneath the vaults can be heard speaking through the green seams, offering knowledge, power, or the return of the vanished in exchange for release. The party may attempt a dangerous parley instead of pure destruction.",
-          "involvedLocations": [
-            "FVS005"
-          ],
-          "status": "not started",
-          "plotImpact": "Creates a major moral choice that can alter the final encounter and the town's long-term fate."
-        }
-      ]
+      "plotImpact": "Challenge room progression",
+      "source_room_number": 13
+    },
+    {
+      "id": "TRIAL000",
+      "title": "Trial at the Door",
+      "description": "Characters approach a wall of rubble and impenetrable vegetation (DC16 Perception reveals it as an illusion hiding a 20ft stone wall with anti-flight wards). Shuluth walks out to meet them and leads them to a small stone watchtower. The illithid explains they must prove worthy of knowledge of Numillian through a series of tests of character. If they agree, Shuluth bars the tower door and draws their consciousness into a shared mindscape.",
+      "prerequisites": [],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL001"
+      ],
+      "status": "not started",
+      "plotImpact": "Trial at the Door"
+    },
+    {
+      "id": "TRIAL001",
+      "title": "The First Trial - Skull Riddle",
+      "description": "A 30x30 stone room with torches. A copper plate inscription reads: The skull of a Beggar, a Wise man, and King. Three receptacles: crown, alms plate, book. Three colored skulls speak: Red (coins earned by others), Blue (watched fools perform), Yellow (ask rather than demand). The trick: each skull lies - place each in the receptacle the clue does NOT indicate. Correct: Red/Wiseman/Book, Blue/Beggar/Alms-plate, Yellow/King/Crown. Wrong: DC15 Wisdom save or 2d8 psychic damage.",
+      "prerequisites": [
+        "TRIAL000"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL002"
+      ],
+      "status": "not started",
+      "plotImpact": "The First Trial - Skull Riddle"
+    },
+    {
+      "id": "TRIAL002",
+      "title": "The Second Trial - Flooding Room",
+      "description": "A 60x20ft barracks with iron ceiling grates, cabinets, small high windows, six beds, and a banded iron door. After 60 seconds, water floods from the ceiling rising 2ft per turn. Escape options: false cabinet back (DC15 Investigation) hiding compartment for two, illusionary windows concealing a ring of water-breathing, iron door (DC10 pick or DC20 break) leading to Bag of Holding, Portable Hole, and ruined book 100 Ways to Die.",
+      "prerequisites": [
+        "TRIAL001"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL003"
+      ],
+      "status": "not started",
+      "plotImpact": "The Second Trial - Flooding Room"
+    },
+    {
+      "id": "TRIAL003",
+      "title": "The False Third Trial - Kill the Dog",
+      "description": "Each character alone in a fabricated room with a small dog. Shuluth instructs: Kill the dog. Players hand responses silently. No wrong answer - Shuluth observes character through their choice. Complex actions (detect magic, etc.) should twist the trial to reveal character rather than dodge intent.",
+      "prerequisites": [
+        "TRIAL002"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL004"
+      ],
+      "status": "not started",
+      "plotImpact": "The False Third Trial - Kill the Dog"
+    },
+    {
+      "id": "TRIAL004",
+      "title": "The True Third Trial - City of the Mind",
+      "description": "Shuluth creates the impression the party is no longer in the mindscape, but this is NOT true. Characters appear seated around the tower table as Shuluth removes its tentacles. The illithid congratulates them and leads them into a flawless mindscape of Numillian, populated by Homunculi. Shuluth scans thoughts and introduces NPCs that appeal to self-interest, hurrying past any they linger with. The city is meticulously clean with shapely marble blocks.",
+      "prerequisites": [
+        "TRIAL003"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL005"
+      ],
+      "status": "not started",
+      "plotImpact": "The True Third Trial - City of the Mind"
+    },
+    {
+      "id": "TRIAL005",
+      "title": "The Final Trial - No-Win Scenario with Kobe",
+      "description": "Alarm spells activate, screaming erupts. A young girl named Kobe is visible on a flat-topped tower; attackers batter the door. Kobe is indwelt by powerful magic. Shuluth hides in the Vault. Party must protect Kobe, bring her to the vault, and never reveal vault location. Enemies attack in waves. If attackers reach Kobe, they slay her. Mindscape clues: NPCs call characters by name unknown, repeat phrases verbatim, swap gender/race, forget enemies. DC16 Wisdom save grants advantage on all actions. Succeeds if all fall without revealing vault OR majority declares mindscape unreal. Only failure: revealing vault location.",
+      "prerequisites": [
+        "TRIAL004"
+      ],
+      "isTrial": true,
+      "location": "A01",
+      "nextPoints": [
+        "TRIAL005"
+      ],
+      "status": "not started",
+      "plotImpact": "The Final Trial - No-Win Scenario with Kobe"
     }
   ],
-  "activeQuests": [],
-  "completedQuests": [],
-  "failedQuests": [],
-  "worldEvents": [],
-  "dmNotes": [
-    "The module is structured as a single escalating investigation: coast entry -> memory trials -> city politics -> submerged wardworks -> forbidden vault climax.",
-    "Each region should foreshadow the next by revealing a shared ward lattice, a common sabotage pattern, and the same forbidden power being sought from different angles.",
-    "The Memory Trials Expanse should feel like the hinge between exploration and revelation, while the Inner Ward and Submerged Ward function as parallel investigative branches that converge on the Vaultlands.",
-    "Use the side quests to reward different play styles: stealth and exploration at the coast, social and lore play in the trials and inner ward, rescue and hazard management in the submerged ward, and moral decision-making in the vaultlands."
-  ]
+  "import_metadata": {
+    "source_title": "The Hidden City of Numillian",
+    "room_count": 13,
+    "area_id": "THE001"
+  }
 }

@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 from utils.enhanced_logger import error, info, warning
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_semantic_authority import enrich_module_semantic_authority
+from utils.toolkit_report_agreement import compose_report_agreement
 
 
 _TOOLKIT_REPORT_FRESHNESS_CONTRACT_VERSION = "toolkit_build_report_refresh_contract.v1"
@@ -202,6 +203,60 @@ def _run_registry_stage(module_slug: str) -> Dict[str, Any]:
     }
 
 
+def _sync_context_backup(module_dir: Path, module_slug: str) -> bool:
+    """Mirror module_context.json to module_context_BU.json atomically.
+
+    Returns True if both files exist in parity after the call.
+    Used after in-place mutations to keep canonical backup current.
+    """
+    ctx_path = module_dir / "module_context.json"
+    bu_path = module_dir / "module_context_BU.json"
+
+    if not ctx_path.exists():
+        return False
+
+    try:
+        payload = safe_read_json(str(ctx_path))
+        if not payload or not isinstance(payload, dict):
+            return False
+        return safe_write_json(str(bu_path), payload)
+    except Exception:
+        warning(
+            f"TOOLKIT_FINISHER: Failed to sync module_context_BU.json for {module_slug}",
+            category="module_ingest",
+        )
+        return False
+
+
+def _run_context_backup_parity_stage(module_dir: Path) -> Dict[str, Any]:
+    """Verify module_context.json and module_context_BU.json are in exact parity.
+
+    Must run AFTER all possible context mutations (classification, semantic
+    authority, enrichment). A mismatch or missing file blocks playable status
+    through the report-agreement stage.
+    """
+    context_path = module_dir / "module_context.json"
+    backup_path = module_dir / "module_context_BU.json"
+
+    if not context_path.exists() or not backup_path.exists():
+        return {
+            "status": "failed",
+            "reason": "context_backup_missing",
+            "context_path": str(context_path),
+            "backup_path": str(backup_path),
+        }
+
+    live = safe_read_json(str(context_path))
+    backup = safe_read_json(str(backup_path))
+    if not isinstance(live, dict) or not isinstance(backup, dict):
+        return {"status": "failed", "reason": "context_backup_invalid_json"}
+
+    if live != backup:
+        return {"status": "failed", "reason": "context_backup_mismatch"}
+
+    return {"status": "success"}
+
+
 def _run_semantic_authority_stage(module_slug: str, module_dir: Path) -> Dict[str, Any]:
     """Run semantic-authority enrichment stage (non-blocking in this phase)."""
     context_path = module_dir / "module_context.json"
@@ -237,6 +292,13 @@ def _run_semantic_authority_stage(module_slug: str, module_dir: Path) -> Dict[st
             stage_result.setdefault("warnings", []).append(
                 f"Failed to persist semantic authority payload to {context_path}"
             )
+        else:
+            # TABLETOP MODE: Sync BU backup after live context mutation.
+            if not _sync_context_backup(module_dir, module_slug):
+                stage_result["status"] = "degraded"
+                stage_result.setdefault("warnings", []).append(
+                    "context_backup_sync_failed"
+                )
 
     if stage_result.get("status") == "failed":
         return {
@@ -452,6 +514,19 @@ def _run_llm_classification_stage(
             classifications.get("destination", {}),
             classifications.get("npc_visibility", {}),
         )
+
+        # TABLETOP MODE: Mirror classification_metadata to module_context_BU.json
+        if not _sync_context_backup(module_dir, module_slug):
+            return {
+                "status": "degraded",
+                "reason": "context_backup_sync_failed",
+                "classification_summary": class_result.get("summaries", {}),
+                "applied": {
+                    "entity": entity_apply,
+                    "destination": dest_apply,
+                    "npc_visibility": npc_apply,
+                },
+            }
 
         return {
             "status": "success",
@@ -673,6 +748,105 @@ def run_toolkit_module_postbuild_finishing(
         }
         overall_status = "degraded"
 
+    def _run_report_agreement_stage(
+        publishability_result: Dict[str, Any],
+        final_ready_status: str,
+        final_publishable_status: str,
+        pipeline_overall_status: str,
+        source_fidelity_report_persisted: bool,
+    ) -> Dict[str, Any]:
+        """Run report-agreement check using in-memory pipeline data.
+
+        Uses final override statuses (post media-handoff, post degradation)
+        rather than raw stage data. Passes actual pipeline status to avoid
+        hiding contradictions behind hardcoded values.
+
+        If source_fidelity_report.json could not be persisted to disk, the
+        missing report is treated as a playable blocker.
+        """
+        try:
+            from utils.toolkit_report_agreement import _derive_validation_status
+
+            pub_report = publishability_result.get("report", {}) or {}
+            sf_s = str(pub_report.get("source_fidelity_status", "unknown") or "unknown")
+            eps = str(pub_report.get("effective_publishable_status", "unknown") or "unknown")
+            ready_s = str(final_ready_status or "").strip().lower()
+            pub_s = str(final_publishable_status or "").strip().lower()
+
+            # Normalize pub_s: treat fail_with_media_handoff as degraded, not blocked
+            if pub_s == "fail_with_media_handoff":
+                pub_s = "degraded"
+
+            # Validation: read from disk, derive using shared helper
+            validation_report_path = module_dir / "validation_report.json"
+            vs = "unknown"
+            missing_validation = False
+            try:
+                if validation_report_path.exists():
+                    vr = json.loads(validation_report_path.read_text(encoding="utf-8"))
+                    vs = _derive_validation_status(vr)
+                else:
+                    missing_validation = True
+            except Exception:
+                missing_validation = True
+
+            # Map pipeline overall_status to canonical value for agreement check
+            pipeline_normalized = str(pipeline_overall_status or "unknown").strip().lower()
+            if pipeline_normalized in {"success", "pass", "complete"}:
+                tts = "pass"
+            elif pipeline_normalized in {"failed", "fail", "blocked"}:
+                tts = "blocked"
+            elif pipeline_normalized == "degraded":
+                tts = "degraded"
+            else:
+                tts = pipeline_normalized
+
+            # If required reports are missing (not on disk or failed to persist), add them
+            missing_list = []
+            if missing_validation:
+                missing_list.append("validation")
+            if not source_fidelity_report_persisted:
+                missing_list.append("source_fidelity")
+
+            agreement = compose_report_agreement(
+                source_fidelity_status=sf_s,
+                validation_status=vs,
+                ready_status=ready_s,
+                publishable_status=pub_s,
+                effective_publishable_status=eps,
+                toolkit_top_level_status=tts,
+                missing_reports=missing_list if missing_list else None,
+            )
+
+            stage_status = agreement.get("status", "failed")
+            return {
+                "status": stage_status,
+                "internal_coherent": agreement.get("internal_coherent", False),
+                "playable_publication_status": agreement.get("playable_publication_status", "unknown"),
+                "source_fidelity_status": agreement.get("source_fidelity_status", "unknown"),
+                "validation_status": agreement.get("validation_status", "unknown"),
+                "ready_status": agreement.get("ready_status", "unknown"),
+                "publishable_status": agreement.get("publishable_status", "unknown"),
+                "effective_publishable_status": agreement.get("effective_publishable_status", "unknown"),
+                "blockers": agreement.get("blockers", []),
+                "diagnostics": agreement.get("diagnostics", []),
+                "missing_reports": agreement.get("missing_reports", []),
+                "stale_reports": agreement.get("stale_reports", []),
+                "agreement": agreement,
+            }
+        except Exception as exc:
+            warning(
+                f"TOOLKIT_FINISHER: Report agreement stage failed for {module_slug}: {exc}",
+                category="module_ingest",
+            )
+            return {
+                "status": "failed",
+                "internal_coherent": False,
+                "reason": f"report_agreement_exception: {exc}",
+                "blockers": [],
+                "diagnostics": [f"Report agreement stage raised exception: {exc}"],
+            }
+
     report_path = module_dir / "toolkit_build_report.json"
 
     def _build_report(
@@ -774,6 +948,14 @@ def run_toolkit_module_postbuild_finishing(
     )
     stages["llm_remediation"] = llm_remediation_stage
 
+    # TABLETOP MODE: Context backup parity stage -- verify module_context.json
+    # and module_context_BU.json are in exact parity after all mutations.
+    # Failure here blocks playable status through pipeline_overall_status.
+    context_parity_stage = _run_context_backup_parity_stage(module_dir)
+    stages["context_backup_parity"] = context_parity_stage
+    if context_parity_stage.get("status") == "failed":
+        overall_status = "failed"
+
     ready_status = str(publishability_stage.get("ready_status", "fail") or "fail")
     publishable_status = str(
         publishability_stage.get("publishable_status", "fail") or "fail"
@@ -815,6 +997,30 @@ def run_toolkit_module_postbuild_finishing(
     ):
         overall_status = "degraded"
 
+    # TABLETOP MODE: Report agreement stage -- check all persisted reports for
+    # contradictions before declaring playable status. Must run AFTER status
+    # computation to use final override values.
+    report_agreement_stage = _run_report_agreement_stage(
+        publishability_result=publishability_stage,
+        final_ready_status=ready_status,
+        final_publishable_status=publishable_status,
+        pipeline_overall_status=overall_status,
+        source_fidelity_report_persisted=_sf_report_persisted,
+    )
+    stages["report_agreement"] = report_agreement_stage
+    ra_status = report_agreement_stage.get("status", "failed")
+    ra_blockers = report_agreement_stage.get("blockers", [])
+
+    # Degrade overall status if report_agreement found any blockers
+    # (missing_reports, stale_reports, or contradictions).
+    if ra_status in {"failed", "blocked", "stale"} and ra_blockers:
+        if overall_status != "failed":
+            overall_status = "degraded"
+        info(
+            f"TOOLKIT_FINISHER: Report agreement {ra_status} for {module_slug}: {ra_blockers}",
+            category="module_ingest",
+        )
+
     report = _build_report(
         status=overall_status,
         ready_status=ready_status,
@@ -826,6 +1032,17 @@ def run_toolkit_module_postbuild_finishing(
     report["source_fidelity_categories"] = list(source_fidelity_categories) if isinstance(source_fidelity_categories, list) else []
     if _sf_report_persisted:
         report["source_fidelity_report"] = "source_fidelity_report.json"
+
+    # Inject report-agreement and playable-publication fields
+    effective_pub = report_agreement_stage.get("effective_publishable_status", "unknown")
+    playable_pub = report_agreement_stage.get("playable_publication_status", "unknown")
+    report["effective_publishable_status"] = effective_pub
+    report["playable_publication_status"] = playable_pub
+    report["report_agreement"] = report_agreement_stage.get("agreement", {})
+    report["report_agreement_status"] = report_agreement_stage.get("status", "unknown")
+    report["report_agreement_internal_coherent"] = bool(
+        report_agreement_stage.get("internal_coherent", False)
+    )
 
     write_ok = safe_write_json(str(report_path), report)
     if not write_ok:

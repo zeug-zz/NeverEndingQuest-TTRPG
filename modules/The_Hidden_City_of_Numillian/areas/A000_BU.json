@@ -1,0 +1,685 @@
+{
+  "areaId": "A000",
+  "areaName": "The Hidden City of Numillian",
+  "areaType": "wilderness",
+  "areaDescription": "",
+  "dangerLevel": "Medium",
+  "recommendedLevel": 1,
+  "climate": "temperate",
+  "terrain": "wilderness",
+  "map": {
+    "mapId": "MAP_A000",
+    "mapName": "The Hidden City of Numillian Map",
+    "totalRooms": 18,
+    "rooms": [
+      {
+        "id": "A01",
+        "name": "Numillian / The Hidden City",
+        "connections": [
+          "A02"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A02",
+        "name": "Stone Watchtower",
+        "connections": [
+          "A01",
+          "A03"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A03",
+        "name": "Shuluth's Tomb",
+        "connections": [
+          "A02",
+          "A04"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A04",
+        "name": "The Rookery",
+        "connections": [
+          "A03",
+          "A05"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A05",
+        "name": "The Grove",
+        "connections": [
+          "A04",
+          "A06"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A06",
+        "name": "Garden House",
+        "connections": [
+          "A05",
+          "A07"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A07",
+        "name": "Brooksteps Inn",
+        "connections": [
+          "A06",
+          "A08"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A08",
+        "name": "Wizard's Tower",
+        "connections": [
+          "A07",
+          "A09"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A09",
+        "name": "Vampire's House",
+        "connections": [
+          "A08",
+          "A10"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A10",
+        "name": "Cat's House",
+        "connections": [
+          "A09",
+          "A11"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A11",
+        "name": "Art Gallery",
+        "connections": [
+          "A10",
+          "A12"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A12",
+        "name": "Temple of Broance",
+        "connections": [
+          "A11",
+          "A13"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A13",
+        "name": "Cellar",
+        "connections": [
+          "A12",
+          "A14"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A14",
+        "name": "Handworks Guild",
+        "connections": [
+          "A13",
+          "A15"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A15",
+        "name": "Charion Tamer",
+        "connections": [
+          "A14",
+          "A16"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A16",
+        "name": "Rookery",
+        "connections": [
+          "A15",
+          "A17"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A17",
+        "name": "Grove",
+        "connections": [
+          "A16",
+          "A18"
+        ],
+        "coordinates": "X0Y0"
+      },
+      {
+        "id": "A18",
+        "name": "Brokensteps Inn",
+        "connections": [
+          "A17"
+        ],
+        "coordinates": "X0Y0"
+      }
+    ],
+    "layout": [
+      [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05"
+      ],
+      [
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A10"
+      ],
+      [
+        "A11",
+        "A12",
+        "A13",
+        "A14",
+        "A15"
+      ],
+      [
+        "A16",
+        "A17",
+        "A18",
+        "   ",
+        "   "
+      ],
+      [
+        "   ",
+        "   ",
+        "   ",
+        "   ",
+        "   "
+      ]
+    ]
+  },
+  "locations": [
+    {
+      "name": "Numillian / The Hidden City",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A01",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A02"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Stone Watchtower",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A02",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A01",
+        "A03"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Shuluth's Tomb",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A03",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A02",
+        "A04"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "The Rookery",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A04",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A03",
+        "A05"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "The Grove",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A05",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A04",
+        "A06"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Garden House",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A06",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A05",
+        "A07"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Brooksteps Inn",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A07",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A06",
+        "A08"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Wizard's Tower",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A08",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A07",
+        "A09"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": [],
+      "aliases": [
+        "wizard's tower"
+      ]
+    },
+    {
+      "name": "Vampire's House",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A09",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A08",
+        "A10"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Cat's House",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A10",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A09",
+        "A11"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Art Gallery",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A11",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A10",
+        "A12"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Temple of Broance",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A12",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A11",
+        "A13"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Cellar",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A13",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A12",
+        "A14"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Handworks Guild",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A14",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A13",
+        "A15"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Charion Tamer",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A15",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A14",
+        "A16"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Rookery",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A16",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A15",
+        "A17"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Grove",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A17",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A16",
+        "A18"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "name": "Brokensteps Inn",
+      "type": "room",
+      "description": "",
+      "dmInstructions": "",
+      "locationId": "A18",
+      "coordinates": "X0Y0",
+      "accessibility": "",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": [
+        "A17"
+      ],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [],
+      "dcChecks": [],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    }
+  ]
+}

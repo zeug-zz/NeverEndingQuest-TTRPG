@@ -1,0 +1,439 @@
+{
+  "schema_version": "toolkit_npc_seed.v1",
+  "source": "builder_blueprint.v2",
+  "blueprint_version": "source_faithful_builder_blueprint.v2",
+  "module_title": "The Hidden City of Numillian",
+  "source_hash": "9ab641d95aed6decf81323679c94dc878401c17e735ba320e90be573abe67786",
+  "npcs": [
+    {
+      "name": "Shuluth",
+      "aliases": [],
+      "role": "Alhoon guardian of the hidden city; conducts the trials and protects Numillian with magic and memory alteration",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Belrik Dumma-dhur",
+      "aliases": [],
+      "role": "Duergar assassin and leader of the Silent Sisters; founder of the city’s hidden security pact",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Wayne",
+      "aliases": [],
+      "role": "Gnome innkeeper at the Brooksteps Inn",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Treever Klinhammer",
+      "aliases": [],
+      "role": "Smithy behind the inn; forges and repairs weapons and armor",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Adhagal",
+      "aliases": [],
+      "role": "Friendly merchant of magic items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Bramak Pakel",
+      "aliases": [],
+      "role": "Charion tamer and animal lover with an animal sanctuary",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Xaereal the Constructor",
+      "aliases": [],
+      "role": "Wizard researching original spells",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Irene Laughing-Eyes",
+      "aliases": [],
+      "role": "Cat-bodied wizard seeking her runaway familiar in her former body",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Strongrod Bildins",
+      "aliases": [],
+      "role": "Dwarf barbarian priest of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Ragna Fitrill",
+      "aliases": [],
+      "role": "Dragonborn fighter obsessed with finding the most beautiful flower",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "The Caretaker / Procul",
+      "aliases": [],
+      "role": "Friendly sane Nothic guarding the vault and magical items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Celun Spackles",
+      "aliases": [],
+      "role": "Human who insists he is a vampire",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Elroy Browning",
+      "aliases": [],
+      "role": "Painter of horrors and forbidden vistas",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Jam",
+      "aliases": [],
+      "role": "Priest of the Temple of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Chad",
+      "aliases": [],
+      "role": "Priest of the Temple of Broance",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Red Skull",
+      "aliases": [],
+      "role": "speaks: “My coins where earned by others.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Blue Skull",
+      "aliases": [],
+      "role": "speaks: “Every day I watched the fools perform.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Yellow Skull",
+      "aliases": [],
+      "role": "speaks: “I must ask rather than demand.”",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "The Caretaker",
+      "aliases": [],
+      "role": "Friendly Nothic; guards the Vault below the town, protecting dangerous magic items",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Dog-Growl",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Book-shut",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Deflation",
+      "aliases": [],
+      "role": "one of three Kenku in the Rookery who learned Qualith from Shuluth",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Rollo",
+      "aliases": [],
+      "role": "were-possum who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Qillasithe",
+      "aliases": [],
+      "role": "were-trout who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Dwal",
+      "aliases": [],
+      "role": "were-bear who plots revenge against society and government officials",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Waynobibille Nebiddlespun",
+      "aliases": [],
+      "role": "greasy gnome innkeeper of Brooksteps Inn, called Wayne by most everyone",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Procul",
+      "aliases": [],
+      "role": "surprisingly sane Nothic who guards the artifacts within the loamy vault of Numillian",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Belrik's",
+      "aliases": [],
+      "role": "home, guild hall, and mayoral office in one; the Handworks Guild Hall",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Red",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Wiseman",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Book",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Blue",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Beggar",
+      "aliases": [],
+      "role": "owner associated with the skull/receptacle table",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Red Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Blue Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Yellow Skull",
+      "aliases": [],
+      "role": "speaking skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Alms-plate",
+      "aliases": [],
+      "role": "receptacle for a skull in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Yellow",
+      "aliases": [],
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "King",
+      "aliases": [],
+      "role": "owner/receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Crown",
+      "aliases": [],
+      "role": "receptacle label in the First Trial",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Red Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Blue Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    },
+    {
+      "name": "Yellow Skull",
+      "aliases": [],
+      "role": "puzzle statue voice",
+      "faction": "",
+      "location_binding": "",
+      "scene_presence": "present",
+      "criticality": "optional",
+      "source_refs": []
+    }
+  ]
+}

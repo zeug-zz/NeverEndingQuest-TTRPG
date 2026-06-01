@@ -2187,7 +2187,7 @@ _MAKE_MODULE_PLOT_RICH = {
         {
             "id": "PP001",
             "title": "A Strange Arrival",
-            "description": "The party arrives at the village of Oakhaven to find it shrouded in unnatural mist. The villagers are fearful and refuse to speak of the事故发生.",
+            "description": "The party arrives at the village of Oakhaven to find it shrouded in unnatural mist. The villagers are fearful and refuse to speak of the incident.",
             "nextPoints": ["PP002"],
             "prerequisites": [],
             "status": "not started",
