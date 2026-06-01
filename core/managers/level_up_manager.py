@@ -51,10 +51,12 @@ Features:
 
 import json
 import os
+import re
 import sys
 from openai import OpenAI
 from config import OPENAI_API_KEY, LEVEL_UP_MODEL, DM_VALIDATION_MODEL
 from utils.file_operations import safe_read_json
+from utils.enhanced_logger import debug, info, warning, error
 from updates.update_character_info import update_character_info, normalize_character_name
 from utils.encoding_utils import safe_json_dump
 from utils.module_path_manager import ModulePathManager
@@ -93,7 +95,7 @@ class LevelUpSession:
         Returns:
             str: The initial greeting/prompt from the AI.
         """
-        print(f"[Level Up Session] Starting for {self.character_name}")
+        debug(f"[Level Up Session] Starting for {self.character_name}", category="level_up")
         # Load character data
         party_tracker = safe_read_json("party_tracker.json")
         module_name = party_tracker.get("module", "").replace(" ", "_")
@@ -140,7 +142,7 @@ class LevelUpSession:
         # Check if the AI has concluded the interview
         update_params = self._extract_update_action(ai_response)
         if update_params:
-            print("[Level Up Session] AI returned final action. Validating...")
+            debug("[Level Up Session] AI returned final action. Validating...", category="level_up")
             is_valid, validation_msg = self._validate_level_up_response(ai_response)
 
             if is_valid:
@@ -148,7 +150,7 @@ class LevelUpSession:
                 changes = self._normalize_final_level_up_changes(changes)
                 
                 if update_character_info(self.character_name, changes):
-                    print(f"[Level Up Session] SUCCESS! {self.character_name} updated.")
+                    debug(f"[Level Up Session] SUCCESS! {self.character_name} updated.", category="level_up")
                     self.is_complete = True
                     self.success = True
                     self.summary = self._generate_level_up_summary(ai_response)
@@ -169,6 +171,40 @@ class LevelUpSession:
                 # Save state and return the corrected response for the UI
                 self._save_conversation()
                 return corrected_response
+
+        if self._looks_like_final_update_response(ai_response):
+            correction_prompt = (
+                "Your previous response looked like a final updateCharacterInfo action, "
+                "but it was not valid complete JSON. Re-emit ONLY one compact valid "
+                "JSON object with narration and actions. Keep feature descriptions "
+                "brief to avoid truncation."
+            )
+            self.conversation.append({"role": "user", "content": correction_prompt})
+            corrected_response = self._get_ai_response()
+            self.conversation.append({"role": "assistant", "content": corrected_response})
+
+            update_params = self._extract_update_action(corrected_response)
+            if update_params:
+                debug("[Level Up Session] Corrected final action received. Validating...", category="level_up")
+                is_valid, validation_msg = self._validate_level_up_response(corrected_response)
+                if is_valid:
+                    changes = update_params.get("changes", "{}")
+                    changes = self._normalize_final_level_up_changes(changes)
+                    if update_character_info(self.character_name, changes):
+                        debug(f"[Level Up Session] SUCCESS! {self.character_name} updated.", category="level_up")
+                        self.is_complete = True
+                        self.success = True
+                        self.summary = self._generate_level_up_summary(corrected_response)
+                        self._save_conversation()
+                        return corrected_response
+                else:
+                    warning(
+                        f"[Level Up Session] Corrected final action invalid: {validation_msg}",
+                        category="level_up",
+                    )
+
+            self._save_conversation()
+            return corrected_response
 
         # Save state and return the AI's next question
         self._save_conversation()
@@ -206,7 +242,7 @@ class LevelUpSession:
             
             return response.choices[0].message.content
         except Exception as e:
-            print(f"[ERROR] Getting AI response: {e}")
+            error(f"[ERROR] Getting AI response: {e}", category="level_up")
             return "I'm having trouble processing that. Could you clarify your choice?"
 
     def _validate_level_up_response(self, ai_response):
@@ -240,7 +276,7 @@ class LevelUpSession:
             else:
                 return False, validation_response
         except Exception as e:
-            print(f"[ERROR] Validating AI response: {e}")
+            error(f"[ERROR] Validating AI response: {e}", category="level_up")
             return False, "Validation system error."
 
 
@@ -257,6 +293,48 @@ class LevelUpSession:
         except (json.JSONDecodeError, AttributeError):
             return None
         return None
+
+    @staticmethod
+    def _looks_like_final_update_response(ai_response):
+        cleaned_response = str(ai_response or "").strip()
+        return (
+            cleaned_response.startswith("{")
+            and ('"actions"' in cleaned_response or "updateCharacterInfo" in cleaned_response)
+        )
+
+    @staticmethod
+    def extract_display_text(ai_response):
+        """Return player-safe display text for level-up responses.
+
+        Final level-up responses are JSON action envelopes. If provider output is
+        truncated after a valid narration field, suppress raw action JSON and
+        show the narration instead.
+        """
+        raw_response = str(ai_response or "")
+        cleaned_response = raw_response.strip()
+
+        if not cleaned_response.startswith("{"):
+            return raw_response, False
+
+        try:
+            response_data = json.loads(cleaned_response)
+            return response_data.get("narration", "Level up complete!"), True
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            narration_match = re.search(
+                r'"narration"\s*:\s*"((?:\\.|[^"\\])*)"',
+                cleaned_response,
+                re.DOTALL,
+            )
+            if narration_match:
+                try:
+                    return json.loads(f'"{narration_match.group(1)}"'), True
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    return narration_match.group(1), True
+
+            if '"actions"' in cleaned_response or "updateCharacterInfo" in cleaned_response:
+                return "Level up complete!", True
+
+            return raw_response, False
 
     @staticmethod
     def _generate_level_up_summary(final_ai_response):
@@ -293,15 +371,49 @@ class LevelUpSession:
                 incoming_xp_value = current_xp
 
             if incoming_xp_value != current_xp:
-                print(
-                    f"[Level Up Session] Preserving cumulative XP for {self.character_name}: "
-                    f"{incoming_xp_value} -> {current_xp}"
+                info(
+                    f"[Level Up Session] Preserving cumulative XP for {self.character_name}: {incoming_xp_value} -> {current_xp}",
+                    category="level_up"
                 )
             del changes_dict["experience_points"]
+
+        self._normalize_level_up_hit_points(changes_dict)
 
         changes_dict["level"] = self.new_level
         changes_dict["exp_required_for_next_level"] = get_next_level_threshold(self.new_level)
         return json.dumps(changes_dict)
+
+    @staticmethod
+    def _safe_int(value, default=None):
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _normalize_level_up_hit_points(self, changes_dict):
+        if not isinstance(changes_dict, dict):
+            return
+
+        current_data = self.character_data or {}
+        old_hp = self._safe_int(current_data.get("hitPoints"))
+        old_max_hp = self._safe_int(current_data.get("maxHitPoints"))
+        new_max_hp = self._safe_int(changes_dict.get("maxHitPoints"))
+
+        if old_hp is None or old_max_hp is None or new_max_hp is None:
+            return
+
+        if new_max_hp <= old_max_hp:
+            return
+
+        status = str(current_data.get("status", "")).strip().lower()
+        if status == "dead" or old_hp <= 0:
+            return
+
+        damage_deficit = max(0, old_max_hp - old_hp)
+        new_hp = max(0, new_max_hp - damage_deficit)
+        changes_dict["hitPoints"] = min(new_max_hp, new_hp)
 
     @staticmethod
     def _load_system_prompts():

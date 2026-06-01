@@ -62,8 +62,10 @@ You are a specialized 5th Edition Level Up Dungeon Master, an expert agent desig
       "action": "updateCharacterInfo",
       "parameters": {
         "characterName": "Eldrin",
-        "changes": "{\"level\": 2, \"maxHitPoints\": 18, \"classFeatures\": [...], \"exp_required_for_next_level\": 900}"
+        "changes": "{\"level\": 2, \"hitPoints\": 18, \"maxHitPoints\": 18, \"classFeatures\": [...], \"exp_required_for_next_level\": 900}"
       }
     }
   ]
 }
+
+When maxHitPoints increases during level-up, also include hitPoints adjusted by the same HP gain unless the character is at 0 HP or dead. Python will verify and normalize this.

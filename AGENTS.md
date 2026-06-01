@@ -1193,6 +1193,18 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Level-Up JSON Leak, HP Reconciliation & NPC Targeting (ARCHIVED - 2026-06-01)
+
+**Status:** ARCHIVED - Fixed JSON leak in web GUI for NPC level-up finalization (truncated JSON display), added HP reconciliation on level-up, added `/levelup [character]` support, and added automatic compact correction for malformed final action envelopes.
+
+**Implementation Summary:**
+- `core/managers/level_up_manager.py` — Added `extract_display_text()` static method with regex fallback for truncated JSON, `_looks_like_final_update_response()` detection, automatic compact correction path for malformed final JSON, `_safe_int()` helper, `_normalize_level_up_hit_points()` to preserve damage deficit on max HP gain, and dead/zero-HP guard
+- `main.py` — Replaced duplicate inline JSON parsing in both level-up loops with `extract_display_text()`, added `find_character_file_fuzzy` import and `/levelup [character]` argument support, removed local `import json` shadowing (fixes NameError crash), removed dead `level_up_summaries` injection path
+- `prompts/leveling/level_up_system_prompt.txt` — Updated example JSON to include `hitPoints` alongside `maxHitPoints` with guidance sentence
+- `scripts/test_levelup_json_web_output.py` — 13 tests (truncated JSON extraction, shared display filter, `/levelup [character]` contract, malformed correction path, plus all original tests)
+- `scripts/test_levelup_hp_reconciliation.py` — 6 tests (full HP remains full, wounded preserves deficit, zero HP not revived, dead not revived, no change when max unchanged, no JSON shadowing)
+- Tests: 13/13 JSON web output, 6/6 HP reconciliation, 6/6 XP invariants, ASCII 0 violations
+
 ### Toolkit Accurate-Ingest Prebuild Review Deadlock Closure (ARCHIVED - 2026-06-01)
 
 **Status:** ARCHIVED - Pre-build fidelity diagnostics no longer block blueprint generation when source/packet artifacts are readable. Degraded fidelity proceeds to bounded blueprint; strict review preserved for explicit required-review states. Source-atom classification improved to recognize heading locations, escaped numbered rooms, appendix sections, and prose fragments. GUI status rendering fixed so rejected/blocked/no-module states never show success or MMG guidance.

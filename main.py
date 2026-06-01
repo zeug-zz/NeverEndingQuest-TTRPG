@@ -118,6 +118,7 @@ from core.ai.conversation_utils import (
 from updates.update_character_info import (
     update_character_info,
     normalize_character_name,
+    find_character_file_fuzzy,
 )
 from core.managers.level_up_manager import LevelUpSession  # Add this line
 from core.ai.incremental_compression import IncrementalLocationCompressor
@@ -4692,30 +4693,6 @@ def process_ai_response(
         if actions_processed:
             party_tracker_data = load_json_file("party_tracker.json")
 
-            if (
-                hasattr(action_handler.process_action, "level_up_summaries")
-                and action_handler.process_action.level_up_summaries
-            ):
-                debug(
-                    f"STATE_CHANGE: Injecting {len(action_handler.process_action.level_up_summaries)} level up summaries",
-                    category="level_up",
-                )
-
-                combined_summary = "\n\n".join(
-                    action_handler.process_action.level_up_summaries
-                )
-                conversation_history.append(
-                    {"role": "user", "content": combined_summary}
-                )
-                save_conversation_history(conversation_history)
-
-                action_handler.process_action.level_up_summaries = []
-
-                ai_response = get_ai_response(conversation_history)
-                return process_ai_response(
-                    ai_response, party_tracker_data, location_data, conversation_history
-                )
-
         # STANDARD TURN COMPLETION: For a normal turn (no special signals or sub-systems),
         # we append the AI's response to history here in process_ai_response.
         # This centralizes history management - the main_game_loop no longer needs to handle it.
@@ -6745,7 +6722,7 @@ def main_game_loop():
                 "  /travel [location] - Travel to location\n"
                 "  /rest [short/long] - Rest\n"
                 "  /storage - Access storage\n"
-                "  /levelup - Trigger level up if XP requirement met\n"
+                "  /levelup [character] - Trigger level up if XP requirement met\n"
                 "[SYSTEM] Reference Guides:\n"
                 "  - NEQ Quick Reference Guide: /static/docs/NEQ_Quick_Reference_Guide.pdf\n"
                 "  - 5e Cheat Sheet: /static/docs/5E_Actions_Cheat_Sheet.pdf\n"
@@ -6761,18 +6738,28 @@ def main_game_loop():
 
         # --- Character Info Commands ---
 
-        elif cmd == "/levelup":
+        elif cmd == "/levelup" or cmd.startswith("/levelup "):
             try:
-                # Get active character
+                # Get target character. Defaults to active character, but supports
+                # NPC/companion targets such as /levelup Kira.
                 pt_data = safe_read_json("party_tracker.json")
-                char_name = (
-                    pt_data.get("active_character")
-                    or pt_data.get("partyMembers", [])[0]
-                )
-                char_path = path_manager.get_character_path(
-                    normalize_character_name(char_name)
-                )
-                char_data = safe_read_json(char_path)
+                parts = clean_input.split(maxsplit=1)
+                requested_name = parts[1].strip() if len(parts) > 1 else ""
+                if requested_name:
+                    matched_name = find_character_file_fuzzy(requested_name)
+                    char_file_ref = matched_name or normalize_character_name(requested_name)
+                    char_path = path_manager.get_character_path(char_file_ref)
+                    char_data = safe_read_json(char_path)
+                    char_name = (char_data or {}).get("name", requested_name)
+                else:
+                    char_name = (
+                        pt_data.get("active_character")
+                        or pt_data.get("partyMembers", [])[0]
+                    )
+                    char_path = path_manager.get_character_path(
+                        normalize_character_name(char_name)
+                    )
+                    char_data = safe_read_json(char_path)
 
                 if not char_data:
                     print(
@@ -6840,21 +6827,14 @@ def main_game_loop():
                             # Handle input
                             dm_response = level_up_session.handle_input(level_up_input)
 
-                            # Check response type
-                            try:
-                                parsed_data = json.loads(dm_response)
-                                final_narration = parsed_data.get(
-                                    "narration", "Level up complete!"
-                                )
-                                print(
-                                    colored("Dungeon Master:", "blue"),
-                                    colored(final_narration, "blue"),
-                                )
-                            except (json.JSONDecodeError, TypeError):
-                                print(
-                                    colored("Dungeon Master:", "blue"),
-                                    colored(dm_response, "blue"),
-                                )
+                            # TABLETOP MODE: Parse level-up JSON, extract narration only
+                            display_text, is_final_json = LevelUpSession.extract_display_text(dm_response)
+                            if is_final_json:
+                                final_narration = display_text
+                            print(
+                                colored("Dungeon Master:", "blue"),
+                                colored(display_text, "blue"),
+                            )
 
                         except EOFError:
                             break
@@ -8243,7 +8223,6 @@ def main_game_loop():
 
             # PRE-PROCESSING: Normalize final action authority before validation.
             try:
-                import json
                 from utils.action_normalization import (
                     normalize_action_list_for_authority,
                 )
@@ -8282,8 +8261,6 @@ def main_game_loop():
             # PRE-VALIDATION: Check for transitionLocation and call transition intelligence agent
             transition_check_passed = True
             try:
-                import json
-
                 response_data = json.loads(
                     ai_response_content
                 )  # Re-parse in case it was modified
@@ -8503,24 +8480,14 @@ def main_game_loop():
                             # Handle the input and get the next AI response from the session
                             dm_response = level_up_session.handle_input(level_up_input)
 
-                            # Check if the response is the final JSON or a conversational step
-                            try:
-                                # It's the final JSON response
-                                parsed_data = json.loads(dm_response)
-                                final_narration = parsed_data.get(
-                                    "narration", "Level up complete!"
-                                )
-                                print(
-                                    colored("Dungeon Master:", "blue"),
-                                    colored(final_narration, "blue"),
-                                )
-                                # The session is now complete, loop will exit
-                            except (json.JSONDecodeError, TypeError):
-                                # It's a normal conversational response
-                                print(
-                                    colored("Dungeon Master:", "blue"),
-                                    colored(dm_response, "blue"),
-                                )
+                            # TABLETOP MODE: Parse level-up JSON, extract narration only
+                            display_text, is_final_json = level_up_session.extract_display_text(dm_response)
+                            if is_final_json:
+                                final_narration = display_text
+                            print(
+                                colored("Dungeon Master:", "blue"),
+                                colored(display_text, "blue"),
+                            )
 
                         # After the loop, the session is complete.
                         if level_up_session.success:
@@ -8528,16 +8495,31 @@ def main_game_loop():
                                 "SUCCESS: Level up successful. Using final narration for context.",
                                 category="level_up",
                             )
-                            # Add the final, high-quality narration to the history as the definitive AI response.
-                            # This provides perfect context for the next turn without an extra AI call.
-                            conversation_history.append(
-                                {
+                            # TABLETOP MODE: Inject action into conversation history
+                            if final_narration and final_narration != "Level up complete!":
+                                action_message = {
                                     "role": "assistant",
-                                    "content": json.dumps(
-                                        {"narration": final_narration, "actions": []}
-                                    ),
+                                    "content": json.dumps({
+                                        "narration": final_narration,
+                                        "actions": [{
+                                            "action": "updateCharacterInfo",
+                                            "parameters": {
+                                                "characterName": level_up_session.character_name,
+                                                "changes": "{}"
+                                            }
+                                        }]
+                                    })
                                 }
-                            )
+                                conversation_history.append(action_message)
+                            else:
+                                conversation_history.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": json.dumps(
+                                            {"narration": final_narration, "actions": []}
+                                        ),
+                                    }
+                                )
                             save_conversation_history(conversation_history)
                         else:
                             # If the level up failed, inform the player and log it.
