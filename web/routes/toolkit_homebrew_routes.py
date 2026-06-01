@@ -77,6 +77,7 @@ _TERMINAL_JOB_STATES = {
     "quarantined",
     "failed",
     "rejected",
+    "blocked",
     "awaiting_overwrite_confirmation",
 }
 
@@ -332,6 +333,7 @@ _ACCURATE_INGEST_CANONICAL_PHASES = {
     "quarantined",
     "failed",
     "rejected",
+    "blocked",
     "awaiting_overwrite_confirmation",
 }
 
@@ -347,7 +349,7 @@ def _get_canonical_accurate_ingest_phase(job: Dict[str, Any]) -> str:
     progress_stage = str(job.get("progress_stage") or "").strip().lower()
 
     # Terminal statuses map directly
-    if status in ("completed", "not_publishable", "quarantined", "failed", "rejected", "awaiting_overwrite_confirmation"):
+    if status in ("completed", "not_publishable", "quarantined", "failed", "rejected", "blocked", "awaiting_overwrite_confirmation"):
         return status
 
     # Pipeline-status-based mapping (most specific first)

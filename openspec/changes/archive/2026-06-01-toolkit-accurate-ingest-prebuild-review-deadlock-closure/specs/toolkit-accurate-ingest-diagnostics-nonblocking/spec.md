@@ -1,9 +1,5 @@
-# toolkit-accurate-ingest-diagnostics-nonblocking Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change toolkit-accurate-ingest-gui-stabilize-defaults. Update Purpose after archive.
-
-## Requirements
 ### Requirement: Clean accurate-ingest diagnostics SHALL NOT create mandatory pre-build approval
 
 Clean or degraded accurate-ingest pre-build diagnostics SHALL NOT create mandatory pre-build approval unless the backend explicitly marks a current required-review state.

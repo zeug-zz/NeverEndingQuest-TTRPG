@@ -1193,6 +1193,21 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Prebuild Review Deadlock Closure (ARCHIVED - 2026-06-01)
+
+**Status:** ARCHIVED - Pre-build fidelity diagnostics no longer block blueprint generation when source/packet artifacts are readable. Degraded fidelity proceeds to bounded blueprint; strict review preserved for explicit required-review states. Source-atom classification improved to recognize heading locations, escaped numbered rooms, appendix sections, and prose fragments. GUI status rendering fixed so rejected/blocked/no-module states never show success or MMG guidance.
+
+**Implementation Summary:**
+- `utils/toolkit_builder_blueprint.py` — Changed `evaluate_blueprint_fidelity_precheck()` to allow degraded fidelity through (blocked/failed only refuse)
+- `utils/toolkit_source_manifest.py` — Added heading-based locations, escaped heading support, appendix filtering, prose fragment detection, creature name patterns
+- `web/extensions/toolkit_homebrew_fidelity_review.py` — Updated `_summarize_blueprint()` and `can_approve_fidelity_review()` to treat degraded blueprints as acceptable
+- `web/templates/module_toolkit.html` — Fixed status rendering, MMG guidance gating, rejected/blocked state handling (rejected uses `warning` not `success`)
+- `web/routes/toolkit_homebrew_routes.py` — Added `"blocked"` to `_TERMINAL_JOB_STATES` and `_ACCURATE_INGEST_CANONICAL_PHASES`
+- `scripts/test_builder_blueprint_fidelity_gate.py` — 45 tests (4 new: blocked terminal status, blocked canonical phase, rejected review decision, blocked build status)
+- Tests: 45/45 fidelity gate, 11/11 fidelity review, 107/107 Numillian benchmark PASS
+
+**OpenSpec:** Archived to `openspec/changes/archive/2026-06-01-toolkit-accurate-ingest-prebuild-review-deadlock-closure/`
+
 ### Narrator Memory Milestone Injection (COMPLETED - 2026-05-30)
 
 **Status:** COMPLETED - Implemented Phase 1 campaign milestone injection into narrator prompts. The narrator LLM now receives a compact timeline of major campaign events from the memory DB on every narrator call, solving the long-term campaign amnesia problem.

@@ -230,6 +230,16 @@ def _heading_key(heading_text: str) -> str:
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
 
+def _normalize_heading_text(raw_text: str) -> str:
+    r"""Strip markdown escaping and trailing whitespace from heading text.
+
+    Handles common escape patterns such as ``1\\. Chapel`` -> ``1. Chapel``.
+    """
+    text = raw_text.strip()
+    text = re.sub(r"\\([#\-.()\[\]{}_*+?!|~`@:])", r"\1", text)
+    return text
+
+
 def _extract_heading_hierarchy(text: str) -> List[Dict[str, Any]]:
     """Extract all headings with level, text, line range, and parent
     tracking."""
@@ -237,7 +247,7 @@ def _extract_heading_hierarchy(text: str) -> List[Dict[str, Any]]:
     stack: List[Dict[str, Any]] = []
     for match in _HEADING_PATTERN.finditer(text):
         level = len(match.group(1))
-        heading_text = match.group(2).strip()
+        heading_text = _normalize_heading_text(match.group(2))
         start_line = _line_at(text, match.start())
         end_line = start_line  # will be fixed up to next heading
         entry = {
@@ -305,21 +315,50 @@ def _extract_markdown_tables(text: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 _MAP_KEY_PATTERN = re.compile(
-    r"^#{3,4}\s+(\d+)[\.\)\-\s]+(.+)$", re.MULTILINE
+    r"^#{3,4}\s+(\d+\\?[\.\)\-\s]+\s*.+)$", re.MULTILINE
 )
 _ROOM_PATTERN = re.compile(
     r"^##\s+Room\s+(\d+):\s*(.+)$", re.MULTILINE
 )
 
+_APPENDIX_PATTERN = re.compile(
+    r"^(?:Appendix|Appendices|Table\s+of\s+Contents|Index|Glossary|"
+    r"Credits|Contributors|Acknowledgments|References|Bibliography|"
+    r"Version\s+History|Changelog|Errata)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_HEADING_PREFIX_WORDS: set = {
+    "a", "an", "the",
+    "gathered", "around", "about", "across", "after", "again",
+    "almost", "along", "always", "another", "around", "away",
+    "back", "before", "behind", "below", "between", "beyond",
+    "both", "but", "down", "each", "either", "enough",
+    "even", "ever", "every", "few", "first", "forward",
+    "from", "further", "great", "here", "how", "into",
+    "just", "last", "less", "many", "more", "most",
+    "much", "near", "never", "next", "none", "not",
+    "nothing", "now", "once", "only", "other", "our",
+    "over", "own", "right", "same", "should", "since",
+    "some", "still", "such", "than", "that", "their",
+    "them", "then", "there", "these", "they", "this",
+    "through", "under", "until", "very", "well", "were",
+    "what", "when", "where", "which", "while", "will",
+    "with", "would", "your",
+    # Prose-fragment filler words
+    "looking", "seeing", "heard", "felt", "seemed", "appeared",
+    "took", "made", "came", "went", "could", "said",
+}
+
 
 def _extract_location_candidates(text: str,
                                  headings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Extract map-key and room-style location candidates."""
+    """Extract map-key, room-style, and heading-based location candidates."""
     candidates: List[Dict[str, Any]] = []
     seen_names: set = set()
 
     for match in _MAP_KEY_PATTERN.finditer(text):
-        name = match.group(2).strip()
+        name = _normalize_heading_text(match.group(1).strip())
         if not name or name.lower() in seen_names:
             continue
         seen_names.add(name.lower())
@@ -328,12 +367,13 @@ def _extract_location_candidates(text: str,
         section = _find_section_for_line(headings, start_line)
         candidates.append({
             "name": name,
-            "number": int(match.group(1)),
+            "number": 0,
             "location_type": "map_key",
             "description": _excerpt(text, match.end(), 300),
             "section": section,
             "line_start": start_line,
             "line_end": end_line,
+            "_raw_match_start": match.start(),
         })
 
     for match in _ROOM_PATTERN.finditer(text):
@@ -352,7 +392,40 @@ def _extract_location_candidates(text: str,
             "section": section,
             "line_start": start_line,
             "line_end": end_line,
+            "_raw_match_start": match.start(),
         })
+
+    # Heading-based locations: Level 2-4 headings that look like named places.
+    # Skip appendix/toc/credits headings.  Map-key and room-style headings
+    # are already captured above; heading-based extraction adds remaining
+    # level 2-4 headings that look like location names.
+    _seen_raw_starts: set = {c.get("_raw_match_start") for c in candidates if "_raw_match_start" in c}
+    for heading in headings:
+        h_text = heading["text"]
+        h_level = heading["level"]
+        if h_level < 2 or h_level > 4:
+            continue
+        norm = h_text.lower()
+        if norm in seen_names:
+            continue
+        if _APPENDIX_PATTERN.match(h_text):
+            continue
+        if not _is_heading_location_name(h_text):
+            continue
+        seen_names.add(norm)
+        candidates.append({
+            "name": h_text,
+            "number": 0,
+            "location_type": "heading_location",
+            "description": _excerpt(text, 0, 300),
+            "section": h_text,
+            "line_start": heading["line_start"],
+            "line_end": heading["line_end"],
+        })
+
+    # Strip internal bookkeeping fields
+    for c in candidates:
+        c.pop("_raw_match_start", None)
 
     return candidates
 
@@ -365,6 +438,60 @@ def _find_section_for_line(headings: List[Dict[str, Any]],
         if h["line_start"] <= line <= h["line_end"]:
             best = h["text"]
     return best
+
+
+def _is_map_key_style_heading(text: str) -> bool:
+    """Return True if the heading looks like a numbered map-key entry."""
+    normalized = _normalize_heading_text(text.strip())
+    return bool(re.match(r"^\d+[\.\)\-\s]", normalized))
+
+
+def _is_heading_location_name(text: str) -> bool:
+    """Return True if heading text looks like a meaningful location name.
+
+    Rejects headings that are:
+    - Common section labels (Introduction, Overview, Synopsis, etc.)
+    - Prose-fragment patterns (mostly function words)
+    - Single generic words
+    - Appendix/credits/glossary headings
+    """
+    text = text.strip()
+    if len(text) < 3 or len(text) > 120:
+        return False
+    if _APPENDIX_PATTERN.match(text):
+        return False
+
+    words = [w for w in text.split() if w]
+    if not words:
+        return False
+
+    # Single generic word is not a location
+    if len(words) == 1 and words[0].lower() in _COMMON_WORDS:
+        return False
+
+    # Reject prose fragments: if >= 50% of words are heading-prefix function
+    # words, it is likely a prose fragment like "gathered around a stone"
+    prefix_word_count = sum(1 for w in words if w.lower() in _HEADING_PREFIX_WORDS)
+    if prefix_word_count >= max(3, len(words) * 0.5):
+        return False
+
+    # Reject common non-location section labels
+    _non_location_labels: set = {
+        "introduction", "overview", "synopsis", "summary", "conclusion",
+        "background", "notes", "author notes", "design notes",
+        "running the adventure", "adventure hooks", "plot hooks",
+        "player character", "non player character", "npcs",
+        "magic items", "equipment", "combat", "exploration",
+        "roleplaying", "experience", "milestones", "advancement",
+        "monsters", "monster", "statistics", "stat block",
+        "preface", "foreword", "afterword", "afterword",
+        "getting started", "setup", "settings", "theme",
+        "tone", "mood", "premise",
+    }
+    if text.lower() in _non_location_labels:
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +601,10 @@ def _is_likely_name(text: str) -> bool:
         return False
     if all(w.lower() in _COMMON_WORDS for w in words):
         return False
+    # Reject prose fragments dominated by function/prefix words
+    prefix_word_count = sum(1 for w in words if w.lower() in _HEADING_PREFIX_WORDS)
+    if prefix_word_count >= max(2, len(words) * 0.5):
+        return False
     return True
 
 
@@ -486,7 +617,12 @@ def _proper_noun_candidates(text: str, headings: List[Dict[str, Any]],
         norm = phrase.lower()
         if norm in seen or len(phrase) < 5:
             continue
-        if all(w.lower() in _COMMON_WORDS for w in phrase.split()):
+        words = phrase.split()
+        # Reject phrases dominated by function/prefix words (prose fragments)
+        prefix_word_count = sum(1 for w in words if w.lower() in _HEADING_PREFIX_WORDS)
+        if prefix_word_count >= max(2, len(words) * 0.5):
+            continue
+        if all(w.lower() in _COMMON_WORDS for w in words):
             continue
         line = _line_at(text, match.start())
         section = _find_section_for_line(headings, line)
@@ -621,7 +757,12 @@ _ENCOUNTER_PATTERN = re.compile(
     r"dragon|wyrm|giant\s+(?:spider|rat|scorpion|centipede|snake)|"
     r"construct|golem|animated|statue|trap|ambush|patrols?|"
     r"spectral|gargoyle|sentinel|challenge(?:s|d)?|intruder(?:s)?|"
-    r"hostile|enemy|combat|battle|fight|attack|defend)\b",
+    r"hostile|enemy|combat|battle|fight|attack|defend|"
+    r"assassin|knight|guard\s+(?:dog|cat|hound|beast)|"
+    r"lesser|greater|black|white|red|green|blue|golden|silver|"
+    r"lion|lizard|wolf|bear|serpent|scorpion|spider|"
+    r"nomadic|wandering|ancient|elder|shadow|"
+    r"hollow|undead|corrupted|fallen|risen)\b",
     re.IGNORECASE,
 )
 

@@ -1,9 +1,5 @@
-# toolkit-homebrew-review-status-ux Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change toolkit-fidelity-review-ui-deadlock. Update Purpose after archive.
-
-## Requirements
 ### Requirement: GUI Status Does Not Overstate Playability
 
 The homebrew/accurate-ingest review UI MUST NOT imply a module is ready for gameplay testing while validation, topology, artifact, publishability, report-agreement, or playable-publication blockers remain.

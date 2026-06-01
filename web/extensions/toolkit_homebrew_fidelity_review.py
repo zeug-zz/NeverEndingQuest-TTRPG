@@ -250,11 +250,14 @@ def _summarize_blueprint(
     if not isinstance(warnings, list):
         warnings = []
 
+    blueprint_status = str(blueprint_report.get("blueprint_status") or blueprint_report.get("status") or "missing").lower()
     return {
-        "status": str(blueprint_report.get("blueprint_status") or blueprint_report.get("status") or "missing").lower(),
+        "status": blueprint_status,
         "fidelity_status": str(blueprint_report.get("fidelity_status") or "unknown").lower(),
         "refusal_reason": str(blueprint_report.get("refusal_reason") or "").strip(),
-        "ready": str(blueprint_report.get("blueprint_status") or "").lower() == "ready",
+        # Blueprint is considered ready when it exists with status ready OR degraded.
+        # Degraded fidelity is nonblocking: final gates remain authoritative.
+        "ready": blueprint_status in ("ready", "degraded"),
         "artifact_path": blueprint_report.get("artifact_path") or blueprint_report.get("path") or str(
             get_workspace_files(workspace)["builder_blueprint_report"]
         ),
@@ -418,6 +421,7 @@ def build_fidelity_review_payload(workspace: Path) -> Dict[str, Any]:
         ]
     else:
         refusal_reason = str(blueprint_summary.get("refusal_reason") or fidelity_summary.get("reason") or "").strip()
+        bp_ready = blueprint_summary.get("ready")  # True for ready OR degraded blueprints
         if fidelity_summary["status"] == "blocked":
             status = "blocked"
             if not refusal_reason:
@@ -430,7 +434,7 @@ def build_fidelity_review_payload(workspace: Path) -> Dict[str, Any]:
             status = "missing"
             if not refusal_reason:
                 refusal_reason = fidelity_report.get("reason") or "missing_source_artifacts"
-        elif not blueprint_summary.get("ready"):
+        elif not bp_ready:
             status = "blocked"
             if not refusal_reason:
                 refusal_reason = blueprint_summary.get("refusal_reason") or "blueprint_not_ready"
@@ -507,7 +511,10 @@ def can_approve_fidelity_review(payload: Dict[str, Any]) -> Tuple[bool, str]:
         return False, str(payload.get("refusal_reason") or "blockers_present")
 
     blueprint = payload.get("blueprint") or {}
-    if str(blueprint.get("status") or "").lower() != "ready":
+    bp_status = str(blueprint.get("status") or "").lower()
+    # Blueprint is acceptable when ready or degraded (degraded fidelity is
+    # nonblocking by default - final gates remain authoritative).
+    if bp_status not in ("ready", "degraded"):
         return False, str(blueprint.get("refusal_reason") or "blueprint_not_ready")
 
     return True, ""

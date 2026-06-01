@@ -158,7 +158,7 @@ def evaluate_blueprint_fidelity_precheck(
             "detail": "normalized_packet is required for blueprint generation",
         }
 
-    # Blocked or failed fidelity
+    # Blocked or failed fidelity - still blocks blueprint (authoritative final gate)
     if fidelity_status in ("blocked", "failed"):
         return {
             "precheck_status": "refused",
@@ -168,17 +168,10 @@ def evaluate_blueprint_fidelity_precheck(
             "detail": f"Fidelity status '{fidelity_status}' prevents blueprint generation",
         }
 
-    # Degraded with blocking findings
-    if fidelity_status == "degraded" and _has_blocking_required_findings(findings):
-        return {
-            "precheck_status": "refused",
-            "refusal_reason": STATUS_BLOCKED_BY_FIDELITY,
-            "fidelity_status": fidelity_status,
-            "blocking_findings": findings,
-            "detail": "Degraded fidelity with pending blocking findings prevents blueprint generation",
-        }
-
-    # Allowed: clean, repaired, or degraded without blockers
+    # Degraded, clean, repaired, unknown - all allow blueprint generation.
+    # Pre-build fidelity diagnostics are nonblocking by default so a bounded
+    # blueprint can be produced.  Final gates (validation, benchmark,
+    # publishability) remain authoritative.
     return {
         "precheck_status": "allowed",
         "refusal_reason": "",

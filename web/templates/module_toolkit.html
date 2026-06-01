@@ -6226,9 +6226,8 @@
 
         function getHomebrewStatusWithGuidance(type, message) {
             const baseMessage = String(message || '').trim();
-            if (type === 'success') {
-                return `${baseMessage} Next: open the MMG tab to generate media assets.`;
-            }
+            // MMG guidance is only appended in the caller when appropriate.
+            // The upload poll and review flows gate this on actual module existence.
             if (type === 'error') {
                 return `${baseMessage} If this keeps happening, contact the developer and include this console output: ${HOME_BREW_SUPPORT_URL}`;
             }
@@ -7475,10 +7474,11 @@
                 }
 
                 const nextStatus = String((payload.job || {}).status || '').toLowerCase();
-                const message = nextStatus === 'approved_for_build'
+                const isApproved = nextStatus === 'approved_for_build';
+                const message = isApproved
                     ? 'Fidelity review approved. Build is now unlocked.'
-                    : 'Fidelity review rejected.';
-                renderHomebrewUploadStatus('success', message, JSON.stringify(payload.job, null, 2));
+                    : 'Fidelity review rejected. This job is terminally blocked. Re-upload corrected source to proceed.';
+                renderHomebrewUploadStatus(isApproved ? 'success' : 'warning', message, JSON.stringify(payload.job, null, 2));
                 await loadToolkitHomebrewReview(activeJobId, { required: true });
             } catch (reviewError) {
                 renderHomebrewUploadStatus('error', `Homebrew review decision failed: ${reviewError.message}`);
@@ -7721,15 +7721,14 @@
                         const reviewSnapshot = job.review_snapshot || {};
                         const fidelityReview = reviewSnapshot.fidelity_review || {};
                         const fidelityMode = String(fidelityReview.mode || '').toLowerCase();
+                        const isRejected = job.status === 'rejected';
                         renderHomebrewUploadStatus(
-                            job.status === 'approved_for_build' ? 'success' : 'warning',
-                            job.status === 'approved_for_build'
-                                ? (fidelityMode === 'accurate_ingest'
-                                    ? 'Accurate ingest review approved. Build remains paused until you press Start Build.'
-                                    : 'Legacy approved state detected; auto-starting packet build.')
+                            isRejected ? 'error' : (job.status === 'approved_for_build' ? 'success' : 'warning'),
+                            isRejected
+                                ? `Accurate ingest review was rejected. This job is terminally blocked. Re-upload corrected source to proceed.`
                                 : (fidelityMode === 'accurate_ingest'
-                                    ? `Accurate ingest review rejected [status: ${job.status}]`
-                                    : `Review state detected [status: ${job.status}]`),
+                                    ? 'Accurate ingest review approved. Build remains paused until you press Start Build.'
+                                    : 'Legacy approved state detected; auto-starting packet build.'),
                             JSON.stringify(reviewSnapshot, null, 2)
                         );
                         await loadToolkitHomebrewReview(jobId, { required: true });
@@ -7820,15 +7819,20 @@
                     }
 
                     if (job.status === 'blocked') {
+                        setHomebrewConsoleWorking(false);
                         const blockedResult = job.result || {};
                         const bf = blockedResult.build_fidelity || {};
                         renderHomebrewUploadStatus(
                             'error',
-                            `Build fidelity blocked: ${bf.refusal_reason || blockedResult.error || 'unknown'}`,
+                            `Build fidelity blocked: ${bf.refusal_reason || blockedResult.error || 'unknown'} (final gates trigger this before finish)`,
                             JSON.stringify(blockedResult, null, 2)
                         );
                         if (homebrewReviewTitle) {
                             homebrewReviewTitle.textContent = `Build Blocked - Fidelity Check Failed [job: ${jobId}]`;
+                        }
+                        stopHomebrewUploadPolling();
+                        if (homebrewUploadButton) {
+                            homebrewUploadButton.disabled = false;
                         }
                         return;
                     }
