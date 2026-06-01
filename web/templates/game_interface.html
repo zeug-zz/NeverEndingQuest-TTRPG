@@ -6526,7 +6526,10 @@
             } else if (message.type === 'user-input') {
                 const avatar = document.createElement('div');
                 avatar.className = 'message-avatar';
-                avatar.textContent = '[COMBAT]';
+                // TABLETOP MODE: Generic player avatar; do not label all player chat as combat.
+                avatar.textContent = 'PC';
+                avatar.title = `${authorName} player message`;
+                avatar.setAttribute('aria-label', `${authorName} player message`);
                 const contentDiv = document.createElement('div');
                 contentDiv.className = 'message-content';
                 const header = document.createElement('div');
