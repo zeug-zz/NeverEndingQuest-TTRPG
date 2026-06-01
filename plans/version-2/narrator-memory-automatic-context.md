@@ -4,13 +4,13 @@
 **Priority:** Low (awaiting Phase 1+2 gameplay validation)
 **Effort:** TBD
 **Plan Date:** 2026-05-30
-**Dependency:** Phase 1 (milestone injection) + Phase 2 (memory lookup) proven in live gameplay
+**Dependency:** Phase 1 (milestone injection) + Phase 2 (memory lookup) proven in live gameplay as per plans/archive/narrator_memory_update.md
 
 ---
 
 ## Goal
 
-Replace the current pull-based model (narrator must explicitly emit `lookupMemory`) with automatic context injection before every narrator call. The system determines which entities are relevant to the current scene and injects bounded memory context without the narrator asking.
+Complement the current pull-based model (narrator must explicitly emit `lookupMemory`) with automatic context injection before every narrator call. The system determines which entities are relevant to the current scene and injects bounded memory context without the narrator asking.
 
 ## Open Question
 
