@@ -382,6 +382,7 @@ modules/**/encounters/
 
 # — 5. Local runtime catalog state (never commit) —
 # NOTE: Also enforced at lines 56-57 and 183-184 (historical duplicates, preserved).
+data/runtime/
 modules/world_registry.json
 modules/campaign.json
 
