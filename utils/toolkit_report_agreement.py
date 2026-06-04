@@ -47,7 +47,7 @@ def _normalize_status(value: Any) -> str:
         return STATUS_PASS
     if raw in {"blocked", "fail", "failed", "error"}:
         return STATUS_BLOCKED
-    if raw in {"degraded", "warning", "warn"}:
+    if raw in {"degraded", "warning", "warn", "reconciled_degraded"}:
         return STATUS_DEGRADED
     if raw in {"stale", "unknown"}:
         return raw
@@ -183,6 +183,9 @@ def compose_report_agreement(
     effective_publishable_status: str = STATUS_UNKNOWN,
     toolkit_top_level_status: str = STATUS_UNKNOWN,
     toolkit_publishability_stage_status: Optional[str] = None,
+    source_fidelity_effective_status: Optional[str] = None,
+    final_reconciliation_accepted: bool = False,
+    final_reconciliation_status: Optional[str] = None,
     report_freshness_states: Optional[Dict[str, str]] = None,
     missing_reports: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -216,6 +219,26 @@ def compose_report_agreement(
 
     blockers: List[str] = []
     diagnostics: List[str] = []
+
+    # Step 5.1: normalize effective fidelity and reconciliation status
+    sfe_effective = source_fidelity_effective_status or sf
+    sfe_normalized = _normalize_status(sfe_effective)
+    # Preserve original effective string for output (e.g. "reconciled_degraded")
+    sfe = sfe_effective if source_fidelity_effective_status else sf
+    frs = (
+        final_reconciliation_status
+        if final_reconciliation_status else "not_applicable"
+    )
+    source_fidelity_reconciled = (
+        final_reconciliation_accepted
+        and str(sfe_effective).strip().lower() == "reconciled_degraded"
+    )
+    if source_fidelity_reconciled:
+        diagnostics.append(
+            "source_fidelity_reconciled: accepted final reconciliation, "
+            "effective source fidelity is degraded (not clean pass)"
+        )
+
     internal_coherent = True
 
     # 1) Required reports present
@@ -311,7 +334,9 @@ def compose_report_agreement(
     # 10) Determine playable_publication_status
     if agreement_status != STATUS_PASS:
         playable = STATUS_BLOCKED
-    elif sf != STATUS_PASS:
+    elif sf != STATUS_PASS and not source_fidelity_reconciled:
+        playable = STATUS_BLOCKED
+    elif rs != STATUS_PASS:
         playable = STATUS_BLOCKED
     elif vs != STATUS_PASS:
         playable = STATUS_BLOCKED
@@ -326,6 +351,10 @@ def compose_report_agreement(
         "status": agreement_status,
         "internal_coherent": internal_coherent,
         "source_fidelity_status": sf,
+        "source_fidelity_effective_status": sfe,
+        "final_reconciliation_accepted": final_reconciliation_accepted,
+        "final_reconciliation_status": frs,
+        "source_fidelity_reconciled": source_fidelity_reconciled,
         "validation_status": vs,
         "ready_status": rs,
         "publishable_status": ps,
@@ -422,6 +451,23 @@ def compose_report_agreement_from_module_dir(
         for rtype in stale_reports:
             freshness_states[rtype] = "stale"
 
+    # Step 5.1: load accepted final reconciliation report if present
+    final_rec_accepted = False
+    final_rec_status = None
+    sfe_status = None
+    try:
+        from utils.toolkit_final_reconciliation import (
+            load_final_reconciliation_report,
+            is_final_reconciliation_accepted,
+        )
+        recon_report = load_final_reconciliation_report(module_dir)
+        if recon_report is not None and is_final_reconciliation_accepted(recon_report):
+            final_rec_accepted = True
+            final_rec_status = recon_report.get("status")
+            sfe_status = recon_report.get("source_fidelity_effective_status")
+    except Exception:
+        pass
+
     return compose_report_agreement(
         source_fidelity_status=sf_status,
         validation_status=vs_status,
@@ -430,6 +476,9 @@ def compose_report_agreement_from_module_dir(
         effective_publishable_status=eps_status,
         toolkit_top_level_status=tts,
         toolkit_publishability_stage_status=tps,
+        source_fidelity_effective_status=sfe_status,
+        final_reconciliation_accepted=final_rec_accepted,
+        final_reconciliation_status=final_rec_status,
         report_freshness_states=freshness_states if freshness_states else None,
         missing_reports=missing if missing else None,
     )

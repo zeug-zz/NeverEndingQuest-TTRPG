@@ -6489,6 +6489,29 @@
 
         // TABLETOP MODE: Extract report-agreement status from multi-report payloads.
         // Distinguishes source_fidelity_status from playable_publication_status.
+        function isFinalReconciledPlayable(payload) {
+            const obj = (payload && typeof payload === 'object') ? payload : {};
+            if (!obj) return false;
+            const candidates = [
+                obj,
+                obj.result || {},
+                obj.report_agreement || {},
+                (obj.result || {}).report_agreement || {},
+                (obj.stages || {}).report_agreement || {},
+                ((obj.result || {}).stages || {}).report_agreement || {},
+            ];
+            for (const c of candidates) {
+                if (c && typeof c === 'object'
+                    && c.final_reconciliation_accepted === true
+                    && c.source_fidelity_reconciled === true
+                    && c.source_fidelity_effective_status === 'reconciled_degraded'
+                    && c.playable_publication_status === 'pass') {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         function formatReportAgreementSection(rawPayload) {
             const _obj = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
             if (!_obj || Object.keys(_obj).length === 0) {
@@ -6528,6 +6551,9 @@
             lines.push(`- Status: ${ra.status || 'unknown'}`);
             lines.push(`- Internal Coherent: ${ic === true ? 'yes' : ic === false ? 'no' : 'unknown'}`);
             lines.push(`- Source Fidelity: ${sf}`);
+            lines.push(`- Source Fidelity Effective: ${ra.source_fidelity_effective_status || _obj.source_fidelity_effective_status || sf}`);
+            lines.push(`- Source Fidelity Reconciled: ${ra.source_fidelity_reconciled ? 'yes' : 'no'}`);
+            lines.push(`- Final Reconciliation: ${ra.final_reconciliation_status || _obj.final_reconciliation_status || 'not_applicable'}${ra.final_reconciliation_accepted ? ' (accepted)' : ''}`);
             lines.push(`- Validation: ${ra.validation_status || 'unknown'}`);
             lines.push(`- Readiness: ${ra.ready_status || 'unknown'}`);
             lines.push(`- Publishability: ${ra.publishable_status || 'unknown'}`);
@@ -7822,13 +7848,24 @@
                         setHomebrewConsoleWorking(false);
                         const blockedResult = job.result || {};
                         const bf = blockedResult.build_fidelity || {};
-                        renderHomebrewUploadStatus(
-                            'error',
-                            `Build fidelity blocked: ${bf.refusal_reason || blockedResult.error || 'unknown'} (final gates trigger this before finish)`,
-                            JSON.stringify(blockedResult, null, 2)
-                        );
-                        if (homebrewReviewTitle) {
-                            homebrewReviewTitle.textContent = `Build Blocked - Fidelity Check Failed [job: ${jobId}]`;
+                        if (isFinalReconciledPlayable(blockedResult)) {
+                            renderHomebrewUploadStatus(
+                                'success',
+                                `Build completed after final reconciliation. Source fidelity is reconciled/degraded (not clean pass). Playable publication candidate.`,
+                                buildHomebrewHydrationAwareDetails(payload, job, blockedResult)
+                            );
+                            if (homebrewReviewTitle) {
+                                homebrewReviewTitle.textContent = `Build Playable - Final Reconciliation Accepted [job: ${jobId}]`;
+                            }
+                        } else {
+                            renderHomebrewUploadStatus(
+                                'error',
+                                `Build fidelity blocked: ${bf.refusal_reason || blockedResult.error || 'unknown'} (final gates trigger this before finish)`,
+                                JSON.stringify(blockedResult, null, 2)
+                            );
+                            if (homebrewReviewTitle) {
+                                homebrewReviewTitle.textContent = `Build Blocked - Fidelity Check Failed [job: ${jobId}]`;
+                            }
                         }
                         stopHomebrewUploadPolling();
                         if (homebrewUploadButton) {
@@ -7991,13 +8028,24 @@
                     if (job.status === 'not_publishable') {
                         setHomebrewConsoleWorking(false);
                         const blockedPayload = job.result || job;
-                        renderHomebrewUploadStatus(
-                            'warning',
-                            'Upload reached finisher, but publishability remains blocked (not_publishable).',
-                            buildHomebrewHydrationAwareDetails(payload, job, blockedPayload)
-                        );
-                        if (homebrewReviewTitle) {
-                            homebrewReviewTitle.textContent = `Not Publishable [job: ${jobId}]`;
+                        if (isFinalReconciledPlayable(blockedPayload)) {
+                            renderHomebrewUploadStatus(
+                                'success',
+                                'Build completed after final reconciliation. Source fidelity is reconciled/degraded (not clean pass). Playable publication candidate.',
+                                buildHomebrewHydrationAwareDetails(payload, job, blockedPayload)
+                            );
+                            if (homebrewReviewTitle) {
+                                homebrewReviewTitle.textContent = `Playable - Final Reconciliation Accepted [job: ${jobId}]`;
+                            }
+                        } else {
+                            renderHomebrewUploadStatus(
+                                'warning',
+                                'Upload reached finisher, but publishability remains blocked (not_publishable).',
+                                buildHomebrewHydrationAwareDetails(payload, job, blockedPayload)
+                            );
+                            if (homebrewReviewTitle) {
+                                homebrewReviewTitle.textContent = `Not Publishable [job: ${jobId}]`;
+                            }
                         }
                         await loadToolkitHomebrewReview(jobId);
                         socket.emit('request_module_list');
@@ -8045,6 +8093,31 @@
                             `Homebrew ingest quarantined [stage: ${stage}] reason: ${job.quarantine_reason || 'unknown'}`,
                             JSON.stringify(job.result || job, null, 2)
                         );
+                        stopHomebrewUploadPolling();
+                        if (homebrewUploadButton) {
+                            homebrewUploadButton.disabled = false;
+                        }
+                        return;
+                    }
+
+                    if (job.status === 'final_reconciliation_required') {
+                        setHomebrewConsoleWorking(false);
+                        const blockedResult = job.result || {};
+                        const bf = blockedResult.build_fidelity || {};
+                        const briefPath = job.final_reconciliation_brief_path
+                            || (bf.final_reconciliation_brief_path || '');
+                        let briefInfo = '';
+                        if (briefPath) {
+                            briefInfo = `\nReconciliation brief: ${briefPath}`;
+                        }
+                        renderHomebrewUploadStatus(
+                            'warning',
+                            `Final reconciliation required. Source-fidelity blockers were classified as editorial, not fatal. A final reconciliation brief was written.${briefInfo}`,
+                            buildHomebrewHydrationAwareDetails(payload, job, blockedResult)
+                        );
+                        if (homebrewReviewTitle) {
+                            homebrewReviewTitle.textContent = `Final Reconciliation Required [job: ${jobId}]`;
+                        }
                         stopHomebrewUploadPolling();
                         if (homebrewUploadButton) {
                             homebrewUploadButton.disabled = false;

@@ -1193,6 +1193,24 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### Toolkit Accurate-Ingest Final Reconciliation Boundary (ARCHIVED - 2026-06-04)
+
+**Status:** ARCHIVED - Implemented final reconciliation boundary for accurate-ingest build-fidelity blockers. Editorial source-fidelity mismatches (e.g., headings misclassified as locations) no longer cause terminal build failure; they are classified, persisted as reconciliation brief/report, and continue past build-fidelity when accepted reconciliation is present. The LLM Builder final editor is deferred to the next slice.
+
+**Implementation Summary:**
+- `utils/toolkit_final_blocker_classifier.py` (NEW) — Provider-free classifier: separates blockers into fatal (JSON/schema/topology failures) and editorial (source-fidelity mismatches). Returns `{status, fatal_blockers, editorial_blockers, warnings, can_attempt_final_reconciliation, ...}`.
+- `utils/toolkit_final_reconciliation.py` (NEW) — Provider-free reconciliation helpers: `build_final_reconciliation_brief()`, `build_final_reconciliation_report()`, `should_persist_final_reconciliation_brief()`, `persist_final_reconciliation_brief()`, `persist_final_reconciliation_report()`, `load_final_reconciliation_report()`, `is_final_reconciliation_accepted()`.
+- `utils/toolkit_report_agreement.py` — Extended with reconciliation fields (`source_fidelity_effective_status`, `final_reconciliation_accepted`, `source_fidelity_reconciled`). Playable publication allows pass when source fidelity is blocked but accepted reconciliation exists.
+- `web/extensions/toolkit_homebrew_packet_builder.py` — Classification metadata attached in build result; editorial-only blockers persisted as `final_reconciliation_brief.json` with `status=final_reconciliation_required`; accepted reconciliation continues without blocking.
+- `web/extensions/toolkit_module_finisher.py` — Report agreement stage loads accepted reconciliation report; `toolkit_build_report.json` includes reconciliation fields at top level.
+- `web/routes/toolkit_homebrew_routes.py` — Added `final_reconciliation_required` terminal state and canonical phase; maps build status to correct job state.
+- `web/templates/module_toolkit.html` — Added `isFinalReconciledPlayable()` helper, reconciled/degraded wording display, `final_reconciliation_required` GUI branch before generic failure. Live Well_of_Ruin status routing fix.
+- `utils/npc_reconciler.py` — Fixed `safe_write_json` argument order bug (args were swapped).
+- `scripts/test_toolkit_final_blocker_classifier.py` (NEW) — 57 tests (classifier contract, fatal/editorial/mixed/unknown status, Well-like heading blockers).
+- `scripts/test_toolkit_final_reconciliation.py` (NEW) — 48 tests (brief/report contracts, persistence, artifact immutability, boundary contracts).
+- `scripts/test_toolkit_report_agreement.py` (NEW) — 29 tests (reconciliation fields, playable gating, source fidelity preservation, end-state regression).
+- Tests: 155 total across all suites. All targeted suites pass cleanly.
+
 ### Level-Up JSON Leak, HP Reconciliation & NPC Targeting (ARCHIVED - 2026-06-01)
 
 **Status:** ARCHIVED - Fixed JSON leak in web GUI for NPC level-up finalization (truncated JSON display), added HP reconciliation on level-up, added `/levelup [character]` support, and added automatic compact correction for malformed final action envelopes.

@@ -79,6 +79,7 @@ _TERMINAL_JOB_STATES = {
     "rejected",
     "blocked",
     "awaiting_overwrite_confirmation",
+    "final_reconciliation_required",
 }
 
 _FINISHING_REACHABLE_STATES = {
@@ -324,6 +325,7 @@ _ACCURATE_INGEST_CANONICAL_PHASES = {
     "seeding_module",
     "enriching_module",
     "build_fidelity",
+    "final_reconciliation",
     "readiness",
     "finishing",
     "publishability_audit",
@@ -335,6 +337,7 @@ _ACCURATE_INGEST_CANONICAL_PHASES = {
     "rejected",
     "blocked",
     "awaiting_overwrite_confirmation",
+    "final_reconciliation_required",
 }
 
 
@@ -1461,6 +1464,23 @@ def _run_homebrew_build_job(
                 result=build_result,
                 error=str(build_result.get("error") or "build_fidelity_blocked"),
                 build_result_path=str(workspace_files["build_result"]),
+            )
+            return
+
+        if build_status == "final_reconciliation_required":
+            _set_job_state(
+                job_id,
+                "final_reconciliation_required",
+                stage="final_reconciliation",
+                pipeline_status="final_reconciliation_required",
+                result=build_result,
+                error="",
+                build_result_path=str(workspace_files["build_result"]),
+                final_reconciliation_brief_path=str(
+                    (build_result.get("build_fidelity") or {}).get(
+                        "final_reconciliation_brief_path", ""
+                    )
+                ),
             )
             return
 

@@ -2036,5 +2036,310 @@ class TestSourceFidelityReportPersistence(unittest.TestCase):
                          f"Finisher must not read MODULE_SUMMARY.md: lines={lines_to_check}")
 
 
+class TestStep61BuildReportReconciliationFields(unittest.TestCase):
+    """Step 6.1: toolkit_build_report.json includes final reconciliation fields."""
+
+    def test_stage_return_includes_reconciliation_fields(self):
+        """_run_report_agreement_stage dict includes four reconciliation fields."""
+        source = Path("web/extensions/toolkit_module_finisher.py").read_text(encoding="utf-8")
+        self.assertIn("source_fidelity_effective_status", source)
+        self.assertIn("final_reconciliation_accepted", source)
+        self.assertIn("final_reconciliation_status", source)
+        self.assertIn("source_fidelity_reconciled", source)
+
+    def test_final_report_includes_reconciliation_top_level_fields(self):
+        """Final report assembly writes four reconciliation fields at top level."""
+        source = Path("web/extensions/toolkit_module_finisher.py").read_text(encoding="utf-8")
+        self.assertIn('["source_fidelity_effective_status"]', source)
+        self.assertIn('["final_reconciliation_accepted"]', source)
+        self.assertIn('["final_reconciliation_status"]', source)
+        self.assertIn('["source_fidelity_reconciled"]', source)
+
+    def test_final_report_defaults_to_source_fidelity_when_no_reconciliation(self):
+        """source_fidelity_effective_status defaults to source_fidelity_status when absent."""
+        source = Path("web/extensions/toolkit_module_finisher.py").read_text(encoding="utf-8")
+        self.assertIn("source_fidelity_status", source,
+                      "Effective must fall back to original source_fidelity_status")
+
+    def test_no_source_fidelity_pass_override_in_finisher(self):
+        """Finisher never hard-assigns source_fidelity_status to pass."""
+        source = Path("web/extensions/toolkit_module_finisher.py").read_text(encoding="utf-8")
+        self.assertNotIn('["source_fidelity_status"] = "pass"', source)
+        self.assertNotIn("'source_fidelity_status'] = 'pass'", source)
+
+    def test_stage_loads_reconciliation_report(self):
+        """_run_report_agreement_stage imports and uses reconciliation helpers."""
+        source = Path("web/extensions/toolkit_module_finisher.py").read_text(encoding="utf-8")
+        self.assertIn("load_final_reconciliation_report", source)
+        self.assertIn("is_final_reconciliation_accepted", source)
+        self.assertIn("source_fidelity_effective_status=sfe_status", source)
+        self.assertIn("final_reconciliation_accepted=final_rec_accepted", source)
+        self.assertIn("final_reconciliation_status=final_rec_status", source)
+
+    def test_report_agreement_stage_reconciliation_fields_in_actual_run(self):
+        """With accepted recon report in module dir, finisher stage emits reconciliation fields."""
+        import os, tempfile
+        from pathlib import Path
+        import web.extensions.toolkit_module_finisher as finisher
+
+        self.orig_continuity = finisher._run_continuity_stage
+        self.orig_registry = finisher._run_registry_stage
+        self.orig_materialization = finisher._run_monster_materialization_stage
+        self.orig_publishability = finisher._run_publishability_stage
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "RARecTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "blocked"}), encoding="utf-8"
+            )
+            (module_dir / "final_reconciliation_report.json").write_text(json.dumps({
+                "version": "v1", "status": "accepted",
+                "reconciliation_status": "accepted",
+                "source_fidelity_effective_status": "reconciled_degraded",
+                "playable_publication_candidate": True,
+                "decisions": ["accepted_final_reconciliation"],
+            }), encoding="utf-8")
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "blocked",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+
+            result = finisher.run_toolkit_module_postbuild_finishing(
+                "RARecTest", strict=True
+            )
+
+            self.assertEqual(result.get("source_fidelity_status"), "blocked")
+            self.assertEqual(result.get("source_fidelity_effective_status"), "reconciled_degraded")
+            self.assertTrue(result.get("final_reconciliation_accepted"))
+            self.assertEqual(result.get("final_reconciliation_status"), "accepted")
+            self.assertTrue(result.get("source_fidelity_reconciled"))
+            self.assertEqual(result.get("playable_publication_status"), "pass")
+
+            report_path = module_dir / "toolkit_build_report.json"
+            self.assertTrue(report_path.exists())
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted.get("source_fidelity_status"), "blocked")
+            self.assertEqual(persisted.get("source_fidelity_effective_status"), "reconciled_degraded")
+            self.assertTrue(persisted.get("final_reconciliation_accepted"))
+        finally:
+            finisher._run_continuity_stage = self.orig_continuity
+            finisher._run_registry_stage = self.orig_registry
+            finisher._run_monster_materialization_stage = self.orig_materialization
+            finisher._run_publishability_stage = self.orig_publishability
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
+
+
+class TestStep62TemplateReconciliationDisplay(unittest.TestCase):
+    """Step 6.2: template displays reconciliation fields distinctly from source fidelity."""
+
+    def test_template_shows_source_fidelity_effective(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("Source Fidelity Effective", source)
+
+    def test_template_shows_source_fidelity_reconciled(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("Source Fidelity Reconciled", source)
+
+    def test_template_shows_final_reconciliation(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("Final Reconciliation", source)
+
+    def test_template_still_shows_original_source_fidelity_and_playable(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("Source Fidelity:", source)
+        self.assertIn("Playable Publication:", source)
+
+    def test_template_uses_effective_and_reconciled_fields(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("source_fidelity_effective_status", source)
+        self.assertIn("source_fidelity_reconciled", source)
+        self.assertIn("final_reconciliation_status", source)
+        self.assertIn("final_reconciliation_accepted", source)
+
+    def test_template_no_source_fidelity_pass_override(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        fields = ["source_fidelity_status", "source_fidelity_effective_status"]
+        for f in fields:
+            self.assertNotIn(f'{f} = "pass"', source,
+                             f"Template must not hard-assign {f} to pass")
+
+
+class TestStep63ReconciledPlayableNoGenericErrors(unittest.TestCase):
+    """Step 6.3: reconciled playable modules do not show generic error copy."""
+
+    def test_is_final_reconciled_playable_helper_exists(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("isFinalReconciledPlayable", source)
+
+    def test_helper_checks_all_required_fields(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("final_reconciliation_accepted", source)
+        self.assertIn("source_fidelity_reconciled", source)
+        self.assertIn("source_fidelity_effective_status", source)
+        self.assertIn("playable_publication_status", source)
+
+    def test_helper_inspects_nested_payloads(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("obj.result || {}", source,
+                      "Helper must check payload.result")
+        self.assertIn("report_agreement", source,
+                      "Helper must check nested report_agreement")
+
+    def test_blocked_branch_calls_is_final_reconciled_playable(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        blocked_start = source.find("job.status === 'blocked'")
+        self.assertGreater(blocked_start, 0)
+        section = source[blocked_start:blocked_start + 800]
+        self.assertIn("isFinalReconciledPlayable", section)
+
+    def test_not_publishable_branch_calls_is_final_reconciled_playable(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        np_start = source.find("job.status === 'not_publishable'")
+        self.assertGreater(np_start, 0)
+        section = source[np_start:np_start + 800]
+        self.assertIn("isFinalReconciledPlayable", section)
+
+    def test_reconciled_branch_no_build_fidelity_blocked_text(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        idx_reconciled = source.find("isFinalReconciledPlayable(blockedResult)")
+        idx_build_blocked = source.find("Build fidelity blocked")
+        self.assertLess(idx_reconciled, idx_build_blocked,
+                        "Reconciled check must precede generic Build fidelity blocked")
+
+    def test_reconciled_blocked_title_is_not_failure(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        blocked_start = source.find("job.status === 'blocked'")
+        section = source[blocked_start:blocked_start + 1200]
+        self.assertIn("Final Reconciliation Accepted", section,
+                      "Reconciled blocked title must mention Final Reconciliation Accepted")
+        self.assertIn("Build Blocked - Fidelity Check Failed", source,
+                      "Generic blocked title must remain for non-reconciled cases")
+
+    def test_reconciled_not_publishable_title_is_not_failure(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        np_start = source.find("job.status === 'not_publishable'")
+        section = source[np_start:np_start + 1200]
+        self.assertIn("Final Reconciliation Accepted", section,
+                      "Reconciled not_publishable title must mention Final Reconciliation Accepted")
+        self.assertIn("Not Publishable", source,
+                      "Generic not_publishable title must remain for non-reconciled cases")
+
+    def test_generic_blocked_text_still_present_for_non_reconciled(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("Build fidelity blocked", source)
+        self.assertIn("not_publishable", source)
+
+
+class TestStep64ReconciledDegradedWording(unittest.TestCase):
+    """Step 6.4: wording tests for reconciled/degraded status in template."""
+
+    def setUp(self):
+        self.source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+    def test_template_contains_reconciled_degraded_wording(self):
+        self.assertIn("reconciled/degraded", self.source)
+        self.assertIn("not clean pass", self.source)
+
+    def test_template_contains_playable_publication_wording(self):
+        self.assertIn("Playable Publication", self.source)
+
+    def test_template_contains_source_fidelity_effective(self):
+        self.assertIn("Source Fidelity Effective", self.source)
+
+    def test_template_contains_final_reconciliation_labels(self):
+        self.assertIn("Final Reconciliation", self.source)
+        self.assertIn("Final Reconciliation Accepted", self.source)
+
+    def test_template_no_clean_pass_claim_in_reconciled_branch(self):
+        self.assertNotIn("source fidelity pass", self.source.lower())
+        self.assertNotIn("source fidelity is pass", self.source.lower())
+        self.assertNotIn("clean source-fidelity pass", self.source.lower())
+
+    def test_source_fidelity_before_effective_ordering(self):
+        idx_sf = self.source.find("Source Fidelity:")
+        idx_sfe = self.source.find("Source Fidelity Effective:")
+        self.assertLess(idx_sf, idx_sfe,
+                        "Source Fidelity must appear before Source Fidelity Effective")
+        self.assertIn("source_fidelity_effective_status", self.source)
+
+    def test_reconciled_copy_includes_playable_and_degraded(self):
+        idx = self.source.find("reconciled/degraded")
+        section = self.source[idx - 200:idx + 200]
+        self.assertIn("Playable publication candidate", section,
+                      "Reconciled copy must mention playable publication")
+
+    def test_generic_failure_copy_still_present(self):
+        self.assertIn("Build fidelity blocked", self.source,
+                      "Generic blocked copy must remain for non-reconciled")
+        self.assertIn("not_publishable", self.source,
+                      "Generic not_publishable copy must remain for non-reconciled")
+
+
+class TestLiveWellOfRuinStatusRoutingFix(unittest.TestCase):
+    """Post-7 fix: final_reconciliation_required routing and safe_write_json fix."""
+
+    def test_final_reconciliation_required_is_terminal_job_state(self):
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+        self.assertIn('"final_reconciliation_required"', source)
+
+    def test_final_reconciliation_required_is_canonical_phase(self):
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+        self.assertIn('"final_reconciliation_required"', source)
+
+    def test_final_reconciliation_is_canonical_phase(self):
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+        self.assertIn('"final_reconciliation"', source)
+
+    def test_build_status_handler_exists(self):
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+        self.assertIn('build_status == "final_reconciliation_required"', source)
+
+    def test_build_handler_maps_to_job_status(self):
+        source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")
+        self.assertIn('"final_reconciliation_required"', source)
+        self.assertIn('"final_reconciliation"', source)
+        self.assertIn("final_reconciliation_brief_path", source)
+
+    def test_template_has_final_reconciliation_required_branch(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("'final_reconciliation_required'", source)
+        self.assertIn("editorial, not fatal", source)
+        self.assertIn("final_reconciliation_brief_path", source)
+
+    def test_template_final_reconciliation_before_generic_failed(self):
+        source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        idx_final_rec = source.find("'final_reconciliation_required'")
+        idx_failed = source.rfind("Homebrew ingest failed")
+        self.assertLess(idx_final_rec, idx_failed,
+                        "final_reconciliation_required must appear before generic failed")
+
+    def test_npc_reconciler_safe_write_json_args_correct(self):
+        source = Path("utils/npc_reconciler.py").read_text(encoding="utf-8")
+        self.assertIn("safe_write_json(area_path, area_data)", source)
+
+
 if __name__ == "__main__":
     unittest.main()

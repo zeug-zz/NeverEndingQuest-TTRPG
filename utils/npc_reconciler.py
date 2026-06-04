@@ -162,7 +162,7 @@ Answer with only the word "true" or "false"."""
                 location["npcs"] = reconciled_npcs
 
             if modified:
-                safe_write_json(area_data, area_path)
+                safe_write_json(area_path, area_data)
                 print(f"  -> Reconciled NPC names in {area_id}.json")
 
 def main():

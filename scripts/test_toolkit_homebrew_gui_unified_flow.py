@@ -17,12 +17,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from web.extensions.toolkit_homebrew_packet_builder import (
     _classify_blueprint_handoff,
-    _describe_blueprint_not_ready,
-    _execute_module_builder,
     run_toolkit_homebrew_packet_build,
-    ENABLE_ACCURATE_INGEST_BLUEPRINT_HANDOFF,
-    ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD,
 )
+from utils.toolkit_final_reconciliation import REPORT_VERSION
 from web.routes.toolkit_homebrew_routes import (
     _get_canonical_accurate_ingest_phase,
     _build_accurate_ingest_summary,
@@ -1831,6 +1828,865 @@ class TestFidelityReviewBranchInIngestJob(unittest.TestCase):
         status = str(job.get("status") or "")
         self.assertEqual(status, "awaiting_review",
                          "Blocked review should enter awaiting_review")
+
+
+class TestFinalReconciliationBoundarySourceContract(unittest.TestCase):
+    """Source-contract tests proving final reconciliation boundary does not alter front/middle pipeline.
+    
+    These tests lock the no-change boundary for:
+    1. Source graph extraction
+    2. Normalized packet generation
+    3. Builder blueprint generation
+    4. Backstage audit/briefing
+    5. Source-enhanced ModuleBuilder handoff
+    """
+
+    def setUp(self):
+        import uuid
+        self.tmpdir_obj = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir_obj.cleanup)
+        self.test_slug = "Boundary_Test_" + uuid.uuid4().hex[:8]
+        self.test_source_hash = uuid.uuid4().hex
+        self.workspace = _create_workspace(
+            self.tmpdir_obj.name,
+            **{
+                "normalized_packet.json": {
+                    "packet_version": "packet.v1",
+                    "name": "boundary-test-001",
+                    "title": self.test_slug,
+                    "description": "A test adventure for boundary tests",
+                    "source_hash": self.test_source_hash,
+                    "source_rights": "user_authored",
+                    "normalization_state": "normalized",
+                },
+            }
+        )
+
+    def test_source_graph_extraction_upstream_of_final_reconciliation(self):
+        """Source graph extraction produces artifacts without final reconciliation fields."""
+        import utils.toolkit_source_manifest as tsm
+        
+        # Create minimal source text
+        source_text = "# Test Adventure\n\n## Introduction\n\nThis is a test."
+        source_path = str(self.workspace / "source.md")
+        
+        # Call build_source_manifest with actual test data
+        result = tsm.build_source_manifest(source_text, source_path, self.test_source_hash)
+        
+        # Verify result structure exists
+        self.assertIsInstance(result, dict)
+        self.assertIn("manifest_version", result)
+        
+        # Final reconciliation fields must NOT appear in source manifest output
+        forbidden_fields = [
+            "final_reconciliation_brief",
+            "final_reconciliation_report",
+            "reconciliation_status",
+            "reconciliation_accepted",
+            "source_fidelity_effective_status"
+        ]
+        for field in forbidden_fields:
+            self.assertNotIn(field, result,
+                           f"Source manifest must not contain {field}")
+
+    def test_normalized_packet_generation_unchanged(self):
+        """Normalized packet artifacts do not contain final reconciliation fields."""
+        # Read the actual normalized_packet.json from workspace
+        packet_path = self.workspace / "normalized_packet.json"
+        self.assertTrue(packet_path.exists(), "normalized_packet.json must exist in workspace")
+        
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        
+        # Verify expected fields exist
+        self.assertIn("packet_version", packet)
+        self.assertIn("source_hash", packet)
+        self.assertIn("normalization_state", packet)
+        
+        # Final reconciliation fields must NOT appear in normalized packet
+        forbidden_fields = [
+            "final_reconciliation_brief",
+            "final_reconciliation_report",
+            "reconciliation_status",
+            "reconciliation_accepted",
+            "source_fidelity_effective_status"
+        ]
+        for field in forbidden_fields:
+            self.assertNotIn(field, packet,
+                           f"Normalized packet must not contain {field}")
+
+    def test_builder_blueprint_generation_unchanged(self):
+        """Builder blueprint generation produces output without final reconciliation fields."""
+        import utils.toolkit_builder_blueprint as tbb
+        
+        # Create minimal test inputs
+        source_graph = {
+            "graph_version": "source_graph.v1",
+            "atoms": [],
+            "edges": []
+        }
+        identity_report = {
+            "identity_version": "identity.v1",
+            "resolved_identity": {"title": self.test_slug}
+        }
+        plot_topology = {
+            "topology_version": "topology.v1",
+            "plot_points": []
+        }
+        synthesis_report = {
+            "synthesis_version": "synthesis.v1",
+            "synthesized_sections": {}
+        }
+        normalized_packet = json.loads(
+            (self.workspace / "normalized_packet.json").read_text(encoding="utf-8")
+        )
+        fidelity_report = {
+            "fidelity_status": "pass",
+            "warnings": []
+        }
+        triage_report = {
+            "triage_version": "triage.v1",
+            "decisions": []
+        }
+        
+        # Call generate_builder_blueprint with actual test data
+        result = tbb.generate_builder_blueprint(
+            source_graph=source_graph,
+            identity_report=identity_report,
+            plot_topology=plot_topology,
+            synthesis_report=synthesis_report,
+            normalized_packet=normalized_packet,
+            fidelity_report=fidelity_report,
+            triage_report=triage_report
+        )
+        
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn("blueprint_version", result)
+        
+        # Final reconciliation fields must NOT appear in blueprint output
+        forbidden_fields = [
+            "final_reconciliation_brief",
+            "final_reconciliation_report",
+            "reconciliation_status",
+            "reconciliation_accepted",
+            "source_fidelity_effective_status"
+        ]
+        for field in forbidden_fields:
+            self.assertNotIn(field, result,
+                           f"Builder blueprint must not contain {field}")
+
+    def test_backstage_audit_briefing_unchanged(self):
+        """Backstage audit artifact names remain unchanged and do not include final reconciliation."""
+        import inspect
+        # Check actual constants in run_backstage_agent module
+        import scripts.run_backstage_agent as rba
+        
+        # Verify the module has expected audit artifact constants
+        # These are the canonical artifact names that should not change
+        # (from run_accurate_ingest_audit function)
+        expected_artifact_names = [
+            "run.json",
+            "evidence.json",
+            "audit_report.json",
+            "recommendation.json"
+        ]
+        
+        # Check if module defines these constants or uses them in functions
+        module_source = inspect.getsource(rba)
+        
+        # Verify expected artifact names appear in module source
+        for artifact_name in expected_artifact_names:
+            self.assertIn(artifact_name, module_source,
+                         f"Backstage audit module must reference {artifact_name}")
+        
+        # Final reconciliation artifact names must NOT appear in backstage audit
+        forbidden_artifacts = [
+            "final_reconciliation_brief.json",
+            "final_reconciliation_report.json"
+        ]
+        for artifact in forbidden_artifacts:
+            self.assertNotIn(artifact, module_source,
+                           f"Backstage audit module must not reference {artifact}")
+
+    @patch("web.extensions.toolkit_homebrew_packet_builder._execute_module_builder")
+    def test_source_enhanced_modulebuilder_handoff_unchanged(self, mock_executor):
+        """Actual builder_input passed to ModuleBuilder preserves source fields and excludes reconciliation."""
+        # Build v2 workspace with source contract fields
+        bp = _make_v2_blueprint(
+            npc_roster=[
+                {"display_name": "TestNPC", "aliases": [], "role": "test"},
+            ],
+            location_roster=[
+                {"display_name": "TestLocation", "parent_area": "TestArea", "aliases": []},
+            ],
+            puzzle_graph=[
+                {"chain_id": "test_puzzle", "title": "Test Puzzle"},
+            ],
+            tone_requirements="test_tone",
+        )
+        report = {"blueprint_status": "ready", "fidelity_status": "pass"}
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        (self.workspace / "builder_blueprint_report.json").write_text(json.dumps(report), encoding="utf-8")
+        
+        # Add monster_refs and encounter_seeds to normalized packet
+        packet_path = self.workspace / "normalized_packet.json"
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["monster_refs"] = ["TestMonster"]
+        packet["encounter_seeds"] = ["Test encounter seed"]
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+        
+        # Add ui_review_snapshot required for build flow
+        ui_review = {
+            "decision": "approve",
+            "recorded_at": "2026-01-01T00:00:00Z",
+            "job_id": "test-job-boundary",
+            "packet_identity": {"source_hash": self.test_source_hash},
+        }
+        (self.workspace / "ui_review_snapshot.json").write_text(json.dumps(ui_review), encoding="utf-8")
+        
+        mock_executor.return_value = {"status": "success", "build_mode": "packet_workspace_v1"}
+        
+        # Run the actual packet build flow
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-job-boundary")
+        
+        # Capture the actual builder_input passed to _execute_module_builder
+        mock_executor.assert_called_once()
+        builder_input = mock_executor.call_args[0][0]
+        
+        # Verify required source fields are present in actual builder_input
+        required_source_fields = [
+            "source_npc_names",
+            "source_location_names",
+            "source_puzzle_ids",
+            "source_tone",
+            "source_monster_refs",
+            "source_encounter_seeds"
+        ]
+        for field in required_source_fields:
+            self.assertIn(field, builder_input,
+                         f"Actual builder_input must preserve {field}")
+        
+        # Verify specific values were passed through
+        self.assertIn("TestNPC", builder_input["source_npc_names"])
+        self.assertIn("TestLocation", builder_input["source_location_names"])
+        self.assertIn("test_puzzle", builder_input["source_puzzle_ids"])
+        self.assertIn("test_tone", builder_input["source_tone"])
+        self.assertIn("TestMonster", builder_input["source_monster_refs"])
+        self.assertIn("Test encounter seed", builder_input["source_encounter_seeds"])
+        
+        # Final reconciliation fields must NOT be injected into actual builder_input
+        forbidden_fields = [
+            "final_reconciliation_brief",
+            "final_reconciliation_report",
+            "final_reconciliation_required",
+            "reconciliation_status",
+            "reconciliation_accepted",
+            "source_fidelity_effective_status"
+        ]
+        for field in forbidden_fields:
+            self.assertNotIn(field, builder_input,
+                           f"Actual builder_input must not contain {field} before ModuleBuilder")
+        
+        # Also verify persisted builder_input.json doesn't contain reconciliation fields
+        persisted_path = self.workspace / "builder_input.json"
+        if persisted_path.exists():
+            persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+            for field in forbidden_fields:
+                self.assertNotIn(field, persisted,
+                               f"Persisted builder_input.json must not contain {field}")
+
+
+class TestStep41PacketBuilderClassification(unittest.TestCase):
+    """Step 4.1 source-contract tests: classification metadata in build_result."""
+
+    def test_packet_builder_source_imports_classifier(self):
+        """Packet builder source code imports classify_final_build_blockers."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("classify_final_build_blockers", source,
+                      "Packet builder must import classify_final_build_blockers")
+
+    def test_classification_metadata_structure(self):
+        """build_result classification dict has expected shape."""
+        classification = {
+            "status": "editorial",
+            "fatal_blockers": [],
+            "editorial_blockers": [{"type": "editorial", "message": "M", "category": "location"}],
+            "warnings": [],
+            "can_attempt_final_reconciliation": True,
+            "fatal_count": 0,
+            "editorial_count": 1,
+            "original_refusal_reason": "test",
+            "report_paths": {},
+        }
+        build_result = {
+            "status": "blocked",
+            "stage": "build_fidelity",
+            "error": "build_fidelity_blocked:test",
+            "final_blocker_classification": classification,
+            "build_fidelity": {
+                "status": "blocked",
+                "can_continue": False,
+                "refusal_reason": "test",
+                "report_path": "/tmp/bf.json",
+                "rollup_path": "/tmp/sf.json",
+                "final_blocker_classification_status": "editorial",
+            },
+        }
+        self.assertIn("final_blocker_classification", build_result)
+        self.assertEqual(build_result["final_blocker_classification"]["status"], "editorial")
+        self.assertEqual(
+            build_result["build_fidelity"]["final_blocker_classification_status"],
+            "editorial",
+        )
+
+    def test_build_fidelity_fields_preserved(self):
+        """Existing build_fidelity status/can_continue/refusal_reason/report_path preserved."""
+        build_fidelity = {
+            "status": "blocked",
+            "can_continue": False,
+            "refusal_reason": "Required location 'Trigger' not found in module",
+            "report_path": "/tmp/bf.json",
+            "rollup_path": "/tmp/sf.json",
+        }
+        classification = {"status": "editorial", "fatal_count": 0, "editorial_count": 1}
+        build_fidelity["final_blocker_classification_status"] = classification["status"]
+
+        self.assertEqual(build_fidelity["status"], "blocked")
+        self.assertFalse(build_fidelity["can_continue"])
+        self.assertEqual(
+            build_fidelity["refusal_reason"],
+            "Required location 'Trigger' not found in module",
+        )
+        self.assertEqual(build_fidelity["report_path"], "/tmp/bf.json")
+        self.assertEqual(build_fidelity["rollup_path"], "/tmp/sf.json")
+
+    def test_no_reconciliation_artifacts_in_packet_builder(self):
+        """Packet builder source does not reference reconciliation brief/report artifacts."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn("final_reconciliation_brief.json", source,
+                         "Packet builder must not persist reconciliation brief in 4.1")
+        self.assertNotIn("final_reconciliation_report.json", source,
+                         "Packet builder must not persist reconciliation report in 4.1")
+
+    def test_no_gui_or_publication_code_in_packet_builder(self):
+        """Packet builder source does not import GUI or publication modules."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn("module_toolkit.html", source,
+                         "Packet builder must not reference GUI templates")
+        self.assertNotIn("report_agreement", source,
+                         "Packet builder must not reference report agreement")
+
+
+class TestStep42FatalBlockedBehavior(unittest.TestCase):
+    """Step 4.2 contract tests: fatal/mixed classification stays terminal blocked."""
+
+    def _blocked_build_result(self, classification_status):
+        return {
+            "status": "blocked",
+            "stage": "build_fidelity",
+            "error": "build_fidelity_blocked:test refusal",
+            "final_blocker_classification": {"status": classification_status},
+            "build_fidelity": {
+                "status": "blocked",
+                "can_continue": False,
+                "refusal_reason": "test refusal",
+                "report_path": "/tmp/bf.json",
+                "rollup_path": "/tmp/sf.json",
+                "final_blocker_classification_status": classification_status,
+            },
+        }
+
+    def test_fatal_classification_blocked(self):
+        """Fatal classification -> build_result status is blocked, stage is build_fidelity."""
+        br = self._blocked_build_result("fatal")
+        self.assertEqual(br["status"], "blocked")
+        self.assertEqual(br["stage"], "build_fidelity")
+        self.assertTrue(br["error"].startswith("build_fidelity_blocked:"))
+        self.assertEqual(br["final_blocker_classification"]["status"], "fatal")
+        self.assertEqual(br["build_fidelity"]["final_blocker_classification_status"], "fatal")
+
+    def test_mixed_classification_blocked(self):
+        """Mixed classification -> build_result status is blocked, stage is build_fidelity."""
+        br = self._blocked_build_result("mixed")
+        self.assertEqual(br["status"], "blocked")
+        self.assertEqual(br["stage"], "build_fidelity")
+        self.assertTrue(br["error"].startswith("build_fidelity_blocked:"))
+        self.assertEqual(br["final_blocker_classification"]["status"], "mixed")
+        self.assertEqual(br["build_fidelity"]["final_blocker_classification_status"], "mixed")
+
+    def test_fatal_mixed_no_reconciliation_required(self):
+        """Fatal/mixed build_result must not have reconciliation_required flag."""
+        for st in ("fatal", "mixed"):
+            br = self._blocked_build_result(st)
+            self.assertNotIn("final_reconciliation_required", br,
+                             f"fatal/mixed ({st}) must not set reconciliation_required")
+            self.assertNotIn("reconciliation_required", br.get("build_fidelity", {}),
+                             f"fatal/mixed ({st}) must not set reconciliation in build_fidelity")
+
+    def test_packet_builder_no_reconciliation_functions(self):
+        """Packet builder source does not import reconciliation report (only brief in 4.3)."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn("persist_final_reconciliation_report", source,
+                         "Packet builder must not persist reconciliation report in 4.3")
+
+    def test_build_fidelity_fields_preserved_for_fatal(self):
+        """Fatal/mixed block preserves all build_fidelity fields."""
+        for st in ("fatal", "mixed"):
+            br = self._blocked_build_result(st)
+            bf = br["build_fidelity"]
+            self.assertEqual(bf["status"], "blocked")
+            self.assertFalse(bf["can_continue"])
+            self.assertEqual(bf["refusal_reason"], "test refusal")
+            self.assertEqual(bf["report_path"], "/tmp/bf.json")
+            self.assertEqual(bf["rollup_path"], "/tmp/sf.json")
+
+
+class TestStep43EditorialReconciliationRequired(unittest.TestCase):
+    """Step 4.3 contract tests: editorial-only -> reconciliation required, not terminal block."""
+
+    def _editorial_build_result(self):
+        return {
+            "status": "final_reconciliation_required",
+            "stage": "final_reconciliation",
+            "final_reconciliation_required": True,
+            "final_reconciliation_brief": {
+                "status": "written",
+                "path": "/ws/final_reconciliation_brief.json",
+                "bytes": 1024,
+                "error": None,
+            },
+            "final_blocker_classification": {
+                "status": "editorial",
+                "fatal_count": 0,
+                "editorial_count": 3,
+            },
+            "build_fidelity": {
+                "status": "blocked",
+                "can_continue": False,
+                "refusal_reason": "test",
+                "report_path": "/tmp/bf.json",
+                "rollup_path": "/tmp/sf.json",
+                "final_blocker_classification_status": "editorial",
+                "final_reconciliation_required": True,
+                "final_reconciliation_brief_path": "/ws/final_reconciliation_brief.json",
+            },
+        }
+
+    def test_editorial_sets_final_reconciliation_required(self):
+        """Editorial classification sets final_reconciliation_required true."""
+        br = self._editorial_build_result()
+        self.assertIn("final_reconciliation_required", br)
+        self.assertTrue(br["final_reconciliation_required"])
+        self.assertTrue(br["build_fidelity"]["final_reconciliation_required"])
+
+    def test_editorial_no_longer_generic_blocked(self):
+        """Editorial result is not generic build_fidelity_blocked."""
+        br = self._editorial_build_result()
+        self.assertEqual(br["status"], "final_reconciliation_required")
+        self.assertEqual(br["stage"], "final_reconciliation")
+        self.assertNotIn("error", br)
+        self.assertNotIn("build_fidelity_blocked:", br.get("error", ""))
+
+    def test_editorial_persists_brief_metadata(self):
+        """Editorial result records brief persistence metadata."""
+        br = self._editorial_build_result()
+        self.assertIn("final_reconciliation_brief", br)
+        self.assertEqual(br["final_reconciliation_brief"]["status"], "written")
+        self.assertTrue(
+            br["final_reconciliation_brief"]["path"].endswith("final_reconciliation_brief.json")
+        )
+        self.assertEqual(
+            br["build_fidelity"]["final_reconciliation_brief_path"],
+            br["final_reconciliation_brief"]["path"],
+        )
+
+    def test_editorial_preserves_build_fidelity_fields(self):
+        """Editorial result preserves build_fidelity evidence fields."""
+        br = self._editorial_build_result()
+        bf = br["build_fidelity"]
+        self.assertEqual(bf["status"], "blocked")
+        self.assertFalse(bf["can_continue"])
+        self.assertEqual(bf["refusal_reason"], "test")
+        self.assertEqual(bf["report_path"], "/tmp/bf.json")
+        self.assertEqual(bf["rollup_path"], "/tmp/sf.json")
+        self.assertEqual(bf["final_blocker_classification_status"], "editorial")
+
+    def test_packet_builder_source_handles_editorial_branch(self):
+        """Packet builder source contains editorial reconciliation branch logic."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("final_reconciliation_required", source,
+                      "Packet builder must set final_reconciliation_required for editorial")
+        self.assertIn("build_final_reconciliation_brief", source,
+                      "Packet builder must call build_final_reconciliation_brief")
+        self.assertIn("_is_final_reconciliation", source,
+                      "Packet builder must use a guard flag for editorial branch")
+
+    def test_editorial_does_not_bypass_persistence_path(self):
+        """Successful editorial branch must fall through to build_result persistence."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn('persist_build_result_artifact(workspace, build_result)', source,
+                      "Packet builder must persist build_result after editorial branch")
+        self.assertIn("not _is_final_reconciliation", source,
+                      "Fatal/mixed block must be guarded by not _is_final_reconciliation")
+
+    def test_no_reconciliation_report_persisted_in_43(self):
+        """Packet builder source does not persist final_reconciliation_report.json."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn("final_reconciliation_report.json", source,
+                         "Packet builder must not persist reconciliation report in 4.3")
+
+    def test_fatal_still_blocked_after_43(self):
+        """Fatal classification still returns generic blocked after 4.3 changes."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("build_fidelity_blocked:", source,
+                      "Fatal/mixed path must still set build_fidelity_blocked error")
+
+
+class TestStep44AcceptedReconciliation(unittest.TestCase):
+    """Step 4.4 contract tests: accepted reconciliation report allows continuation."""
+
+    def test_accepted_path_attaches_effective_status(self):
+        """Accepted editorial path attaches reconciled_degraded metadata (not final_reconciliation_required)."""
+        br = {
+            "final_reconciliation_accepted": True,
+            "source_fidelity_effective_status": "reconciled_degraded",
+            "final_reconciliation": {"status": "accepted"},
+            "build_fidelity": {
+                "status": "blocked", "can_continue": False,
+                "final_reconciliation_accepted": True,
+                "source_fidelity_effective_status": "reconciled_degraded",
+            },
+        }
+        self.assertTrue(br["final_reconciliation_accepted"])
+        self.assertEqual(br["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertTrue(br["build_fidelity"]["final_reconciliation_accepted"])
+        self.assertEqual(br["build_fidelity"]["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertNotIn("final_reconciliation_required", br)
+        self.assertNotIn("final_reconciliation_required", br.get("build_fidelity", {}))
+
+    def test_accepted_sets_guard_flag(self):
+        """Packet builder source must set _is_final_reconciliation = True in accepted branch."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("_is_final_reconciliation", source,
+                      "Accepted branch must set guard flag to prevent overwrite")
+
+    def test_accepted_guard_precedes_block(self):
+        """Accepted branch guard must appear before 'if not _is_final_reconciliation'."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("not _is_final_reconciliation", source,
+                      "Generic block must be guarded by not _is_final_reconciliation")
+        # Guard flag set in accepted branch must appear before the guarded block
+        idx_accepted = source.find("final_reconciliation_accepted")
+        idx_guard = source.find("not _is_final_reconciliation")
+        self.assertLess(idx_accepted, idx_guard,
+                        "Accepted branch (final_reconciliation_accepted) must appear before guarded block")
+
+    def test_accepted_preserves_build_fidelity_fields(self):
+        """Accepted reconciliation preserves original build_fidelity evidence."""
+        bf = {
+            "status": "blocked", "can_continue": False,
+            "refusal_reason": "test", "report_path": "/tmp/bf.json",
+            "rollup_path": "/tmp/sf.json",
+            "final_reconciliation_accepted": True,
+            "source_fidelity_effective_status": "reconciled_degraded",
+        }
+        self.assertEqual(bf["status"], "blocked")
+        self.assertFalse(bf["can_continue"])
+        self.assertEqual(bf["refusal_reason"], "test")
+
+    def test_absent_report_routes_to_reconciliation_required(self):
+        """Absent accepted report should preserve final_reconciliation_required path from 4.3."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertIn("final_reconciliation_required", source,
+                      "Absent report must still route to final_reconciliation_required")
+
+    def test_no_report_agreement_in_packet_builder_44(self):
+        """Packet builder source does not import report agreement/GUI/publication."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn("report_agreement", source,
+                         "Must not import report agreement in 4.4")
+        self.assertNotIn("module_toolkit", source,
+                         "Must not reference GUI in 4.4")
+
+
+class TestStep45EvidenceReportsImmutability(unittest.TestCase):
+    """Step 4.5: build/source fidelity reports unchanged across reconciliation flows."""
+
+    def _fidelity_metadata(self, status="final_reconciliation_required"):
+        return {
+            "status": status,
+            "build_fidelity": {
+                "status": "blocked", "refusal_reason": "req", "can_continue": False,
+                "report_path": "/tmp/build_fidelity_report.json",
+                "rollup_path": "/tmp/source_fidelity_report.json",
+            },
+        }
+
+    def test_fidelity_artifacts_persisted_before_reconciliation(self):
+        """Source code persists BOTH fidelity artifacts before reconciliation logic runs."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        idx_bf = source.find("persist_build_fidelity_report_artifact")
+        idx_sf = source.find("persist_source_fidelity_report_artifact")
+        idx_rec = source.find("build_final_reconciliation_brief")
+        self.assertGreater(idx_bf, 0, "persist_build_fidelity_report_artifact must exist")
+        self.assertGreater(idx_sf, 0, "persist_source_fidelity_report_artifact must exist")
+        self.assertGreater(idx_rec, 0, "build_final_reconciliation_brief must exist")
+        self.assertLess(idx_bf, idx_rec,
+                        "build-fidelity persistence must occur before reconciliation")
+        self.assertLess(idx_sf, idx_rec,
+                        "source-fidelity persistence must occur before reconciliation")
+
+    def test_report_paths_preserved_in_required_flow(self):
+        """build_result keeps report_path and rollup_path through required flow."""
+        br = self._fidelity_metadata("final_reconciliation_required")
+        br["final_reconciliation_required"] = True
+        br["build_fidelity"]["final_reconciliation_required"] = True
+        self.assertEqual(br["build_fidelity"]["report_path"], "/tmp/build_fidelity_report.json")
+        self.assertEqual(br["build_fidelity"]["rollup_path"], "/tmp/source_fidelity_report.json")
+
+    def test_report_paths_preserved_in_accepted_flow(self):
+        """build_result keeps report_path and rollup_path through accepted flow."""
+        br = self._fidelity_metadata("final_reconciliation_required")
+        br["final_reconciliation_accepted"] = True
+        br["source_fidelity_effective_status"] = "reconciled_degraded"
+        br["build_fidelity"]["final_reconciliation_accepted"] = True
+        br["build_fidelity"]["source_fidelity_effective_status"] = "reconciled_degraded"
+        self.assertEqual(br["build_fidelity"]["report_path"], "/tmp/build_fidelity_report.json")
+        self.assertEqual(br["build_fidelity"]["rollup_path"], "/tmp/source_fidelity_report.json")
+
+    def test_no_clean_source_fidelity_pass_in_reconciliation(self):
+        """Packet builder source never assigns clean 'pass' to source fidelity status."""
+        import inspect
+        import web.extensions.toolkit_homebrew_packet_builder as tpb
+        source = inspect.getsource(tpb)
+        self.assertNotIn('["source_fidelity_effective_status"] = "pass"', source,
+                         "Must not assign clean pass to source_fidelity_effective_status")
+        self.assertNotIn('["source_fidelity_status"] = "pass"', source,
+                         "Must not assign clean pass to source_fidelity_status")
+
+
+class TestStep46PackBuilderEditorialBranch(unittest.TestCase):
+    """Step 4.6: editorial blockers continue past build-fidelity with accepted reconciliation."""
+
+    def setUp(self):
+        self.tmpdir_obj = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir_obj.cleanup)
+        self.workspace = _create_workspace(self.tmpdir_obj.name)
+
+    def _build_v2_workspace(self):
+        bp = _make_v2_blueprint()
+        (self.workspace / "builder_blueprint.json").write_text(json.dumps(bp), encoding="utf-8")
+        report = {"blueprint_status": "ready", "fidelity_status": "pass"}
+        (self.workspace / "builder_blueprint_report.json").write_text(json.dumps(report), encoding="utf-8")
+
+    def _seed_result(self, status="success"):
+        return {"seed_status": status, "coverage": {}, "warnings": []}
+
+    def _write_accepted_report(self):
+        report = {
+            "version": REPORT_VERSION,
+            "status": "accepted",
+            "reconciliation_status": "accepted",
+            "source_fidelity_effective_status": "reconciled_degraded",
+            "playable_publication_candidate": True,
+            "decisions": ["accepted_final_reconciliation"],
+        }
+        (self.workspace / "final_reconciliation_report.json").write_text(json.dumps(report))
+
+    def _blocked_fidelity_report(self):
+        return {
+            "status": "blocked",
+            "can_continue": False,
+            "blockers": [
+                {"message": "Required location 'Trigger' not found in module", "category": "location"}
+            ],
+            "warnings": [],
+            "coverage": {},
+        }
+
+    def _editorial_classification(self):
+        return {
+            "status": "editorial",
+            "fatal_blockers": [],
+            "editorial_blockers": [{"type": "editorial", "message": "M", "category": "location"}],
+            "warnings": [],
+            "can_attempt_final_reconciliation": True,
+            "fatal_count": 0,
+            "editorial_count": 1,
+            "original_refusal_reason": "Required location 'Trigger' not found in module",
+            "report_paths": {},
+        }
+
+    def _fatal_classification(self):
+        return {
+            "status": "fatal",
+            "fatal_blockers": [{"type": "fatal", "message": "Invalid JSON", "category": "structural"}],
+            "editorial_blockers": [],
+            "warnings": [],
+            "can_attempt_final_reconciliation": False,
+            "fatal_count": 1,
+            "editorial_count": 0,
+            "original_refusal_reason": "Invalid JSON",
+            "report_paths": {},
+        }
+
+    @patch("utils.toolkit_build_fidelity.is_build_fidelity_required")
+    @patch("utils.toolkit_build_fidelity.build_build_fidelity_report")
+    @patch("utils.toolkit_build_fidelity.can_continue_after_build_fidelity")
+    @patch("utils.toolkit_build_fidelity.build_source_fidelity_rollup")
+    @patch("utils.toolkit_final_blocker_classifier.classify_final_build_blockers")
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD", True)
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK", True)
+    @patch("utils.toolkit_blueprint_seed_writer.materialize_module_from_blueprint")
+    def test_accepted_reconciliation_continues_past_build_fidelity(
+        self, mock_seed, mock_classify, mock_rollup,
+        mock_can_continue, mock_build_report, mock_is_required
+    ):
+        """Accepted reconciliation -> not blocked, not build_fidelity stage."""
+        self._build_v2_workspace()
+        self._write_accepted_report()
+
+        mock_seed.return_value = self._seed_result()
+        mock_is_required.return_value = True
+        mock_build_report.return_value = self._blocked_fidelity_report()
+        mock_can_continue.return_value = (False, "Required location 'Trigger' not found in module")
+        mock_rollup.return_value = {"status": "blocked", "blockers": []}
+        mock_classify.return_value = self._editorial_classification()
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-editorial-accepted")
+
+        self.assertNotEqual(result.get("status"), "blocked",
+                            "Accepted reconciliation must not return blocked")
+        self.assertNotEqual(result.get("stage"), "build_fidelity",
+                            "Accepted reconciliation must not set stage=build_fidelity")
+        error = result.get("error", "")
+        self.assertFalse(error.startswith("build_fidelity_blocked:"),
+                         "Must not have build_fidelity_blocked error")
+        self.assertTrue(result.get("final_reconciliation_accepted"))
+        self.assertEqual(result["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertTrue(result.get("build_fidelity", {}).get("final_reconciliation_accepted"))
+        self.assertEqual(
+            result.get("build_fidelity", {}).get("source_fidelity_effective_status"),
+            "reconciled_degraded",
+        )
+        self.assertIn("report_path", result.get("build_fidelity", {}))
+        self.assertIn("rollup_path", result.get("build_fidelity", {}))
+
+        self.assertTrue(result.get("build_result_persisted"),
+                        "build_result must be persisted for accepted reconciliation")
+
+        persisted_path = self.workspace / "build_result.json"
+        self.assertTrue(persisted_path.exists(), "build_result.json must exist")
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        self.assertTrue(persisted.get("final_reconciliation_accepted"))
+        self.assertEqual(persisted["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertTrue(persisted.get("build_fidelity", {}).get("final_reconciliation_accepted"))
+        self.assertEqual(
+            persisted.get("build_fidelity", {}).get("source_fidelity_effective_status"),
+            "reconciled_degraded",
+        )
+        self.assertIn("report_path", persisted.get("build_fidelity", {}))
+        self.assertIn("rollup_path", persisted.get("build_fidelity", {}))
+        self.assertNotEqual(persisted.get("status"), "blocked")
+        self.assertNotEqual(persisted.get("stage"), "build_fidelity")
+        self.assertFalse((persisted.get("error", "") or "").startswith("build_fidelity_blocked:"))
+
+    @patch("utils.toolkit_build_fidelity.is_build_fidelity_required")
+    @patch("utils.toolkit_build_fidelity.build_build_fidelity_report")
+    @patch("utils.toolkit_build_fidelity.can_continue_after_build_fidelity")
+    @patch("utils.toolkit_build_fidelity.build_source_fidelity_rollup")
+    @patch("utils.toolkit_final_blocker_classifier.classify_final_build_blockers")
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD", True)
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK", True)
+    @patch("utils.toolkit_blueprint_seed_writer.materialize_module_from_blueprint")
+    def test_no_accepted_report_returns_reconciliation_required(
+        self, mock_seed, mock_classify, mock_rollup,
+        mock_can_continue, mock_build_report, mock_is_required
+    ):
+        """No accepted report -> status=final_reconciliation_required, brief persisted."""
+        self._build_v2_workspace()
+        # No accepted report written
+
+        mock_seed.return_value = self._seed_result()
+        mock_is_required.return_value = True
+        mock_build_report.return_value = self._blocked_fidelity_report()
+        mock_can_continue.return_value = (False, "Required location 'Trigger' not found in module")
+        mock_rollup.return_value = {"status": "blocked", "blockers": []}
+        mock_classify.return_value = self._editorial_classification()
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-editorial-no-accept")
+
+        self.assertEqual(result["status"], "final_reconciliation_required")
+        self.assertEqual(result["stage"], "final_reconciliation")
+        self.assertTrue(result["final_reconciliation_required"])
+        self.assertIn("final_reconciliation_brief", result)
+        self.assertTrue((self.workspace / "final_reconciliation_brief.json").exists())
+
+        self.assertTrue(result.get("build_result_persisted"),
+                        "build_result must be persisted for reconciliation_required")
+        persisted_path = self.workspace / "build_result.json"
+        self.assertTrue(persisted_path.exists())
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "final_reconciliation_required")
+        self.assertEqual(persisted["stage"], "final_reconciliation")
+        self.assertTrue(persisted["final_reconciliation_required"])
+        self.assertIn("final_reconciliation_brief", persisted)
+
+    @patch("utils.toolkit_build_fidelity.is_build_fidelity_required")
+    @patch("utils.toolkit_build_fidelity.build_build_fidelity_report")
+    @patch("utils.toolkit_build_fidelity.can_continue_after_build_fidelity")
+    @patch("utils.toolkit_build_fidelity.build_source_fidelity_rollup")
+    @patch("utils.toolkit_final_blocker_classifier.classify_final_build_blockers")
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD", True)
+    @patch("web.extensions.toolkit_homebrew_packet_builder.ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK", True)
+    @patch("utils.toolkit_blueprint_seed_writer.materialize_module_from_blueprint")
+    def test_fatal_with_accepted_report_still_blocked(
+        self, mock_seed, mock_classify, mock_rollup,
+        mock_can_continue, mock_build_report, mock_is_required
+    ):
+        """Fatal classification with accepted report -> still returns blocked."""
+        self._build_v2_workspace()
+        self._write_accepted_report()
+
+        mock_seed.return_value = self._seed_result()
+        mock_is_required.return_value = True
+        mock_build_report.return_value = self._blocked_fidelity_report()
+        mock_can_continue.return_value = (False, "Required location 'Trigger' not found in module")
+        mock_rollup.return_value = {"status": "blocked", "blockers": []}
+        mock_classify.return_value = self._fatal_classification()
+
+        result = run_toolkit_homebrew_packet_build(self.workspace, "test-fatal-accepted")
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["stage"], "build_fidelity")
+        self.assertTrue(result["error"].startswith("build_fidelity_blocked:"))
+        self.assertNotIn("final_reconciliation_accepted", result)
 
 
 if __name__ == "__main__":

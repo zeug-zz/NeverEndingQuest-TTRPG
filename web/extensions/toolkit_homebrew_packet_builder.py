@@ -812,17 +812,122 @@ def run_toolkit_homebrew_packet_build(
                 "rollup_path": str(files["source_fidelity_report"]),
                 "coverage": fidelity_report.get("coverage"),
             }
+
+            # Step 4.1: attach final blocker classification metadata
             if not can_continue:
-                build_result["status"] = "blocked"
-                build_result["stage"] = "build_fidelity"
-                build_result["error"] = f"build_fidelity_blocked:{refusal}"
-                info(
-                    (
-                        f"TOOLKIT_HOMEBREW: Build fidelity blocked job={job_id} "
-                        f"module={params['module_name']} reason={refusal}"
-                    ),
-                    category="web_interface",
-                )
+                try:
+                    from utils.toolkit_final_blocker_classifier import (
+                        classify_final_build_blockers,
+                    )
+                    classification = classify_final_build_blockers(
+                        fidelity_report, module_dir=module_dir,
+                    )
+                except Exception:
+                    classification = {
+                        "status": "unknown",
+                        "fatal_blockers": [],
+                        "editorial_blockers": [],
+                        "warnings": [{
+                            "type": "classification_failed",
+                            "message": "classify_final_build_blockers raised exception",
+                            "category": "input_validation",
+                        }],
+                        "can_attempt_final_reconciliation": False,
+                        "fatal_count": 0,
+                        "editorial_count": 0,
+                        "original_refusal_reason": "",
+                        "report_paths": {},
+                    }
+                build_result["final_blocker_classification"] = classification
+                build_result["build_fidelity"]["final_blocker_classification_status"] = classification.get("status", "unknown")
+
+            if not can_continue:
+                _cls_status = classification.get("status", "unknown")
+                _is_final_reconciliation = False
+
+                # Step 4.3: editorial-only -> reconciliation required, not terminal block
+                if _cls_status == "editorial":
+                    try:
+                        from utils.toolkit_final_reconciliation import (
+                            build_final_reconciliation_brief,
+                            is_final_reconciliation_accepted,
+                            load_final_reconciliation_report,
+                            should_persist_final_reconciliation_brief,
+                            persist_final_reconciliation_brief,
+                        )
+                    except Exception:
+                        build_result["status"] = "blocked"
+                        build_result["stage"] = "final_reconciliation"
+                        build_result["error"] = "final_reconciliation_brief_persist_failed:import_error"
+                        info(
+                            f"TOOLKIT_HOMEBREW: Reconciliation brief import failed job={job_id}",
+                            category="web_interface",
+                        )
+                        return build_result
+
+                    if should_persist_final_reconciliation_brief(classification):
+                        module_name = params["module_name"]
+                        brief = build_final_reconciliation_brief(
+                            classification,
+                            job_id=job_id,
+                            module_name=module_name,
+                            module_dir=module_dir,
+                        )
+
+                        # Step 4.4: check for accepted reconciliation report before pausing
+                        _accepted_report = load_final_reconciliation_report(workspace)
+                        if _accepted_report is not None and is_final_reconciliation_accepted(_accepted_report):
+                            build_result["final_reconciliation_accepted"] = True
+                            build_result["final_reconciliation"] = _accepted_report
+                            build_result["source_fidelity_effective_status"] = "reconciled_degraded"
+                            build_result["build_fidelity"]["final_reconciliation_accepted"] = True
+                            build_result["build_fidelity"]["source_fidelity_effective_status"] = "reconciled_degraded"
+                            _is_final_reconciliation = True
+                            info(
+                                f"TOOLKIT_HOMEBREW: Final reconciliation accepted job={job_id} "
+                                f"module={module_name}",
+                                category="web_interface",
+                            )
+                            # Continue to normal build_result persistence
+                        else:
+                            persist_result = persist_final_reconciliation_brief(workspace, brief)
+
+                            if persist_result["status"] != "written":
+                                build_result["status"] = "blocked"
+                                build_result["stage"] = "final_reconciliation"
+                                build_result["error"] = f"final_reconciliation_brief_persist_failed:{persist_result.get('error', 'unknown')}"
+                                info(
+                                    f"TOOLKIT_HOMEBREW: Reconciliation brief persist failed job={job_id}",
+                                    category="web_interface",
+                                )
+                                return build_result
+
+                            build_result["final_reconciliation_required"] = True
+                            build_result["final_reconciliation_brief"] = persist_result
+                            build_result["build_fidelity"]["final_reconciliation_required"] = True
+                            build_result["build_fidelity"]["final_reconciliation_brief_path"] = persist_result["path"]
+                            build_result["status"] = "final_reconciliation_required"
+                            build_result["stage"] = "final_reconciliation"
+                            build_result.pop("error", None)
+                            _is_final_reconciliation = True
+                            info(
+                                f"TOOLKIT_HOMEBREW: Final reconciliation required job={job_id} "
+                                f"module={module_name} editorial_count={classification.get('editorial_count', 0)}",
+                                category="web_interface",
+                            )
+
+                # Step 4.2: fatal/mixed/unknown -> terminal block
+                if not _is_final_reconciliation:
+                    build_result["status"] = "blocked"
+                    build_result["stage"] = "build_fidelity"
+                    build_result["error"] = f"build_fidelity_blocked:{refusal}"
+                    info(
+                        (
+                            f"TOOLKIT_HOMEBREW: Build fidelity blocked job={job_id} "
+                            f"module={params['module_name']} reason={refusal}"
+                        ),
+                        category="web_interface",
+                    )
     except Exception as build_fidelity_error:
         if _fidelity_required or _fidelity_inputs_present:
             module_dir = Path(params["output_directory"]).resolve()

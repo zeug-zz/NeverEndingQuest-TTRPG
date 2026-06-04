@@ -808,6 +808,23 @@ def run_toolkit_module_postbuild_finishing(
             if not source_fidelity_report_persisted:
                 missing_list.append("source_fidelity")
 
+            # Load accepted final reconciliation report if present
+            final_rec_accepted = False
+            final_rec_status = None
+            sfe_status = None
+            try:
+                from utils.toolkit_final_reconciliation import (
+                    load_final_reconciliation_report,
+                    is_final_reconciliation_accepted,
+                )
+                recon_report = load_final_reconciliation_report(module_dir)
+                if recon_report is not None and is_final_reconciliation_accepted(recon_report):
+                    final_rec_accepted = True
+                    final_rec_status = recon_report.get("status", "accepted")
+                    sfe_status = recon_report.get("source_fidelity_effective_status")
+            except Exception:
+                pass
+
             agreement = compose_report_agreement(
                 source_fidelity_status=sf_s,
                 validation_status=vs,
@@ -815,6 +832,9 @@ def run_toolkit_module_postbuild_finishing(
                 publishable_status=pub_s,
                 effective_publishable_status=eps,
                 toolkit_top_level_status=tts,
+                source_fidelity_effective_status=sfe_status,
+                final_reconciliation_accepted=final_rec_accepted,
+                final_reconciliation_status=final_rec_status,
                 missing_reports=missing_list if missing_list else None,
             )
 
@@ -824,6 +844,10 @@ def run_toolkit_module_postbuild_finishing(
                 "internal_coherent": agreement.get("internal_coherent", False),
                 "playable_publication_status": agreement.get("playable_publication_status", "unknown"),
                 "source_fidelity_status": agreement.get("source_fidelity_status", "unknown"),
+                "source_fidelity_effective_status": agreement.get("source_fidelity_effective_status", "unknown"),
+                "final_reconciliation_accepted": agreement.get("final_reconciliation_accepted", False),
+                "final_reconciliation_status": agreement.get("final_reconciliation_status", "not_applicable"),
+                "source_fidelity_reconciled": agreement.get("source_fidelity_reconciled", False),
                 "validation_status": agreement.get("validation_status", "unknown"),
                 "ready_status": agreement.get("ready_status", "unknown"),
                 "publishable_status": agreement.get("publishable_status", "unknown"),
@@ -1042,6 +1066,19 @@ def run_toolkit_module_postbuild_finishing(
     report["report_agreement_status"] = report_agreement_stage.get("status", "unknown")
     report["report_agreement_internal_coherent"] = bool(
         report_agreement_stage.get("internal_coherent", False)
+    )
+
+    report["source_fidelity_effective_status"] = report_agreement_stage.get(
+        "source_fidelity_effective_status", source_fidelity_status
+    )
+    report["final_reconciliation_accepted"] = report_agreement_stage.get(
+        "final_reconciliation_accepted", False
+    )
+    report["final_reconciliation_status"] = report_agreement_stage.get(
+        "final_reconciliation_status", "not_applicable"
+    )
+    report["source_fidelity_reconciled"] = report_agreement_stage.get(
+        "source_fidelity_reconciled", False
     )
 
     write_ok = safe_write_json(str(report_path), report)
