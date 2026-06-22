@@ -35,7 +35,7 @@ MarkupSafe==3.0.3
 mitmproxy==12.2.3
 mitmproxy-macos==0.12.8
 mitmproxy_rs==0.12.8
-msgpack==1.1.2
+msgpack==1.2.1
 openai==2.38.0
 packaging==26.2
 pillow==12.2.0
