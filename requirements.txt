@@ -31,7 +31,7 @@ Pillow>=10.0.0
 mitmproxy>=10.0.0
 
 # PDF form filling
-pypdf>=6.12.2
+pypdf>=6.13.3
 
 # Python standard library extensions (usually included)
 # pathlib - included in Python 3.4+
