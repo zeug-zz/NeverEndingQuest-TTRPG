@@ -60,6 +60,22 @@ jobs:
             --config p/secrets \
             --metrics=off \
             --sarif > semgrep-results.sarif
+      - name: Normalize SARIF security-severity for CodeQL
+        run: |
+          python3 - <<'EOF'
+          import json
+          SEV = {"critical": "9.5", "high": "8.0", "medium": "5.0", "low": "2.0"}
+          with open("semgrep-results.sarif") as f:
+              data = json.load(f)
+          for run in data.get("runs", []):
+              for rule in run.get("tool", {}).get("driver", {}).get("rules", []):
+                  props = rule.get("properties", {})
+                  val = props.get("security-severity")
+                  if isinstance(val, str) and val.lower() in SEV:
+                      props["security-severity"] = SEV[val.lower()]
+          with open("semgrep-results.sarif", "w") as f:
+              json.dump(data, f)
+          EOF
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
         with:
@@ -75,4 +91,13 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Audit dependencies
-        run: pip-audit -r requirements.txt --strict
+        # Accepted risks: msgpack/tornado are transitively capped by mitmproxy 12.2.3
+        # (latest release). Fixed versions cannot be installed until mitmproxy lifts
+        # the caps. Tracked in SECURITY.md Accepted Risks.
+        run: |
+          pip-audit -r requirements.txt --strict \
+            --ignore-vuln GHSA-6v7p-g79w-8964 \
+            --ignore-vuln CVE-2026-49853 \
+            --ignore-vuln CVE-2026-49854 \
+            --ignore-vuln CVE-2026-49855 \
+            --ignore-vuln GHSA-pw6j-qg29-8w7f

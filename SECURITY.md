@@ -6,7 +6,7 @@
 [![Dependabot](https://img.shields.io/badge/dependabot-active-blue)](.github/dependabot.yml)
 [![pip-audit](https://img.shields.io/badge/pip--audit-passing-brightgreen)](requirements-lock.txt)
 
-**Last audit:** 2026-06-22 · **Status:** 0 secrets · 0 SAST findings · lockfile resolvable (msgpack/tornado CVEs deferred — capped by `mitmproxy 12.2.3`)
+**Last audit:** 2026-06-22 · **Status:** 0 secrets · 0 SAST findings · pip-audit gate passing (msgpack/tornado CVEs accepted via `--ignore-vuln` — capped by `mitmproxy 12.2.3`)
 
 ---
 
@@ -124,8 +124,8 @@ Rotation procedure:
 | 2026-05-25 | allow_unsafe_werkzeug=True | MEDIUM   | Required for Flask-SocketIO; local-only app. Review during v2 client hardening.      |
 | 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Required for local network access. Tracked in `plans/version-2/client_network.md`. |
 | 2026-05-25 | python-engineio CORS       | LOW      | Flask-SocketIO default; review with v2 CORS hardening.                               |
-| 2026-06-22 | msgpack 1.1.2 (GHSA-6v7p-g79w-8964) | MEDIUM | `mitmproxy 12.2.3` caps `msgpack<=1.1.2`; fix is 1.2.1. Resolve by upgrading mitmproxy + regenerating lock. |
-| 2026-06-22 | tornado 6.5.5 (CVE-2026-49853/49854/49855, GHSA-pw6j-qg29-8w7f) | MEDIUM | `mitmproxy 12.2.3` caps `tornado<=6.5.5`; fix is 6.5.6. Resolve by upgrading mitmproxy + regenerating lock. |
+| 2026-06-22 | msgpack 1.1.2 (GHSA-6v7p-g79w-8964) | MEDIUM | `mitmproxy 12.2.3` caps `msgpack<=1.1.2`; fix is 1.2.1. Resolve by upgrading mitmproxy + regenerating lock. CI gate accepts via `pip-audit --ignore-vuln`. |
+| 2026-06-22 | tornado 6.5.5 (CVE-2026-49853/49854/49855, GHSA-pw6j-qg29-8w7f) | MEDIUM | `mitmproxy 12.2.3` caps `tornado<=6.5.5`; fix is 6.5.6. Resolve by upgrading mitmproxy + regenerating lock. CI gate accepts via `pip-audit --ignore-vuln`. |
 
 ---
 
