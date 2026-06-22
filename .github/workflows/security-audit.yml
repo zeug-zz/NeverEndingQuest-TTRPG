@@ -54,7 +54,6 @@ jobs:
       - name: Semgrep SAST
         run: |
           semgrep scan \
-            --config auto \
             --config p/flask \
             --config p/bandit \
             --config p/python \
