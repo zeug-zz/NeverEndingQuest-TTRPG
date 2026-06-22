@@ -1206,8 +1206,8 @@ character_data["is_active_pc"] = True
 **Dependency hygiene (pip-audit):**
 - Root cause: `requirements-lock.txt` was not resolvable. It pinned packages above `mitmproxy 12.2.3` hard caps (`aioquic`, `msgpack`, `tornado`, `typing_extensions`, `urwid`), held an impossible `pydantic`/`pydantic_core` pair, and 23 pins pointed to versions newer than anything installable. This also caused the original lockfile `pip-audit -r` to fail.
 - Reconciled the lock to the actual working installed set; `pip install -r requirements-lock.txt --dry-run` now exits 0.
-- CVE fixes applied (venv + lock): `cryptography 48.0.0 -> 48.0.1` (within mitmproxy `<=48.1`), `pypdf 6.12.1 -> 6.12.2`.
-- Deferred (mitmproxy 12.2.3 caps): `msgpack 1.1.2` (fix 1.2.1, capped `<=1.1.2`), `tornado 6.5.5` (fix 6.5.6, capped `<=6.5.5`). Recorded in SECURITY.md Accepted Risks.
+- CVE fixes applied (venv + lock): `cryptography 48.0.0 -> 48.0.1` (within mitmproxy `<=48.1`), `pypdf 6.12.1 -> 6.13.3` (clears all PDF-parsing CVEs).
+- Deferred (mitmproxy 12.2.3 caps; latest release, used by `lmstudio_forwarder.py`): `msgpack 1.1.2` (fix 1.2.1, capped `<=1.1.2`), `tornado 6.5.5` (fix 6.5.6, capped `<=6.5.5`). Recorded in SECURITY.md Accepted Risks and dismissed in Dependabot (`tolerable_risk`).
 - Non-production venv tooling CVEs (pip, pyjwt, starlette, python-multipart, pydantic-settings) are not in the lock; out of production scope.
 
 **Docs:**
@@ -1221,6 +1221,7 @@ character_data["is_active_pc"] = True
 **Files Modified (committed):**
 - `.github/workflows/security-audit.yml`
 - `pyproject.toml`
+- `requirements.txt`
 - `requirements-lock.txt`
 - `SECURITY.md`
 - `AGENTS.md`
