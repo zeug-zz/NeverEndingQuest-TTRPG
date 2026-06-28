@@ -1,332 +1,78 @@
-# World Narrative Plan v0.3 (Copyright-First)
+# World Narrative Plan v0.4
 
-Status: Planning in progress (draft for review)
-Date: 2026-02-22
+Status: Planning in progress
+Date: 2026-06-28
 Owner: Narrative systems + memory integration
 Track reference: `plans/version-2/v2-narrative-track.md`
-Encounter escalation reference: `plans/version-2/encounterEscalationProfile.md`
 
 Related plans:
-- `plans/module-uploader.md` = interactive reviewed module-import lane for player-authored and approved source-preserving adventure uploads
-- `plans/version-2/module-import.md` = scaled canonical module-import lane that builds on uploader-era normalization/build contracts
-- `plans/version-2/titan-integration.md` = later interpreted-state consumer of world-narrative and continuity-qualified module signals
+- `plans/version-2/module-import.md` = scaled canonical module-import lane
+- `plans/version-2/memory.md` = retrieval/storage contracts
+- `plans/version-2/titan-integration.md` = later interpreted-state consumer
 
-## Titan v2 Alignment Stub
+## Seed DB
 
-- Umbrella reference: `plans/version-2/titan-integration.md`
-- Retune status: Pending (schema and lifecycle updates not yet applied)
-- Last tagged: 2026-02-26
-- Retune focus: alignment relationship tables, Titan cycle logs, and world history proposal lifecycle
+The world narrative system operates on a pre-built data artifact: `data/world_narrative_seed.db`. This is a read-only SQLite database committed to the repository that provides D&D alignment profiles, mythic conflict templates, cosmological domain catalogs, and motif/archetype/faction patterns for use by runtime retrieval, the campaign world model, and module builder integration.
 
 ## Current Baseline
 
-A first operational continuity layer now exists for module ingest and validation. This is the current bridge from module-level narrative data into future world-narrative and Titan/EGO pipelines.
+### Storage
 
-Planning boundary:
+- `data/world_narrative_seed.db` — committable data artifact. Serves as the install baseline.
+- `data/memory.db` — runtime working DB (gitignored). Merges seed tables with runtime tables.
+- Bootstrap: on first run, if `data/memory.db` is missing, the runtime merges seed DB tables.
 
-1. `plans/module-uploader.md` owns the public source-preserving reviewed upload flow for approved adventure/module inputs.
-2. `plans/version-2/module-import.md` owns the future scaled import lane that generalizes those contracts for bulk and canonical world expansion.
-3. This plan owns a different ingestion lane: local literary/worldbuilding source analysis that must become source-anonymous before it can influence committable derived outputs.
+### Runtime tables (NEQ-TTRPG owns these)
 
-This distinction is critical. World-narrative is not a replacement for the uploader, and the uploader should not be treated as a shortcut around the copyright firewall described in this document.
+`core/memory/memory_db.py` holds the runtime schema. The world-narrative seed tables (`inspiration_*`, `atom_*`, `alignment_*`, `cosmological_*`, `mythic_*`, `deity_*`, `campaign_*`) are verified at bootstrap from the seed DB. Runtime-only tables (`memory_events`, `entities`, `journal_entries`, `companion_memory_state`, `narrative_threads`, etc.) are created by NEQ migrations.
 
-Operational baseline:
+### Schema (seed DB tables)
 
-1. Continuity contract output at ingest time:
-   - ingest emits `continuity_contract` in result payload and sidecar.
+#### Core data
 
-2. Deterministic enforcement modes:
-   - strict mode: missing required continuity keys fail closed.
-   - warn-first mode: ambiguous aliases and soft continuity issues remain non-blocking with warnings.
+`inspiration_profiles`, `inspiration_atoms`, `atom_relations`, `atom_statistics` — motif, archetype, faction, and tone patterns for narrative interpretation.
 
-3. Validation integration:
-   - continuity payload validation in sidecar audit,
-   - continuity gate in readiness validator,
-   - continuity reporting in bulk module validation summary.
+#### D&D alignment
 
-4. Contract keys used as current v1 baseline:
-   - `continuity_version`
-   - `entry_state_variants`
-   - `cross_module_refs`
-   - `standalone_fallback`
+`alignment_profiles` — continuous ethical/moral/balance scores with 5e classic labels for entities, factions, atoms, and deities.
 
-Architectural note:
-- This baseline does not yet populate campaign world model tables directly.
-- It does establish normalized module continuity metadata that can be lifted into world-model interpretation phases later.
+#### Cosmological domains
 
-## Next Milestone
+`cosmological_domains` — planar realms, demiplanes, elemental planes with alignment affinity and SRD references.
 
-Define the continuity-to-world-model bridge so module continuity signals become bounded interpreted inputs to `campaign_world_model` and `campaign_world_delta` workflows.
+#### Mythic conflicts
 
-Practical dependency note:
+`mythic_conflicts` — the great multiverse tensions (Law vs Chaos, Nature vs Civilization, Fate vs Free Will, etc.) with narrative pattern templates and alignment mappings.
 
-1. uploader and module-import may complete earlier as source-preserving module-creation systems,
-2. world-narrative should then consume only safe interpreted signals from those systems,
-3. copyrighted literary ingestion under `/user_uploads/text/` remains a later, separate, source-anonymous narrative-web build.
+`conflict_alignments` — bridges entities/atoms to conflicts with alignment strength.
 
-## Exit Criteria
+#### Deity archetypes
 
-- Continuity metadata is consumed as interpreted world input (not mechanical truth).
-- Proposal/apply lifecycle exists for world narrative updates using continuity signals.
-- Copyright and source-anonymous constraints remain enforced end-to-end.
+`deity_archetypes` — god-like patterns (Trickster, War God, Harvest Goddess, Death God, etc.) with divine domains and narrative roles.
 
----
+`deity_manifestations` — entity-to-archetype mappings.
 
-## 0) Priority Zero: Copyright Firewall
+#### Campaign world model
 
-This is the top requirement for this plan.
+`campaign_world_model` — versioned campaign-specific worldview snapshots.
 
-Hard rules:
-1. Raw uploads stay local only under `/user_uploads/text/` in project root (gitignored).
-2. No direct source prose is allowed in any committable file.
-3. No source-identifying metadata is allowed in committable JSON/DB outputs:
-   - no title
-   - no author
-   - no series
-   - no chapter names
-   - no unique source labels
-4. Anything that can reach GitHub (modules, memory exports, seeds, prompt packs) must be source-anonymous.
-5. Fail closed: if scanner flags copyright risk, block commit/push.
+`campaign_world_delta` — proposed worldview updates with apply lifecycle.
 
-Operational separation:
-- Local Source Zone (gitignored): `/user_uploads/text/`
-- Committable Derived Zone (repo-tracked): abstractions only, source-anonymous
+#### Narrative threads
 
----
+`narrative_threads`, `narrative_thread_events`, `narrative_actor_state`, `module_narrative_seeds` — campaign-facing continuity state. These are seed DB tables that NEQ-TTRPG may also extend at runtime.
 
-## 1) What this plan solves
+## Storage Model
 
-We want a rolling world narrative that:
-1. Feels rich and coherent across long campaigns.
-2. Reuses literary inspiration safely as abstract patterns.
-3. Preserves Python as SRD 5e mechanical truth.
-4. Integrates cleanly with current NeverEndingQuest hooks.
+- Extend `data/memory.db` for narrative state — seed tables + runtime tables in one DB.
+- Tracked baseline: `data/world_narrative_seed.db` (committed).
+- Runtime/bootstrap policy:
+  1. `data/world_narrative_seed.db` is the install baseline.
+  2. Runtime working DB remains `data/memory.db` (gitignored).
+  3. First-run bootstrap: if `data/memory.db` is missing, merge seed DB tables.
+  4. Runtime DB diverges from seed immediately (user campaign data appended).
 
-This plan does not own the primary public adventure-upload/module-build workflow. It owns the interpreted narrative substrate that can later flavor narration, continuity pressure, and future module-builder context after sanitization.
-
----
-
-## 2) Core architecture contract
-
-Non-negotiable rule:
-- Python enforces mechanics; narrative layer influences pressure and continuity only.
-
-Three-layer model:
-1. Inspiration Layer (abstract motifs/archetypes/tone patterns only)
-2. Canon Layer (campaign event truth)
-3. Generation Layer (bounded retrieval for DM note/campaign/module builder)
-
-If narrative guidance conflicts with mechanics, mechanics win.
-
----
-
-## 3) Storage model
-
-Decision:
-- Extend `data/memory.db` for narrative state.
-- Keep raw ingestion files in `/user_uploads/text/` only.
-- Add a tracked baseline seed DB for tester installs: `data/world_narrative_seed.db`.
-
-Why:
-- Existing memory migration/retrieval/save portability already exists.
-- Avoid duplicate persistence systems.
-- Supports clean distribution: code + baseline narrative seed only.
-
-No separate `narrative.db` for v1.
-
-Runtime/bootstrap policy:
-1. `data/world_narrative_seed.db` is the install baseline and is safe to commit (source-anonymous only).
-2. Runtime working DB remains `data/memory.db` (gitignored) and may diverge per user/campaign.
-3. First-run bootstrap: if `data/memory.db` is missing, copy from `data/world_narrative_seed.db`.
-4. User uploads and local ingests never write back to seed DB.
-
----
-
-## 4) Ingestion policy (strict)
-
-Two ingestion lanes must remain separate:
-
-1. Module lane:
-   - source-preserving reviewed module import for approved adventure inputs,
-   - owned by `plans/module-uploader.md` and later `plans/version-2/module-import.md`.
-
-2. World-narrative lane:
-   - local literary/worldbuilding ingestion for source-anonymous narrative abstraction,
-   - owned by this plan.
-
-Rule:
-- outputs from the world-narrative lane must obey the source-anonymous contract in this file.
-- outputs from the module lane may remain source-preserving locally when policy allows, but they must not be mistaken for source-anonymous world-narrative artifacts.
-
-Allowed to store in committable outputs:
-- motif labels
-- archetype labels
-- faction dynamics
-- thread templates
-- tone vectors
-- scene templates (abstract)
-
-Never store in committable outputs:
-- verbatim quotes
-- long paraphrase near source wording
-- title/author/series/source IDs linked to real books
-- distinctive copyrighted character/place names from source novels
-
-Local-only ingestion files in `/user_uploads/text/` may include source tracking for workflow support, but must remain gitignored.
-
----
-
-## 5) Schema adjustments for copyright safety
-
-This plan removes source bibliographic fields from committable DB design.
-
-### 5.1 Committable inspiration tables (source-anonymous)
-
-`inspiration_profiles`
-- `profile_id TEXT PRIMARY KEY`
-- `profile_kind TEXT NOT NULL` (`horror_gothic`, `heroic_epic`, `urban_intrigue`, etc.)
-- `weights_json TEXT NOT NULL DEFAULT '{}'`
-- `created_at TEXT NOT NULL`
-
-`inspiration_atoms`
-- `atom_id TEXT PRIMARY KEY`
-- `profile_id TEXT NOT NULL`
-- `atom_type TEXT NOT NULL` (`motif`, `archetype`, `relationship_pattern`, `faction_pattern`, `tone`, `arc_shape`, `scene_template`)
-- `label TEXT NOT NULL`
-- `description TEXT NOT NULL`
-- `weight REAL NOT NULL DEFAULT 0.5`
-- `srd_compatibility TEXT NOT NULL DEFAULT 'unknown'`
-- `created_at TEXT NOT NULL`
-
-Note:
-- No `title`, `author`, `series`, or source bibliographic columns in committable DB.
-
-### 5.2 Canon and generation tables (unchanged direction)
-
-`narrative_threads`, `narrative_thread_events`, `narrative_actor_state`, `module_narrative_seeds`
-
-These remain campaign-facing and contain no source references.
-
-### 5.3 Cross-book atom convergence (how book 2 relates to book 1)
-
-Goal:
-- Build one shared inspiration graph, not isolated per-book silos.
-
-Rules:
-1. Atoms from each new book are merged by semantic identity (`atom_id`).
-2. Repeated motifs/archetypes increase confidence/weight, not row count duplication.
-3. New motifs/archetypes add coverage as new atom IDs.
-4. No book identifiers are stored in committable rows.
-
-Example:
-- Book A exports `atom.liminal_threshold` and `atom.hidden_refuge`.
-- Book B exports `atom.liminal_threshold` and `atom.masked_authority_predator`.
-- Result: one shared `atom.liminal_threshold` (higher support/weight), plus one new atom (`atom.masked_authority_predator`).
-
-Proposed relation tables:
-
-`atom_relations`
-- `relation_id INTEGER PRIMARY KEY AUTOINCREMENT`
-- `left_atom_id TEXT NOT NULL`
-- `right_atom_id TEXT NOT NULL`
-- `relation_type TEXT NOT NULL` (`co_occurs`, `tension`, `complements`, `escalates`)
-- `weight REAL NOT NULL DEFAULT 0.5`
-- `updated_at TEXT NOT NULL`
-- `UNIQUE(left_atom_id, right_atom_id, relation_type)`
-
-`atom_statistics`
-- `atom_id TEXT PRIMARY KEY`
-- `support_count INTEGER NOT NULL DEFAULT 0`
-- `avg_weight REAL NOT NULL DEFAULT 0.5`
-- `variance REAL NOT NULL DEFAULT 0.0`
-- `updated_at TEXT NOT NULL`
-
-Interpretation note:
-- DB stores evidence/state only; it does not hardwire one canonical story.
-
-### 5.4 Campaign-specific world model tables (interpreted layer)
-
-`campaign_world_model`
-- `campaign_id TEXT NOT NULL`
-- `version INTEGER NOT NULL`
-- `summary_json TEXT NOT NULL`
-- `generated_by TEXT NOT NULL` (`ratio_llm`, `bootstrap_llm`)
-- `created_at TEXT NOT NULL`
-- `PRIMARY KEY(campaign_id, version)`
-
-`campaign_world_delta`
-- `delta_id INTEGER PRIMARY KEY AUTOINCREMENT`
-- `campaign_id TEXT NOT NULL`
-- `base_version INTEGER NOT NULL`
-- `proposal_json TEXT NOT NULL`
-- `applied INTEGER NOT NULL DEFAULT 0`
-- `applied_at TEXT`
-- `created_at TEXT NOT NULL`
-
-Purpose:
-- Enables similar but non-identical campaigns from the same 50+ book prior.
-
----
-
-## 6) Extraction and analysis pipeline (Python)
-
-Pipeline:
-1. Read one source PDF locally from `/user_uploads/text/` (single-book mode only).
-2. Run chunked extraction preprocessor to avoid context-window overflow:
-   - script: `scripts/extract_book_pdf_for_ingestion.py`
-   - output: local manifest + JSONL chunks under `/user_uploads/text/ingestion/`
-   - chunk policy: bounded char/token budgets with overlap
-3. Process chunks sequentially (map phase), never full-book prompt payloads.
-4. Merge chunk-level abstractions into local ingestion JSON (reduce phase).
-5. Validate schema + confidence.
-6. Build source-anonymous atom export:
-   - script: `scripts/build_source_anonymous_atoms.py`
-   - input: local chunk JSONL
-   - output: source-anonymous atoms + bounded builder prompt pack
-7. Run copyright sanitizer:
-   - remove source names
-   - remove bibliographic references
-   - remove high-overlap phrasing
-8. Emit sanitized source-anonymous outputs to committable data paths.
-
-Key principle:
-- Two-stage output: local rich ingest -> sanitized anonymous export.
-- One-book-at-a-time processing is mandatory to prevent model context freeze.
-
-### 6.1 Toolkit upload entrypoint (player-facing)
-
-Primary UI location:
-- Module Toolkit Web GUI (`/toolkit`) with a new "World Narrative Sources" panel.
-
-Important clarification:
-
-1. This panel is not the same as the public Homebrew module uploader described in `plans/module-uploader.md`.
-2. This panel is for the world-narrative lane only: local ingestion of copyrighted or otherwise restricted narrative sources that must be abstracted and anonymized before any committable derived output exists.
-3. The module uploader remains the separate player-facing lane for reviewed module creation from approved adventure sources.
-
-Upload contract:
-1. Accept `pdf` only.
-2. Save uploads under `/user_uploads/text/` only.
-3. Enforce hard cutover: reject legacy `/user_uploads/` paths outside `/user_uploads/text/`.
-4. Show copyright warning + explicit attestation before ingestion.
-5. Run extraction and atom-build jobs asynchronously with progress/status.
-6. Ingest only source-anonymous outputs into runtime DB.
-
-API sketch:
-- `POST /api/toolkit/world/sources/upload`
-- `POST /api/toolkit/world/sources/extract`
-- `POST /api/toolkit/world/sources/build-atoms`
-- `POST /api/toolkit/world/sources/ingest`
-- `GET /api/toolkit/world/jobs/<job_id>`
-
-Safety:
-- One active ingestion job per source file.
-- File size/page/chunk caps enforced before processing.
-- Fail closed on compliance or parsing errors.
-
----
-
-## 7) Integration hooks (current codebase)
+## Integration Hooks (current codebase)
 
 Canon event ingestion:
 - `updates/plot_update.py` -> thread progression
@@ -340,23 +86,7 @@ Retrieval injection:
 - `core/generators/module_builder.py` -> continuity seed preamble
 - `core/generators/module_stitcher.py` -> write back module narrative seeds
 
-Uploader bridge note:
-
-1. The uploader may later contribute continuity-qualified module outputs and provenance-safe module narrative seeds.
-2. It should not directly write raw source-derived literary content into world-narrative state.
-3. Any bridge from uploader/module-import outputs into this plan must remain interpreted, bounded, and compatible with the facts-vs-interpretation split.
-
-### 7.1 Character Sheet PDF mapping (deferred requirement)
-
-Requirement for world-narrative build:
-- Populate 5e sheet page 2 `Allies` (ALLIES & ORGANIZATIONS) from narrative continuity data.
-- Do not use temporary/manual stopgap fields that will be replaced later.
-- Source of truth should come from world-narrative outputs (relationship continuity + campaign world model), then map into PDF export.
-- Keep existing page 2 mappings intact (`Feat+Traits`, `Backstory`, `Treasure`) while adding deterministic `Allies` population.
-
----
-
-## 8) Retrieval contracts (bounded)
+## Retrieval Contracts (bounded)
 
 Turn-time pack:
 - `get_narrative_turn_pack(module_name, location_id, active_entities, max_items=6)`
@@ -368,15 +98,15 @@ Transition pack:
 Builder pack:
 - `get_module_seed_pack(target_module, max_items=10)`
 
-Ordering:
-- priority desc -> recency desc -> stable id asc
+Ordering: priority desc -> recency desc -> stable id asc
 
-### 8.1 World picture lifecycle (interpreted, not hardwired)
+### World picture lifecycle (interpreted, not hardwired)
 
 At campaign start:
 1. Bootstrap LLM composes a `campaign_world_model` from:
    - merged global inspiration atoms
    - atom relations and statistics
+   - alignment profiles and mythic conflicts
    - selected module/campaign setup context
 2. Result is a campaign-specific worldview snapshot (version 1).
 
@@ -385,184 +115,65 @@ During campaign play:
 2. Ratio LLM proposes worldview updates as `campaign_world_delta`.
 3. Approved deltas are applied to create next `campaign_world_model` version.
 
-Outcome:
-- Campaigns remain family-similar (same inspiration prior) but relationship maps shift per playthrough.
+Outcome: Campaigns remain family-similar (same inspiration prior) but relationship maps shift per playthrough.
 
-### 8.2 LLM entry point contract #1 - EGO/Ratio drift and strategy
+### LLM entry point contract #1 - EGO/Ratio drift and strategy
 
-Role:
-- Background coherence process for drift checks and strategic updates.
+- Inputs: current `campaign_world_model`, recent memory events/links, active threads, actor state, recent narrator outputs.
+- Outputs: drift report, proposed `campaign_world_delta`, optional actor-state updates.
+- Writes: interpreted narrative state only. Never mechanical truth.
 
-Inputs:
-- Current `campaign_world_model` version
-- Recent `memory_events` and `memory_links`
-- Active `narrative_threads` and `narrative_actor_state`
-- Recent narrator outputs (bounded window)
+### LLM entry point contract #2 - Module Builder interpretation
 
-Outputs:
-- Drift report (`aligned`, `soft_drift`, `hard_drift`)
-- Proposed `campaign_world_delta`
-- Optional updates for `narrative_actor_state` (allegiances, strategy posture)
+- Inputs: latest `campaign_world_model`, active high-priority threads, actor-state pressures, module registry.
+- Outputs: seeded narrative structure, `module_narrative_seeds`, candidate thread continuations.
+- Writes: narrative seeds and proposed continuations. Never event history.
 
-Write permissions:
-- May write interpreted narrative state (`campaign_world_delta`, actor strategy fields)
-- May not write mechanical truth (HP/AC/slots/conditions/legal action outcomes)
+### LLM entry point contract #3 - Narrator runtime interpretation
 
-### 8.3 LLM entry point contract #2 - Module Builder interpretation
+- Inputs: player inputs (highest signal), bounded pressure pack, DM note mechanical truth, SRD constraints.
+- Outputs: narrative response, action proposals.
+- Writes: none directly. Emits events that Python converts into canonical updates.
 
-Role:
-- Uses world model to generate richer modules and feed continuity back.
+### Permission model
 
-Inputs:
-- Latest `campaign_world_model`
-- Active high-priority threads
-- Actor-state pressures
-- Existing module registry context
-
-Outputs:
-- Module narrative structure seeded from world pressures
-- `module_narrative_seeds` additions
-- Candidate thread continuations tied to new module content
-
-Write permissions:
-- May add narrative seeds and proposed thread continuations
-- May not overwrite canonical event history
-
-### 8.4 LLM entry point contract #3 - Narrator runtime interpretation
-
-Role:
-- Turn-by-turn storyteller that "discovers" the world via constrained context.
-
-Inputs:
-- Player inputs (highest live signal)
-- Bounded pressure pack from world model + active threads
-- DM note mechanical truth and SRD constraints
-
-Outputs:
-- Narrative response
-- Action proposals for Python validators/handlers
-
-Write permissions:
-- Direct writes: none
-- Indirect influence: emits events that Python systems convert into canonical state updates
-
-### 8.5 Permission model summary
-
-Facts vs interpretation split:
-- Facts (append-only/audited): event history, mechanical outcomes, validated action results
-- Interpretation (versioned/revisable): worldview summary, projected tensions, likely allegiances
-
-Rule:
-- Interpretation can be revised by Ratio.
+- Facts (append-only/audited): event history, mechanical outcomes, validated action results.
+- Interpretation (versioned/revisable): worldview summary, projected tensions, likely allegiances.
 - Facts cannot be silently rewritten.
 
----
-
-## 9) Copyright compliance gates
-
-### 9.1 Pre-commit gate
-- Scan staged files for banned fields/terms:
-  - `title`, `author`, `series`, `source_title`, `source_author`
-  - source novel proper nouns list (maintained locally)
-- Scan for suspicious overlap against local corpus hashes.
-- Block commit on hit.
-
-### 9.2 CI gate
-- Repeat scanner in CI for pushed changes.
-- Fail build on copyright risk.
-
-### 9.3 Runtime publish gate
-- Before writing module/memory artifacts intended for GitHub, run sanitizer.
-- If sanitized output still risky, fail close and log.
-
-### 9.4 Distribution gate (tester installs)
-- GitHub/tester artifact set includes only:
-  - Python/code changes
-  - source-anonymous baseline `data/world_narrative_seed.db`
-- Excludes always:
-  - `/user_uploads/text/`
-  - runtime `data/memory.db` and local ingest artifacts
-
----
-
-## 10) Rollout plan
-
-Phase 0 - Policy lock
-- Approve copyright firewall + source-anonymous schema.
-- Approve facts-vs-interpretation boundary and write-permission contracts.
-- Approve lane separation:
-  - uploader/module-import = source-preserving module lane where policy permits
-  - world-narrative = source-anonymous literary ingestion lane
+## Rollout Plan
 
 Phase 1 - Foundation
-- Add migration 003 for source-anonymous inspiration tables + narrative tables.
-- Add `atom_relations`, `atom_statistics`, `campaign_world_model`, `campaign_world_delta`.
-- Add `core/memory/narrative_state.py`.
-- Add runtime bootstrap helper: seed DB -> `data/memory.db` when missing.
+- Verify world-narrative seed tables exist in runtime DB after bootstrap.
+- Add `core/memory/narrative_state.py` for retrieval helpers.
+- Add runtime bootstrap: copy/merge seed DB tables when `data/memory.db` is missing.
 
-Phase 2 - Ingestion tooling
-- Local ingestion scripts writing to `/user_uploads/text/`.
-- Sanitized export pipeline to committable structures.
-- Cross-book convergence job to update atom statistics/relations.
-- Add toolkit upload endpoints and async job flow.
-
-Dependency note:
-- This phase should not absorb the public module uploader. The uploader is a sibling lane and may complete before or in parallel, but the world-narrative tooling here remains dedicated to source-anonymous narrative-web generation.
-
-Phase 3 - World model bootstrap and Ratio loop
+Phase 2 - World model bootstrap and Ratio loop
 - Implement campaign-start world model bootstrap (`campaign_world_model` v1).
 - Implement Ratio drift check loop and delta proposal/apply flow.
 
-Phase 4 - Hook integration
+Phase 3 - Hook integration
 - Wire plot/combat/transition hooks.
 - Feed canonical events into thread and actor-state updates.
 
-Phase 5 - Prompt and builder integration
+Phase 4 - Prompt and builder integration
 - Inject pressure packs into DM note and module builder.
 - Ensure narrator sees bounded interpreted world pressure, not raw DB dumps.
 
-Phase 6 - Safety gates
-- Pre-commit + CI + runtime publish blockers.
+Phase 5 - Safety gates
+- Verify runtime DB never writes back to seed DB.
 
----
-
-## 11) Verification checklist
+## Verification Checklist
 
 Automated:
-1. Migration idempotency.
+1. Seed DB bootstrap creates runtime tables correctly on fresh install.
 2. Thread lifecycle correctness.
-3. Retrieval ordering stability.
-4. Save/export/import parity.
-5. Copyright scan blocks any source identifiers.
-6. Cross-book atom merge updates `support_count` and relation weights deterministically.
-7. Ratio drift loop writes only interpreted state and never mechanical fields.
-8. Seed bootstrap creates runtime DB correctly on fresh install.
-9. Distribution checks confirm `/user_uploads/text/` and runtime DB are excluded from repo artifacts.
+3. Retrieval ordering stability across alignment/mythic tables.
+4. Save/export/import parity with world-narrative tables.
+5. Ratio drift loop writes only interpreted state, never mechanical fields.
+6. Distribution checks confirm seed DB is present and valid.
 
 Manual:
-1. Ingest one book locally under `/user_uploads/text/`.
-2. Ingest second book and confirm shared atoms converge instead of duplicating.
-3. Confirm exported atoms are source-anonymous.
-4. Confirm DM/module outputs contain no title/author/source references.
-5. Start two campaigns from same atom pool and verify world models are similar but not identical.
-6. Confirm campaign continuity behavior still works across modules.
-7. Use Toolkit upload panel end-to-end (upload -> extract -> atoms -> ingest) and verify no raw source leakage.
-
----
-
-## 12) Review requests
-
-Please review and confirm:
-1. Source-anonymous requirement for all committable JSON/DB data.
-2. Local-only ingestion files under `/user_uploads/text/`.
-3. Banned metadata fields (`title`, `author`, etc.) in committable outputs.
-4. Fail-closed commit/push gates as mandatory.
-5. Cross-book atom convergence model (`atom_relations` + `atom_statistics`).
-6. Campaign world model versioning (`campaign_world_model` + `campaign_world_delta`).
-7. Three LLM entry-point contracts and write permissions.
-8. Baseline seed DB distribution model and runtime bootstrap behavior.
-9. Explicit separation between:
-   - module uploader/module-import as reviewed module-creation lanes,
-   - world-narrative as the source-anonymous literary ingestion lane.
-
-If approved, next step is to implement Phase 1 and Phase 2 only.
+1. Start campaign from seed DB and verify world model generates.
+2. Start two campaigns from same seed DB and verify world models are similar but not identical.
+3. Confirm campaign continuity works across modules with world-narrative pressure.

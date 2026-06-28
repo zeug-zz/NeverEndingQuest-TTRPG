@@ -18,10 +18,10 @@ This document is planning-level only. It intentionally does not replace implemen
 - interpreted state: narrative pressure/state that never mutates mechanical truth.
 - mechanical truth: Python-enforced gameplay state.
 - proposal/apply lifecycle: interpreted world updates are proposed, reviewed, then applied.
-- narrative seed atoms: source-anonymous world narrative units used for long-horizon continuity and world pressure interpretation.
-- creative ingest lane: LLM-first conversion of raw prose into ingestable structured drafts.
+- narrative seed atoms: world narrative units used for long-horizon continuity and world pressure interpretation.
 - approval gate: human facilitator review step that must pass before draft artifacts become canonical.
 - Ralph loop: iterative proposal -> Python validation -> human approval loop that prevents hallucinated canon writes.
+- seed DB: pre-built world-narrative database (`data/world_narrative_seed.db`).
 
 ## Prime Directive (Locked for v2)
 
@@ -64,8 +64,8 @@ Phase 1: Continuity Substrate (DONE)
 - Outcome: deterministic module continuity gate now exists.
 
 Phase 2: World Model and Memory Lift (IN PROGRESS)
-- Scope: map module continuity signals into world narrative interpretation inputs, plus introduce runtime creative ingest lane.
-- Outcome target: continuity-aware world model proposals without mechanical writes, with approval-gated draft promotion.
+- Scope: map module continuity signals into world narrative interpretation inputs from the external seed DB.
+- Outcome target: continuity-aware world model proposals without mechanical writes.
 
 Phase 2B: Companion Relationship Memory Lift (PLANNED)
 - Scope: absorb the remaining unfinished NPC companion-memory work into the v2 memory/retrieval architecture after the live file-backed Phase 2A stopgap.
@@ -75,15 +75,6 @@ Phase 2B: Companion Relationship Memory Lift (PLANNED)
   - Relationship retrieval MUST distinguish group continuity from specific-PC edges without forcing attribution when evidence is ambiguous.
   - Any richer parser/crystallizer adoption MUST flow into the common memory architecture, not create another parallel long-lived subsystem.
   - Operator-facing diagnosis/rebuild tooling for companion state MUST align with the same v2 memory truth model.
-
-Phase 2A: Creative Ingest Lane + Approval Gate (PLANNED, HIGH PRIORITY)
-- Scope: accept raw prose (paste/upload) and run LLM-first conversion into structured ingest drafts and narrative seed atoms.
-- Model posture: prioritize GLM-5 for initial narrative development quality, with provider abstraction and fallback support.
-- Outcome target: non-dev users can submit raw prose and receive review-ready structured drafts.
-- Hard guardrails:
-  - LLM cannot write canon directly.
-  - Python validators and schema gates remain fail-closed for publish.
-  - Canon apply requires explicit facilitator approval.
 
 Phase 3: EGO and Titan Runtime Bridge (PLANNED)
 - Scope: consume continuity and interpreted world signals in Titan/EGO cycles.
@@ -104,7 +95,7 @@ Phase 5: Governance and Observability Hardening (PLANNED)
 - `plans/version-2/module-import.md`
   - Owns: high-volume import pipeline and any-order readiness policy.
 - `plans/version-2/world-narrative.md`
-  - Owns: interpreted world model architecture and copyright-safe narrative store.
+  - Owns: interpreted world model architecture, seed DB consumption, retrieval contracts, campaign world model lifecycle.
 - `plans/version-2/memory.md`
   - Owns: retrieval/storage contracts, companion relationship-memory migration after live Phase 2A, and memory-layer integration with continuity quality signals.
 - `plans/version-2/narrative-sovereignty-post-gametest.md`
@@ -121,45 +112,14 @@ Phase 5: Governance and Observability Hardening (PLANNED)
 ## Dependency Chain
 
 1. Continuity substrate (already done) ->
-2. creative ingest lane (raw prose -> structured draft + seed atoms) ->
-3. approval gate + Ralph loop validation ->
-4. world-narrative + memory interpreted contracts ->
-5. companion relationship memory lift (DB-backed relationship retrieval + companion-state unification) ->
-6. post-gametest narrative-sovereignty continuation (event ledger + prompt reset) ->
-7. OpenRouter router re-architecture ->
-8. EGO/Titan runtime bridge ->
-9. module-builder continuity pressure integration ->
-10. governance hardening.
-
-## Creative Ingest Execution Plan (v2)
-
-Stage A: Runtime Draft Synthesis
-- Input: raw prose, module fragments, fantasy-horror scene notes, NPC/monster/location ideas.
-- Runtime LLM task: produce ingestable draft structure (room/location graph, entities, hooks, continuity hints) and seed-atom candidates.
-- Output classification: `draft_only`, never canonical by default.
-
-Stage B: Deterministic Structuring and Validation
-- Run deterministic preflight/transform/ingest checks against the draft.
-- Run continuity contract checks, sidecar checks, and readiness gates.
-- Build explicit validation report with blocking errors and fix guidance.
-
-Stage C: Facilitator Approval Gate
-- Present diff-style review:
-  - proposed module artifacts,
-  - proposed narrative seed atoms,
-  - continuity cross-module refs,
-  - rationale summary.
-- Require explicit approve/reject decision before apply.
-
-Stage D: Apply and Provenance
-- On approve: persist canonical artifacts, continuity payload, and provenance metadata.
-- On reject: keep quarantined draft and feedback for next Ralph loop iteration.
-
-Stage E: Gameplay-Coupled Evolution
-- During play, LLM interprets narrative pressure from party actions.
-- Narrative evolution is expected to be dynamic and reactive at runtime as the tabletop party introduces indeterministic inputs.
-- Mechanical outcomes remain Python-authoritative.
-- Narrative updates return to proposal/apply lifecycle (no bypass path).
+2. seed DB populated (`data/world_narrative_seed.db`) ->
+3. world-narrative + memory interpreted contracts ->
+4. companion relationship memory lift (DB-backed relationship retrieval + companion-state unification) ->
+5. post-gametest narrative-sovereignty continuation (event ledger + prompt reset) ->
+6. OpenRouter router re-architecture ->
+7. EGO/Titan runtime bridge ->
+8. module-builder continuity pressure integration ->
+9. governance hardening.
 
 ## Companion NPC Memory Integration Notes
 
@@ -179,13 +139,12 @@ This keeps NPC memory enhancements embedded in the same Ralph-loop, approval-gat
 
 ## Next Milestone
 
-Stand up Phase 2A MVP:
+Stand up world-narrative seed DB consumption:
 
-1. Runtime endpoint for raw prose -> creative structured draft generation.
-2. Deterministic validation bundle for generated drafts.
-3. Facilitator approval UI/API with explicit apply action.
-4. Provenance logging for accepted/rejected draft iterations.
-5. Draft the first v2 companion relationship retrieval contract so the archived NPC-memory follow-on work has a clear home in the common memory architecture.
+1. Bootstrap: copy/merge `data/world_narrative_seed.db` tables into runtime `data/memory.db` on first run.
+2. Retrieval: bounded query helpers for inspiration atoms, alignment profiles, and mythic conflicts.
+3. World model bootstrap: LLM composes `campaign_world_model` v1 from seed DB data.
+4. Draft the first v2 companion relationship retrieval contract so the archived NPC-memory follow-on work has a clear home in the common memory architecture.
 
 ## Exit Criteria
 
@@ -196,7 +155,7 @@ This narrative track is considered cohesive when:
 3. No plan allows interpreted layers to bypass Python mechanical truth.
 4. Titan/EGO phases explicitly consume continuity outputs as quality inputs.
 5. Builder integration remains proposal/apply and provenance-safe.
-6. Creative ingest lane remains approval-gated in initial runtime rollout.
+6. Seed DB consumption path is deterministic at bootstrap.
 7. Companion NPC relationship continuity is owned by the shared memory architecture rather than a permanently separate legacy subsystem.
 
 ## Working Note

@@ -105,10 +105,7 @@ It matches existing architecture split:
 1. No Titan process may write mechanical state (`hitPoints`, `armorClass`, slots, conditions, initiative, encounter legality).
 2. Titan process writes interpreted narrative state only.
 3. Titan process is fail-open for gameplay (server continues if Titan worker fails).
-4. Copyright firewall remains active:
-   - local raw sources only under `/user_uploads/text/`
-   - no source-identifying metadata in committable narrative outputs
-5. Creation/materialization of monsters/NPCs must remain declaration-gated.
+4. Creation/materialization of monsters/NPCs must remain declaration-gated.
 
 ---
 
@@ -476,12 +473,9 @@ Use this index to retool existing plan docs under one v2 umbrella.
 
 ## 18) OpenSpec draft retune checklist
 
-### 17.1 `openspec/changes/world-narrative-seed-bootstrap-and-toolkit-ingestion`
+### 17.1 Seed DB contract
 
-- [ ] Extend capability docs with Titan lifecycle tables and proposal statuses.
-- [ ] Add requirements for alignment relationship edges and provenance fields.
-- [ ] Add ingestion constraints for Titan-generated lines (source-anonymous and schema-bound).
-- [ ] Add tests for Titan-line storage compliance and fail-closed validation.
+- [ ] Add schema-bound ingestion constraints.
 
 ### 17.2 `openspec/changes/openrouter-llm-router-facade`
 

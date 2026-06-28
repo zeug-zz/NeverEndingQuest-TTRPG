@@ -55,8 +55,7 @@ This roadmap formalizes a safe, phased rebuild so we can improve quality without
 3. Improve deterministic data contracts before UI polish.
 4. Keep lazy runtime materialization unless there is a measured need for eager generation.
 5. Preserve SP and TABLETOP MODE compatibility.
-6. **Keep player-uploaded source content local-only under `/user_uploads/text/`.??**
-7. Feed Module Builder with source-anonymous narrative atoms, not raw book text.
+6. Feed Module Builder with narrative atoms, not raw content.
 
 ---
 
@@ -103,29 +102,19 @@ Exit criteria:
 
 ---
 
-## Phase 1.5: Toolkit world-source upload integration (narrative feed)
+## Narrative seed integration
 
-Objective: add a safe player-facing ingestion path in Toolkit that enriches module narratives without copyright leakage.
+Objective: enrich module narratives with narrative seeds from the seed DB.
 
 Core outcomes:
 
-1. Add Toolkit panel for world-source ingestion (`/toolkit`).
-2. Accept player uploads (`pdf` only) to `/user_uploads/text/` only.
-3. Run extraction -> source-anonymous atom build -> runtime DB ingest.
-4. Expose resulting narrative seed packs to Module Builder generation paths.
-
-Constraints:
-
-- No raw uploaded content in committable repo paths.
-- No title/author/source metadata in committable DB outputs.
-- One-book-at-a-time processing to avoid context overflow.
-- Hard cutover to `/user_uploads/text/` (reject legacy `/user_uploads/` paths).
+1. Load narrative seed packs from `data/world_narrative_seed.db`.
+2. Expose seed packs to Module Builder generation paths.
 
 Exit criteria:
 
-- User can upload one file and complete ingestion from Toolkit UI.
-- Module Builder sees richer continuity seeds from newly ingested atoms.
-- Git status remains clean for `/user_uploads/text/` and runtime DB content.
+- Module Builder sees richer continuity seeds from the seed DB.
+- Atom/seed data is well-formed.
 
 ---
 
@@ -172,7 +161,6 @@ Candidate scope:
 - Clear preflight checks and warnings.
 - Better progress detail and actionable error messages.
 - Optional post-build quality report in toolkit UI.
-- Copyright warning/attestation UX for player upload ingestion.
 
 Exit criteria:
 
@@ -217,10 +205,10 @@ For each phase:
 3. One manual smoke for primary facilitator workflow.
 4. Fail-open behavior confirmed for non-critical enhancement paths.
 
-Additional checks for upload integration phases:
-5. Upload files are written only to `/user_uploads/text/`.
-6. Generated atoms/seeds are source-anonymous.
-7. No raw-source files or runtime DB artifacts are included in distribution commits.
+Additional checks for seed integration phases:
+5. Seed DB is present and valid at bootstrap.
+6. Generated atoms/seeds are well-formed.
+7. No runtime DB artifacts are included in distribution commits.
 
 ---
 

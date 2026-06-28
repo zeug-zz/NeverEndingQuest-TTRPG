@@ -187,28 +187,20 @@ Staging approach:
 
 ## Source Rights And Provenance Classification
 
-This plan should explicitly distinguish source classes because later integration with world-narrative depends on it.
+This plan should explicitly distinguish source classes for module import routing.
 
 Recommended classes:
 
 1. `user_authored`
-   - player-created or project-owned raw adventure content,
-   - source-preserving normalized packets and module artifacts are acceptable in local workflow,
-   - can proceed through reviewed module publication flow.
+- player-created or project-owned raw adventure content,
+- source-preserving normalized packets and module artifacts are acceptable in local workflow,
+- can proceed through reviewed module publication flow.
 
 2. `licensed_or_project_owned`
-   - approved internal content or content with rights permitting module conversion,
-   - may follow the same module import lane with policy-appropriate review.
+- approved internal content or content with rights permitting module conversion,
+- may follow the same module import lane with policy-appropriate review.
 
-3. `third_party_copyright_restricted`
-   - locally processed source material whose raw identifying content must not enter committable derived outputs,
-   - may still inform future source-anonymous narrative abstractions,
-   - must not be treated as ordinary source-preserving module import by default.
-
-Architectural rule:
-
-- This module-import plan primarily targets `user_authored` and approved `licensed_or_project_owned` module sources.
-- Future bridges into `plans/version-2/world-narrative.md` must respect its stronger source-anonymous firewall for `third_party_copyright_restricted` material.
+This module-import plan targets `user_authored` and approved `licensed_or_project_owned` module sources only.
 
 ## Canonical Pipeline Architecture
 
@@ -270,8 +262,8 @@ Output:
 Boundary note:
 
 - This module-import rewrite stage is about canonical module cohesion and world placement.
-- It is not the same as the source-anonymous narrative atom pipeline in `plans/version-2/world-narrative.md`.
-- The world-narrative plan remains the later interpreted-state lane for narrative web, anonymized literary inspiration, and Titan-facing pressure systems.
+- The world-narrative seed DB provides inspiration atoms, alignment profiles, and mythic patterns for interpreted-state retrieval.
+- The module-import lane does not produce world-narrative seed data.
 
 ### Stage 5: Emit NEQ Modules
 
@@ -541,5 +533,5 @@ This expected outcome assumes a continuity chain:
 
 1. uploader completes the interactive reviewed import lane,
 2. v2 module-import scales that lane into bulk canonical operations,
-3. world-narrative later adds source-anonymous narrative web and world-pressure interpretation,
+3. world-narrative seed DB provides narrative web and world-pressure interpretation,
 4. Titan integration later consumes those interpreted narrative structures without owning the module import path itself.

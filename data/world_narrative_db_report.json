@@ -1,0 +1,949 @@
+{
+  "report_version": "1.0.0",
+  "generated_at": "2026-06-28T06:21:21.457899+00:00",
+  "source_db_path": "/Users/zeug/Projects/NeverEndingQuest/data/world_narrative_seed.db",
+  "schema_version": {
+    "version": "1.0.0",
+    "build_date": "2026-06-28T06:07:24.834456+00:00",
+    "source_book_count": 0,
+    "atom_count": 0,
+    "alignment_count": 0,
+    "domain_count": 0,
+    "conflict_count": 0,
+    "deity_archetype_count": 0
+  },
+  "table_count": 17,
+  "total_rows": 1,
+  "tables": [
+    {
+      "name": "alignment_profiles",
+      "columns": [
+        {
+          "name": "profile_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "entity_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "entity_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "ethical_score",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.0"
+        },
+        {
+          "name": "moral_score",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.0"
+        },
+        {
+          "name": "balance_score",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.0"
+        },
+        {
+          "name": "classic_label",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "source",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "confidence",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "atom_relations",
+      "columns": [
+        {
+          "name": "relation_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "left_atom_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "right_atom_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "relation_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "weight",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "right_atom_id",
+          "references_table": "inspiration_atoms",
+          "references_column": "atom_id",
+          "on_delete": "CASCADE"
+        },
+        {
+          "column": "left_atom_id",
+          "references_table": "inspiration_atoms",
+          "references_column": "atom_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "atom_statistics",
+      "columns": [
+        {
+          "name": "atom_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "support_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "avg_weight",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "variance",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.0"
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "atom_id",
+          "references_table": "inspiration_atoms",
+          "references_column": "atom_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "campaign_world_delta",
+      "columns": [
+        {
+          "name": "delta_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "base_version",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "proposal_json",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "applied",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "applied_at",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "campaign_world_model",
+      "columns": [
+        {
+          "name": "campaign_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "version",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "summary_json",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "generated_by",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "conflict_alignments",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "conflict_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "entity_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "alignment_strength",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "source",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "conflict_id",
+          "references_table": "mythic_conflicts",
+          "references_column": "conflict_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "cosmological_domains",
+      "columns": [
+        {
+          "name": "domain_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "domain_name",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "domain_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "parent_domain_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "alignment_affinity",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "elemental_affinity",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "srd_reference",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "deity_archetypes",
+      "columns": [
+        {
+          "name": "archetype_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "archetype_name",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "domains",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "typical_alignments",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "narrative_role",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "deity_manifestations",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "archetype_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "entity_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "manifestation_strength",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "source",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "archetype_id",
+          "references_table": "deity_archetypes",
+          "references_column": "archetype_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "inspiration_atoms",
+      "columns": [
+        {
+          "name": "atom_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "profile_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "atom_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "label",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "weight",
+          "type": "REAL",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0.5"
+        },
+        {
+          "name": "srd_compatibility",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false,
+          "default": "'unknown'"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "profile_id",
+          "references_table": "inspiration_profiles",
+          "references_column": "profile_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "inspiration_profiles",
+      "columns": [
+        {
+          "name": "profile_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "profile_kind",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "weights_json",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false,
+          "default": "'{}'"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "module_narrative_seeds",
+      "columns": [
+        {
+          "name": "seed_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "module_slug",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "seed_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "content_json",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "applied",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "mythic_conflicts",
+      "columns": [
+        {
+          "name": "conflict_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "conflict_name",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "pole_1",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "pole_2",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "narrative_patterns",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "alignment_mapping",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "narrative_actor_state",
+      "columns": [
+        {
+          "name": "entity_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "entity_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "current_goals",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "current_strategy",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "allegiances_json",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "hostility_json",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "last_updated",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "narrative_thread_events",
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "thread_id",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "event_kind",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "description",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "source_event_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [
+        {
+          "column": "thread_id",
+          "references_table": "narrative_threads",
+          "references_column": "thread_id",
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "narrative_threads",
+      "columns": [
+        {
+          "name": "thread_id",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "thread_type",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "status",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false,
+          "default": "'active'"
+        },
+        {
+          "name": "summary",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 0,
+      "sample_rows": []
+    },
+    {
+      "name": "schema_version",
+      "columns": [
+        {
+          "name": "version",
+          "type": "TEXT",
+          "nullable": true,
+          "primary_key": true
+        },
+        {
+          "name": "build_date",
+          "type": "TEXT",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "name": "source_book_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "atom_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "alignment_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "domain_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "conflict_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        },
+        {
+          "name": "deity_archetype_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primary_key": false,
+          "default": "0"
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [],
+      "row_count": 1,
+      "sample_rows": [
+        {
+          "version": "1.0.0",
+          "build_date": "2026-06-28T06:07:24.834456+00:00",
+          "source_book_count": 0,
+          "atom_count": 0,
+          "alignment_count": 0,
+          "domain_count": 0,
+          "conflict_count": 0,
+          "deity_archetype_count": 0
+        }
+      ]
+    }
+  ],
+  "distributions": {},
+  "_instructions": {
+    "purpose": "This report describes the NEQ-world seed DB schema and data distributions. An LLM consuming this report can generate the corresponding CREATE TABLE statements and bootstrap logic needed by NEQ-TTRPG's core/memory/memory_db.py. Each 'tables' entry contains full column metadata (name, type, nullable, default, pk), foreign keys, indexes, row counts, and sample rows. The 'distributions' section shows enum-like value distributions across the data.",
+    "for_neq_ttrpg_llm": "Use this report to: 1. Identify NEW tables (not present in memory_db.py migrations) -> generate CREATE TABLE IF NOT EXISTS. 2. Identify NEW columns on existing tables -> generate ALTER TABLE ADD COLUMN (SQLite compatible). 3. Identify NEW indexes -> generate CREATE INDEX IF NOT EXISTS. 4. Update bootstrap logic to seed new tables from the seed DB. 5. NEVER drop or rename columns \u2014 only additive changes. 6. Use 'column.default' values when adding columns to existing tables. 7. Compare 'distributions' against current schema enum constants for new values.",
+    "migration_notes": "All NEQ-world tables are seed tables. NEQ-TTRPG may have additional runtime-only tables (memory_events, entities, journal_entries, companion_memory_state, session_diary_*, etc.) that are NOT in this report. Do NOT remove those runtime tables. NEQ-world tables should be created in a migration named with the NEQ-world schema version (e.g., migration '004-neq-world-v1.0.0'). The bootstrap_memory_db_from_seed() function copies the seed DB on first run, so tables that exist in the seed DB do not need runtime CREATE TABLE statements if bootstrap runs before migrations. For safety, include them anyway."
+  }
+}

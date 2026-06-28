@@ -136,9 +136,9 @@ Goal: define the interpreted-state persistence and retrieval model for Titan pre
 
 Targets:
 
-- `plans/version-2/world-narrative.md`
+- `plans/neq-world.md` (external seed DB project)
+- `plans/version-2/world-narrative.md` (seed DB consumption contracts)
 - `plans/version-2/memory.md`
-- `openspec/changes/world-narrative-seed-bootstrap-and-toolkit-ingestion/proposal.md`
 
 Checklist:
 

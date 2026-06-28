@@ -64,15 +64,13 @@ Core intent:
   - Runtime implementation should align with `data/memory.db` narrative tables.
   - Optional compatibility layer/view may be named "world_brain" without separate raw-source storage.
 
-## Copyright and Upload Boundary (Sync Requirement)
+## Data Boundary (Sync Requirement)
 
-This EGO/RATIO plan must remain aligned with world-narrative copyright policy:
+This EGO/RATIO plan operates on interpreted world model state:
 
-1. Raw uploaded books/files are local-only under `/user_uploads/text/` (gitignored).
-2. EGO and RATIO never read raw source files directly in normal operation.
-3. EGO/RATIO consume only source-anonymous atoms and interpreted world model state.
-4. No title/author/source metadata is stored in committable DB rows used by EGO/RATIO.
-5. Tester distributions may include baseline source-anonymous seed DB only, never local uploads.
+1. EGO and RATIO consume narrative atoms and interpreted world model state from `data/memory.db`.
+2. EGO/RATIO never modify mechanical truth (Python-enforced state).
+3. Tester distributions may include baseline seed DB only.
 
 ## Prerequisite
 
