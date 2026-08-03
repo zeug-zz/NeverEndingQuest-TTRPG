@@ -1484,6 +1484,23 @@ def _run_homebrew_build_job(
             )
             return
 
+        # Step 5.2 gate: readiness/finisher continuation is allowed ONLY when
+        # build_status == "success". The packet builder is the single source of
+        # truth for this status:
+        #   - Editorial + editor accepted + persist success -> "success" with
+        #     final_reconciliation_accepted=True and
+        #     source_fidelity_effective_status="reconciled_degraded" (the only
+        #     accepted metadata shape that may flow to readiness/finisher).
+        #   - Editorial + editor non-accepted or persist fail -> "blocked" (handled
+        #     in the build_status == "blocked" branch above; never reaches here).
+        #   - Editorial + helper API import fail -> "final_reconciliation_required"
+        #     (handled in the branch above; never reaches here).
+        #   - Fatal/mixed/unknown fidelity classification -> "blocked" (handled
+        #     in the branch above; never reaches here).
+        # The finisher is responsible for reading the accepted
+        # final_reconciliation_report.json from module_dir and pinning the
+        # accepted metadata into compose_report_agreement(...). See
+        # toolkit_module_finisher._run_report_agreement_stage.
         if build_status == "success":
             _set_job_state(
                 job_id,

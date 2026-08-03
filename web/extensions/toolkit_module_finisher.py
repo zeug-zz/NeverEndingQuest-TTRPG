@@ -87,6 +87,45 @@ def _derive_report_freshness(
     }
 
 
+def _run_publishability_finalizer_stage(
+    module_slug: str, module_dir: Path
+) -> Dict[str, Any]:
+    """Run centralized publishability metadata finalization.
+
+    Calls ``finalize_module_publishability_metadata()`` which applies
+    continuity contract keys, continuity cross-ref enrichment, and semantic
+    authority enrichment in one deterministic pass, atomically persisting
+    any changes to ``module_context.json`` (and BU mirror if present).
+
+    Fail-open/degraded: errors are reported in the stage result but do not
+    crash the pipeline.
+    """
+    from utils.toolkit_publishability_finalizer import (
+        finalize_module_publishability_metadata,
+    )
+
+    try:
+        result = finalize_module_publishability_metadata(module_slug, module_dir)
+        stage_status = result.get("status", "degraded")
+        return {
+            "status": stage_status,
+            "changed": result.get("changed", False),
+            "errors": result.get("errors", []),
+            "warnings": result.get("warnings", []),
+        }
+    except Exception as exc:
+        warning(
+            f"TOOLKIT_FINISHER: Publishability finalizer stage failed for {module_slug}: {exc}",
+            category="module_ingest",
+        )
+        return {
+            "status": "degraded",
+            "changed": False,
+            "errors": [f"publishability_finalizer_exception: {exc}"],
+            "warnings": [],
+        }
+
+
 def _run_continuity_stage(
     module_slug: str, module_dir: Path, strict: bool
 ) -> Dict[str, Any]:
@@ -264,6 +303,64 @@ def _run_context_backup_parity_stage(module_dir: Path) -> Dict[str, Any]:
     return {"status": "success"}
 
 
+def _run_ingest_sidecar_persistence_stage(
+    module_slug: str,
+    module_dir: Path,
+    build_status: str,
+) -> Dict[str, Any]:
+    """Persist ingest sidecar for a module build.
+
+    Calls ``persist_ingest_sidecar()`` which writes a deterministic sidecar
+    JSON file to ``modules/ingest/archive/<timestamp>_<slug>.result.json``.
+
+    The sidecar satisfies the contract expected by
+    ``find_latest_sidecar_for_slug()`` and passes
+    ``homebrew_sidecar_audit.py --require-success`` when written.
+
+    If *build_status* is ``"failed"``, the stage is skipped (with a warning)
+    to avoid creating a misleading success sidecar for a terminally failed
+    build.
+
+    Fail-open/degraded: errors are reported in the stage result but do not
+    crash the pipeline.
+    """
+    from utils.toolkit_publishability_finalizer import persist_ingest_sidecar
+
+    # Do not write success sidecar for a terminally failed build
+    if build_status == "failed":
+        return {
+            "status": "skipped",
+            "sidecar_path": "",
+            "errors": [],
+            "warnings": ["sidecar_skipped_build_failed"],
+        }
+
+    try:
+        result = persist_ingest_sidecar(
+            module_slug=module_slug,
+            module_dir=module_dir,
+            status="success",
+        )
+        stage_status = result.get("status", "degraded")
+        return {
+            "status": stage_status,
+            "sidecar_path": result.get("sidecar_path", ""),
+            "errors": result.get("errors", []),
+            "warnings": result.get("warnings", []),
+        }
+    except Exception as exc:
+        warning(
+            f"TOOLKIT_FINISHER: Ingest sidecar persistence stage failed for {module_slug}: {exc}",
+            category="module_ingest",
+        )
+        return {
+            "status": "degraded",
+            "sidecar_path": "",
+            "errors": [f"ingest_sidecar_persistence_exception: {exc}"],
+            "warnings": [],
+        }
+
+
 def _run_semantic_authority_stage(module_slug: str, module_dir: Path) -> Dict[str, Any]:
     """Run semantic-authority enrichment stage (non-blocking in this phase)."""
     context_path = module_dir / "module_context.json"
@@ -367,6 +464,49 @@ def _run_monster_materialization_stage(module_slug: str) -> Dict[str, Any]:
         "returncode": 0,
         "parsed_output": parsed_output,
     }
+
+
+def _run_monster_media_closure_stage(module_dir: Path) -> Dict[str, Any]:
+    """Close missing monster base media with placeholder JPEGs.
+
+    Calls ``close_monster_base_media()`` which writes a minimal valid JPEG
+    placeholder at ``media/monsters/<slug>.jpg`` for every monster slug that
+    has a JSON stat block but no base media file.  Existing files are never
+    overwritten.
+
+    Fail-open/degraded: errors are recorded in the stage result but do not
+    crash the pipeline.  This stage MUST run after monster materialization
+    so that the materialization stage has already created all monster JSON
+    files (and thus the slug list is complete).
+    """
+    from utils.module_monster_media_closure import close_monster_base_media
+
+    try:
+        result = close_monster_base_media(str(module_dir))
+        created = int(result.get("created", 0))
+        skipped = int(result.get("skipped", 0))
+        errors = list(result.get("errors", []))
+        if errors:
+            stage_status = "degraded"
+        else:
+            stage_status = "success"
+        return {
+            "status": stage_status,
+            "created": created,
+            "skipped": skipped,
+            "errors": errors,
+        }
+    except Exception as exc:
+        warning(
+            f"TOOLKIT_FINISHER: Monster media closure stage failed: {exc}",
+            category="module_ingest",
+        )
+        return {
+            "status": "degraded",
+            "created": 0,
+            "skipped": 0,
+            "errors": [f"monster_media_closure_exception: {exc}"],
+        }
 
 
 def _detect_media_only_debt(publishability_stage: Dict[str, Any]) -> bool:
@@ -687,6 +827,20 @@ def run_toolkit_module_postbuild_finishing(
             if stage_key not in stages and isinstance(stage_payload, dict):
                 stages[stage_key] = stage_payload
 
+    # TABLETOP MODE: Publishability metadata finalization (continuity + semantic
+    # authority) using the centralized helper. Runs before the individual
+    # continuity and semantic-authority stages so that they find no remaining
+    # work and report no-op status.
+    publishability_finalizer_stage = _run_publishability_finalizer_stage(
+        module_slug=module_slug, module_dir=module_dir
+    )
+    stages["publishability_finalizer"] = publishability_finalizer_stage
+    if (
+        publishability_finalizer_stage.get("status") == "degraded"
+        and overall_status != "failed"
+    ):
+        overall_status = "degraded"
+
     continuity_stage = _run_continuity_stage(
         module_slug=module_slug, module_dir=module_dir, strict=strict
     )
@@ -719,6 +873,19 @@ def run_toolkit_module_postbuild_finishing(
         overall_status = "failed"
     elif (
         materialization_stage.get("status") == "degraded" and overall_status != "failed"
+    ):
+        overall_status = "degraded"
+
+    # TABLETOP MODE: Monster base media closure -- write placeholder JPEGs
+    # for any monster that lacks a media/monsters/<slug>.jpg file.  Runs
+    # after monster materialization so that the slug list is complete.
+    monster_media_closure_stage = _run_monster_media_closure_stage(
+        module_dir=module_dir
+    )
+    stages["monster_media_closure"] = monster_media_closure_stage
+    if (
+        monster_media_closure_stage.get("status") == "degraded"
+        and overall_status != "failed"
     ):
         overall_status = "degraded"
 
@@ -996,6 +1163,21 @@ def run_toolkit_module_postbuild_finishing(
     stages["context_backup_parity"] = context_parity_stage
     if context_parity_stage.get("status") == "failed":
         overall_status = "failed"
+
+    # TABLETOP MODE: Ingest sidecar persistence -- write sidecar JSON for
+    # sidecar audit compatibility.  Runs after all mutation stages.
+    # Skipped if build has already failed to avoid misleading success sidecar.
+    ingest_sidecar_stage = _run_ingest_sidecar_persistence_stage(
+        module_slug=module_slug,
+        module_dir=module_dir,
+        build_status=overall_status,
+    )
+    stages["ingest_sidecar_persistence"] = ingest_sidecar_stage
+    if (
+        ingest_sidecar_stage.get("status") == "degraded"
+        and overall_status != "failed"
+    ):
+        overall_status = "degraded"
 
     ready_status = str(publishability_stage.get("ready_status", "fail") or "fail")
     publishable_status = str(

@@ -1068,7 +1068,7 @@ IMPORTANT:
             "partyNPCs": [],
             "worldConditions": {
                 "year": 1492,  # Standard Forgotten Realms year
-                "month": "Hammer",  # January equivalent
+                "month": "Firstmonth",  # TABLETOP MODE: SRD calendar first month
                 "day": 1,
                 "time": "08:00:00",
                 "weather": "Clear",

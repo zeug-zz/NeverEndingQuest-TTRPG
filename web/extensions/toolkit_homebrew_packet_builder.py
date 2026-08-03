@@ -779,6 +779,115 @@ def run_toolkit_homebrew_packet_build(
         if _seed_writer_mode:
             build_result["seed_writer_mode"] = _seed_writer_mode
 
+    # TABLETOP MODE: Run monster reference closure before fidelity gates.
+    # Ensures all monster references have corresponding stat files before
+    # validation and final blocker classification. Unresolved references
+    # become structural fatal blockers.
+    try:
+        from utils.monster_reference_closure import (  # type: ignore[import-untyped]
+            ensure_monster_reference_closure,
+        )
+        _module_name = params.get("module_name", "")
+        _module_dir_str = str(Path(params["output_directory"]).resolve())
+        _closure_report = ensure_monster_reference_closure(_module_name, _module_dir_str)
+        build_result["monster_closure"] = {
+            "required": _closure_report.get("required", 0),
+            "existing_before": _closure_report.get("existing_before", 0),
+            "generated": _closure_report.get("generated", 0),
+            "unresolved": _closure_report.get("unresolved", 0),
+            "ambiguous_npc_like": _closure_report.get("ambiguous_npc_like", []),
+            "report_path": str(Path(_module_dir_str) / "monster_closure_report.json"),
+        }
+        if _closure_report.get("unresolved", 0) > 0:
+            # Unresolved monster references are structural fatal blockers.
+            # Block the build before fidelity gates or final-editor routing.
+            build_result["status"] = "blocked"
+            build_result["stage"] = "monster_closure"
+            build_result["error"] = (
+                f"monster_closure_unresolved:{_closure_report['unresolved']} "
+                f"unresolved monster reference(s)"
+            )
+            info(
+                f"TOOLKIT_HOMEBREW: Monster closure blocked build with "
+                f"{_closure_report['unresolved']} unresolved references",
+                category="web_interface",
+            )
+            return build_result
+    except Exception as e:
+        warning(
+            f"TOOLKIT_HOMEBREW: Monster closure exception: {e}",
+            category="web_interface",
+        )
+        # Fail open: if closure itself crashes, let fidelity gates proceed.
+        # The validator will catch missing monsters as reference_integrity
+        # failures.
+
+    # TABLETOP MODE: Run spatial repair after monster closure, before fidelity gates.
+    # Recomputes coordinates, cardinal adjacency, map links, and area
+    # connectivity to ensure spatial contract compliance before validation.
+    try:
+        from utils.spatial_repair import repair_module_spatial
+        _spatial_report = repair_module_spatial(_module_dir_str)
+        build_result["spatial_repair"] = {
+            "status": _spatial_report.get("status", "unknown"),
+            "input_location_count": _spatial_report.get("input_location_count", 0),
+            "repaired_area_count": _spatial_report.get("repaired_area_count", 0),
+            "edge_count": _spatial_report.get("edge_count", 0),
+            "unresolved_count": _spatial_report.get("unresolved_count", 0),
+            "report_path": str(Path(_module_dir_str) / "spatial_repair_report.json"),
+        }
+        if _spatial_report.get("status") == "failed":
+            # Spatial repair failed -> structural fatal blocker.
+            build_result["status"] = "blocked"
+            build_result["stage"] = "spatial_repair"
+            build_result["error"] = (
+                f"spatial_repair_failed:{_spatial_report.get('unresolved_count', 0)} "
+                f"unresolved spatial issue(s)"
+            )
+            info(
+                f"TOOLKIT_HOMEBREW: Spatial repair blocked build with "
+                f"{_spatial_report.get('unresolved_count', 0)} unresolved issues",
+                category="web_interface",
+            )
+            return build_result
+    except Exception as e:
+        warning(
+            f"TOOLKIT_HOMEBREW: Spatial repair exception: {e}",
+            category="web_interface",
+        )
+        # Fail open: if repair itself crashes, let fidelity gates proceed.
+        # The validator will catch spatial contract failures.
+
+    # TABLETOP MODE: Run calendar normalization after spatial repair, before fidelity gates.
+    # Normalizes party_tracker_BU.json calendar values to schema-valid months.
+    try:
+        from utils.calendar_normalization import normalize_party_calendar
+        _calendar_report = normalize_party_calendar(_module_dir_str)
+        build_result["calendar_normalization"] = {
+            "status": _calendar_report.get("status", "unknown"),
+            "month_before": _calendar_report.get("month_before", ""),
+            "month_after": _calendar_report.get("month_after", ""),
+            "reason": _calendar_report.get("reason", ""),
+        }
+        if _calendar_report.get("status") == "failed":
+            build_result["status"] = "blocked"
+            build_result["stage"] = "calendar_normalization"
+            build_result["error"] = (
+                f"calendar_normalization_failed:{_calendar_report.get('reason', 'unknown')}"
+            )
+            info(
+                f"TOOLKIT_HOMEBREW: Calendar normalization blocked build: "
+                f"{_calendar_report.get('reason', 'unknown')}",
+                category="web_interface",
+            )
+            return build_result
+    except Exception as e:
+        warning(
+            f"TOOLKIT_HOMEBREW: Calendar normalization exception: {e}",
+            category="web_interface",
+        )
+        # Fail open: validator catches invalid months as party failures.
+
     # TABLETOP MODE: Run build fidelity gates before finishing/publication
     _fidelity_required = False
     _fidelity_inputs_present = bool(
@@ -867,11 +976,25 @@ def run_toolkit_homebrew_packet_build(
 
                     if should_persist_final_reconciliation_brief(classification):
                         module_name = params["module_name"]
+
+                        # TABLETOP MODE: Load source graph for brief evidence enrichment.
+                        # Fail-open: missing/malformed source graph does not block brief.
+                        _source_graph: Optional[Dict[str, Any]] = None
+                        try:
+                            _sg_path = files.get("source_graph")
+                            if _sg_path is not None and _sg_path.exists():
+                                _loaded = load_json_artifact(_sg_path)
+                                if isinstance(_loaded, dict):
+                                    _source_graph = _loaded
+                        except Exception:
+                            pass
+
                         brief = build_final_reconciliation_brief(
                             classification,
                             job_id=job_id,
                             module_name=module_name,
                             module_dir=module_dir,
+                            source_graph=_source_graph,
                         )
 
                         # Step 4.4: check for accepted reconciliation report before pausing
@@ -902,21 +1025,69 @@ def run_toolkit_homebrew_packet_build(
                                 )
                                 return build_result
 
-                            build_result["final_reconciliation_required"] = True
-                            build_result["final_reconciliation_brief"] = persist_result
-                            build_result["build_fidelity"]["final_reconciliation_required"] = True
-                            build_result["build_fidelity"]["final_reconciliation_brief_path"] = persist_result["path"]
-                            build_result["status"] = "final_reconciliation_required"
-                            build_result["stage"] = "final_reconciliation"
-                            build_result.pop("error", None)
-                            _is_final_reconciliation = True
-                            info(
-                                f"TOOLKIT_HOMEBREW: Final reconciliation required job={job_id} "
-                                f"module={module_name} editorial_count={classification.get('editorial_count', 0)}",
-                                category="web_interface",
+                            # Step 5.1: invoke the LLM Builder final editor pipeline.
+                            # The editor consumes the freshly persisted brief and either
+                            # accepts the reconciliation (persists an accepted report and
+                            # sets reconciled_degraded metadata) or fails closed with a
+                            # blocked state and diagnostics. Falls back to the legacy
+                            # final_reconciliation_required pause only if the helper API
+                            # itself is unavailable (per task 5.1 step 6).
+                            _editor_accepted = _invoke_final_editor_or_fallback(
+                                build_result=build_result,
+                                brief=brief,
+                                module_dir=module_dir,
+                                workspace=workspace,
+                                job_id=job_id,
+                                module_name=module_name,
+                                brief_persist_result=persist_result,
+                                classification=classification,
                             )
+                            if _editor_accepted:
+                                # Step 5.2 gate: editor accepted and persisted
+                                # -> accepted metadata is now on build_result
+                                # (final_reconciliation_accepted=True and
+                                #  source_fidelity_effective_status="reconciled_degraded")
+                                # AND build_result["status"] is still "success"
+                                # (helper did NOT mutate it on the accepted path).
+                                # The route layer's build_status == "success"
+                                # branch will launch readiness/finisher, and the
+                                # finisher will load the persisted accepted
+                                # report from module_dir via the legacy
+                                # ``is_final_reconciliation_accepted`` oracle.
+                                _is_final_reconciliation = True
+                                # Continue to normal build_result persistence
+                            else:
+                                # Either the editor was unavailable and we fell back
+                                # to final_reconciliation_required, or the editor
+                                # returned non-accepted and the helper already set
+                                # build_result to blocked / required. Honor the
+                                # helper's verdict in both cases.
+                                # In BOTH sub-paths the helper mutates
+                                # build_result["status"]:
+                                #   - "blocked"           -> route layer returns
+                                #     before reaching the build_status == "success"
+                                #     branch.
+                                #   - "final_reconciliation_required" -> route
+                                #     layer returns at the dedicated branch
+                                #     before reaching the success branch.
+                                # In neither sub-path does the build reach
+                                # readiness/finisher. The Step 5.2 gate is
+                                # therefore: build_status == "success" is the
+                                # only signal that readiness/finisher may run.
+                                _is_final_reconciliation = True
+                                _resolved_status = build_result.get("status")
+                                if _resolved_status == "blocked":
+                                    # Non-accepted or persist failure path: stop here.
+                                    return build_result
+                                # Legacy fallback path (final_reconciliation_required):
+                                # fall through to normal build_result persistence.
 
-                # Step 4.2: fatal/mixed/unknown -> terminal block
+                # Step 4.2 + Step 5.3: fatal/mixed/unknown -> terminal block.
+                # The final editor (and the helper that invokes it) is reached
+                # ONLY through the `if _cls_status == "editorial":` branch
+                # above; this guard catches everything else and keeps the
+                # build blocked at the build_fidelity layer with no editor
+                # invocation and no reconciliation fields set.
                 if not _is_final_reconciliation:
                     build_result["status"] = "blocked"
                     build_result["stage"] = "build_fidelity"
@@ -1011,3 +1182,233 @@ def run_toolkit_homebrew_packet_build(
         return build_result
 
     return build_result
+
+
+# ---------------------------------------------------------------------------
+# Step 5.1: Final editor invocation helper
+# ---------------------------------------------------------------------------
+
+
+def _invoke_final_editor_or_fallback(
+    build_result: Dict[str, Any],
+    brief: Dict[str, Any],
+    module_dir: Path,
+    workspace: Path,
+    job_id: str,
+    module_name: str,
+    brief_persist_result: Dict[str, Any],
+    classification: Dict[str, Any],
+) -> bool:
+    """Invoke the LLM Builder final editor pipeline for an editorial-only brief.
+
+    Step 5.1 of the ``toolkit-accurate-ingest-llm-builder-final-editor`` change.
+    The helper owns the entire editorial-only live-invocation contract:
+
+    1. If the helper API (``utils.toolkit_llm_final_reconciliation``) cannot be
+       imported, the helper falls back to the legacy
+       ``final_reconciliation_required`` pause (per task 5.1 step 6) by
+       populating ``build_result`` with the existing pause metadata. Returns
+       ``False`` so the caller does not continue as accepted.
+    2. If the import succeeds, the orchestrator is invoked with the freshly
+       built brief and the resolved ``module_dir``. Live-provider errors are
+       caught fail-closed: ``build_result`` is set to ``blocked`` and the
+       caller is expected to stop.
+    3. When the orchestrator returns ``accepted``, the accepted report is
+       persisted via ``persist_accepted_final_reconciliation_report(...)``.
+       On persist success, the helper sets the accepted metadata
+       (``final_reconciliation_accepted``, ``source_fidelity_effective_status:
+       reconciled_degraded``, plus the nested ``build_fidelity`` mirror) and
+       returns ``True`` so the caller continues to normal build-result
+       persistence. On persist failure, the helper shapes a blocked report via
+       ``build_blocked_final_reconciliation_report(...)`` and sets the build
+       result to ``blocked``.
+    4. When the orchestrator returns any non-accepted status (``rejected``,
+       ``not_retryable``, ``invalid_brief``, etc.), the helper shapes a
+       blocked report and sets the build result to ``blocked`` with
+       ``stage=final_reconciliation`` and a ``final_reconciliation_editor_rejected:``
+       error string.
+
+    The helper NEVER mutates ``brief`` or ``classification``. It ONLY mutates
+    ``build_result`` (the same in-place mutation pattern the surrounding
+    packet-builder flow already uses). It does not persist the brief itself
+    (the caller persists the brief first, before calling the helper) and it
+    does not persist the blocked report (the helper's blocked report shape is
+    used as in-memory metadata only, per the "fail closed and write nothing"
+    contract that already exists in the helper API).
+
+    Returns:
+        ``True`` only when the editor was invoked and produced an accepted
+        reconciliation that was successfully persisted. ``False`` in every
+        other case (fallback pause, non-accepted orchestrator result, or
+        accepted-but-persist-failed).
+    """
+    try:
+        from utils.toolkit_llm_final_reconciliation import (
+            run_final_reconciliation_with_bounded_retry,
+            persist_accepted_final_reconciliation_report,
+            build_blocked_final_reconciliation_report,
+        )
+    except Exception as editor_import_error:
+        # Helper API unavailable: fall back to the legacy
+        # final_reconciliation_required pause (per task 5.1 step 6).
+        build_result["final_reconciliation_required"] = True
+        build_result["final_reconciliation_brief"] = brief_persist_result
+        build_result["build_fidelity"]["final_reconciliation_required"] = True
+        build_result["build_fidelity"]["final_reconciliation_brief_path"] = (
+            brief_persist_result.get("path")
+        )
+        build_result["status"] = "final_reconciliation_required"
+        build_result["stage"] = "final_reconciliation"
+        build_result.pop("error", None)
+        info(
+            (
+                f"TOOLKIT_HOMEBREW: Final editor API import failed job={job_id} "
+                f"module={module_name} error={editor_import_error}; "
+                "falling back to final_reconciliation_required"
+            ),
+            category="web_interface",
+        )
+        return False
+
+    # Invoke the orchestrator. The helper has its own bounded retry + provider
+    # fail-closed semantics, so the surrounding code only needs to catch
+    # unexpected exceptions (e.g. import-time side effects) and treat any
+    # non-accepted orchestrator status as a fail-closed blocked result.
+    try:
+        orchestrator_result = run_final_reconciliation_with_bounded_retry(
+            brief=brief,
+            module_dir=str(module_dir),
+        )
+    except Exception as editor_error:
+        build_result["status"] = "blocked"
+        build_result["stage"] = "final_reconciliation"
+        build_result["error"] = (
+            f"final_reconciliation_editor_exception:{editor_error}"
+        )
+        build_result["final_reconciliation_required"] = True
+        build_result["final_reconciliation_brief"] = brief_persist_result
+        build_result["build_fidelity"]["final_reconciliation_required"] = True
+        build_result["build_fidelity"]["final_reconciliation_brief_path"] = (
+            brief_persist_result.get("path")
+        )
+        build_result["final_reconciliation_editor_result"] = {
+            "status": "error",
+            "error": str(editor_error),
+            "editor_invoked": True,
+        }
+        error(
+            (
+                f"TOOLKIT_HOMEBREW: Final editor exception job={job_id} "
+                f"module={module_name} error={editor_error}"
+            ),
+            exception=editor_error,
+            category="web_interface",
+        )
+        return False
+
+    editor_status = (
+        orchestrator_result.get("status")
+        if isinstance(orchestrator_result, dict)
+        else "unknown"
+    )
+
+    if editor_status == "accepted":
+        # Persist the accepted report. On any persist failure, fail closed
+        # with the blocked report shape; do NOT continue as accepted.
+        try:
+            persist_report_result = persist_accepted_final_reconciliation_report(
+                module_dir=str(module_dir),
+                orchestrator_result=orchestrator_result,
+                brief=brief,
+            )
+        except Exception as persist_error:
+            persist_report_result = {
+                "status": "failed",
+                "path": None,
+                "report": None,
+                "error": str(persist_error),
+                "diagnostics": [],
+                "bytes": 0,
+            }
+
+        if persist_report_result.get("status") != "written":
+            # Build a minimal blocked-shape metadata dict directly so we do NOT
+            # delegate to ``build_blocked_final_reconciliation_report`` (which
+            # passes through to the accepted report for accepted orchestrator
+            # results). The build is blocked here, so the metadata must reflect
+            # the blocked state, not the underlying accepted orchestrator
+            # status.
+            blocked_metadata = {
+                "status": "blocked",
+                "reconciliation_status": "blocked",
+                "source_fidelity_effective_status": "blocked",
+                "playable_publication_candidate": False,
+                "decisions": [],
+                "changed_files": [],
+                "persist_error": persist_report_result.get("error"),
+            }
+            build_result["status"] = "blocked"
+            build_result["stage"] = "final_reconciliation"
+            build_result["error"] = (
+                "final_reconciliation_persist_failed:"
+                f"{persist_report_result.get('error', 'unknown')}"
+            )
+            build_result["final_reconciliation_required"] = True
+            build_result["final_reconciliation_brief"] = brief_persist_result
+            build_result["build_fidelity"]["final_reconciliation_required"] = True
+            build_result["build_fidelity"]["final_reconciliation_brief_path"] = (
+                brief_persist_result.get("path")
+            )
+            build_result["final_reconciliation_editor_result"] = blocked_metadata
+            error(
+                (
+                    f"TOOLKIT_HOMEBREW: Final report persist failed job={job_id} "
+                    f"module={module_name} "
+                    f"error={persist_report_result.get('error')}"
+                ),
+                category="web_interface",
+            )
+            return False
+
+        # Accepted path: set accepted metadata, do not claim clean pass.
+        accepted_report = persist_report_result.get("report") or {}
+        build_result["final_reconciliation_accepted"] = True
+        build_result["final_reconciliation"] = accepted_report
+        build_result["source_fidelity_effective_status"] = "reconciled_degraded"
+        build_result["build_fidelity"]["final_reconciliation_accepted"] = True
+        build_result["build_fidelity"]["source_fidelity_effective_status"] = (
+            "reconciled_degraded"
+        )
+        info(
+            (
+                f"TOOLKIT_HOMEBREW: Final reconciliation accepted job={job_id} "
+                f"module={module_name} via final editor "
+                f"path={persist_report_result.get('path')}"
+            ),
+            category="web_interface",
+        )
+        return True
+
+    # Non-accepted orchestrator result: shape a blocked report and stop.
+    blocked_report = build_blocked_final_reconciliation_report(
+        orchestrator_result=orchestrator_result,
+        brief=brief,
+    )
+    build_result["status"] = "blocked"
+    build_result["stage"] = "final_reconciliation"
+    build_result["error"] = f"final_reconciliation_editor_rejected:{editor_status}"
+    build_result["final_reconciliation_required"] = True
+    build_result["final_reconciliation_brief"] = brief_persist_result
+    build_result["build_fidelity"]["final_reconciliation_required"] = True
+    build_result["build_fidelity"]["final_reconciliation_brief_path"] = (
+        brief_persist_result.get("path")
+    )
+    build_result["final_reconciliation_editor_result"] = blocked_report
+    warning(
+        (
+            f"TOOLKIT_HOMEBREW: Final editor did not accept job={job_id} "
+            f"module={module_name} status={editor_status}"
+        ),
+        category="web_interface",
+    )
+    return False

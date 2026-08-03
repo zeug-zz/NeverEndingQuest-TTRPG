@@ -307,7 +307,7 @@ class LocationPromptGuide:
         "impact": "Guardians destroyed, forge now accessible",
         "worldConditions": {
             "year": 1492,
-            "month": "Hammer",
+            "month": "Firstmonth",  # TABLETOP MODE: SRD calendar first month
             "day": 15,
             "time": "14:30:00"
         }
