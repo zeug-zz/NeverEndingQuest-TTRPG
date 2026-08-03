@@ -4,7 +4,7 @@
 # This software is subject to the terms of the Fair Source License.
 
 """
-GPT-5.4-mini chat parameter shim contract tests.
+GPT-5.6 Luna chat parameter shim contract tests (generic GPT-5 family).
 """
 
 import os
@@ -28,11 +28,11 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
     def test_gpt5_dm_main_omits_legacy_sampling_controls(self) -> None:
         params = ai_client_factory.get_chat_completion_params(
             "dm_main",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             temperature_override=0.7,
         )
 
-        self.assertEqual(params["model"], "gpt-5.4-mini-2026-03-17")
+        self.assertEqual(params["model"], "gpt-5.6-luna")
         self.assertEqual(params["reasoning_effort"], "medium")
         self.assertEqual(params["verbosity"], "medium")
         self.assertNotIn("temperature", params)
@@ -41,7 +41,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
     def test_gpt5_validation_prefers_low_reasoning_and_low_verbosity(self) -> None:
         params = ai_client_factory.get_chat_completion_params(
             "dm_validation",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             temperature_override=0.1,
         )
 
@@ -67,7 +67,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
 
         params = ai_client_factory.get_chat_completion_params(
             "combat_main",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             temperature_override=0.8,
         )
 

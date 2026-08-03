@@ -3,7 +3,7 @@
 # License: See LICENSE file in the repository root
 
 """
-GPT-5.4 Mini prompt/runtime parity audit.
+GPT-5.6 Luna chat-params prompt/runtime parity contract (generic GPT-5 family).
 """
 
 import os
@@ -44,18 +44,18 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
     def test_gpt5_params_include_reasoning_and_verbosity(self):
         params = ai_client_factory.get_chat_completion_params(
             "dm_main",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             temperature_override=0.7,
         )
 
-        self.assertEqual(params["model"], "gpt-5.4-mini-2026-03-17")
+        self.assertEqual(params["model"], "gpt-5.6-luna")
         self.assertEqual(params["reasoning_effort"], "medium")
         self.assertEqual(params["verbosity"], "medium")
 
     def test_gpt5_params_exclude_legacy_temperature_by_default(self):
         params = ai_client_factory.get_chat_completion_params(
             "dm_main",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             temperature_override=0.7,
         )
 
@@ -76,7 +76,7 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
     def test_retry_tier_high_uses_high_reasoning(self):
         params = ai_client_factory.get_chat_completion_params(
             "combat_validation",
-            "gpt-5.4-mini-2026-03-17",
+            "gpt-5.6-luna",
             retry_tier="high",
         )
 

@@ -1193,6 +1193,37 @@ character_data["is_active_pc"] = True
 
 ## Recent Changes
 
+### GPT-5.6 Luna Direct OpenAI Model Swap (COMPLETED - 2026-08-03)
+
+**Status:** COMPLETED - Replaced the active direct-OpenAI GPT-5.4 Mini assignments with `gpt-5.6-luna`, preserved the generic GPT-5 Chat Completions shim, and verified direct narrator/combat requests.
+
+**Implementation Summary:**
+- `model_config.py` - Updated all 22 active GPT-5 runtime assignments, including `GPT5_MINI_MODEL`, `GPT5_FULL_MODEL`, and compression roles, to `gpt-5.6-luna`. OpenRouter model settings remain unchanged.
+- `utils/ai_client_factory.py` - Retained generic `gpt-5` prefix detection and task-based reasoning profiles; added `GPT-5.6 Luna` display mappings.
+- `updates/update_encounter.py` and `updates/plot_update.py` - Routed two live high-value GPT-5 call sites through `get_chat_completion_params()` so legacy sampling controls are omitted for direct OpenAI while existing OpenRouter request shape is preserved.
+- `scripts/test_gpt56_luna_direct_openai_contract.py` - Added 39 provider-free model, shim, display, retry, sampling, and OpenRouter-isolation tests.
+- `scripts/test_gpt54_mini_chat_params_shim.py` and `scripts/test_gpt54_chat_params_contract.py` - Updated active GPT-5 fixtures to exercise Luna while retaining generic GPT-5-family assertions.
+- `openspec/changes/archive/2026-08-03-gpt56-luna-direct-openai-model-swap/` - Archived the completed OpenSpec change.
+- `openspec/specs/gpt56-luna-direct-openai-runtime/spec.md` - Synced the direct-OpenAI Luna runtime capability specification.
+
+**Runtime Contract:**
+- Direct OpenAI uses the exact model ID `gpt-5.6-luna`.
+- Narrator and combat use `reasoning_effort=medium` and `verbosity=medium`; validation/compression retain their existing low-effort profiles; configured retries retain high reasoning escalation.
+- GPT-5 requests omit legacy `temperature` and `top_p` by default.
+- OpenRouter remains a future build target; its model IDs and `thinking` request shape were not changed.
+
+**Verification:**
+- `openspec validate gpt56-luna-direct-openai-model-swap --strict` -> PASS before archive.
+- Provider-free focused tests -> 55/55 PASS; targeted narrator/combat/routing regression checks -> 146/146 PASS.
+- Direct narrator smoke -> `gpt-5.6-luna` accepted medium reasoning/verbosity; 7.4 seconds, 94 total tokens.
+- Direct combat smoke -> valid JSON/action output with `gpt-5.6-luna`; 2.9 seconds, 161 total tokens; no GPT-5.4 fallback.
+- Fresh-process single-player and TABLETOP MODE routing smoke -> PASS; both modes select Luna.
+- Two pre-existing narrator source-contract failures remain documented; they are unrelated whitespace-sensitive assertions against unchanged `main.py` formatting.
+
+**Performance Note:** The two small live samples measured approximately 12.7 and 54.6 total tokens/second. They do not establish the expected 100+ tokens/second target because reasoning overhead, output size, and provider load affect results.
+
+**Rollback:** Restore active `model_config.py` assignments to `gpt-5.4-mini-2026-03-17`, restart the process, and rerun the provider-free contract/regression suites. No OpenRouter rollback is required.
+
 ### Security Audit + Threat Monitor Pass; Lockfile Reconciliation (COMPLETED - 2026-06-22)
 
 **Status:** COMPLETED - Ran threat-monitor + security-audit, fixed CI semgrep config, suppressed test-only SAST noise, applied compatible dependency CVE patches, and repaired a fundamentally unresolvable `requirements-lock.txt`.

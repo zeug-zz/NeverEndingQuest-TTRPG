@@ -22,7 +22,7 @@ except:
     def track_response(r): pass
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import create_chat_client, get_model_config  # OPENROUTER: Multi-provider support
+from utils.ai_client_factory import create_chat_client, get_chat_completion_params  # OPENROUTER: Multi-provider support
 
 # Set script name for logging
 set_script_name("update_encounter")
@@ -483,11 +483,17 @@ Remember to only update monster information and leave player and NPC data unchan
         ]
 
         # Get AI's response
-        config = get_model_config("encounter_update", ENCOUNTER_UPDATE_MODEL)  # OPENROUTER: 3-tier model selection
+        # GPT-5 family (gpt-5.6-luna) requires reasoning_effort/verbosity and omits
+        # legacy temperature/top_p. Route through the shared helper so the direct
+        # OpenAI GPT-5 branch is valid while non-GPT-5 temperature and the
+        # OpenRouter thinking extra_body behavior are preserved.
         response = client.chat.completions.create(
-            model=config["model"], **config.get("extra_body", {}),
-            temperature=TEMPERATURE,
-            messages=prompt
+            messages=prompt,
+            **get_chat_completion_params(
+                "encounter_update",
+                ENCOUNTER_UPDATE_MODEL,
+                temperature_override=TEMPERATURE,
+            ),
         )
         
         # Track usage

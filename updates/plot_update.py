@@ -21,7 +21,7 @@ from config import PLOT_UPDATE_MODEL
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_write_json, safe_read_json
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import create_chat_client, get_model_config  # OPENROUTER: Multi-provider support
+from utils.ai_client_factory import create_chat_client, get_chat_completion_params  # OPENROUTER: Multi-provider support
 
 # Set script name for logging
 set_script_name("plot_update")
@@ -203,11 +203,17 @@ Examples:
             {"role": "user", "content": f"Current plot info: {json.dumps(plot_info_data)}\n\nPlot point to update: {plot_point_id_param}\nNew status: {normalized_status_param}\nPlot impact: {plot_impact_param}"}
         ]
 
-        config = get_model_config("plot_update", PLOT_UPDATE_MODEL)  # OPENROUTER: 3-tier model selection
+        # GPT-5 family (gpt-5.6-luna) requires reasoning_effort/verbosity and omits
+        # legacy temperature/top_p. Route through the shared helper so the direct
+        # OpenAI GPT-5 branch is valid while non-GPT-5 temperature and the
+        # OpenRouter thinking extra_body behavior are preserved.
         response = client.chat.completions.create(
-            model=config["model"], **config.get("extra_body", {}), # Use imported model name
-            temperature=TEMPERATURE,
-            messages=prompt_messages
+            messages=prompt_messages,
+            **get_chat_completion_params(
+                "plot_update",
+                PLOT_UPDATE_MODEL,
+                temperature_override=TEMPERATURE,
+            ),
         )
         
         # Track usage if available

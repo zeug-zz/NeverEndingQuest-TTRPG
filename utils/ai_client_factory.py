@@ -207,6 +207,8 @@ def get_model_display_name() -> str:
         "gpt-4.1-mini-2025-04-14": "GPT-4.1 Mini",
         "gpt-5.4-mini-2026-03-17": "GPT-5.4 Mini",
         "openai/gpt-5.4-mini-2026-03-17": "GPT-5.4 Mini",
+        "gpt-5.6-luna": "GPT-5.6 Luna",
+        "openai/gpt-5.6-luna": "GPT-5.6 Luna",
     }
     
     return display_names.get(model, model)
