@@ -227,6 +227,8 @@ def build_prefilter_decision(
 
     if not text or not slug:
         return None
+
+    # 1. Existing lowercase prose / conjunction-prefix check
     if looks_like_narrative_phrase(text):
         return build_triage_decision(
             candidate_text=text,
@@ -239,7 +241,137 @@ def build_prefilter_decision(
                 "narrative phrase, not a named entity candidate."
             ),
         )
+
+    # 2. Full sentence / long clause check (catches uppercase-starting
+    #    sentences that pass the lowercase-only narrative phrase check).
+    if _looks_like_full_sentence_or_clause(text):
+        return build_triage_decision(
+            candidate_text=text,
+            candidate_slug=slug,
+            proposed_type=proposed,
+            adjudicated_type=TYPE_NARRATIVE_PHRASE,
+            decision=DECISION_REJECT,
+            reason=(
+                "Deterministic prefilter: text is a full sentence or "
+                "long clause, not a named entity candidate."
+            ),
+        )
+
+    # 3. One-word capitalized mechanic/effect verb in trap/table/effect
+    #    context.  True one-word NPC names are NOT rejected because they
+    #    either are not in _MECHANIC_EFFECT_VERBS or their context does
+    #    not indicate mechanics material.
+    words = text.strip().split()
+    if len(words) == 1:
+        word = words[0].strip(".,;:!?'\"()[]")
+        if word in _MECHANIC_EFFECT_VERBS and _candidate_in_mechanics_context(candidate):
+            return build_triage_decision(
+                candidate_text=text,
+                candidate_slug=slug,
+                proposed_type=proposed,
+                adjudicated_type=TYPE_NARRATIVE_PHRASE,
+                decision=DECISION_REJECT,
+                reason=(
+                    "Deterministic prefilter: one-word mechanic/effect "
+                    "verb in trap/table/spell/mechanics context."
+                ),
+            )
+
     return None
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1: Extended non-actor prefiltering
+# ---------------------------------------------------------------------------
+
+_MECHANIC_EFFECT_VERBS: tuple = (
+    "Awaken", "Enrage", "Menace", "Enthrall", "Irradiate", "Overwhelm",
+)
+
+_MECHANICS_CONTEXT_KEYWORDS: tuple = (
+    "trap", "effect", "spell", "mechanic", "mechanics",
+    "result", "complication", "trigger", "damage", "condition",
+    "passive element", "active element",
+)
+
+
+def _looks_like_full_sentence_or_clause(text: str) -> bool:
+    """Return True if text is a full sentence or long clause.
+
+    Detects multi-word prose even when starting with an uppercase letter.
+    True NPC names (multi-word title-cased phrases) are NOT rejected.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    words = [w for w in stripped.split() if w]
+    if len(words) < 2:
+        return False
+
+    # Full sentences end with a period and have mixed case (lowercase words
+    # after the first).  NPC names rarely if ever end with a period.
+    if stripped.endswith("."):
+        return True
+
+    # Long clauses: 6+ words where at least 2 words after the first start
+    # with a lowercase letter (mixed-case prose rather than title-cased
+    # entity names).
+    if len(words) >= 6:
+        lower_start_count = 0
+        for w in words[1:]:
+            w_clean = w.lstrip("'\"(")
+            if w_clean and w_clean[0].islower():
+                lower_start_count += 1
+        if lower_start_count >= 2:
+            return True
+
+    return False
+
+
+def _candidate_in_mechanics_context(candidate: Dict[str, Any]) -> bool:
+    """Return True if candidate context fields indicate trap/effect/
+    spell/mechanics material.
+
+    Inspects direct fields (context, section, source_role,
+    proposed_type) and source_refs entries.  Handles missing or
+    non-dict values fail-open.
+
+    NOTE: The candidate 'source' field (e.g. 'table_cell') is an
+    extraction technical detail, NOT semantic context, so it is NOT
+    scanned here.  The keyword 'table' is also excluded because it
+    matches identity-bearing table mentions (e.g. 'Table: NPC Name,
+    Role, Location') and would cause false positives against true
+    one-word NPC names from identity-bearing tables.
+    """
+    # Direct context fields (source is NOT scanned -- see docstring)
+    for key in ("context", "section", "source_role"):
+        val = candidate.get(key)
+        if isinstance(val, str) and val.strip():
+            val_lower = val.lower().strip()
+            for kw in _MECHANICS_CONTEXT_KEYWORDS:
+                if kw in val_lower:
+                    return True
+
+    # Proposed type
+    ptype = (candidate.get("proposed_type") or "").lower().strip()
+    if ptype in ("mechanic", "table_effect", "trap_effect"):
+        return True
+
+    # Source refs (source key NOT scanned -- see docstring)
+    source_refs = candidate.get("source_refs")
+    if isinstance(source_refs, list):
+        for ref in source_refs:
+            if not isinstance(ref, dict):
+                continue
+            for key in ("context", "section", "excerpt"):
+                val = ref.get(key)
+                if isinstance(val, str) and val.strip():
+                    val_lower = val.lower().strip()
+                    for kw in _MECHANICS_CONTEXT_KEYWORDS:
+                        if kw in val_lower:
+                            return True
+
+    return False
 
 
 def build_underbound_npc_findings(

@@ -21,6 +21,9 @@ from pathlib import Path
 from utils.toolkit_final_reconciliation import (
     BRIEF_VERSION,
     REPORT_VERSION,
+    DEFAULT_EDITABLE_SURFACES,
+    _build_generated_module_summary,
+    _resolve_source_excerpts,
     build_final_reconciliation_brief,
     build_final_reconciliation_report,
     persist_final_reconciliation_brief,
@@ -88,6 +91,14 @@ class TestBuildFinalReconciliationBrief(unittest.TestCase):
         self.assertIn("editable_surfaces", brief)
         self.assertIsInstance(brief["editable_surfaces"], list)
         self.assertGreater(len(brief["editable_surfaces"]), 0)
+        # Narrowed canonical surfaces: no runtime-only or source/middle entries
+        self.assertNotIn("module_plot.json", brief["editable_surfaces"])
+        self.assertNotIn("areas/", brief["editable_surfaces"])
+        self.assertNotIn("monsters/", brief["editable_surfaces"])
+        self.assertIn("module_context_BU.json", brief["editable_surfaces"])
+        self.assertIn("module_plot_BU.json", brief["editable_surfaces"])
+        self.assertIn("areas/*_BU.json", brief["editable_surfaces"])
+        self.assertIn("map_*.json", brief["editable_surfaces"])
 
         self.assertIn("instructions", brief)
         self.assertIsInstance(brief["instructions"], str)
@@ -124,6 +135,311 @@ class TestBuildFinalReconciliationBrief(unittest.TestCase):
         classification = self._editorial_classification()
         brief = build_final_reconciliation_brief(classification)
 
+        self.assertEqual(brief["source_excerpts"], [])
+        self.assertEqual(brief["generated_module_summary"], {})
+
+
+class TestDefaultEditableSurfaces(unittest.TestCase):
+    """Verify DEFAULT_EDITABLE_SURFACES match the canonical contract.
+
+    The preferred canonical surfaces are:
+      module_context.json, module_context_BU.json, module_plot_BU.json,
+      areas/*_BU.json, map_*.json.
+
+    Runtime-only files, broad directory prefixes, and source/middle
+    pipeline artifacts must remain absent from defaults.
+    """
+
+    CANONICAL_SURFACES = [
+        "module_context.json",
+        "module_context_BU.json",
+        "module_plot_BU.json",
+        "areas/*_BU.json",
+        "map_*.json",
+    ]
+
+    def test_default_surfaces_match_canonical_list(self):
+        """DEFAULT_EDITABLE_SURFACES is exactly the canonical list."""
+        self.assertEqual(DEFAULT_EDITABLE_SURFACES, self.CANONICAL_SURFACES)
+
+    def test_default_surfaces_excludes_runtime_module_plot(self):
+        """module_plot.json (runtime-only) is NOT in defaults."""
+        self.assertNotIn("module_plot.json", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_excludes_broad_areas_prefix(self):
+        """areas/ (broad directory prefix) is NOT in defaults."""
+        self.assertNotIn("areas/", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_excludes_monsters_prefix(self):
+        """monsters/ is NOT in defaults."""
+        self.assertNotIn("monsters/", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_includes_module_context_bu(self):
+        """module_context_BU.json (canonical backup) IS in defaults."""
+        self.assertIn("module_context_BU.json", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_includes_module_plot_bu(self):
+        """module_plot_BU.json (canonical backup) IS in defaults."""
+        self.assertIn("module_plot_BU.json", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_includes_areas_bu_glob(self):
+        """areas/*_BU.json (canonical backup glob) IS in defaults."""
+        self.assertIn("areas/*_BU.json", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_includes_map_glob(self):
+        """map_*.json (static authored maps) IS in defaults."""
+        self.assertIn("map_*.json", DEFAULT_EDITABLE_SURFACES)
+
+    def test_default_surfaces_are_all_strings(self):
+        """Every surface entry is a non-empty string."""
+        for surface in DEFAULT_EDITABLE_SURFACES:
+            self.assertIsInstance(surface, str)
+            self.assertTrue(surface)
+
+    def test_default_surfaces_are_ascii_only(self):
+        """All surface entries are ASCII-safe."""
+        combined = "".join(DEFAULT_EDITABLE_SURFACES)
+        combined.encode("ascii")
+
+
+class TestEvidenceEnrichment(unittest.TestCase):
+    """Test source_excerpts and generated_module_summary enrichment."""
+
+    def _editorial_classification(self):
+        return {
+            "status": "editorial",
+            "fatal_blockers": [],
+            "editorial_blockers": [
+                {
+                    "type": "editorial",
+                    "message": "Required location 'Trigger' not found in module",
+                    "category": "location",
+                    "source_atom_id": "loc_trigger",
+                    "raw": {},
+                },
+                {
+                    "type": "editorial",
+                    "message": "Required npc 'Wayne' not found in module",
+                    "category": "npc",
+                    "source_atom_id": "ent_wayne",
+                    "raw": {},
+                },
+            ],
+            "warnings": [],
+            "can_attempt_final_reconciliation": True,
+            "fatal_count": 0,
+            "editorial_count": 2,
+            "original_refusal_reason": "",
+            "report_paths": {},
+        }
+
+    def _source_graph(self):
+        return {
+            "atoms": [
+                {"id": "loc_trigger", "type": "location", "name": "Trigger",
+                 "summary": "The ancient Trigger chamber beneath the ruin"},
+                {"id": "ent_wayne", "type": "npc", "name": "Wayne",
+                 "summary": "Wayne the gatekeeper of the hidden city"},
+                {"id": "loc_unreferenced", "type": "location", "name": "Unreferenced",
+                 "summary": "A location not referenced by any blocker"},
+            ],
+        }
+
+    def _classification_no_source_atom_ids(self):
+        return {
+            "status": "editorial",
+            "fatal_blockers": [],
+            "editorial_blockers": [
+                {
+                    "type": "editorial",
+                    "message": "Some editorial issue",
+                    "category": "general",
+                    "source_atom_id": None,
+                    "raw": {},
+                },
+                {
+                    "type": "editorial",
+                    "message": "Another issue",
+                    "category": "general",
+                    "raw": {},
+                },
+            ],
+            "warnings": [],
+            "can_attempt_final_reconciliation": True,
+            "fatal_count": 0,
+            "editorial_count": 2,
+            "original_refusal_reason": "",
+            "report_paths": {},
+        }
+
+    def test_resolve_source_excerpts_with_matching_atoms(self):
+        """Resolved excerpts contain enriched data from source graph atoms."""
+        classification = self._editorial_classification()
+        sg = self._source_graph()
+        excerpts = _resolve_source_excerpts(classification, sg)
+
+        self.assertEqual(len(excerpts), 2)
+
+        # Order matches blocker order (loc_trigger first)
+        self.assertEqual(excerpts[0]["source_atom_id"], "loc_trigger")
+        self.assertEqual(excerpts[0]["atom_type"], "location")
+        self.assertEqual(excerpts[0]["name"], "Trigger")
+        self.assertIn("Trigger chamber", excerpts[0]["excerpt"])
+
+        self.assertEqual(excerpts[1]["source_atom_id"], "ent_wayne")
+        self.assertEqual(excerpts[1]["atom_type"], "npc")
+        self.assertEqual(excerpts[1]["name"], "Wayne")
+
+    def test_resolve_source_excerpts_no_source_graph(self):
+        """No source_graph returns empty list."""
+        classification = self._editorial_classification()
+        excerpts = _resolve_source_excerpts(classification, None)
+        self.assertEqual(excerpts, [])
+
+    def test_resolve_source_excerpts_empty_source_graph(self):
+        """Empty source graph dict returns empty list."""
+        classification = self._editorial_classification()
+        excerpts = _resolve_source_excerpts(classification, {})
+        self.assertEqual(excerpts, [])
+
+    def test_resolve_source_excerpts_no_atoms_in_graph(self):
+        """Source graph with no atoms returns empty list."""
+        classification = self._editorial_classification()
+        excerpts = _resolve_source_excerpts(classification, {"atoms": []})
+        self.assertEqual(excerpts, [])
+
+    def test_resolve_source_excerpts_no_source_atom_ids(self):
+        """Blockers without source_atom_id produce no excerpts."""
+        classification = self._classification_no_source_atom_ids()
+        sg = self._source_graph()
+        excerpts = _resolve_source_excerpts(classification, sg)
+        self.assertEqual(excerpts, [])
+
+    def test_resolve_source_excerpts_atom_id_no_match(self):
+        """Non-matching source_atom_id produces no excerpt for that blocker."""
+        classification = self._editorial_classification()
+        sg = {"atoms": [
+            {"id": "unrelated", "type": "npc", "name": "Ghost",
+             "summary": "A ghostly figure"},
+        ]}
+        excerpts = _resolve_source_excerpts(classification, sg)
+        self.assertEqual(excerpts, [])
+
+    def test_resolve_source_excerpts_bounded_at_max(self):
+        """More blockers than _MAX_EXCERPTS are bounded."""
+        many_blockers = []
+        many_atoms = []
+        for i in range(25):
+            atom_id = f"blk_{i:03d}"
+            many_blockers.append({
+                "type": "editorial",
+                "message": f"Blocker {i}",
+                "category": "general",
+                "source_atom_id": atom_id,
+                "raw": {},
+            })
+            many_atoms.append({
+                "id": atom_id, "type": "npc", "name": f"Blocker_{i}",
+                "summary": f"Entity number {i}",
+            })
+        classification = {
+            "status": "editorial", "fatal_blockers": [], "editorial_blockers": many_blockers,
+            "warnings": [], "can_attempt_final_reconciliation": True,
+            "fatal_count": 0, "editorial_count": 25,
+            "original_refusal_reason": "", "report_paths": {},
+        }
+        sg = {"atoms": many_atoms}
+        excerpts = _resolve_source_excerpts(classification, sg)
+        self.assertLessEqual(len(excerpts), 20)
+
+    def test_generated_module_summary_no_module_dir(self):
+        """No module_dir returns empty dict."""
+        self.assertEqual(_build_generated_module_summary(None), {})
+
+    def test_generated_module_summary_missing_dir(self):
+        """Non-existent module_dir returns empty dict."""
+        self.assertEqual(_build_generated_module_summary(Path("/nonexistent")), {})
+
+    def test_generated_module_summary_with_real_artifacts(self):
+        """Valid module dir returns counts and missing categories."""
+        with tempfile.TemporaryDirectory() as d:
+            mod_dir = Path(d)
+            area_dir = mod_dir / "areas"
+            area_dir.mkdir(parents=True)
+            (area_dir / "AREA001_BU.json").write_text("{}")
+            (area_dir / "AREA002_BU.json").write_text("{}")
+            (area_dir / "AREA003.json").write_text("{}")
+            monsters_dir = mod_dir / "monsters"
+            monsters_dir.mkdir()
+            (monsters_dir / "goblin.json").write_text("{}")
+            (mod_dir / "module_context.json").write_text("{}")
+            (mod_dir / "module_plot.json").write_text("{}")
+
+            summary = _build_generated_module_summary(mod_dir)
+            self.assertEqual(summary["area_count"], 3)
+            self.assertEqual(summary["area_bu_count"], 2)
+            self.assertEqual(summary["monster_count"], 1)
+            self.assertTrue(summary["has_module_context"])
+            self.assertTrue(summary["has_module_plot"])
+            self.assertEqual(summary["missing_categories"], [])
+
+    def test_generated_module_summary_missing_categories(self):
+        """Module dir with missing artifacts reports missing categories."""
+        with tempfile.TemporaryDirectory() as d:
+            mod_dir = Path(d)
+            area_dir = mod_dir / "areas"
+            area_dir.mkdir(parents=True)
+            (area_dir / "AREA001_BU.json").write_text("{}")
+            (mod_dir / "module_context.json").write_text("{}")
+            # No module_plot, no monsters
+
+            summary = _build_generated_module_summary(mod_dir)
+            self.assertEqual(summary["area_count"], 1)
+            self.assertEqual(summary["area_bu_count"], 1)
+            self.assertEqual(summary["monster_count"], 0)
+            self.assertTrue(summary["has_module_context"])
+            self.assertFalse(summary["has_module_plot"])
+            self.assertIn("module_plot", summary["missing_categories"])
+            self.assertIn("monsters", summary["missing_categories"])
+            self.assertNotIn("areas", summary["missing_categories"])
+            self.assertNotIn("module_context", summary["missing_categories"])
+
+    def test_brief_with_source_graph_has_excerpts(self):
+        """Brief built with source_graph has enriched source_excerpts."""
+        classification = self._editorial_classification()
+        sg = self._source_graph()
+        brief = build_final_reconciliation_brief(
+            classification, job_id="j1", module_name="M1",
+            source_graph=sg,
+        )
+        self.assertEqual(len(brief["source_excerpts"]), 2)
+        self.assertEqual(brief["source_excerpts"][0]["source_atom_id"], "loc_trigger")
+
+    def test_brief_with_module_dir_has_generated_summary(self):
+        """Brief built with existing module_dir has generated_module_summary."""
+        classification = self._editorial_classification()
+        with tempfile.TemporaryDirectory() as d:
+            mod_dir = Path(d)
+            area_dir = mod_dir / "areas"
+            area_dir.mkdir(parents=True)
+            (area_dir / "AREA001_BU.json").write_text("{}")
+            (mod_dir / "module_context.json").write_text("{}")
+
+            brief = build_final_reconciliation_brief(
+                classification, job_id="j1", module_name="M1",
+                module_dir=mod_dir,
+            )
+            summary = brief["generated_module_summary"]
+            self.assertEqual(summary["area_count"], 1)
+            self.assertTrue(summary["has_module_context"])
+            self.assertFalse(summary["has_module_plot"])
+
+    def test_brief_default_empty_behavior_preserved(self):
+        """Default call without source_graph or module_dir source_excerpts=[] summary={}."""
+        classification = self._editorial_classification()
+        brief = build_final_reconciliation_brief(
+            classification, job_id="j1", module_name="M1",
+        )
         self.assertEqual(brief["source_excerpts"], [])
         self.assertEqual(brief["generated_module_summary"], {})
 

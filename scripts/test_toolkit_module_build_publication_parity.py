@@ -1660,6 +1660,7 @@ class TestReportAgreementComposer(unittest.TestCase):
         self.orig_materialization = finisher._run_monster_materialization_stage
         self.orig_publishability = finisher._run_publishability_stage
         self.orig_semantic_auth = finisher._run_semantic_authority_stage
+        self.orig_pub_finalizer = finisher._run_publishability_finalizer_stage
 
         temp_dir = tempfile.TemporaryDirectory()
         old_cwd = Path.cwd()
@@ -1697,6 +1698,7 @@ class TestReportAgreementComposer(unittest.TestCase):
                 "errors": [],
             }
             finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_finalizer_stage = lambda *a, **kw: {"status": "success", "changed": False, "errors": [], "warnings": []}
             finisher._run_publishability_stage = lambda *a, **kw: {
                 "status": "success",
                 "ready_status": "pass",
@@ -1734,6 +1736,7 @@ class TestReportAgreementComposer(unittest.TestCase):
             finisher._run_monster_materialization_stage = self.orig_materialization
             finisher._run_publishability_stage = self.orig_publishability
             finisher._run_semantic_authority_stage = self.orig_semantic_auth
+            finisher._run_publishability_finalizer_stage = self.orig_pub_finalizer
             os.chdir(old_cwd)
             temp_dir.cleanup()
 
@@ -1924,18 +1927,24 @@ class TestSourceFidelityReportPersistence(unittest.TestCase):
         self.orig_registry = finisher._run_registry_stage
         self.orig_materialization = finisher._run_monster_materialization_stage
         self.orig_publishability = finisher._run_publishability_stage
+        self.orig_pub_finalizer = finisher._run_publishability_finalizer_stage
+        self.orig_semantic_auth = finisher._run_semantic_authority_stage
 
         # Stub non-publishability stages to succeed so only the
         # publishability report content drives the result.
         finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
         finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
         finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+        finisher._run_publishability_finalizer_stage = lambda *a, **kw: {"status": "success", "changed": False}
+        finisher._run_semantic_authority_stage = lambda *a, **kw: {"status": "success", "changed": False}
 
     def tearDown(self):
         finisher._run_continuity_stage = self.orig_continuity
         finisher._run_registry_stage = self.orig_registry
         finisher._run_monster_materialization_stage = self.orig_materialization
         finisher._run_publishability_stage = self.orig_publishability
+        finisher._run_publishability_finalizer_stage = self.orig_pub_finalizer
+        finisher._run_semantic_authority_stage = self.orig_semantic_auth
         finisher.safe_write_json = self._orig_safe_write
 
         if self._orig_sf_artifact_builder:
@@ -2086,8 +2095,17 @@ class TestStep61BuildReportReconciliationFields(unittest.TestCase):
         self.orig_registry = finisher._run_registry_stage
         self.orig_materialization = finisher._run_monster_materialization_stage
         self.orig_publishability = finisher._run_publishability_stage
+        self.orig_pub_finalizer = finisher._run_publishability_finalizer_stage
+        self.orig_semantic_auth = finisher._run_semantic_authority_stage
 
         temp_dir = tempfile.TemporaryDirectory()
+        # Safety reset: ensure CWD is valid before capturing it. Some preceding
+        # tests in the same process may leave CWD pointing to a deleted tempdir.
+        _repo_root = Path(__file__).resolve().parent.parent
+        try:
+            os.chdir(_repo_root)
+        except Exception:
+            pass
         old_cwd = Path.cwd()
         try:
             repo_root = Path(temp_dir.name)
@@ -2109,10 +2127,14 @@ class TestStep61BuildReportReconciliationFields(unittest.TestCase):
                 "playable_publication_candidate": True,
                 "decisions": ["accepted_final_reconciliation"],
             }), encoding="utf-8")
+            # Ensure BU file exists so context_backup_parity check passes.
+            (module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
 
             finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
             finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
             finisher._run_monster_materialization_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_publishability_finalizer_stage = lambda *a, **kw: {"status": "success", "changed": False, "errors": [], "warnings": []}
+            finisher._run_semantic_authority_stage = lambda *a, **kw: {"status": "success", "changed": False, "warnings": [], "errors": []}
             finisher._run_publishability_stage = lambda *a, **kw: {
                 "status": "success",
                 "ready_status": "pass",
@@ -2148,6 +2170,8 @@ class TestStep61BuildReportReconciliationFields(unittest.TestCase):
             finisher._run_registry_stage = self.orig_registry
             finisher._run_monster_materialization_stage = self.orig_materialization
             finisher._run_publishability_stage = self.orig_publishability
+            finisher._run_publishability_finalizer_stage = self.orig_pub_finalizer
+            finisher._run_semantic_authority_stage = self.orig_semantic_auth
             os.chdir(old_cwd)
             temp_dir.cleanup()
 
@@ -2297,6 +2321,471 @@ class TestStep64ReconciledDegradedWording(unittest.TestCase):
         self.assertIn("not_publishable", self.source,
                       "Generic not_publishable copy must remain for non-reconciled")
 
+    # ------------------------------------------------------------------
+    # Step 6.4 source-contract tests: prove isFinalReconciledPlayable
+    # helper gates on all four required axes simultaneously and rejects
+    # clean-pass source-fidelity effective status.
+    # ------------------------------------------------------------------
+
+    def _extract_helper_block(self):
+        """Return the body of the isFinalReconciledPlayable function."""
+        start = self.source.find("function isFinalReconciledPlayable(")
+        self.assertGreater(start, 0, "Helper isFinalReconciledPlayable must exist")
+        end = self.source.find("\n        }\n", start)
+        if end == -1:
+            end = self.source.find("function formatReportAgreementSection", start)
+        self.assertGreater(end, start)
+        return self.source[start:end]
+
+    def test_helper_requires_playable_publication_status_pass(self):
+        block = self._extract_helper_block()
+        self.assertIn(
+            "playable_publication_status === 'pass'",
+            block,
+            "isFinalReconciledPlayable must require playable_publication_status='pass'",
+        )
+
+    def test_helper_requires_source_fidelity_effective_status_reconciled_degraded(self):
+        block = self._extract_helper_block()
+        self.assertIn(
+            "source_fidelity_effective_status === 'reconciled_degraded'",
+            block,
+            "isFinalReconciledPlayable must require "
+            "source_fidelity_effective_status='reconciled_degraded'",
+        )
+
+    def test_helper_rejects_clean_pass_source_fidelity_effective(self):
+        block = self._extract_helper_block()
+        self.assertNotIn(
+            "source_fidelity_effective_status === 'pass'",
+            block,
+            "isFinalReconciledPlayable must NOT match when "
+            "source_fidelity_effective_status is 'pass' (would conflate "
+            "clean pass with reconciled/degraded)",
+        )
+        self.assertNotIn(
+            'source_fidelity_effective_status === "pass"',
+            block,
+            "isFinalReconciledPlayable must NOT match double-quoted 'pass' either",
+        )
+
+    def test_helper_requires_final_reconciliation_accepted_true(self):
+        block = self._extract_helper_block()
+        self.assertIn(
+            "final_reconciliation_accepted === true",
+            block,
+            "isFinalReconciledPlayable must require final_reconciliation_accepted=true",
+        )
+
+    def test_helper_requires_source_fidelity_reconciled_true(self):
+        block = self._extract_helper_block()
+        self.assertIn(
+            "source_fidelity_reconciled === true",
+            block,
+            "isFinalReconciledPlayable must require source_fidelity_reconciled=true",
+        )
+
+    def test_helper_uses_single_conditional_with_all_four_axes(self):
+        """The helper must combine all four required axes in ONE
+        conditional so a payload missing any axis is rejected."""
+        block = self._extract_helper_block()
+        # All four required keys must appear in the same return-true branch.
+        return_idx = block.find("return true")
+        self.assertGreater(return_idx, 0, "Helper must have a return-true branch")
+        branch = block[:return_idx]
+        self.assertIn("final_reconciliation_accepted", branch)
+        self.assertIn("source_fidelity_reconciled", branch)
+        self.assertIn("source_fidelity_effective_status", branch)
+        self.assertIn("playable_publication_status", branch)
+
+    def test_helper_walks_multiple_nested_payload_shapes(self):
+        """The helper must inspect nested report_agreement and result
+        candidates so the reconciled/degraded axes are surfaced no
+        matter where the GUI mounts the report."""
+        block = self._extract_helper_block()
+        for needle in (
+            "obj",
+            "obj.result || {}",
+            "obj.report_agreement || {}",
+            "(obj.result || {}).report_agreement || {}",
+            "(obj.stages || {}).report_agreement || {}",
+        ):
+            self.assertIn(needle, block, f"isFinalReconciledPlayable must inspect {needle}")
+
+    # ------------------------------------------------------------------
+    # Step 6.4 source-contract tests: prove formatReportAgreementSection
+    # emits Source Fidelity:, Source Fidelity Effective:, and Playable
+    # Publication: as separate, distinct output lines.
+    # ------------------------------------------------------------------
+
+    def _extract_formatter_block(self):
+        """Return the body of the formatReportAgreementSection function."""
+        start = self.source.find("function formatReportAgreementSection(")
+        self.assertGreater(start, 0, "formatReportAgreementSection must exist")
+        end = self.source.find("\n        }\n", start)
+        if end == -1:
+            end = self.source.find("\n        function ", start + 1)
+        self.assertGreater(end, start)
+        return self.source[start:end]
+
+    def test_formatter_emits_source_fidelity_label(self):
+        block = self._extract_formatter_block()
+        self.assertIn("Source Fidelity:", block,
+                      "Formatter must emit 'Source Fidelity:' line")
+
+    def test_formatter_emits_source_fidelity_effective_label(self):
+        block = self._extract_formatter_block()
+        self.assertIn("Source Fidelity Effective:", block,
+                      "Formatter must emit 'Source Fidelity Effective:' line")
+
+    def test_formatter_emits_playable_publication_label(self):
+        block = self._extract_formatter_block()
+        self.assertIn("Playable Publication:", block,
+                      "Formatter must emit 'Playable Publication:' line")
+
+    def test_three_axes_are_independent_lines(self):
+        """The three axes (Source Fidelity, Source Fidelity Effective,
+        Playable Publication) must be emitted on INDEPENDENT lines, not
+        concatenated into a single output line, so the GUI display can
+        style each axis separately."""
+        block = self._extract_formatter_block()
+        for label in ("Source Fidelity:", "Source Fidelity Effective:", "Playable Publication:"):
+            push_idx = block.find(f"lines.push(`- {label}")
+            self.assertGreater(
+                push_idx, 0,
+                f"'{label}' must be emitted via a separate lines.push() call",
+            )
+
+    def test_formatter_distinguishes_source_fidelity_from_effective(self):
+        """The formatter must read source_fidelity_status and
+        source_fidelity_effective_status from INDEPENDENT sources so
+        the two axes never collapse into one another."""
+        block = self._extract_formatter_block()
+        # sf reads ra.source_fidelity_status or _obj.source_fidelity_status
+        self.assertIn("ra.source_fidelity_status", block)
+        # sfe reads ra.source_fidelity_effective_status (with fallback)
+        self.assertIn("ra.source_fidelity_effective_status", block)
+        # The two lines must be emitted in distinct lines.push calls
+        sf_push = block.find("Source Fidelity: ${sf}")
+        sfe_push = block.find("Source Fidelity Effective:")
+        self.assertGreater(sf_push, 0,
+                          "Source Fidelity line must use a distinct "
+                          "lines.push() with its own template literal")
+        self.assertGreater(sfe_push, 0,
+                          "Source Fidelity Effective line must use a distinct "
+                          "lines.push() with its own template literal")
+        self.assertNotEqual(sf_push, sfe_push,
+                           "Source Fidelity and Source Fidelity Effective must be "
+                           "emitted by DIFFERENT lines.push() calls")
+
+    def test_formatter_keeps_final_reconciliation_accepted_distinct(self):
+        """The formatter must surface final_reconciliation_accepted
+        alongside the source-fidelity axes (not collapse them) so the
+        reconciled/degraded truth remains visible."""
+        block = self._extract_formatter_block()
+        self.assertIn("Final Reconciliation:", block)
+        self.assertIn("ra.final_reconciliation_accepted", block)
+        self.assertIn("source_fidelity_reconciled", block)
+
+    # ------------------------------------------------------------------
+    # Step 6.4 source-contract tests: prove the reconciled branch copy
+    # does NOT contain clean-pass source-fidelity wording.
+    # ------------------------------------------------------------------
+
+    def _extract_reconciled_branch_block(self):
+        """Return the reconciled success branch block: the section
+        between the first isFinalReconciledPlayable(true) body and its
+        end of branch."""
+        marker = "Build completed after final reconciliation"
+        idx = self.source.find(marker)
+        self.assertGreater(idx, 0, "Reconciled branch copy must exist")
+        # Use a generous window to capture the entire branch message
+        return self.source[idx:idx + 800]
+
+    def test_reconciled_branch_states_reconciled_degraded_explicitly(self):
+        block = self._extract_reconciled_branch_block()
+        self.assertIn("reconciled/degraded", block,
+                      "Reconciled branch must say 'reconciled/degraded'")
+        self.assertIn("not clean pass", block,
+                      "Reconciled branch must say 'not clean pass'")
+
+    def test_reconciled_branch_mentions_playable_publication(self):
+        block = self._extract_reconciled_branch_block()
+        self.assertIn("Playable publication candidate", block,
+                      "Reconciled branch must mention playable publication")
+
+    def test_reconciled_branch_no_clean_pass_phrase(self):
+        """The reconciled branch must not contain the clean-pass
+        source-fidelity claim phrases that the spec forbids."""
+        block = self._extract_reconciled_branch_block().lower()
+        for forbidden in (
+            "source fidelity pass",
+            "source fidelity is pass",
+            "clean source-fidelity pass",
+            "clean_pass",
+        ):
+            self.assertNotIn(
+                forbidden, block,
+                f"Reconciled branch must not contain '{forbidden}' "
+                "(would falsely imply clean pass)",
+            )
+
+    # ------------------------------------------------------------------
+    # Step 6.4 source-contract tests: prove the generic failure copy
+    # remains for non-reconciled / non-playable cases (i.e. the
+    # separate-axes contract does not collapse generic failure text).
+    # ------------------------------------------------------------------
+
+    def test_generic_blocked_branch_copy_intact(self):
+        """The generic 'Build Blocked - Fidelity Check Failed' copy
+        must still exist for non-reconciled blocked cases."""
+        self.assertIn("Build Blocked - Fidelity Check Failed", self.source,
+                      "Generic blocked title must remain for non-reconciled cases")
+        self.assertIn("Build fidelity blocked", self.source,
+                      "Generic blocked error must remain for non-reconciled cases")
+
+    def test_generic_not_publishable_branch_copy_intact(self):
+        """The generic not_publishable copy must still exist for
+        non-reconciled / non-accepted-reconciliation cases."""
+        self.assertIn("Not Publishable", self.source,
+                      "Generic not_publishable title must remain for non-reconciled cases")
+        self.assertIn("publishability remains blocked", self.source,
+                      "Generic not_publishable copy must remain for non-reconciled cases")
+
+
+class TestStep64ReportAgreementAxesSeparation(unittest.TestCase):
+    """Step 6.4: prove report data itself separates playable
+    publication from reconciled/degraded source fidelity.
+
+    The Step 6.3 GUI tests pin template wording and helper
+    conditional structure. This class pins the *data* side: the
+    compose_report_agreement result must keep the playable_publication
+    axis and the source-fidelity axis as INDEPENDENT fields so
+    downstream consumers (GUI, finisher, audit reports) cannot
+    collapse them."""
+
+    def _all_pass_kwargs(self):
+        return dict(
+            validation_status="pass",
+            ready_status="pass",
+            publishable_status="pass",
+            effective_publishable_status="pass",
+            toolkit_top_level_status="pass",
+        )
+
+    def _accepted_recon_kwargs(self):
+        return dict(
+            source_fidelity_effective_status="reconciled_degraded",
+            final_reconciliation_accepted=True,
+            final_reconciliation_status="accepted",
+        )
+
+    def test_result_dict_has_separate_playable_and_fidelity_keys(self):
+        """The result dict must expose playable_publication_status,
+        source_fidelity_status, source_fidelity_effective_status,
+        source_fidelity_reconciled, and final_reconciliation_accepted
+        as INDEPENDENT keys (no aliasing)."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="blocked",
+            **self._accepted_recon_kwargs(),
+        )
+        for key in (
+            "playable_publication_status",
+            "source_fidelity_status",
+            "source_fidelity_effective_status",
+            "source_fidelity_reconciled",
+            "final_reconciliation_accepted",
+            "final_reconciliation_status",
+        ):
+            self.assertIn(key, result,
+                          f"Result must expose {key} as an independent key")
+
+    def test_accepted_recon_playable_pass_does_not_rewrite_source_fidelity(self):
+        """Accepted reconciliation that flips playable to pass MUST
+        leave source_fidelity_status at the original blocked value
+        (no silent rewrite to pass)."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="blocked",
+            **self._accepted_recon_kwargs(),
+        )
+        self.assertEqual(result["playable_publication_status"], "pass")
+        self.assertEqual(result["source_fidelity_status"], "blocked")
+        self.assertEqual(result["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertTrue(result["source_fidelity_reconciled"])
+        self.assertTrue(result["final_reconciliation_accepted"])
+        # source_fidelity_status must NOT be the clean-pass value
+        self.assertNotEqual(result["source_fidelity_status"], "pass")
+
+    def test_clean_pass_keeps_effective_status_pass_no_reconciled_flag(self):
+        """A clean source-fidelity pass (no reconciliation needed)
+        must keep playable_publication_status=pass WITHOUT firing
+        the reconciled flag, and effective status must equal pass
+        (no false reconciled_degraded label)."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="pass",
+        )
+        self.assertEqual(result["playable_publication_status"], "pass")
+        self.assertEqual(result["source_fidelity_status"], "pass")
+        self.assertEqual(result["source_fidelity_effective_status"], "pass")
+        self.assertFalse(result["source_fidelity_reconciled"])
+        self.assertFalse(result["final_reconciliation_accepted"])
+
+    def test_degraded_original_with_accepted_recon_axes_remain_separate(self):
+        """Degraded original + accepted reconciliation: playable flips
+        to pass, source_fidelity_status stays degraded (not pass), and
+        effective status carries the reconciled_degraded label."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="degraded",
+            **self._accepted_recon_kwargs(),
+        )
+        self.assertEqual(result["playable_publication_status"], "pass")
+        self.assertEqual(result["source_fidelity_status"], "degraded")
+        self.assertEqual(result["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertNotEqual(result["source_fidelity_status"], "pass")
+        self.assertTrue(result["source_fidelity_reconciled"])
+
+    def test_blocked_without_recon_axes_blocked_separately(self):
+        """Blocked source fidelity without accepted reconciliation
+        must keep BOTH axes blocked. Playable stays blocked even when
+        other gates pass."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="blocked",
+        )
+        self.assertEqual(result["playable_publication_status"], "blocked")
+        self.assertEqual(result["source_fidelity_status"], "blocked")
+        self.assertEqual(result["source_fidelity_effective_status"], "blocked")
+        self.assertFalse(result["source_fidelity_reconciled"])
+        self.assertFalse(result["final_reconciliation_accepted"])
+
+    def test_blocked_effective_status_with_accepted_recon_does_not_pretend_pass(self):
+        """If the caller marks final_reconciliation_accepted but
+        leaves source_fidelity_effective_status at 'blocked' (i.e.
+        a malformed non-reconciled path), the composer must NOT
+        pretend the source-fidelity is clean pass. The reconciled
+        flag must be false because effective != 'reconciled_degraded'."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        result = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="blocked",
+            source_fidelity_effective_status="blocked",
+            final_reconciliation_accepted=True,
+        )
+        # Playable must NOT be pass because the accepted flag is
+        # meaningless without the reconciled_degraded effective status
+        self.assertNotEqual(result["playable_publication_status"], "pass")
+        self.assertFalse(result["source_fidelity_reconciled"])
+        self.assertEqual(result["source_fidelity_status"], "blocked")
+
+    def test_playable_and_fidelity_values_can_diverge(self):
+        """The two axes must be ABLE to diverge: one may be pass
+        while the other is not. This proves they are independent
+        rather than aliased or co-derived."""
+        from utils.toolkit_report_agreement import compose_report_agreement
+        # Diverged case A: playable=pass, source_fidelity=blocked
+        result_a = compose_report_agreement(
+            **self._all_pass_kwargs(),
+            source_fidelity_status="blocked",
+            **self._accepted_recon_kwargs(),
+        )
+        self.assertEqual(result_a["playable_publication_status"], "pass")
+        self.assertEqual(result_a["source_fidelity_status"], "blocked")
+        self.assertNotEqual(
+            result_a["playable_publication_status"],
+            result_a["source_fidelity_status"],
+            "Axes must be able to diverge (playable=pass, fidelity=blocked)",
+        )
+        # Diverged case B: playable=blocked, source_fidelity=pass
+        result_b_kwargs = self._all_pass_kwargs()
+        result_b_kwargs["source_fidelity_status"] = "pass"
+        result_b_kwargs["publishable_status"] = "blocked"  # force playable blocked
+        result_b = compose_report_agreement(**result_b_kwargs)
+        self.assertEqual(result_b["source_fidelity_status"], "pass")
+        self.assertEqual(result_b["playable_publication_status"], "blocked")
+        self.assertNotEqual(
+            result_b["playable_publication_status"],
+            result_b["source_fidelity_status"],
+            "Axes must be able to diverge (playable=blocked, fidelity=pass)",
+        )
+
+    def test_no_aliasing_or_co_derivation_in_production_source(self):
+        """Static guard: the production compose_report_agreement
+        source must not co-derive playable_publication_status from
+        source_fidelity_status. The two assignments must be
+        independent in the source."""
+        import inspect
+        from utils.toolkit_report_agreement import compose_report_agreement
+        source = inspect.getsource(compose_report_agreement)
+        # The function must NOT contain any alias assignment such as
+        # 'playable = sf' (which would co-derive the two axes).
+        self.assertNotRegex(
+            source,
+            r"^\s*playable\s*=\s*sf\b",
+            "playable_publication_status must not be aliased to "
+            "source_fidelity_status (would co-derive the axes)",
+            # Python 3 unittest supports msg= for assertNotRegex
+        )
+        # The two result keys must be assigned independently.
+        self.assertIn('"playable_publication_status": playable', source)
+        self.assertIn('"source_fidelity_status": sf', source)
+        # And the keys must appear in distinct assignment contexts
+        # (both inside the same return dict, but as separate keys,
+        # not as one alias of the other).
+
+    def test_module_dir_accepted_recon_axes_separate_in_real_data(self):
+        """End-to-end via compose_report_agreement_from_module_dir:
+        when a module dir has a real accepted reconciliation report
+        on disk, the returned dict must keep playable_publication
+        and source_fidelity_status as INDEPENDENT fields, with the
+        effective status labelled reconciled_degraded and the
+        original source_fidelity_status preserved as blocked."""
+        import tempfile
+        from pathlib import Path
+        from utils.toolkit_report_agreement import compose_report_agreement_from_module_dir
+
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        module_dir = Path(tmpdir.name)
+        (module_dir / "validation_report.json").write_text(
+            json.dumps({"status": "pass", "valid": True}))
+        (module_dir / "source_fidelity_report.json").write_text(
+            json.dumps({"source_fidelity_status": "blocked"}))
+        (module_dir / "toolkit_build_report.json").write_text(
+            json.dumps({
+                "status": "pass",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "effective_publishable_status": "pass",
+            }))
+        (module_dir / "final_reconciliation_report.json").write_text(
+            json.dumps({
+                "version": "accurate_ingest_final_reconciliation_report.v1",
+                "status": "accepted",
+                "reconciliation_status": "accepted",
+                "source_fidelity_effective_status": "reconciled_degraded",
+                "playable_publication_candidate": True,
+                "decisions": [{"decision": "delete_bogus_atom"}],
+            }))
+
+        result = compose_report_agreement_from_module_dir(module_dir)
+        # The two axes must be INDEPENDENT fields, not the same value.
+        self.assertEqual(result["playable_publication_status"], "pass")
+        self.assertEqual(result["source_fidelity_status"], "blocked")
+        self.assertEqual(result["source_fidelity_effective_status"], "reconciled_degraded")
+        self.assertTrue(result["source_fidelity_reconciled"])
+        self.assertTrue(result["final_reconciliation_accepted"])
+        # The original must NOT have been rewritten.
+        self.assertNotEqual(result["source_fidelity_status"], "pass")
+
 
 class TestLiveWellOfRuinStatusRoutingFix(unittest.TestCase):
     """Post-7 fix: final_reconciliation_required routing and safe_write_json fix."""
@@ -2339,6 +2828,400 @@ class TestLiveWellOfRuinStatusRoutingFix(unittest.TestCase):
     def test_npc_reconciler_safe_write_json_args_correct(self):
         source = Path("utils/npc_reconciler.py").read_text(encoding="utf-8")
         self.assertIn("safe_write_json(area_path, area_data)", source)
+
+
+class TestStep52ReadinessFinisherGate(unittest.TestCase):
+    """Step 5.2: readiness/finisher continuation is allowed ONLY when
+    final reconciliation is accepted and deterministic gates passed.
+
+    The gate is currently encoded as `build_status == "success"` in the
+    route layer (see ``web/routes/toolkit_homebrew_routes.py``). The
+    packet builder is the single source of truth for that status; the
+    finisher reads the accepted ``final_reconciliation_report.json``
+    from ``module_dir`` and pins accepted metadata into
+    ``compose_report_agreement(...)``.
+
+    These tests pin the contract so future refactors cannot silently
+    widen the gate (e.g. by treating ``build_status == "blocked"`` as
+    success or by skipping the finisher's accepted-report load).
+    """
+
+    def _read(self, rel: str) -> str:
+        return Path(rel).read_text(encoding="utf-8")
+
+    def test_route_layer_has_blocked_branch(self):
+        """Route layer must handle ``build_status == "blocked"`` before
+        the success branch (terminal block returns early)."""
+        source = self._read("web/routes/toolkit_homebrew_routes.py")
+        self.assertIn('build_status == "blocked"', source)
+        idx_blocked = source.find('build_status == "blocked"')
+        idx_success = source.find('build_status == "success"')
+        self.assertGreater(idx_blocked, 0)
+        self.assertGreater(idx_success, 0)
+        self.assertLess(
+            idx_blocked,
+            idx_success,
+            "build_status == 'blocked' branch must appear BEFORE "
+            "build_status == 'success' so terminal blocks return before "
+            "readiness/finisher continuation",
+        )
+
+    def test_route_layer_has_final_reconciliation_required_branch(self):
+        """Route layer must handle ``build_status == "final_reconciliation_required"``
+        as a separate pause branch before the success branch."""
+        source = self._read("web/routes/toolkit_homebrew_routes.py")
+        self.assertIn('build_status == "final_reconciliation_required"', source)
+        idx_required = source.find('build_status == "final_reconciliation_required"')
+        idx_success = source.find('build_status == "success"')
+        self.assertGreater(idx_required, 0)
+        self.assertGreater(idx_success, 0)
+        self.assertLess(
+            idx_required,
+            idx_success,
+            "build_status == 'final_reconciliation_required' branch must "
+            "appear BEFORE the success branch so the legacy pause returns "
+            "before readiness/finisher continuation",
+        )
+
+    def test_route_layer_success_branch_launches_readiness_then_finisher(self):
+        """The only path that reaches readiness and finisher is
+        ``build_status == "success"``."""
+        source = self._read("web/routes/toolkit_homebrew_routes.py")
+        # Find the first occurrence of the success branch in the build
+        # handler (the packet-build gate area). There are several
+        # ``build_status`` checks in the file; we want the one closest
+        # to the readiness/finisher invocations.
+        idx_success = source.find('if build_status == "success":')
+        self.assertGreater(idx_success, 0)
+        # Both readiness and finisher invocations must live AFTER the
+        # build_status == "success" branch starts.
+        success_block = source[idx_success:]
+        self.assertIn(
+            "_run_homebrew_readiness_gate", success_block,
+            "readiness gate must be invoked inside the build_status == "
+            "'success' branch (Step 5.2 gate)",
+        )
+        self.assertIn(
+            "_run_homebrew_finisher", success_block,
+            "finisher must be invoked inside the build_status == 'success' "
+            "branch (Step 5.2 gate)",
+        )
+        # Function definitions of readiness/finisher wrappers (and any
+        # OTHER route handler that also calls them, e.g. the standalone
+        # finish endpoint) may appear before the build-status success
+        # branch. The contract is about INVOCATIONS inside the build
+        # handler, not about definitions. So we pin:
+        #   1. At least one readiness invocation appears AFTER the
+        #      build_status == "success" check.
+        #   2. At least one finisher invocation appears AFTER that
+        #      readiness invocation.
+        idx_readiness_invocation = success_block.find("_run_homebrew_readiness_gate(")
+        self.assertGreater(idx_readiness_invocation, 0)
+        post_readiness = success_block[idx_readiness_invocation:]
+        idx_finisher_invocation = post_readiness.find("_run_homebrew_finisher(")
+        self.assertGreater(
+            idx_finisher_invocation, 0,
+            "finisher must be invoked AFTER readiness inside the "
+            "build_status == 'success' branch",
+        )
+
+    def test_route_layer_has_explicit_step52_gate_comment(self):
+        """The route layer's success branch should carry the Step 5.2
+        gate comment so future maintainers do not widen the gate."""
+        source = self._read("web/routes/toolkit_homebrew_routes.py")
+        self.assertIn("Step 5.2 gate", source)
+
+    def test_packet_builder_editor_accepted_keeps_status_success(self):
+        """When the editor accepts and persist succeeds, the packet
+        builder's ``build_result["status"]`` must remain ``"success"``
+        (the only status that lets the route layer proceed to
+        readiness/finisher)."""
+        source = self._read("web/extensions/toolkit_homebrew_packet_builder.py")
+        # The accepted branch must NOT mutate build_result["status"].
+        # Find the helper's accepted path block (between the
+        # ``# Accepted path:`` comment and the helper's ``return True``).
+        accepted_idx = source.find("# Accepted path: set accepted metadata")
+        self.assertGreater(accepted_idx, 0)
+        accepted_block_end = source.find("return True", accepted_idx)
+        self.assertGreater(accepted_block_end, 0)
+        block = source[accepted_idx:accepted_block_end]
+        self.assertNotIn(
+            'build_result["status"] = "blocked"',
+            block,
+            "accepted path must NOT mark build_result as blocked",
+        )
+        self.assertNotIn(
+            'build_result["status"] = "final_reconciliation_required"',
+            block,
+            "accepted path must NOT mark build_result as required",
+        )
+        # And the accepted path MUST set the accepted metadata.
+        self.assertIn('build_result["final_reconciliation_accepted"] = True', block)
+        self.assertIn(
+            'build_result["source_fidelity_effective_status"] = "reconciled_degraded"',
+            block,
+        )
+
+    def test_packet_builder_helper_blocked_path_returns_early(self):
+        """When the editor helper marks build_result as blocked, the
+        packet builder must return early so the build does NOT reach
+        readiness/finisher."""
+        source = self._read("web/extensions/toolkit_homebrew_packet_builder.py")
+        # Locate the editor-call site and the helper's blocked return.
+        helper_call_idx = source.find("_invoke_final_editor_or_fallback(")
+        self.assertGreater(helper_call_idx, 0)
+        block = source[helper_call_idx:helper_call_idx + 4000]
+        # The if-not-editor-accepted branch must short-circuit on
+        # "blocked" status (the helper already mutated build_result).
+        self.assertIn('if _resolved_status == "blocked":', block)
+        self.assertIn("return build_result", block)
+
+    def test_packet_builder_status_blocked_does_not_reach_normal_persistence(self):
+        """``status: blocked`` paths must NOT re-enter the normal
+        build_result persistence block at the end of the function."""
+        source = self._read("web/extensions/toolkit_homebrew_packet_builder.py")
+        # Find the normal build_result_persisted call near the end of
+        # the function. The blocked / required branches return before
+        # this block runs.
+        persisted_idx = source.find("build_result_persisted")
+        self.assertGreater(persisted_idx, 0)
+        # Trace the helper's blocked return statement and confirm it
+        # appears BEFORE the persisted block.
+        blocked_return_idx = source.rfind("return build_result", 0, persisted_idx)
+        self.assertGreater(blocked_return_idx, 0)
+        self.assertLess(
+            blocked_return_idx,
+            persisted_idx,
+            "blocked return must precede normal build_result persistence",
+        )
+
+    def test_packet_builder_source_fidelity_honesty_never_claims_clean_pass(self):
+        """The accepted branch must never claim clean source-fidelity
+        pass. ``source_fidelity_effective_status`` must be
+        ``reconciled_degraded`` only."""
+        source = self._read("web/extensions/toolkit_homebrew_packet_builder.py")
+        accepted_idx = source.find("# Accepted path: set accepted metadata")
+        self.assertGreater(accepted_idx, 0)
+        accepted_block_end = source.find("return True", accepted_idx)
+        self.assertGreater(accepted_block_end, 0)
+        block = source[accepted_idx:accepted_block_end]
+        for forbidden in ('"pass"', "'pass'", '"clean_pass"', '"clean"',
+                          '"source_fidelity_pass"'):
+            self.assertNotIn(
+                forbidden, block,
+                f"accepted path must never assign clean-pass variant {forbidden}",
+            )
+
+    def test_finisher_loads_accepted_final_reconciliation_report_from_module_dir(self):
+        """The finisher's report-agreement stage must load the accepted
+        ``final_reconciliation_report.json`` from ``module_dir`` (not
+        from a top-level build_result flag)."""
+        source = self._read("web/extensions/toolkit_module_finisher.py")
+        # The finisher imports the helper API.
+        self.assertIn("load_final_reconciliation_report", source)
+        self.assertIn("is_final_reconciliation_accepted", source)
+        # And invokes it on module_dir.
+        self.assertIn(
+            "recon_report = load_final_reconciliation_report(module_dir)",
+            source,
+            "finisher must load final_reconciliation_report.json from "
+            "module_dir (not from a top-level build_result flag)",
+        )
+        # And pins the accepted metadata into compose_report_agreement.
+        self.assertIn(
+            "final_reconciliation_accepted=final_rec_accepted",
+            source,
+            "finisher must forward final_reconciliation_accepted to "
+            "compose_report_agreement",
+        )
+        self.assertIn(
+            "source_fidelity_effective_status=sfe_status",
+            source,
+            "finisher must forward source_fidelity_effective_status to "
+            "compose_report_agreement",
+        )
+
+    def test_finisher_never_assigns_clean_pass_in_source_fidelity_effective(self):
+        """The finisher must never hard-assign
+        ``source_fidelity_effective_status = "pass"``."""
+        source = self._read("web/extensions/toolkit_module_finisher.py")
+        for forbidden in (
+            '["source_fidelity_effective_status"] = "pass"',
+            "['source_fidelity_effective_status'] = 'pass'",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_finisher_uses_persisted_report_not_build_result_flag(self):
+        """Step 5.2 contract: the finisher's reconciliation facts come
+        from the persisted ``final_reconciliation_report.json`` (read
+        inside the function from module_dir), NOT from a top-level
+        build_result flag passed in by the caller.
+
+        The Step 5.1 packet builder path MAY set
+        ``build_result["final_reconciliation_accepted"] = True`` as
+        metadata, but the finisher does NOT consume that flag - it
+        re-loads the persisted report and asks the legacy oracle
+        ``is_final_reconciliation_accepted(...)`` whether the report is
+        accepted. This protects against top-level build_result flag
+        drift (e.g. a build_result in memory with the flag set but the
+        on-disk report missing or corrupt)."""
+        source = self._read("web/extensions/toolkit_module_finisher.py")
+        # The stage function receives module_dir, not build_result.
+        self.assertIn("module_dir", source)
+        # And reads the report through the legacy oracle.
+        self.assertIn("is_final_reconciliation_accepted(recon_report)", source)
+        # The accepted flag is sourced from the report, not build_result.
+        # Pin: the stage must NOT pin ``final_rec_accepted = True`` from
+        # anything other than the legacy oracle's verdict.
+        helper_block_idx = source.find("is_final_reconciliation_accepted(recon_report)")
+        helper_block = source[helper_block_idx:helper_block_idx + 800]
+        self.assertIn(
+            "final_rec_accepted = True",
+            helper_block,
+            "finisher must set final_rec_accepted=True ONLY after the "
+            "legacy oracle marks the persisted report as accepted",
+        )
+        self.assertNotIn(
+            'final_rec_accepted = build_result.get(',
+            helper_block,
+            "finisher must NOT source final_rec_accepted from a "
+            "top-level build_result flag (Step 5.2 contract)",
+        )
+
+    def test_finisher_consumes_accepted_report_in_actual_run(self):
+        """End-to-end: when a module has an accepted
+        ``final_reconciliation_report.json`` on disk, the finisher
+        surfaces the accepted metadata + reconciled_degraded effective
+        source fidelity in the published build report. (Mirrors the
+        Step 6.1 happy path test, but added here under Step 5.2 to lock
+        down the post-gate consumption.)"""
+        import os
+        import web.extensions.toolkit_module_finisher as finisher
+
+        orig_continuity = finisher._run_continuity_stage
+        orig_registry = finisher._run_registry_stage
+        orig_materialization = finisher._run_monster_materialization_stage
+        orig_publishability = finisher._run_publishability_stage
+        orig_semantic_auth = finisher._run_semantic_authority_stage
+        orig_safe_write = finisher.safe_write_json
+
+        def _force_success_safe_write(path, data, **kw):
+            orig_safe_write(path, data, **kw)
+            return True
+
+        temp_dir = tempfile.TemporaryDirectory()
+        old_cwd = Path.cwd()
+        try:
+            repo_root = Path(temp_dir.name)
+            os.chdir(repo_root)
+            module_dir = repo_root / "modules" / "Step52FinisherConsumeTest"
+            module_dir.mkdir(parents=True, exist_ok=True)
+            (module_dir / "module_context.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_context_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot.json").write_text("{}", encoding="utf-8")
+            (module_dir / "module_plot_BU.json").write_text("{}", encoding="utf-8")
+            (module_dir / "validation_report.json").write_text(
+                json.dumps({"summary": {"total_failed": 0}}), encoding="utf-8"
+            )
+            (module_dir / "source_fidelity_report.json").write_text(
+                json.dumps({"source_fidelity_status": "blocked"}), encoding="utf-8"
+            )
+            (module_dir / "final_reconciliation_report.json").write_text(
+                json.dumps({
+                    "version": "accurate_ingest_final_reconciliation_report.v1",
+                    "status": "accepted",
+                    "reconciliation_status": "accepted",
+                    "source_fidelity_effective_status": "reconciled_degraded",
+                    "playable_publication_candidate": True,
+                    "decisions": [{"decision": "delete_bogus_atom"}],
+                }),
+                encoding="utf-8",
+            )
+
+            finisher._run_continuity_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_registry_stage = lambda *a, **kw: {"status": "success"}
+            finisher._run_monster_materialization_stage = (
+                lambda *a, **kw: {"status": "success"}
+            )
+            finisher._run_publishability_stage = lambda *a, **kw: {
+                "status": "success",
+                "ready_status": "pass",
+                "publishable_status": "pass",
+                "report": {
+                    "source_fidelity_status": "blocked",
+                    "source_fidelity_categories": [],
+                    "ready_status": "pass",
+                    "publishable_status": "pass",
+                    "effective_publishable_status": "pass",
+                },
+            }
+            finisher._run_semantic_authority_stage = (
+                lambda *a, **kw: {
+                    "status": "success",
+                    "changed": False,
+                    "semantic_authority": {},
+                    "warnings": [],
+                    "errors": [],
+                }
+            )
+            finisher.safe_write_json = _force_success_safe_write
+
+            try:
+                import scripts.audit_module_publishability as sap
+                orig_sf = sap._build_source_fidelity_report_artifact
+                sap._build_source_fidelity_report_artifact = (
+                    lambda module_slug, module_path, publishability_report: {
+                        "source_fidelity_status": "blocked",
+                        "module": module_slug,
+                    }
+                )
+            except Exception:
+                orig_sf = None
+
+            import model_config
+            orig_llm = model_config.ENABLE_LLM_CLASSIFICATION
+            model_config.ENABLE_LLM_CLASSIFICATION = False
+
+            try:
+                result = finisher.run_toolkit_module_postbuild_finishing(
+                    "Step52FinisherConsumeTest", strict=True
+                )
+                # Step 5.2 contract: the finisher surfaces the accepted
+                # metadata and the reconciled_degraded effective source
+                # fidelity in the result, even though the raw
+                # source_fidelity_status was "blocked".
+                self.assertTrue(
+                    result.get("final_reconciliation_accepted"),
+                    "finisher must surface final_reconciliation_accepted=True "
+                    "when the on-disk report is accepted",
+                )
+                self.assertEqual(
+                    result.get("source_fidelity_effective_status"),
+                    "reconciled_degraded",
+                    "finisher must surface source_fidelity_effective_status="
+                    "reconciled_degraded when an accepted report is on disk",
+                )
+                self.assertEqual(
+                    result.get("final_reconciliation_status"),
+                    "accepted",
+                )
+            finally:
+                model_config.ENABLE_LLM_CLASSIFICATION = orig_llm
+                if orig_sf is not None:
+                    try:
+                        import scripts.audit_module_publishability as sap
+                        sap._build_source_fidelity_report_artifact = orig_sf
+                    except Exception:
+                        pass
+        finally:
+            finisher._run_continuity_stage = orig_continuity
+            finisher._run_registry_stage = orig_registry
+            finisher._run_monster_materialization_stage = orig_materialization
+            finisher._run_publishability_stage = orig_publishability
+            finisher._run_semantic_authority_stage = orig_semantic_auth
+            finisher.safe_write_json = orig_safe_write
+            os.chdir(old_cwd)
+            temp_dir.cleanup()
 
 
 if __name__ == "__main__":

@@ -71,6 +71,49 @@ class FileLockError(Exception):
     """Raised when unable to acquire file lock"""
     pass
 
+
+def _is_valid_filepath(filepath: Any) -> bool:
+    """Return True when ``filepath`` is acceptable as a file path argument.
+
+    Accepts:
+
+    * :class:`str` values that are NOT serialized JSON-like payloads
+      (i.e. they do not start with ``{`` or ``[`` while also parsing as
+      a JSON object or array).
+    * :class:`os.PathLike` values (e.g. :class:`pathlib.Path`).
+
+    Rejects:
+
+    * ``None``.
+    * Non-path payloads such as ``dict``, ``list``, ``tuple``, ``set``,
+      ``int``, ``float``, ``bool``, ``bytes``, and any other non-str /
+      non-PathLike object.
+    * Strings that look like serialized JSON dict / list payloads
+      (e.g. ``"{...}"`` or ``"[...]"`` that parse to a dict / list).
+      These are rejected because they almost always indicate a payload
+      was accidentally passed where a file path was expected. Allowing
+      them through causes ``str(filepath)`` to produce oversized lock /
+      temp file names that can exceed filesystem path limits and
+      trigger ``[Errno 63] File name too long``.
+    """
+    if filepath is None:
+        return False
+    if isinstance(filepath, os.PathLike):
+        return True
+    if isinstance(filepath, str):
+        stripped = filepath.lstrip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                parsed = json.loads(filepath)
+            except (TypeError, ValueError):
+                # Not parseable JSON; treat the string as a literal path.
+                return True
+            if isinstance(parsed, (dict, list)):
+                return False
+        return True
+    return False
+
+
 class AtomicFileWriter:
     """Handles atomic file writing with automatic backups and locking"""
     
@@ -166,17 +209,25 @@ class AtomicFileWriter:
                    json_kwargs: Optional[Dict[str, Any]] = None) -> bool:
         """
         Atomically write JSON data to file with optional backup and locking.
-        
+
         Args:
             filepath: Path to the JSON file
             data: JSON-serializable payload to write
             create_backup: Whether to create a backup before writing
             acquire_lock: Whether to use file locking
             json_kwargs: Optional kwargs forwarded to json.dump
-            
+
         Returns:
             True if successful, False otherwise
         """
+        if not _is_valid_filepath(filepath):
+            logger.error(
+                "Refusing to write JSON: filepath argument is not a valid path "
+                "(type=%s). This usually means a payload was passed where a file "
+                "path was expected.",
+                type(filepath).__name__,
+            )
+            return False
         filepath = str(filepath)  # Handle Path objects
         temp_path = f"{filepath}.tmp"
         backup_path = None

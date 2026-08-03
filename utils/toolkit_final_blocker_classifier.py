@@ -27,6 +27,10 @@ FATAL_MESSAGE_KEYWORDS = [
     "unrecoverable topology",
     "broken topology",
     "no valid topology",
+    # Full-module validation report structural failure patterns
+    "not cardinally adjacent",
+    "expected monsters/",
+    "is not one of",
 ]
 
 # Fatal blocker categories (category-based)
@@ -34,6 +38,10 @@ FATAL_CATEGORIES = [
     "structural",
     "schema",
     "topology",
+    # Full-module validation report categories representing structural defects
+    "reference_integrity",
+    "spatial_contract",
+    "party",
 ]
 
 # Editorial blocker categories (source-fidelity mismatches)

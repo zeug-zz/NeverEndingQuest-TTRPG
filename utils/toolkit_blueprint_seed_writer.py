@@ -1024,7 +1024,7 @@ def _build_party_tracker_backup(
     if first_area_name and area_locations.get(first_area_name):
         first_location = area_locations[first_area_name][0] or {}
 
-    src_month = source_month if source_month is not None else "Hammer"
+    src_month = source_month if source_month is not None else "Firstmonth"  # TABLETOP MODE: SRD calendar first month
     normalized_month = _normalize_schema_month(source_month)
     src_display = str(source_month) if source_month is not None else "None"
 

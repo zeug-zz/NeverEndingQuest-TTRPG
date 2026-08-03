@@ -311,6 +311,97 @@ def _extract_markdown_tables(text: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# 2b. Table header role classification helpers
+# ---------------------------------------------------------------------------
+# These pure helpers classify table headers as identity-bearing
+# (NPC/character/creature tables) vs. effect/mechanics/description
+# tables.  Used by _extract_entity_candidates to filter table-cell
+# entity registration (wired in task 2.2).
+
+
+def _normalize_table_header(header: str) -> str:
+    """Normalize a markdown table header for classification matching.
+
+    Strips leading/trailing whitespace, bold/italic markers (**, *),
+    and trailing punctuation (colon, semicolon, comma, period, !?).
+    Returns lowercase plain text.  Pure helper, no side effects.
+    """
+    h = header.strip()
+    h = h.strip("*_:;,.!?")
+    h = h.strip()
+    return h.lower()
+
+
+_TABLE_IDENTITY_HEADERS: set = {
+    "name",
+    "npc", "npcs",
+    "character", "characters",
+    "creature", "creatures",
+    "monster", "monsters",
+    "faction", "factions",
+    "person",
+    "people",
+    "actor", "actors",
+    "identity",
+}
+
+
+_TABLE_EFFECT_HEADERS: set = {
+    "d100", "d%",
+    "effect", "effects",
+    "complication", "complications",
+    "result", "results",
+    "description", "descriptions",
+    "spell", "spells",
+    "trigger", "triggers",
+    "trap", "traps",
+    "mechanic", "mechanics",
+    "trick", "tricks",
+    "damage",
+    "condition", "conditions",
+    "passive element",
+    "active element",
+}
+
+
+def _table_headers_indicate_entity_identity(headers: List[str]) -> bool:
+    """Check if table headers suggest the table contains named entities
+    (NPCs, characters, creatures, factions, etc.).
+
+    Normalizes each header and tests for overlap with
+    _TABLE_IDENTITY_HEADERS.  Also checks individual words from multi-word
+    headers (e.g. "NPC Name" -> {"npc", "name"} both in identity set).
+    Pure helper, no side effects.
+    """
+    if not headers:
+        return False
+    normalized = {_normalize_table_header(h) for h in headers}
+    if normalized & _TABLE_IDENTITY_HEADERS:
+        return True
+    # Check individual words of multi-word headers to catch
+    # patterns like "NPC Name", "Character Name", "Monster Name"
+    for h in headers:
+        norm = _normalize_table_header(h)
+        for word in norm.split():
+            if word in _TABLE_IDENTITY_HEADERS:
+                return True
+    return False
+
+
+def _table_headers_indicate_effect_text(headers: List[str]) -> bool:
+    """Check if table headers suggest the table contains effect, trap,
+    description, or mechanic text (not named entities).
+
+    Normalizes each header and tests for overlap with
+    _TABLE_EFFECT_HEADERS.  Pure helper, no side effects.
+    """
+    if not headers:
+        return False
+    normalized = {_normalize_table_header(h) for h in headers}
+    return bool(normalized & _TABLE_EFFECT_HEADERS)
+
+
+# ---------------------------------------------------------------------------
 # 3. Location candidates
 # ---------------------------------------------------------------------------
 
@@ -542,6 +633,14 @@ def _extract_entity_candidates(text: str,
             _register(bold_text, "bold_span", ctx, match.start())
 
     for table in tables:
+        headers = table.get("headers", [])
+        # Task 2.2: Only register table cells as entity/NPC candidates when
+        # table headers indicate the table contains named entities (NPCs,
+        # characters, creatures, etc.).  Effect/description/mechanics tables
+        # and ambiguous tables are skipped to avoid false-positive NPC
+        # extraction from trap/effect prose.
+        if not _table_headers_indicate_entity_identity(headers):
+            continue
         rows = table.get("rows", [])
         row_line_numbers = table.get("row_line_numbers", [])
         for row_idx, row in enumerate(rows):

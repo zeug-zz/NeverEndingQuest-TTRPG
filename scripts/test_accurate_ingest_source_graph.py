@@ -142,6 +142,36 @@ TONE_MD = (
     "Quirky characters and whimsical encounters provide comic relief."
 )
 
+# Minimal Well-of-Ruin-style effect table fixture for source graph filtering tests.
+# The table uses effect-bearing headers (d100 / Effect / Description), so its
+# cell values MUST NOT produce npc-type atoms in the source graph.
+WELL_EFFECT_SOURCE_MD = """# Well of Ruin
+
+## Complex Trap
+
+### level 11-16 Complex Trap, Deadly
+
+| d100 | Effect | Description |
+|------|--------|-------------|
+| 31-45 | Awaken | Mundane objects worth at least 1 gp become sentient and hostile. |
+| 56-65 | Enrage | A wave of crimson energy washes over the area. |
+| 66-75 | Enthrall | Hypnotic patterns dance in the air. |
+"""
+
+# Minimal Numillian-style identity-bearing table fixture for source graph
+# filtering tests.  The table uses identity-bearing headers (Name / Role /
+# Location), so its first-column values MUST produce npc-type atoms.
+NUMILLIAN_TABLE_SOURCE_MD = """# The Hidden City of Numillian
+
+## Notable NPCs
+
+| Name | Role | Location |
+|------|------|----------|
+| Wayne | Crypt caretaker | The Crypts |
+| Irene Laughing-Eyes | Tavern keeper | The Gilded Tankard |
+| Treever | Town herbalist | Apothecary |
+"""
+
 
 class TestHeadingExtraction(unittest.TestCase):
     """Task 1.2: Heading hierarchy extraction."""
@@ -198,9 +228,10 @@ class TestLocationCandidateExtraction(unittest.TestCase):
         headings = _extract_heading_hierarchy(NUMILLIAN_LIKE_MD)
         locations = _extract_location_candidates(NUMILLIAN_LIKE_MD, headings)
         names = [l["name"] for l in locations]
-        self.assertIn("Charion Tamer", names)
-        self.assertIn("Shuluth's Tomb", names)
-        self.assertIn("Brooksteps Inn", names)
+        # Production code prefixes numbered map-key entries with "N. ".
+        self.assertIn("1. Charion Tamer", names)
+        self.assertIn("2. Shuluth's Tomb", names)
+        self.assertIn("4. Brooksteps Inn", names)
 
     def test_minimum_thirteen_locations(self):
         headings = _extract_heading_hierarchy(NUMILLIAN_LIKE_MD)
@@ -210,8 +241,12 @@ class TestLocationCandidateExtraction(unittest.TestCase):
     def test_location_type_map_key(self):
         headings = _extract_heading_hierarchy(NUMILLIAN_LIKE_MD)
         locations = _extract_location_candidates(NUMILLIAN_LIKE_MD, headings)
-        for loc in locations:
-            self.assertEqual(loc["location_type"], "map_key")
+        # Numbered map-key entries are "map_key"; non-numbered headings are
+        # "heading_location".  Verify both classes are present.
+        map_key_count = sum(1 for l in locations if l["location_type"] == "map_key")
+        heading_loc_count = sum(1 for l in locations if l["location_type"] == "heading_location")
+        self.assertGreaterEqual(map_key_count, 13)
+        self.assertGreaterEqual(heading_loc_count, 4)
 
     def test_empty_text(self):
         locations = _extract_location_candidates(EMPTY_MD, [])
@@ -470,6 +505,101 @@ class TestCriticalityClassification(unittest.TestCase):
         self.assertIn("ominous", tone_names)
         self.assertIn("quirky", tone_names)
         self.assertIn("whimsical", tone_names)
+
+
+class TestSourceGraphWellEffectFiltering(unittest.TestCase):
+    """Task 2.3: Source graph MUST NOT produce npc atoms from effect-bearing
+    table cells (Well-style trap/effect fixtures)."""
+
+    def test_awaken_not_in_graph_npc_atoms(self):
+        """Awaken is NOT an npc-type atom in the source graph."""
+        graph = build_source_graph(WELL_EFFECT_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        self.assertNotIn(
+            "Awaken", npc_names,
+            "'Awaken' should NOT be an npc atom (effect table filtered).",
+        )
+
+    def test_enrage_not_in_graph_npc_atoms(self):
+        """Enrage is NOT an npc-type atom in the source graph."""
+        graph = build_source_graph(WELL_EFFECT_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        self.assertNotIn(
+            "Enrage", npc_names,
+            "'Enrage' should NOT be an npc atom (effect table filtered).",
+        )
+
+    def test_full_sentence_not_in_graph_npc_atoms(self):
+        """The full effect sentence is NOT an npc-type atom in the source graph."""
+        graph = build_source_graph(WELL_EFFECT_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        sentence = "Mundane objects worth at least 1 gp become sentient and hostile."
+        self.assertNotIn(
+            sentence, npc_names,
+            "Full effect sentence should NOT be an npc atom "
+            "(effect table filtered).",
+        )
+
+    def test_well_npc_count_zero(self):
+        """npc_candidates summary is 0 for effect-only table fixture."""
+        graph = build_source_graph(WELL_EFFECT_SOURCE_MD)
+        self.assertEqual(
+            graph["summary"]["npc_candidates"], 0,
+            "Effect-only table fixture must produce 0 npc candidates.",
+        )
+
+
+class TestSourceGraphNumillianTableNpcPreservation(unittest.TestCase):
+    """Task 2.3: Source graph MUST produce npc atoms from identity-bearing
+    table cells (Numillian-style NPC tables)."""
+
+    def test_wayne_in_graph_npc_atoms(self):
+        """Wayne IS an npc-type atom (identity-bearing Name table)."""
+        graph = build_source_graph(NUMILLIAN_TABLE_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        self.assertIn(
+            "Wayne", npc_names,
+            "'Wayne' should be an npc atom (identity-bearing table).",
+        )
+
+    def test_irene_in_graph_npc_atoms(self):
+        """Irene Laughing-Eyes IS an npc-type atom (identity-bearing Name table)."""
+        graph = build_source_graph(NUMILLIAN_TABLE_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        self.assertIn(
+            "Irene Laughing-Eyes", npc_names,
+            "'Irene Laughing-Eyes' should be an npc atom "
+            "(identity-bearing table).",
+        )
+
+    def test_treever_in_graph_npc_atoms(self):
+        """Treever IS an npc-type atom (identity-bearing Name table)."""
+        graph = build_source_graph(NUMILLIAN_TABLE_SOURCE_MD)
+        npc_names = {a["name"] for a in graph["atoms"] if a.get("type") == "npc"}
+        self.assertIn(
+            "Treever", npc_names,
+            "'Treever' should be an npc atom (identity-bearing table).",
+        )
+
+    def test_numillian_npc_count_minimum_three(self):
+        """npc_candidates summary >= 3 for the 3-name identity table fixture."""
+        graph = build_source_graph(NUMILLIAN_TABLE_SOURCE_MD)
+        self.assertGreaterEqual(
+            graph["summary"]["npc_candidates"], 3,
+            "Identity-bearing table fixture must produce >= 3 npc candidates.",
+        )
+
+    def test_well_and_numillian_fixtures_differ(self):
+        """Cross-check: Well fixture has 0 npc, Numillian fixture has >= 3 npc."""
+        well_graph = build_source_graph(WELL_EFFECT_SOURCE_MD)
+        num_graph = build_source_graph(NUMILLIAN_TABLE_SOURCE_MD)
+        well_npc = well_graph["summary"]["npc_candidates"]
+        num_npc = num_graph["summary"]["npc_candidates"]
+        self.assertGreater(
+            num_npc, well_npc,
+            f"Numillian NPC count ({num_npc}) must exceed Well NPC count "
+            f"({well_npc}) -- table-header classification must differ.",
+        )
 
 
 class TestAtomDedupe(unittest.TestCase):

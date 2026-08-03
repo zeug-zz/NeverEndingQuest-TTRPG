@@ -13,6 +13,7 @@ Commercial competing use is prohibited for 2 years from release.
 See LICENSE file for full terms.
 """
 
+import glob
 import json
 import os
 import tempfile
@@ -22,11 +23,27 @@ from typing import Any, Dict, List, Optional
 BRIEF_VERSION = "accurate_ingest_final_reconciliation_brief.v1"
 REPORT_VERSION = "accurate_ingest_final_reconciliation_report.v1"
 
+# Preferred canonical surfaces for final-reconciliation patch targets.
+# These are the only module artifact files the LLM final editor may modify:
+#
+#   module_context.json        -- main context (live, edit-safe)
+#   module_context_BU.json     -- context canonical backup
+#   module_plot_BU.json        -- plot canonical backup
+#   areas/*_BU.json            -- per-area canonical backups
+#   map_*.json                 -- static authored map files
+#
+# Runtime-only files (module_plot.json, live areas/*.json, monsters/*.json),
+# source/middle pipeline artifacts (source_graph.json, source_manifest.json,
+# normalized_packet.json, blueprint files, backstage audits, agent runs),
+# and intermediate build artifacts remain FORBIDDEN patch targets regardless
+# of what a brief's editable_surfaces advertises.  The LLM-side
+# ``_is_forbidden_target()`` enforces this as a second layer of defense.
 DEFAULT_EDITABLE_SURFACES = [
     "module_context.json",
-    "module_plot.json",
-    "areas/",
-    "monsters/",
+    "module_context_BU.json",
+    "module_plot_BU.json",
+    "areas/*_BU.json",
+    "map_*.json",
 ]
 
 DEFAULT_INSTRUCTIONS = (
@@ -58,22 +75,155 @@ def _normalize_classification(classification: Any) -> Dict[str, Any]:
     return classification
 
 
+_MAX_EXCERPT_CHARS = 80
+_MAX_EXCERPTS = 20
+
+
+def _resolve_source_excerpts(
+    classification: Dict[str, Any],
+    source_graph: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
+    """Resolve bounded source excerpts from blocker source_atom_id fields.
+
+    Iterates over editorial_blockers and fatal_blockers, looks up each
+    blocker's ``source_atom_id`` in the source graph atom index, and
+    returns compact excerpt entries.  Returns ``[]`` when no source_graph
+    is provided, no blockers carry a ``source_atom_id``, or no atoms match.
+
+    Args:
+        classification: Classifier output dict with blocked lists.
+        source_graph: Optional source graph dict with ``atoms`` list.
+
+    Returns:
+        List of excerpt dicts with keys: source_atom_id, atom_type, name,
+        excerpt.  Bounded by ``_MAX_EXCERPTS`` entries and
+        ``_MAX_EXCERPT_CHARS`` per excerpt.
+    """
+    if source_graph is None:
+        return []
+    atoms = source_graph.get("atoms")
+    if not isinstance(atoms, list) or not atoms:
+        return []
+
+    # Build a lookup index: atom id -> atom dict
+    atom_index: Dict[str, Dict[str, Any]] = {}
+    for atom in atoms:
+        atom_id = atom.get("id")
+        if atom_id and isinstance(atom_id, str):
+            atom_index[atom_id] = atom
+
+    excerpts: List[Dict[str, str]] = []
+    blocker_classes = ("editorial_blockers", "fatal_blockers")
+
+    for cls_name in blocker_classes:
+        for blocker in classification.get(cls_name, []):
+            if len(excerpts) >= _MAX_EXCERPTS:
+                break
+            source_atom_id = blocker.get("source_atom_id")
+            if not source_atom_id or not isinstance(source_atom_id, str):
+                continue
+            atom = atom_index.get(source_atom_id)
+            if atom is None:
+                continue
+            name = str(atom.get("name", ""))[:_MAX_EXCERPT_CHARS]
+            summary = str(atom.get("summary", ""))[:_MAX_EXCERPT_CHARS]
+            excerpts.append({
+                "source_atom_id": source_atom_id,
+                "atom_type": str(atom.get("type", "")),
+                "name": name,
+                "excerpt": summary,
+            })
+        if len(excerpts) >= _MAX_EXCERPTS:
+            break
+
+    return excerpts
+
+
+def _build_generated_module_summary(
+    module_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Build a compact summary of canonical module artifacts.
+
+    Scans the module directory for area files, monster files, context,
+    and plot artifacts.  Returns bounded counts and short lists only;
+    does not embed entire module files.
+
+    Args:
+        module_dir: Optional module directory path.
+
+    Returns:
+        Compact summary dict with artifact counts and missing categories.
+        Returns ``{}`` when module_dir is None or does not exist.
+    """
+    if module_dir is None or not module_dir.exists():
+        return {}
+
+    area_dir = module_dir / "areas"
+    monsters_dir = module_dir / "monsters"
+    context_path = module_dir / "module_context.json"
+    plot_path = module_dir / "module_plot.json"
+
+    # Count area BU files (canonical) and live area files
+    area_bu_files = sorted(glob.glob(str(area_dir / "*_BU.json"))) if area_dir.is_dir() else []
+    area_live_files = []
+    if area_dir.is_dir():
+        area_live_files = sorted(
+            p for p in area_dir.glob("*.json")
+            if not p.name.endswith("_BU.json")
+        )
+
+    # Count monster files
+    monster_files = sorted(glob.glob(str(monsters_dir / "*.json"))) if monsters_dir.is_dir() else []
+
+    # Check context and plot presence
+    has_context = context_path.is_file()
+    has_plot = plot_path.is_file()
+
+    # Collect missing canonical categories
+    missing_categories: List[str] = []
+    if not has_context:
+        missing_categories.append("module_context")
+    if not has_plot:
+        missing_categories.append("module_plot")
+    if not area_bu_files and not area_live_files:
+        missing_categories.append("areas")
+    if not monster_files:
+        missing_categories.append("monsters")
+
+    return {
+        "area_count": len(area_live_files) + len(area_bu_files),
+        "area_bu_count": len(area_bu_files),
+        "monster_count": len(monster_files),
+        "has_module_context": has_context,
+        "has_module_plot": has_plot,
+        "missing_categories": missing_categories,
+    }
+
+
 def build_final_reconciliation_brief(
     classification: Dict[str, Any],
     job_id: str = "",
     module_name: str = "",
     module_dir: Optional[Path] = None,
+    source_graph: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a final reconciliation brief dict from classifier output.
 
     The brief describes editorial blockers and surfaces that may need
     manual review before final reconciliation is accepted.
 
+    When ``source_graph`` is supplied, ``source_excerpts`` is populated
+    by resolving blocker ``source_atom_id`` fields against the source
+    graph atom index.  When ``module_dir`` points to an existing module
+    directory, ``generated_module_summary`` is populated with compact
+    canonical artifact counts.
+
     Args:
         classification: Classifier output dict from classify_final_build_blockers()
         job_id: Optional job identifier
         module_name: Optional module name/slug
         module_dir: Optional module directory path
+        source_graph: Optional source graph dict for evidence enrichment
 
     Returns:
         Brief dict ready for persistence or downstream consumption
@@ -82,6 +232,10 @@ def build_final_reconciliation_brief(
     classification = _normalize_classification(classification)
 
     trigger = "editorial_blockers_present" if classification.get("editorial_count", 0) > 0 else "no_editorial_blockers"
+
+    # Evidence enrichment
+    source_excerpts = _resolve_source_excerpts(classification, source_graph)
+    generated_module_summary = _build_generated_module_summary(module_dir)
 
     return {
         "version": BRIEF_VERSION,
@@ -95,8 +249,8 @@ def build_final_reconciliation_brief(
         "warnings": classification.get("warnings", []),
         "original_refusal_reason": classification.get("original_refusal_reason", ""),
         "report_paths": classification.get("report_paths", {}),
-        "source_excerpts": [],
-        "generated_module_summary": {},
+        "source_excerpts": source_excerpts,
+        "generated_module_summary": generated_module_summary,
         "editable_surfaces": list(DEFAULT_EDITABLE_SURFACES),
         "instructions": DEFAULT_INSTRUCTIONS,
     }
