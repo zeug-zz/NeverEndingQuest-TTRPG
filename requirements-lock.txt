@@ -41,7 +41,7 @@ packaging==26.2
 pillow==12.3.0
 protobuf==6.33.6
 publicsuffix2==2.20191221
-pyasn1==0.6.3
+pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==2.23
 pydantic==2.12.5
