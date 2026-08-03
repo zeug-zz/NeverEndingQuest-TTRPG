@@ -6,6 +6,7 @@ Owner: Narrative systems + memory integration
 Track reference: `plans/version-2/v2-narrative-track.md`
 
 Related plans:
+
 - `plans/version-2/module-import.md` = scaled canonical module-import lane
 - `plans/version-2/memory.md` = retrieval/storage contracts
 - `plans/version-2/titan-integration.md` = later interpreted-state consumer
@@ -75,12 +76,14 @@ The world narrative system operates on a pre-built data artifact: `data/world_na
 ## Integration Hooks (current codebase)
 
 Canon event ingestion:
+
 - `updates/plot_update.py` -> thread progression
 - `core/ai/action_handler.py` -> transition/faction pressure events
 - `core/managers/combat_manager.py` -> consequence events
 - `core/managers/location_manager.py` -> location consequence transitions
 
 Retrieval injection:
+
 - `main.py` -> bounded `NARRATIVE PRESSURE` block in DM note path
 - `core/managers/campaign_manager.py` -> cross-module continuity pack
 - `core/generators/module_builder.py` -> continuity seed preamble
@@ -89,13 +92,16 @@ Retrieval injection:
 ## Retrieval Contracts (bounded)
 
 Turn-time pack:
+
 - `get_narrative_turn_pack(module_name, location_id, active_entities, max_items=6)`
 - output: `threats`, `obligations`, `continuity`
 
 Transition pack:
+
 - `get_transition_pressure_pack(from_module, to_module, max_items=6)`
 
 Builder pack:
+
 - `get_module_seed_pack(target_module, max_items=10)`
 
 Ordering: priority desc -> recency desc -> stable id asc
@@ -103,6 +109,7 @@ Ordering: priority desc -> recency desc -> stable id asc
 ### World picture lifecycle (interpreted, not hardwired)
 
 At campaign start:
+
 1. Bootstrap LLM composes a `campaign_world_model` from:
    - merged global inspiration atoms
    - atom relations and statistics
@@ -111,6 +118,7 @@ At campaign start:
 2. Result is a campaign-specific worldview snapshot (version 1).
 
 During campaign play:
+
 1. New canon events land in memory/thread tables.
 2. Ratio LLM proposes worldview updates as `campaign_world_delta`.
 3. Approved deltas are applied to create next `campaign_world_model` version.
@@ -144,28 +152,34 @@ Outcome: Campaigns remain family-similar (same inspiration prior) but relationsh
 ## Rollout Plan
 
 Phase 1 - Foundation
+
 - Verify world-narrative seed tables exist in runtime DB after bootstrap.
 - Add `core/memory/narrative_state.py` for retrieval helpers.
 - Add runtime bootstrap: copy/merge seed DB tables when `data/memory.db` is missing.
 
 Phase 2 - World model bootstrap and Ratio loop
+
 - Implement campaign-start world model bootstrap (`campaign_world_model` v1).
 - Implement Ratio drift check loop and delta proposal/apply flow.
 
 Phase 3 - Hook integration
+
 - Wire plot/combat/transition hooks.
 - Feed canonical events into thread and actor-state updates.
 
 Phase 4 - Prompt and builder integration
+
 - Inject pressure packs into DM note and module builder.
 - Ensure narrator sees bounded interpreted world pressure, not raw DB dumps.
 
 Phase 5 - Safety gates
+
 - Verify runtime DB never writes back to seed DB.
 
 ## Verification Checklist
 
 Automated:
+
 1. Seed DB bootstrap creates runtime tables correctly on fresh install.
 2. Thread lifecycle correctness.
 3. Retrieval ordering stability across alignment/mythic tables.
@@ -174,6 +188,7 @@ Automated:
 6. Distribution checks confirm seed DB is present and valid.
 
 Manual:
+
 1. Start campaign from seed DB and verify world model generates.
 2. Start two campaigns from same seed DB and verify world models are similar but not identical.
 3. Confirm campaign continuity works across modules with world-narrative pressure.
