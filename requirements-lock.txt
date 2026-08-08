@@ -11,7 +11,7 @@ brotli==1.2.0
 certifi==2025.11.12
 cffi==2.0.0
 charset-normalizer==3.4.4
-cryptography==48.0.1
+cryptography==50.0.0
 distro==1.9.0
 exceptiongroup==1.2.2
 Flask==3.1.3
