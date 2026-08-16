@@ -178,19 +178,26 @@ def _run_registry_stage(module_slug: str) -> Dict[str, Any]:
     try:
         stitcher = ModuleStitcher()
         integration_success = bool(stitcher.integrate_module(module_slug))
+        provider_stage_errors = list(
+            getattr(stitcher, "provider_stage_errors", []) or []
+        )
     except Exception as stitch_error:
         integration_error = str(stitch_error)
+        provider_stage_errors = []
 
     verify_after = verify_present(module_slug)
     if verify_after.get("present", False):
-        return {
-            "status": "success",
+        result = {
+            "status": "degraded" if provider_stage_errors else "success",
             "verify_before": verify_before,
             "verify_after": verify_after,
             "integration_attempted": integration_attempted,
             "integration_success": integration_success,
             "integration_error": integration_error,
         }
+        if provider_stage_errors:
+            result["provider_stage_errors"] = provider_stage_errors
+        return result
 
     return {
         "status": "failed",
@@ -578,9 +585,16 @@ def _run_llm_remediation_stage(
         if not batch:
             return {"status": "skipped", "reason": "no_affordances"}
 
-        proposals = call_llm_remediation_proposals(batch)
+        provider_errors: List[Dict[str, Any]] = []
+        proposals = call_llm_remediation_proposals(
+            batch, error_sink=provider_errors
+        )
         if not proposals:
-            return {"status": "skipped", "reason": "api_returned_empty"}
+            result = {"status": "skipped", "reason": "api_returned_empty"}
+            if provider_errors:
+                result["status"] = "degraded"
+                result["provider_errors"] = provider_errors
+            return result
 
         validated = validate_remediation_proposals(
             str(module_dir), proposals
@@ -591,12 +605,15 @@ def _run_llm_remediation_stage(
             if p.get("safety", "").startswith(("pass", "warning"))
         )
 
-        return {
-            "status": "success",
+        result = {
+            "status": "degraded" if provider_errors else "success",
             "proposal_count": len(proposals),
             "valid_count": valid_count,
             "proposals": validated,
         }
+        if provider_errors:
+            result["provider_errors"] = provider_errors
+        return result
     except Exception as exc:
         warning(
             f"LLM remediation stage failed for {module_slug}: {exc}",

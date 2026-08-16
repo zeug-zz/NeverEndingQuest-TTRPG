@@ -1,0 +1,19 @@
+{
+  "diagnostics_persisted_api_credential": false,
+  "diagnostics_persisted_raw_response": false,
+  "diagnostics_persisted_raw_source": false,
+  "elapsed_seconds": 2.78,
+  "max_completion_tokens": 64,
+  "max_retries": 0,
+  "model": "gpt-5.6-luna",
+  "provider": "openai",
+  "status": "pass",
+  "task": "4.4",
+  "timeout_seconds": 25,
+  "unsupported_parameter_error": false,
+  "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 37,
+    "total_tokens": 45
+  }
+}

@@ -20,7 +20,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from model_config import DM_MAIN_MODEL
-from utils.ai_client_factory import create_chat_client, get_model_config
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+)
 from utils.enhanced_logger import warning
 from utils.toolkit_homebrew_upload_contract import (
     build_normalized_packet_placeholder,
@@ -470,14 +474,16 @@ def normalize_homebrew_upload(
                 try:
                     client = create_chat_client()
                     resp = client.chat.completions.create(
-                        model=section_model,
                         messages=[
                             {"role": "system", "content": section_prompt},
                             {"role": "user", "content": user_msg},
                         ],
-                        temperature=section_config.get("temperature", 0.2),
                         timeout=90,
-                        **section_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "builders",
+                            DM_MAIN_MODEL,
+                            temperature_override=section_config.get("temperature", 0.2),
+                        ),
                     )
                     section_raw = _as_string(resp.choices[0].message.content)
                     parsed, err = _extract_json_payload(section_raw)
@@ -545,14 +551,16 @@ def normalize_homebrew_upload(
                 ident_client = create_chat_client()
                 ident_config = get_model_config("builders", DM_MAIN_MODEL)
                 ident_resp = ident_client.chat.completions.create(
-                    model=ident_config.get("model", DM_MAIN_MODEL),
                     messages=[
                         {"role": "system", "content": identity_prompt},
                         {"role": "user", "content": identity_user_msg},
                     ],
-                    temperature=ident_config.get("temperature", 0.2),
                     timeout=90,
-                    **ident_config.get("extra_body", {}),
+                    **get_chat_completion_params(
+                        "builders",
+                        DM_MAIN_MODEL,
+                        temperature_override=ident_config.get("temperature", 0.2),
+                    ),
                 )
                 ident_raw = _as_string(ident_resp.choices[0].message.content)
                 ident_parsed, ident_err = _extract_json_payload(ident_raw)
@@ -634,14 +642,16 @@ def normalize_homebrew_upload(
                 topo_client = create_chat_client()
                 topo_config = get_model_config("builders", DM_MAIN_MODEL)
                 topo_resp = topo_client.chat.completions.create(
-                    model=topo_config.get("model", DM_MAIN_MODEL),
                     messages=[
                         {"role": "system", "content": topology_prompt},
                         {"role": "user", "content": topology_user_msg},
                     ],
-                    temperature=topo_config.get("temperature", 0.2),
                     timeout=90,
-                    **topo_config.get("extra_body", {}),
+                    **get_chat_completion_params(
+                        "builders",
+                        DM_MAIN_MODEL,
+                        temperature_override=topo_config.get("temperature", 0.2),
+                    ),
                 )
                 topo_raw = _as_string(topo_resp.choices[0].message.content)
                 topo_parsed, topo_err = _extract_json_payload(topo_raw)
@@ -752,14 +762,16 @@ def normalize_homebrew_upload(
     try:
         client = create_chat_client()
         response = client.chat.completions.create(
-            model=model_name,
             messages=[
                 {"role": "system", "content": prompt_template},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=model_config.get("temperature", 0.3),
             timeout=120,
-            **model_config.get("extra_body", {}),
+            **get_chat_completion_params(
+                "builders",
+                DM_MAIN_MODEL,
+                temperature_override=model_config.get("temperature", 0.3),
+            ),
         )
         model_text = _as_string(response.choices[0].message.content)
     except Exception as provider_error:
@@ -891,14 +903,16 @@ def normalize_homebrew_upload(
                 try:
                     repair_client = create_chat_client()
                     repair_resp = repair_client.chat.completions.create(
-                        model=repair_model,
                         messages=[
                             {"role": "system", "content": repair_prompt},
                             {"role": "user", "content": repair_user_msg},
                         ],
-                        temperature=repair_config.get("temperature", 0.2),
                         timeout=90,
-                        **repair_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "builders",
+                            DM_MAIN_MODEL,
+                            temperature_override=repair_config.get("temperature", 0.2),
+                        ),
                     )
                     model_output = _as_string(repair_resp.choices[0].message.content)
                     parsed, parse_err = _extract_json_payload(model_output)

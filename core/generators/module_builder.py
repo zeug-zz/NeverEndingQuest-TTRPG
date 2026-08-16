@@ -586,11 +586,9 @@ The plot title should reference this specific area, not other locations.
             return
             
         # Import factory at the function level to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
-        from config import DM_MAIN_MODEL
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error; from config import DM_MAIN_MODEL
         
         client = create_chat_client()
-        model_config = get_model_config("unify_plots", DM_MAIN_MODEL)
         
         # Prepare context for unification
         area_summaries = []
@@ -693,14 +691,14 @@ IMPORTANT:
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "unify_plots", DM_MAIN_MODEL, temperature_override=0.7
+                        ),
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating coherent, engaging adventure narratives."},
                             {"role": "user", "content": prompt}
                         ],
                         response_format={"type": "json_object"},
-                        temperature=0.7
                     )
                     break
                 except Exception as e:
@@ -790,11 +788,10 @@ IMPORTANT:
             return
         
         # Import here to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
         from config import DM_MAIN_MODEL
         
         client = create_chat_client()
-        model_config = get_model_config("update_plot_hooks", DM_MAIN_MODEL)
         
         # Update each area's plot hooks
         for area_id in self.areas_data:
@@ -899,6 +896,7 @@ IMPORTANT:
     def _generate_enhanced_plot_hooks(self, area_id, area_data, plot_points, side_quests, client):
         """Generate enhanced plot hooks that reference specific plot points and side quests"""
         # Import here to avoid circular imports
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
         from config import DM_MAIN_MODEL
         
         # Extract existing plot hooks from all locations in the area
@@ -957,14 +955,14 @@ IMPORTANT:
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "update_plot_hooks", DM_MAIN_MODEL, temperature_override=0.6
+                        ),
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating actionable plot hooks that reference specific plot elements."},
                             {"role": "user", "content": prompt}
                         ],
                         response_format={"type": "json_object"},
-                        temperature=0.6
                     )
                     break
                 except Exception as e:
@@ -1402,11 +1400,10 @@ def parse_narrative_to_module_params(narrative: str) -> Dict[str, Any]:
     Returns:
         Dict containing parsed module parameters
     """
-    from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+    from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
     import config
     
     client = create_chat_client()
-    model_config = get_model_config("parse_module_params", config.DM_SUMMARIZATION_MODEL)
     
     parsing_prompt = """You are a module configuration parser for the world's most popular 5th edition tabletop role-playing game. Extract adventure module parameters from a narrative description.
 
@@ -1464,9 +1461,10 @@ Return ONLY the JSON object, no explanations or additional text."""
         try:
             try:
                 response = client.chat.completions.create(
-                    model=model_config["model"],
-                    **model_config.get("extra_body", {}),
-                    temperature=0.3,
+                    **get_chat_completion_params(
+                        "parse_module_params", config.DM_SUMMARIZATION_MODEL,
+                        temperature_override=0.3,
+                    ),
                     messages=[
                         {"role": "system", "content": current_prompt},
                         {"role": "user", "content": f"Parse this module narrative:\n\n{narrative}"}

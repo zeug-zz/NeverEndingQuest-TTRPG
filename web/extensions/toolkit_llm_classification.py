@@ -35,7 +35,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from model_config import DM_VALIDATION_MODEL, ENABLE_LLM_CLASSIFICATION
-from utils.ai_client_factory import create_chat_client, get_model_config
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+    handle_provider_error,
+)
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.enhanced_logger import debug, error, info, warning
 from utils.module_semantic_authority import enrich_module_semantic_authority
@@ -197,27 +202,41 @@ def _call_llm_with_fallback(
     system_prompt: str,
     user_prompt: str,
     response_format: str = "json_object",
+    stage: str = "toolkit_classification",
+    error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
-        client = create_chat_client(use_fallback=True)
+        client = create_chat_client()
         config = get_model_config("dm_validation", DM_VALIDATION_MODEL)
         response = client.chat.completions.create(
-            model=config.get("model", DM_VALIDATION_MODEL),
+            **get_chat_completion_params(
+                "dm_validation",
+                DM_VALIDATION_MODEL,
+                temperature_override=config.get("temperature", 0.2),
+            ),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
             response_format={"type": response_format},
-            **config.get("extra_body", {}),
         )
         content = response.choices[0].message.content
         if content:
             return json.loads(content)
         return None
     except Exception as exc:
+        error_result = handle_provider_error(exc, stage)
+        diagnostic = {
+            "status": "degraded",
+            "stage": stage,
+            "error_type": type(exc).__name__,
+            "retryable": bool(error_result.get("should_fallback", False)),
+            "fallback": "classification_defaults_or_empty_proposals",
+        }
+        if isinstance(error_sink, list):
+            error_sink.append(diagnostic)
         warning(
-            f"LLM classification call failed: {exc}",
+            f"LLM classification call failed stage={stage}: {exc}",
             category="llm_classification",
         )
         return None
@@ -314,6 +333,7 @@ def call_llm_classify_entities(
     batch: List[Dict[str, str]],
     cache: Optional[ClassificationCache] = None,
     module_slug: str = "",
+    error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, str]:
     if not batch:
         return {}
@@ -333,7 +353,12 @@ def call_llm_classify_entities(
     )
     user_prompt = json.dumps(remaining, indent=2)
 
-    result = _call_llm_with_fallback(system_prompt, user_prompt)
+    result = _call_llm_with_fallback(
+        system_prompt,
+        user_prompt,
+        stage="toolkit_classification.entity",
+        error_sink=error_sink,
+    )
     if result is None:
         info(
             "LLM entity classification degraded: API error, "
@@ -359,6 +384,7 @@ def call_llm_classify_destinations(
     batch: List[Dict[str, str]],
     cache: Optional[ClassificationCache] = None,
     module_slug: str = "",
+    error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, str]:
     if not batch:
         return {}
@@ -379,7 +405,12 @@ def call_llm_classify_destinations(
     )
     user_prompt = json.dumps(remaining, indent=2)
 
-    result = _call_llm_with_fallback(system_prompt, user_prompt)
+    result = _call_llm_with_fallback(
+        system_prompt,
+        user_prompt,
+        stage="toolkit_classification.destination",
+        error_sink=error_sink,
+    )
     if result is None:
         info(
             "LLM destination classification degraded: API error, "
@@ -405,6 +436,7 @@ def call_llm_classify_npc_visibility(
     batch: List[Dict[str, str]],
     cache: Optional[ClassificationCache] = None,
     module_slug: str = "",
+    error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, str]:
     if not batch:
         return {}
@@ -425,7 +457,12 @@ def call_llm_classify_npc_visibility(
     )
     user_prompt = json.dumps(remaining, indent=2)
 
-    result = _call_llm_with_fallback(system_prompt, user_prompt)
+    result = _call_llm_with_fallback(
+        system_prompt,
+        user_prompt,
+        stage="toolkit_classification.npc_visibility",
+        error_sink=error_sink,
+    )
     if result is None:
         info(
             "LLM NPC visibility classification degraded: API error, "
@@ -711,6 +748,7 @@ def run_llm_classification_pass(
         "classifications": {},
         "summaries": {},
         "errors": [],
+        "provider_errors": [],
     }
 
     def _classify_domain(
@@ -750,7 +788,12 @@ def run_llm_classification_pass(
             return domain_result
 
         try:
-            labels = classifier_fn(batch, cache=cache, module_slug=slug)
+            labels = classifier_fn(
+                batch,
+                cache=cache,
+                module_slug=slug,
+                error_sink=result["provider_errors"],
+            )
         except Exception as exc:
             info(
                 f"Classification call failed for {domain_name}: {exc}",
@@ -783,7 +826,7 @@ def run_llm_classification_pass(
         "npc_visibility",
     )
 
-    if result["errors"]:
+    if result["errors"] or result["provider_errors"]:
         result["status"] = "degraded"
     return result
 
@@ -1203,6 +1246,7 @@ def build_remediation_proposal_batch(
 
 def call_llm_remediation_proposals(
     batch: List[Dict[str, Any]],
+    error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     if not batch:
         return []
@@ -1234,7 +1278,12 @@ def call_llm_remediation_proposals(
     )
     user_prompt = json.dumps(batch, indent=2)
 
-    result = _call_llm_with_fallback(system_prompt, user_prompt)
+    result = _call_llm_with_fallback(
+        system_prompt,
+        user_prompt,
+        stage="toolkit_classification.remediation",
+        error_sink=error_sink,
+    )
     if result is None:
         info(
             "LLM remediation proposals degraded: API error, "

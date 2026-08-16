@@ -64,7 +64,7 @@ from pathlib import Path  # TABLETOP MODE: Import Path for module preflight vali
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import AI client factory (supports OpenAI and OpenRouter)
-from utils.ai_client_factory import create_chat_client, get_chat_model_name, get_model_config  # OPENROUTER: Multi-provider support
+from utils.ai_client_factory import create_chat_client, get_chat_model_name, get_model_config, get_chat_completion_params  # OPENROUTER: Multi-provider support
 from openai import OpenAI
 
 # Token tracking import
@@ -103,6 +103,7 @@ from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.character_creation_audit import apply_background_feature_suggestion_if_generic
 from model_config import (
     DM_MINI_MODEL,
+    NPC_BUILDER_MODEL,
     ENABLE_BROWSER_TTS_STREAM_SYNC,
     ENABLE_CHAT_STREAMING,
     ENABLE_BROWSER_WORD_SYNC,
@@ -5807,6 +5808,58 @@ def handle_cancel_build():
     else:
         emit('module_error', {'error': 'No active build to cancel.'})
 
+def _generate_toolkit_npc_description(
+    asset_name: str,
+    client=None,
+) -> dict:
+    """Generate one toolkit NPC description with stage-local diagnostics."""
+    provider_stage = "toolkit_mmg.npc_description"
+    fallback_description = f"A fantasy NPC named {asset_name}"
+    try:
+        if client is None:
+            client = create_chat_client()
+        model_config = get_model_config("npc_builder", NPC_BUILDER_MODEL)
+        ai_prompt = (
+            f"Generate a 150-200 word visual description for {asset_name} "
+            f"suitable for AI image generation. Include physical appearance, "
+            f"clothing, demeanor, and any notable features."
+        )
+        response = client.chat.completions.create(
+            **get_chat_completion_params(
+                "npc_builder",
+                NPC_BUILDER_MODEL,
+                temperature_override=model_config.get("temperature", 0.7),
+            ),
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You write vivid NPC descriptions for fantasy RPG character portraits.",
+                },
+                {"role": "user", "content": ai_prompt},
+            ],
+            max_tokens=300,
+        )
+        description = response.choices[0].message.content.strip()
+        if not description:
+            raise ValueError("empty_provider_response")
+        return {"status": "success", "description": description}
+    except Exception as exc:
+        error(
+            f"TOOLKIT_PROVIDER_FAILURE stage={provider_stage} "
+            f"asset={asset_name} error_type={type(exc).__name__}",
+            category="module_ingest",
+        )
+        return {
+            "status": "degraded",
+            "description": fallback_description,
+            "failure": {
+                "stage": provider_stage,
+                "status": "degraded",
+                "error_type": type(exc).__name__,
+            },
+        }
+
+
 @socketio.on('generate_unified_assets')
 def handle_generate_unified_assets(data):
     """Generate missing descriptions and images for module assets"""
@@ -6010,34 +6063,23 @@ def handle_generate_unified_assets(data):
 
                                 # If still no description, generate new one with AI
                                 if not description_found:
-                                    # TABLETOP MODE: Use direct AI client instead of
-                                    # the removed NPCBuilder class.
                                     info(f"Generating AI description for NPC {asset_name}")
-                                    from utils.ai_client_factory import create_chat_client, get_model_config
-                                    client = create_chat_client()
-                                    config = get_model_config("npc_builder")
-                                    ai_prompt = (
-                                        f"Generate a 150-200 word visual description for {asset_name} "
-                                        f"suitable for AI image generation. Include physical appearance, "
-                                        f"clothing, demeanor, and any notable features."
+                                    description_result = _generate_toolkit_npc_description(
+                                        asset_name
                                     )
-                                    try:
-                                        resp = client.chat.completions.create(
-                                            model=config["model"],
-                                            **config.get("extra_body", {}),
-                                            temperature=0.7,
-                                            messages=[
-                                                {"role": "system", "content": "You write vivid NPC descriptions for fantasy RPG character portraits."},
-                                                {"role": "user", "content": ai_prompt},
-                                            ],
-                                            max_tokens=300,
-                                        )
-                                        description_text = resp.choices[0].message.content.strip()
-                                        if description_text:
-                                            info(f"Generated new AI description for {asset_name}")
-                                    except Exception as ai_err:
-                                        error(f"AI description generation failed for {asset_name}: {ai_err}")
-                                        description_text = f"A fantasy NPC named {asset_name}"
+                                    description_text = description_result.get(
+                                        "description", ""
+                                    )
+                                    if description_result.get("status") == "success":
+                                        info(f"Generated new AI description for {asset_name}")
+                                    elif description_result.get("failure"):
+                                        generation_failures.append({
+                                            "asset_id": asset_id,
+                                            "asset_name": asset_name,
+                                            "asset_type": "npc",
+                                            "phase": "description",
+                                            **description_result["failure"],
+                                        })
 
                                 # Save to NPC compendium
                                 if description_text:
@@ -6416,6 +6458,7 @@ def handle_generate_unified_assets(data):
                 (len(description_targets) if 'description_targets' in locals() else 0)
                 + (len(image_targets) if 'image_targets' in locals() else 0)
             )
+            generation_status = "degraded" if generation_failures else "success"
             info(f"TOOLKIT: Generation completed. Description targets: {len(description_targets) if 'description_targets' in locals() else 0}, Image targets: {len(image_targets) if 'image_targets' in locals() else 0}")
 
             media_report = None
@@ -6460,9 +6503,15 @@ def handle_generate_unified_assets(data):
                     )
 
             socketio.emit('unified_generation_complete', {
-                'success': True,
-                'message': f"Successfully generated assets for {module_name}",
+                'success': not generation_failures,
+                'status': generation_status,
+                'message': (
+                    f"Successfully generated assets for {module_name}"
+                    if not generation_failures
+                    else f"Asset generation completed with degraded status for {module_name}"
+                ),
                 'generated_count': generated_count,
+                'generation_failures': generation_failures,
                 'media_report': {
                     'status': media_report.get('status'),
                     'missing_count': media_report.get('missing_count', 0),

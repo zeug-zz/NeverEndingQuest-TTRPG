@@ -42,25 +42,40 @@ def _try_provider_call(prompt: str) -> str:
 
     Fails closed: returns an error marker on any failure.
     """
+    provider_stage = "accurate_ingest.critical_narrative_repair"
     try:
-        from utils.ai_client_factory import create_chat_client, get_chat_model_name
+        from utils.ai_client_factory import (
+            create_chat_client,
+            get_chat_completion_params,
+            get_chat_model_name,
+            handle_provider_error,
+        )
         client = create_chat_client()
-        model = get_chat_model_name()
         response = client.chat.completions.create(
-            model=model,
+            **get_chat_completion_params(
+                "builders",
+                get_chat_model_name(),
+                temperature_override=0.2,
+            ),
             messages=[
                 {"role": "system", "content": "Return structured JSON only. No markdown, no prose outside the JSON object."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
             timeout=120,
         )
         return response.choices[0].message.content or ""
     except Exception as exc:
+        error_result = {"should_fallback": False}
+        try:
+            error_result = handle_provider_error(exc, provider_stage)
+        except Exception:
+            pass
         return json.dumps({
             "provider_error": True,
+            "provider_stage": provider_stage,
             "error_type": type(exc).__name__,
             "error_message": str(exc)[:500],
+            "retryable": bool(error_result.get("should_fallback", False)),
         })
 
 

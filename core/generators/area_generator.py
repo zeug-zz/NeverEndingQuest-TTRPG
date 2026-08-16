@@ -42,7 +42,7 @@ from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass
 from utils.ai_client_factory import (
     create_chat_client,
-    get_model_config,
+    get_chat_completion_params,
     handle_provider_error,
 )
 from model_config import DM_MAIN_MODEL
@@ -174,13 +174,14 @@ No explanations, just the JSON array of thematic location names."""
                 prompt += f"\n\nSOURCE CONSTRAINTS (MUST follow):\n{_source_lock}\n"
 
             client = create_chat_client()
-            config = get_model_config("generate_thematic_names", DM_MAIN_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model=config["model"],
-                        **config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "generate_thematic_names", DM_MAIN_MODEL,
+                            temperature_override=0.8,
+                        ),
                         messages=[
                             {
                                 "role": "system",
@@ -188,7 +189,6 @@ No explanations, just the JSON array of thematic location names."""
                             },
                             {"role": "user", "content": prompt},
                         ],
-                        temperature=0.8,
                     )
                     break
                 except Exception as e:
@@ -540,14 +540,14 @@ class AreaGenerator:
 """
 
         try:
-            model_config = get_model_config("generate_area_name", DM_MAIN_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = self.client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
-                        temperature=0.8,
+                        **get_chat_completion_params(
+                            "generate_area_name", DM_MAIN_MODEL,
+                            temperature_override=0.8,
+                        ),
                         messages=[
                             {
                                 "role": "system",
@@ -725,14 +725,14 @@ Requirements:
 Return ONLY the area description text, no additional formatting or labels."""
 
         try:
-            model_config = get_model_config("generate_area_description", DM_MAIN_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = self.client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
-                        temperature=0.8,  # Higher temperature for more creative variety
+                        **get_chat_completion_params(
+                            "generate_area_description", DM_MAIN_MODEL,
+                            temperature_override=0.8,
+                        ),
                         messages=[
                             {
                                 "role": "system",

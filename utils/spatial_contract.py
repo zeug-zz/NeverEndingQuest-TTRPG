@@ -623,6 +623,25 @@ def _build_structured_spatial_prompt(room_records: List[Dict[str, Any]]) -> str:
     )
 
 
+def _build_spatial_provider_failure(
+    fallback_plan: Dict[str, Any],
+    stage: str,
+    error: Exception,
+    retryable: bool = False,
+) -> Dict[str, Any]:
+    """Return the deterministic plan with explicit provider-stage diagnostics."""
+    degraded_plan = dict(fallback_plan)
+    degraded_plan["status"] = "degraded"
+    degraded_plan["provider_diagnostics"] = {
+        "status": "degraded",
+        "stage": stage,
+        "error_type": type(error).__name__,
+        "retryable": bool(retryable),
+        "fallback": "deterministic_spatial_plan",
+    }
+    return degraded_plan
+
+
 def _resolve_semantic_spatial_plan_with_llm(
     room_records: List[Dict[str, Any]],
     room_order: List[str],
@@ -632,21 +651,29 @@ def _resolve_semantic_spatial_plan_with_llm(
     if not room_order:
         return fallback_plan
 
+    provider_stage = "toolkit_spatial.semantic_plan"
     try:
         from model_config import DM_VALIDATION_MODEL
-        from utils.ai_client_factory import create_chat_client, get_model_config
-    except Exception:
-        return fallback_plan
+        from utils.ai_client_factory import (
+            create_chat_client,
+            get_chat_completion_params,
+            get_model_config,
+            handle_provider_error,
+        )
+    except Exception as exc:
+        return _build_spatial_provider_failure(fallback_plan, provider_stage, exc)
 
     prompt_text = _build_structured_spatial_prompt(room_records)
 
     try:
-        client = create_chat_client(use_fallback=True)
+        client = create_chat_client()
         model_config = get_model_config("dm_validation", DM_VALIDATION_MODEL)
         response = client.chat.completions.create(
-            model=model_config["model"],
-            **model_config.get("extra_body", {}),
-            temperature=model_config.get("temperature", 0.2),
+            **get_chat_completion_params(
+                "dm_validation",
+                DM_VALIDATION_MODEL,
+                temperature_override=model_config.get("temperature", 0.2),
+            ),
             messages=[
                 {
                     "role": "system",
@@ -656,8 +683,14 @@ def _resolve_semantic_spatial_plan_with_llm(
             ],
             response_format={"type": "json_object"},
         )
-    except Exception:
-        return fallback_plan
+    except Exception as exc:
+        error_result = handle_provider_error(exc, provider_stage)
+        return _build_spatial_provider_failure(
+            fallback_plan,
+            provider_stage,
+            exc,
+            retryable=error_result.get("should_fallback", False),
+        )
 
     content = (
         response.choices[0].message.content if response and response.choices else ""

@@ -6,8 +6,12 @@ import re
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_context import ModuleContext
-from openai import OpenAI
-from config import OPENAI_API_KEY, DM_MINI_MODEL
+from config import DM_MINI_MODEL
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    handle_provider_error,
+)
 
 class NpcReconciler:
     """
@@ -19,8 +23,8 @@ class NpcReconciler:
         self.context_path = self.path_manager.get_context_path()
         self.context = None
         self.canonical_map = {}
-        # --- ADD THIS LINE ---
-        self.client = OpenAI(api_key=OPENAI_API_KEY)
+        self.provider_stage_errors = []
+        self.client = create_chat_client()
 
     def load_context(self):
         """Loads the module context and builds a map of all aliases to their canonical name."""
@@ -56,7 +60,6 @@ class NpcReconciler:
         print(f"WARNING: [NpcReconciler] Could not find canonical name for '{original_name}'. Using original.")
         return original_name
 
-    # --- ADD THIS NEW METHOD ---
     def _ai_confirm_merge(self, npc1_name: str, npc2_name: str) -> bool:
         """Uses a cheap AI call to confirm if two NPCs are the same entity."""
         prompt = f"""Are these two fantasy characters likely the same person, just described differently?
@@ -66,15 +69,31 @@ class NpcReconciler:
 Answer with only the word "true" or "false"."""
         try:
             response = self.client.chat.completions.create(
-                model=DM_MINI_MODEL, # Use the mini model for fast, cheap inference
+                **get_chat_completion_params(
+                    "dm_validation",
+                    DM_MINI_MODEL,
+                    temperature_override=0.0,
+                ),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1,
-                temperature=0.0
             )
             answer = response.choices[0].message.content.lower().strip()
             return answer == "true"
         except Exception as e:
-            print(f"WARNING: [NpcReconciler] AI merge confirmation failed: {e}")
+            stage = "module_builder.npc_reconciliation"
+            error_result = handle_provider_error(e, stage)
+            diagnostic = {
+                "status": "degraded",
+                "stage": stage,
+                "error_type": type(e).__name__,
+                "retryable": bool(error_result.get("should_fallback", False)),
+                "fallback": "do_not_merge",
+            }
+            self.provider_stage_errors.append(diagnostic)
+            print(
+                "WARNING: [NpcReconciler] Provider stage failed "
+                f"stage={stage} error_type={type(e).__name__}"
+            )
             return False # Default to not merging if AI fails
 
     # --- ADD THIS NEW METHOD ---

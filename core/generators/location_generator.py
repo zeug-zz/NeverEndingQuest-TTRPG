@@ -18,7 +18,7 @@ import random
 from utils.module_path_manager import ModulePathManager
 from utils.ai_client_factory import (
     create_chat_client,
-    get_model_config,
+    get_chat_completion_params,
     handle_provider_error,
 )
 from model_config import DM_MAIN_MODEL
@@ -455,15 +455,13 @@ For objects, return just the object.
 """
 
         client = create_chat_client()
-        config = get_model_config("location_generator", DM_MAIN_MODEL)
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=config["model"],
-                    **config.get("extra_body", {}),
-                    temperature=0.7,
+                    **get_chat_completion_params(
+                        "location_generator", DM_MAIN_MODEL, temperature_override=0.7
+                    ),
                     messages=[
                         {
                             "role": "system",
@@ -603,15 +601,14 @@ Check the location schema carefully for all required fields.
 """
 
         client = create_chat_client()
-        config = get_model_config("location_generator_batch", DM_MAIN_MODEL)
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=config["model"],
-                    **config.get("extra_body", {}),
-                    temperature=0.8,
+                    **get_chat_completion_params(
+                        "location_generator_batch", DM_MAIN_MODEL,
+                        temperature_override=0.8,
+                    ),
                     messages=[
                         {
                             "role": "system",

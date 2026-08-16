@@ -42,7 +42,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 import jsonschema
 
-from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
 from model_config import DM_MAIN_MODEL
 
 @dataclass
@@ -343,15 +343,13 @@ For objects, return just the object.
 """
         
         client = create_chat_client()
-        config = get_model_config("plot_generator", DM_MAIN_MODEL)
-        
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=config["model"],
-                    **config.get("extra_body", {}),
-                    temperature=0.7,
+                    **get_chat_completion_params(
+                        "plot_generator", DM_MAIN_MODEL, temperature_override=0.7
+                    ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e adventure designer. Return only the requested data in the exact format needed."},
                         {"role": "user", "content": prompt}
@@ -464,15 +462,13 @@ IMPORTANT: Each plot point should have its sideQuests array (can be empty). Side
 """
         
         client = create_chat_client()
-        config = get_model_config("plot_generator", DM_MAIN_MODEL)
-        
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=config["model"],
-                    **config.get("extra_body", {}),
-                    temperature=0.8,
+                    **get_chat_completion_params(
+                        "plot_generator", DM_MAIN_MODEL, temperature_override=0.8
+                    ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e adventure designer."},
                         {"role": "user", "content": prompt}

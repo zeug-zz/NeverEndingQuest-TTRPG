@@ -336,12 +336,14 @@ def _llm_intro_narrative(
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import create_chat_client
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
-            model=DM_SUMMARIZATION_MODEL,
+            **get_chat_completion_params(
+                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.5
+            ),
             messages=[{
                 "role": "user",
                 "content": (
@@ -368,7 +370,6 @@ def _llm_intro_narrative(
                     )
                 )
             }],
-            temperature=0.5,
             max_completion_tokens=800,
         )
         result = response.choices[0].message.content.strip()
@@ -422,12 +423,14 @@ def _llm_plot_hook(plot_text: str, plot_count: int, author_name: str) -> Optiona
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import create_chat_client
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
-            model=DM_SUMMARIZATION_MODEL,
+            **get_chat_completion_params(
+                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.7
+            ),
             messages=[{
                 "role": "user",
                 "content": (
@@ -438,7 +441,6 @@ def _llm_plot_hook(plot_text: str, plot_count: int, author_name: str) -> Optiona
                     "PLOT TEXT:\n{}".format(plot_text)
                 )
             }],
-            temperature=0.7,
             max_completion_tokens=250,
         )
         result = response.choices[0].message.content.strip()
@@ -661,14 +663,15 @@ def _llm_area_overview(area: Dict[str, Any], data: Dict[str, Any]) -> Optional[s
     )
 
     try:
-        from utils.ai_client_factory import create_chat_client
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
-            model=DM_SUMMARIZATION_MODEL,
+            **get_chat_completion_params(
+                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.6
+            ),
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
             max_completion_tokens=500,
         )
         result = response.choices[0].message.content.strip()

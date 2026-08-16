@@ -75,7 +75,7 @@ import random
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
 from model_config import DM_MAIN_MODEL
 import jsonschema
 from utils.module_path_manager import ModulePathManager
@@ -520,15 +520,13 @@ If the field expects an object, return just the object.
         start_time = time.time()
         
         client = create_chat_client()
-        config = get_model_config("module_generator", DM_MAIN_MODEL)
-        
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=config["model"],
-                    **config.get("extra_body", {}),
-                    temperature=0.7,
+                    **get_chat_completion_params(
+                        "module_generator", DM_MAIN_MODEL, temperature_override=0.7
+                    ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e module designer. Return only the requested data in the exact format needed."},
                         {"role": "user", "content": prompt}

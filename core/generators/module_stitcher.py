@@ -100,7 +100,12 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
-from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+    handle_provider_error,
+)
 import config
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 
@@ -126,6 +131,7 @@ class ModuleStitcher:
         self.root_dir = os.path.dirname(self.modules_dir)
         self.world_registry_file = os.path.join(self.modules_dir, "world_registry.json")
         self.party_tracker_file = os.path.join(self.root_dir, "party_tracker.json")
+        self.provider_stage_errors = []
         self.client = create_chat_client()
 
         # Ensure directories exist
@@ -140,6 +146,28 @@ class ModuleStitcher:
             del self.world_registry['connections']
             self.world_registry['isolatedModules'] = True
             safe_json_dump(self.world_registry, self.world_registry_file)
+
+    def _record_provider_stage_error(
+        self,
+        stage: str,
+        error: Exception,
+        retryable: bool = False,
+    ) -> Dict[str, Any]:
+        """Record provider failure diagnostics without persisting source content."""
+        diagnostic = {
+            "status": "degraded",
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "retryable": bool(retryable),
+        }
+        if not isinstance(getattr(self, "provider_stage_errors", None), list):
+            self.provider_stage_errors = []
+        self.provider_stage_errors.append(diagnostic)
+        warning(
+            f"Provider stage failed stage={stage} error_type={type(error).__name__}",
+            category="module_ingest",
+        )
+        return diagnostic
     
     def _load_world_registry(self) -> Dict[str, Any]:
         """Load world registry or create default"""
@@ -415,25 +443,33 @@ FIRST AREA: {first_area_name} ({first_area_type})
 
 Create atmospheric travel narration that leads into this adventure."""
             
+            provider_stage = "module_stitcher.travel_narration"
             model_config = get_model_config("travel_narration", config.DM_SUMMARIZATION_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = self.client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "travel_narration",
+                            config.DM_SUMMARIZATION_MODEL,
+                            temperature_override=model_config.get("temperature", 0.8),
+                        ),
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
-                        temperature=0.8
                     )
                     break
                 except Exception as e:
-                    error_result = handle_provider_error(e, "module_stitcher_travel")
+                    error_result = handle_provider_error(e, provider_stage)
                     if error_result["should_fallback"] and attempt < max_retries - 1:
                         self.client = create_chat_client(use_fallback=True)
                         continue
+                    self._record_provider_stage_error(
+                        provider_stage,
+                        e,
+                        retryable=error_result.get("should_fallback", False),
+                    )
                     raise
             
             # Parse AI response
@@ -454,8 +490,15 @@ Create atmospheric travel narration that leads into this adventure."""
                 }
                 
         except Exception as e:
+            provider_stage = "module_stitcher.travel_narration"
+            if not any(
+                item.get("stage") == provider_stage
+                for item in getattr(self, "provider_stage_errors", [])
+            ):
+                self._record_provider_stage_error(provider_stage, e)
             print(f"Error generating travel narration: {e}")
             return {
+                "status": "degraded",
                 "travelNarration": "The party travels to a new region where fresh adventures await.",
                 "dmGuidance": "Present this as a transition to the new module.",
                 "generatedDate": datetime.now().isoformat()
@@ -1085,25 +1128,33 @@ Check for:
 Respond with JSON:
 {{"safe": true/false, "reason": "explanation if unsafe"}}"""
             
+            provider_stage = "module_stitcher.safety_review"
             model_config = get_model_config("safety_review", config.DM_SUMMARIZATION_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = self.client.chat.completions.create(
-                        model=model_config["model"],
-                        **model_config.get("extra_body", {}),
+                        **get_chat_completion_params(
+                            "safety_review",
+                            config.DM_SUMMARIZATION_MODEL,
+                            temperature_override=model_config.get("temperature", 0.1),
+                        ),
                         messages=[
                             {"role": "system", "content": "You are a content safety reviewer for family-friendly fantasy gaming content. Be strict but reasonable in your assessment."},
                             {"role": "user", "content": safety_prompt}
                         ],
-                        temperature=0.1
                     )
                     break
                 except Exception as e:
-                    error_result = handle_provider_error(e, "safety_review")
+                    error_result = handle_provider_error(e, provider_stage)
                     if error_result["should_fallback"] and attempt < max_retries - 1:
                         self.client = create_chat_client(use_fallback=True)
                         continue
+                    self._record_provider_stage_error(
+                        provider_stage,
+                        e,
+                        retryable=error_result.get("should_fallback", False),
+                    )
                     raise
             
             ai_response = response.choices[0].message.content
@@ -1118,6 +1169,12 @@ Respond with JSON:
                 return True  # Default to safe if parsing fails
                 
         except Exception as e:
+            provider_stage = "module_stitcher.safety_review"
+            if not any(
+                item.get("stage") == provider_stage
+                for item in getattr(self, "provider_stage_errors", [])
+            ):
+                self._record_provider_stage_error(provider_stage, e)
             print(f"Warning: AI content validation failed: {e}")
             return True  # Default to safe if validation fails
     

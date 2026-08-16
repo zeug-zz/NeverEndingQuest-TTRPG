@@ -70,7 +70,7 @@ from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.ai_client_factory import (
     create_chat_client,
-    get_model_config,
+    get_chat_completion_params,
     handle_provider_error,
 )
 
@@ -243,15 +243,14 @@ Schema: {json.dumps(schema)}"""
 
     try:
         client = create_chat_client()
-        model_config = get_model_config("monster_builder", config.MONSTER_BUILDER_MODEL)
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=model_config["model"],
-                    **model_config.get("extra_body", {}),
-                    temperature=0.7,
+                    **get_chat_completion_params(
+                        "monster_builder", config.MONSTER_BUILDER_MODEL,
+                        temperature_override=0.7,
+                    ),
                     messages=prompt,
                 )
                 break
