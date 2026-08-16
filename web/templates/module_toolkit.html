@@ -1703,6 +1703,103 @@
             font-weight: bold;
         }
 
+        /* TABLETOP MODE: Existing Modules collapse disclosure (task 1.2).
+           Scoped to the modules sidebar only. Covers the banner control,
+           ASCII `>` indicators, expanded-state styling, focus visibility,
+           compact title rows, and the existing scrollable sidebar layout.
+           Bulk behavior is added by task 2.3; state is reflected through
+           data-modules-banner-state / aria-expanded. */
+
+        .modules-panel .panel-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modules-panel .panel-content {
+            overflow-y: auto;
+        }
+
+        .modules-panel .modules-banner-toggle {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #FFA500;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.78em;
+            font-weight: bold;
+            text-transform: none;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+
+        .modules-panel .modules-banner-toggle:hover {
+            border-color: #FFA500;
+        }
+
+        .modules-panel .modules-banner-toggle:focus,
+        .modules-panel .modules-banner-toggle:focus-visible {
+            outline: 2px solid #FFA500;
+            outline-offset: 2px;
+        }
+
+        .modules-panel .modules-banner-toggle[data-modules-banner-state="expanded"] .module-disclosure-indicator {
+            transform: rotate(90deg);
+        }
+
+        .modules-panel .module-summary {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            list-style: none;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .modules-panel .module-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .modules-panel .module-summary .module-name {
+            margin-bottom: 0;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .modules-panel .module-disclosure-indicator {
+            display: inline-block;
+            width: 14px;
+            flex-shrink: 0;
+            text-align: center;
+            color: #FFA500;
+            font-weight: bold;
+            font-family: 'Share Tech Mono', monospace;
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+
+        .modules-panel .module-item[open] .module-disclosure-indicator {
+            transform: rotate(90deg);
+            color: #4CAF50;
+        }
+
+        .modules-panel .module-item[open] {
+            border-color: #FFA500;
+        }
+
+        .modules-panel .module-summary:focus {
+            outline: none;
+        }
+
+        .modules-panel .module-summary:focus-visible {
+            outline: 2px solid #FFA500;
+            outline-offset: 2px;
+        }
+
         .module-sidebar-failure {
             margin-top: 8px;
             color: #ff6666;
@@ -2766,7 +2863,14 @@
                     
                     <!-- Right Panel: Existing Modules -->
                     <div class="panel modules-panel">
-                        <div class="panel-header">Existing Modules<span class="tooltip-trigger" data-tooltip="This panel lists all modules currently installed in your 'modules' directory, along with their key statistics.">?</span></div>
+                        <div class="panel-header">Existing Modules<span class="tooltip-trigger" data-tooltip="This panel lists all modules currently installed in your 'modules' directory, along with their key statistics.">?</span>
+                            <!-- TABLETOP MODE: Existing Modules banner disclosure control
+                                 (task 1.2). Static keyboard-accessible hook; bulk
+                                 expand/collapse behavior is wired by task 2.3.
+                                 ASCII `>` indicator; expanded state reflected via
+                                 aria-expanded and data-modules-banner-state. -->
+                            <button type="button" id="existing-modules-toggle" class="modules-banner-toggle" aria-expanded="false" aria-controls="modules-list" aria-label="Expand or collapse all modules" data-modules-banner-state="collapsed" title="Expand or collapse all modules"><span class="module-disclosure-indicator" aria-hidden="true">&gt;</span><span class="modules-banner-toggle-label">Expand all</span></button>
+                        </div>
                         <div class="panel-content" id="modules-list">
                             <div class="no-modules">Loading modules...</div>
                         </div>
@@ -5891,6 +5995,118 @@
         let progressStages = null;
         let modulesListContainer = null;
         let homebrewMdFileInput = null;
+        // TABLETOP MODE: Page-session-only expansion state for the Existing
+        // Modules sidebar, keyed by canonical module name. Held in memory
+        // only (never localStorage, module/campaign files, backend calls, or
+        // payload changes) and starts empty so the first render is closed.
+        let expandedModuleNames = new Set();
+
+        // TABLETOP MODE: Individual disclosure synchronization helper.
+        // Keeps ONE module card's summary aria-expanded aligned with its
+        // native details.open state so open/closed state, indicator
+        // styling, and assistive-technology state remain consistent for
+        // that card only. Indicator styling itself is driven by the
+        // existing .module-item[open] CSS, which tracks the native state.
+        function syncModuleSummaryExpanded(moduleItem) {
+            const summary = moduleItem ? moduleItem.querySelector('.module-summary') : null;
+            if (summary) {
+                summary.setAttribute('aria-expanded', moduleItem.open ? 'true' : 'false');
+            }
+        }
+
+        // TABLETOP MODE: Bulk disclosure helpers (task 2.3). The banner
+        // control operates on the currently rendered module cards only;
+        // empty and loading lists are a safe no-op. Banner state is derived
+        // from the native details.open property of the visible cards, so
+        // individual, bulk, and refresh changes all converge on the same
+        // aria-expanded / data-modules-banner-state / label outcome.
+        function getVisibleModuleCards() {
+            if (!modulesListContainer) {
+                return [];
+            }
+            return Array.from(modulesListContainer.querySelectorAll('.module-item'));
+        }
+
+        // Syncs ONE card's session expansion state (keyed by the canonical
+        // data-module-name identity hook) and its summary disclosure state.
+        function syncModuleExpandedState(moduleItem) {
+            if (!moduleItem) {
+                return;
+            }
+            const name = moduleItem.getAttribute('data-module-name');
+            if (name) {
+                if (moduleItem.open) {
+                    expandedModuleNames.add(name);
+                } else {
+                    expandedModuleNames.delete(name);
+                }
+            }
+            syncModuleSummaryExpanded(moduleItem);
+        }
+
+        // Derives the banner control state from the currently visible cards.
+        function syncModulesBannerState() {
+            const toggle = document.getElementById('existing-modules-toggle');
+            if (!toggle) {
+                return;
+            }
+            const cards = getVisibleModuleCards();
+            if (cards.length === 0) {
+                // Empty or loading list: safe no-op; disable the control so
+                // activation cannot toggle anything.
+                toggle.disabled = true;
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.setAttribute('data-modules-banner-state', 'collapsed');
+                const emptyLabel = toggle.querySelector('.modules-banner-toggle-label');
+                if (emptyLabel) {
+                    emptyLabel.textContent = 'Expand all';
+                }
+                toggle.title = 'Expand or collapse all modules';
+                return;
+            }
+            toggle.disabled = false;
+            const allOpen = cards.every(card => card.open);
+            toggle.setAttribute('aria-expanded', allOpen ? 'true' : 'false');
+            toggle.setAttribute('data-modules-banner-state', allOpen ? 'expanded' : 'collapsed');
+            const label = toggle.querySelector('.modules-banner-toggle-label');
+            if (label) {
+                label.textContent = allOpen ? 'Collapse all' : 'Expand all';
+            }
+            toggle.title = allOpen ? 'Collapse all modules' : 'Expand all modules';
+        }
+
+        // Bulk toggle: if at least one visible card is closed, open every
+        // visible card; if every visible card is open, close every visible
+        // card. Empty/loading lists are a safe no-op.
+        function toggleAllModules() {
+            const cards = getVisibleModuleCards();
+            if (cards.length === 0) {
+                return;
+            }
+            const allOpen = cards.every(card => card.open);
+            cards.forEach(card => {
+                // The native toggle event for a programmatic open/close is
+                // queued rather than synchronous, so update the session set
+                // and the summary disclosure state for each card right here
+                // to keep refresh behavior correct.
+                card.open = allOpen ? false : true;
+                syncModuleExpandedState(card);
+            });
+            syncModulesBannerState();
+        }
+
+        // Wires the static banner button (task 1.2) to the bulk toggle and
+        // reflects the initial visible set (the loading state has no cards,
+        // so the banner starts disabled).
+        function setupExistingModulesToggle() {
+            const toggle = document.getElementById('existing-modules-toggle');
+            if (toggle) {
+                toggle.addEventListener('click', () => {
+                    toggleAllModules();
+                });
+            }
+            syncModulesBannerState();
+        }
         let homebrewUploadButton = null;
         let homebrewUploadStatus = null;
         let homebrewUploadMessage = null;
@@ -6109,12 +6325,17 @@
             });
 
             sortedModules.forEach(module => {
-                const moduleItem = document.createElement('div');
+                // TABLETOP MODE: Each module renders as a native details/summary
+                // disclosure. No `open` attribute means native closed-by-default;
+                // the summary is limited to the ASCII `>` indicator and the
+                // module title. Level, statistics, status, and download action
+                // stay in the detail body and are visible only when expanded.
+                const moduleItem = document.createElement('details');
                 moduleItem.className = 'module-item';
                 const levelRange = module.levelRange || { min: '?', max: '?' };
                 
                 moduleItem.innerHTML = `
-                    <div class="module-name">${module.moduleName.replace(/_/g, ' ')}</div>
+                    <summary class="module-summary" aria-expanded="false"><span class="module-disclosure-indicator" aria-hidden="true">&gt;</span><span class="module-name">${module.moduleName.replace(/_/g, ' ')}</span></summary>
                     <div class="module-level">Levels ${levelRange.min} - ${levelRange.max}</div>
                     <div class="module-details">
                         <div class="module-detail-item"><span>Areas:</span><span>${module.areaCount || 'N/A'}</span></div>
@@ -6203,6 +6424,9 @@
         
         socket.on('module_error', (data) => {
             let message = data.error || 'Unknown module build error';
+
+            // TABLETOP MODE: Existing Modules banner bulk toggle (task 2.3).
+            setupExistingModulesToggle();
             if (data.generation_succeeded && data.readiness_failed) {
                 message += `\n\nGeneration completed, but readiness convergence failed. Review the readiness result for details.`;
                 if (data.readiness_result) {
@@ -6222,6 +6446,9 @@
             setTimeout(() => {
                 resetBuilderUI();
             }, 2000);
+                // TABLETOP MODE: No visible cards -> banner becomes a safe
+                // disabled no-op.
+                syncModulesBannerState();
         });
 
         function getHomebrewStatusWithGuidance(type, message) {
@@ -6233,6 +6460,9 @@
             }
             return baseMessage;
         }
+                // TABLETOP MODE: No visible cards -> banner becomes a safe
+                // disabled no-op.
+                syncModulesBannerState();
 
         function renderHomebrewUploadStatus(type, message, details = '') {
             if (!homebrewUploadStatus || !homebrewUploadMessage || !homebrewUploadDetails) {
@@ -6255,9 +6485,24 @@
                 cursor.textContent = ' [|';
                 cursor.style.opacity = '0.9';
                 cursor.style.animation = 'homebrewCursorBlink 1s step-end infinite';
+            // TABLETOP MODE: Prune expansion state for module names that are
+            // no longer present in this refreshed response so the session
+            // set only ever holds currently rendered canonical names.
+            const presentModuleNames = new Set(sortedModules.map(m => m.moduleName));
+            for (const name of expandedModuleNames) {
+                if (!presentModuleNames.has(name)) {
+                    expandedModuleNames.delete(name);
+                }
+            }
+
                 homebrewUploadMessage.appendChild(cursor);
             }
             homebrewUploadDetails.textContent = details;
+                // TABLETOP MODE: Canonical identity hook used by the bulk
+                // expand/collapse helper to keep expandedModuleNames in sync
+                // for every card it toggles (set via DOM, not innerHTML, so
+                // no escaping concerns for module names).
+                moduleItem.setAttribute('data-module-name', module.moduleName);
         }
 
         function setHomebrewConsoleWorking(isWorking) {
@@ -6272,8 +6517,37 @@
 
             const summary = {
                 phase: '',
+                // TABLETOP MODE: Capture explicit open/close state for the
+                // current page session so later refreshes can reapply it.
+                // Ignore stale toggle events from detached nodes (the toggle
+                // event for programmatic state changes is queued, not
+                // synchronous, so a cleared list can otherwise repollute the
+                // session set with names that were pruned).
+                moduleItem.addEventListener('toggle', () => {
+                    if (!moduleItem.isConnected) {
+                        return;
+                    }
+                    // TABLETOP MODE: Update the session set and this card's
+                    // summary disclosure state, then refresh the banner
+                    // control for the current visible set.
+                    syncModuleExpandedState(moduleItem);
+                    syncModulesBannerState();
+                });
+                // TABLETOP MODE: Reapply explicit session state after a
+                // refresh. Modules newly introduced by this response are not
+                // in the set and remain closed (no `open` attribute).
+                if (expandedModuleNames.has(module.moduleName)) {
+                    moduleItem.open = true;
+                    // The toggle event for programmatic open is queued, not
+                    // synchronous, so sync the summary disclosure state
+                    // explicitly right here as well.
+                    syncModuleSummaryExpanded(moduleItem);
+                }
                 blocked_count: 0,
                 blocker_classes: {},
+            // TABLETOP MODE: Reflect the rendered visible set in the banner
+            // control after every list render (initial, empty, and refresh).
+            syncModulesBannerState();
                 hydration_modes: {},
                 candidate_sources: {},
                 sample_monsters: [],
