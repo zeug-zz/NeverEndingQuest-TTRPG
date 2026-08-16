@@ -36,7 +36,12 @@ except ImportError:
     ENABLE_PLAYERS_DIARY_APPEND_LLM = True
 
 try:
-    from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+    from utils.ai_client_factory import (
+        create_chat_client,
+        get_chat_completion_params,
+        get_model_config,
+        handle_provider_error,
+    )
 
     AI_CLIENTS_AVAILABLE = True
 except ImportError:
@@ -307,7 +312,6 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
 
     try:
         response = client.chat.completions.create(
-            model=config["model"],
             messages=[
                 {
                     "role": "system",
@@ -318,8 +322,11 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
                     "content": prompt_text,
                 },
             ],
-            temperature=config.get("temperature", 0.8),
-            **config.get("extra_body", {}),
+            **get_chat_completion_params(
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.8,
+            ),
         )
         raw_text = ""
         if response.choices and response.choices[0].message:
@@ -344,7 +351,6 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
             try:
                 fallback_client = create_chat_client(use_fallback=True)
                 fallback_response = fallback_client.chat.completions.create(
-                    model=DM_SUMMARIZATION_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -355,7 +361,11 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
                             "content": prompt_text,
                         },
                     ],
-                    temperature=config.get("temperature", 0.8),
+                    **get_chat_completion_params(
+                        "summaries",
+                        DM_SUMMARIZATION_MODEL,
+                        temperature_override=0.8,
+                    ),
                 )
                 raw_text = ""
                 if fallback_response.choices and fallback_response.choices[0].message:

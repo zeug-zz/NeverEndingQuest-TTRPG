@@ -31,7 +31,12 @@ except ImportError:
     ENABLE_SESSION_DIARY_LLM = False
 
 try:
-    from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+    from utils.ai_client_factory import (
+        create_chat_client,
+        get_chat_completion_params,
+        get_model_config,
+        handle_provider_error,
+    )
 
     AI_CLIENTS_AVAILABLE = True
 except ImportError:
@@ -885,7 +890,6 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
 
     try:
         response = client.chat.completions.create(
-            model=config["model"],
             messages=[
                 {
                     "role": "system",
@@ -896,8 +900,11 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
                     "content": prompt,
                 },
             ],
-            temperature=config.get("temperature", 0.7),
-            **config.get("extra_body", {}),
+            **get_chat_completion_params(
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.7,
+            ),
         )
         generated = ""
         if response.choices and response.choices[0].message:
@@ -916,7 +923,6 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
             try:
                 fallback_client = create_chat_client(use_fallback=True)
                 fallback_response = fallback_client.chat.completions.create(
-                    model=DM_SUMMARIZATION_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -927,7 +933,11 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
                             "content": prompt,
                         },
                     ],
-                    temperature=config.get("temperature", 0.7),
+                    **get_chat_completion_params(
+                        "summaries",
+                        DM_SUMMARIZATION_MODEL,
+                        temperature_override=0.7,
+                    ),
                 )
                 generated = ""
                 if fallback_response.choices and fallback_response.choices[0].message:
@@ -1506,7 +1516,6 @@ def _generate_checkpoint_summary(
 
     try:
         response = client.chat.completions.create(
-            model=config["model"],
             messages=[
                 {
                     "role": "system",
@@ -1517,8 +1526,11 @@ def _generate_checkpoint_summary(
                     "content": prompt,
                 },
             ],
-            temperature=config.get("temperature", 0.7),
-            **config.get("extra_body", {}),
+            **get_chat_completion_params(
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.7,
+            ),
         )
         generated = ""
         if response.choices and response.choices[0].message:
@@ -1537,7 +1549,6 @@ def _generate_checkpoint_summary(
             try:
                 fallback_client = create_chat_client(use_fallback=True)
                 fallback_response = fallback_client.chat.completions.create(
-                    model=DM_SUMMARIZATION_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -1548,7 +1559,11 @@ def _generate_checkpoint_summary(
                             "content": prompt,
                         },
                     ],
-                    temperature=config.get("temperature", 0.7),
+                    **get_chat_completion_params(
+                        "summaries",
+                        DM_SUMMARIZATION_MODEL,
+                        temperature_override=0.7,
+                    ),
                 )
                 generated = ""
                 if fallback_response.choices and fallback_response.choices[0].message:

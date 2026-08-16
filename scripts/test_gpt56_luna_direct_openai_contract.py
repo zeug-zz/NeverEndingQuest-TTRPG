@@ -188,6 +188,34 @@ class TestEditedCallsiteHelperRouting(unittest.TestCase):
         self.assertNotIn('**config.get("extra_body", {})', self.plot_source)
 
 
+class TestMemoryCallsiteHelperRouting(unittest.TestCase):
+    """Memory diary and chronicle calls use the shared parameter boundary."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sources = {
+            path: _read(path)
+            for path in (
+                "core/memory/session_diary.py",
+                "core/memory/story_so_far_compiler.py",
+                "core/memory/players_diary.py",
+            )
+        }
+
+    def test_memory_calls_use_shared_helper(self) -> None:
+        for path, source in self.sources.items():
+            with self.subTest(path=path):
+                self.assertIn("get_chat_completion_params", source)
+                self.assertIn("**get_chat_completion_params(", source)
+
+    def test_memory_calls_do_not_construct_legacy_request_params(self) -> None:
+        for path, source in self.sources.items():
+            with self.subTest(path=path):
+                self.assertNotIn('model=config["model"]', source)
+                self.assertNotIn('temperature=config.get(', source)
+                self.assertNotIn('**config.get("extra_body", {})', source)
+
+
 # Active direct-OpenAI GPT-5 runtime role constants in model_config.py.
 # Every role that previously selected GPT-5.4 Mini must now resolve to
 # gpt-5.6-luna, and no active selector branch may silently fall back to

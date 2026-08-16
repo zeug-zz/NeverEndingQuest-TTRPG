@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import core.memory.session_diary as session_diary
 from core.memory.memory_db import init_memory_db
 from core.memory.memory_ingest import ingest_journal_entry
 from core.memory.session_diary import (
@@ -41,6 +42,8 @@ class TestSessionDiaryMVP(unittest.TestCase):
     """Focused Step-2 tests for diary checkpoint behavior."""
 
     def setUp(self) -> None:
+        self.original_session_diary_llm = session_diary.ENABLE_SESSION_DIARY_LLM
+        session_diary.ENABLE_SESSION_DIARY_LLM = False
         self.temp_dir = tempfile.mkdtemp(prefix="neq_diary_test_")
         self.prev_cwd = os.getcwd()
         os.chdir(self.temp_dir)
@@ -57,6 +60,7 @@ class TestSessionDiaryMVP(unittest.TestCase):
     def tearDown(self) -> None:
         import shutil
 
+        session_diary.ENABLE_SESSION_DIARY_LLM = self.original_session_diary_llm
         os.chdir(self.prev_cwd)
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)

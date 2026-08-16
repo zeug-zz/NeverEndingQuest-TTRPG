@@ -28,6 +28,7 @@ from utils.enhanced_logger import debug, error, warning
 try:
     from utils.ai_client_factory import (
         create_chat_client,
+        get_chat_completion_params,
         get_model_config,
         handle_provider_error,
     )
@@ -270,7 +271,6 @@ def _generate_story_text_with_llm(
 
     try:
         response = client.chat.completions.create(
-            model=config["model"],
             messages=[
                 {
                     "role": "system",
@@ -281,8 +281,11 @@ def _generate_story_text_with_llm(
                     "content": prompt,
                 },
             ],
-            temperature=config.get("temperature", 0.7),
-            **config.get("extra_body", {}),
+            **get_chat_completion_params(
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.7,
+            ),
         )
         story_text = ""
         if response.choices and response.choices[0].message:
@@ -305,7 +308,6 @@ def _generate_story_text_with_llm(
             try:
                 fallback_client = create_chat_client(use_fallback=True)
                 fallback_response = fallback_client.chat.completions.create(
-                    model=DM_SUMMARIZATION_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -316,7 +318,11 @@ def _generate_story_text_with_llm(
                             "content": prompt,
                         },
                     ],
-                    temperature=config.get("temperature", 0.7),
+                    **get_chat_completion_params(
+                        "summaries",
+                        DM_SUMMARIZATION_MODEL,
+                        temperature_override=0.7,
+                    ),
                 )
                 story_text = ""
                 if fallback_response.choices and fallback_response.choices[0].message:
