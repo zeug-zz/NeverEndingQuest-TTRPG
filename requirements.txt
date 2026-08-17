@@ -2,7 +2,7 @@
 # Core dependencies for running the 5th edition AI dungeon master system
 
 # OpenAI API for AI model interactions
-openai>=1.0.0
+openai>=3.0.0
 
 # Web interface framework
 Flask>=2.3.0
