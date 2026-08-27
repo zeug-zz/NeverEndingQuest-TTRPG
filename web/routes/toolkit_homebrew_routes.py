@@ -54,6 +54,7 @@ from web.extensions.toolkit_homebrew_rebuild_guard import (
     detect_module_collision,
     prepare_backup_clean_rebuild,
 )
+from utils.repo_paths import resolve_repository_path
 
 try:
     from web.extensions.toolkit_llm_classification import (
@@ -401,7 +402,7 @@ def _get_canonical_accurate_ingest_phase(job: Dict[str, Any]) -> str:
 
 
 ALLOWED_HOME_BREW_EXTENSIONS = {".md", ".pdf"}
-TOOLKIT_HOMEBREW_UPLOAD_ROOT = Path("user_uploads") / "toolkit" / "homebrew_md"
+TOOLKIT_HOMEBREW_UPLOAD_ROOT = resolve_repository_path("user_uploads/toolkit/homebrew_md")
 TOOLKIT_HOMEBREW_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 _jobs_lock = threading.Lock()

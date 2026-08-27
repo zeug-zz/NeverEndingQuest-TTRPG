@@ -85,6 +85,13 @@ ENABLE_LIVE_EXCHANGE_RATE = False  # Disabled by default for safety
 # --- Web Interface Configuration ---
 MULTIPLAYER_MODE = True                                 # Enable tabletop/multi-PC UI even with 1 character
 WEB_PORT = 8357                                         # Port for the web interface (changed from 5000 for security)
+# TABLETOP MODE: Safe local default. Set WEB_HOST and the explicit origin list
+# together only when deliberately serving the game to another device.
+WEB_HOST = "127.0.0.1"
+WEB_CORS_ALLOWED_ORIGINS = []                            # e.g. ["http://192.168.1.50:8357"]
+# WEB_HOST controls the listening interface; WEB_CORS_ALLOWED_ORIGINS controls
+# browser permission separately. For deliberate LAN use, set both to specific
+# trusted values. Never use a wildcard (*) origin.
 DEBUG_STATUS_SYNC = False                               # Enable/disable noisy status synchronization debug logs
 
 # Feature Flag -- Accurate-Ingest Final Benchmark
@@ -115,5 +122,20 @@ DEBUG_STATUS_SYNC = False                               # Enable/disable noisy s
 # deterministic seed materialization. Requires GUI_BLUEPRINT_BUILD.
 # Default is False in model_config.py; enable after patch-validation tests pass.
 # ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False
+
+# Feature Flag -- LLM Adaptation Lane (rollout gated)
+# When True, readable Homebrew uploads may route through the LLM-led
+# adaptation lane instead of the legacy accurate-ingest path. Default is
+# False in model_config.py. Do NOT enable until the adaptation lane rollout
+# is complete; while disabled, all adaptation route requests fail safely to
+# the documented legacy accurate-ingest behavior.
+# ENABLE_LLM_ADAPTATION = False
+# Separate safety opt-in for approved canonical monster stat generation.
+# Keep disabled unless controlled staging-only generation is explicitly tested;
+# enabling adaptation does not enable canonical generation.
+# ENABLE_LLM_ADAPTATION_CANONICAL_MONSTER_GENERATION = False
+# Maximum final semantic adaptation revisions. Allowed values are 0, 1, or 2;
+# values above the hard maximum of two are clamped by the revision runner.
+# LLM_ADAPTATION_MAX_REVISIONS = 1
 
 # --- END OF FILE config_template.py ---

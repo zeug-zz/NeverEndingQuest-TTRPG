@@ -73,11 +73,14 @@ Change LM Studio Port (if not using default 1234):
   3. Change to your port
   4. Save and restart
 
-Disable Logging:
-  1. Edit lmstudio_forwarder.py
-  2. Line 21: CAPTURE_LOGS = True
-  3. Change to False
-  4. Save and restart
+Optional Payload Capture (disabled by default):
+  1. Set the environment variable NEQ_LMSTUDIO_CAPTURE_PAYLOADS=true
+     (recognized values are true, 1, yes, or on)
+  2. Restart the forwarder
+  3. Leave the variable absent, blank, false, or invalid to keep capture off
+  4. Captured prompts, responses, headers, and credentials may be sensitive.
+     Capture files are written under the project's lmstudio_logs directory
+     only when this opt-in is enabled.
 
 ================================================================================
 

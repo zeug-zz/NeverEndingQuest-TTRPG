@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 
-def get_local_version() -> str:
+def get_local_version(repo_path: str = ".") -> str:
     """Read local VERSION file."""
-    version_file = Path("VERSION")
+    version_file = Path(repo_path) / "VERSION"
     if version_file.exists():
         return version_file.read_text(encoding="utf-8").strip()
     return "0.0.0"
@@ -156,13 +156,13 @@ def compare_versions(local: str, remote: Optional[str]) -> str:
         return "unknown"
 
 
-def check_for_updates(silent: bool = False):
+def check_for_updates(silent: bool = False, repo_path: str = "."):
     """
     Check if updates are available.
     Returns: (status, local_version, remote_version, message)
     """
-    local_version = get_local_version()
-    target = resolve_update_target()
+    local_version = get_local_version(repo_path=repo_path)
+    target = resolve_update_target(repo_path=repo_path)
 
     if not target:
         message = f"Could not resolve fork update source from origin (v{local_version})"

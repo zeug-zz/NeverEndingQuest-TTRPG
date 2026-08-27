@@ -12,6 +12,11 @@ import subprocess
 import socket
 from pathlib import Path
 
+from utils.repo_paths import repository_root, resolve_repository_path
+
+
+INSTALL_ROOT = repository_root()
+
 def check_port(port=5000):
     """Check if a port is available"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -55,13 +60,13 @@ def main():
     ]
     
     for dir_path in dirs_to_create:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        resolve_repository_path(dir_path, root=INSTALL_ROOT).mkdir(parents=True, exist_ok=True)
     
     # Check for required files
-    if not Path('data/bestiary/monster_compendium.json').exists():
+    if not resolve_repository_path('data/bestiary/monster_compendium.json', root=INSTALL_ROOT).exists():
         print("[WARNING] Monster compendium not found. Some features may be limited.")
     
-    if not Path('data/styles/style_templates.json').exists():
+    if not resolve_repository_path('data/styles/style_templates.json', root=INSTALL_ROOT).exists():
         print("[WARNING] Style templates not found. Using default styles.")
     
     print("[INFO] Starting web server on port 8357...")
@@ -74,7 +79,8 @@ def main():
     try:
         # Launch in subprocess so we can control it better
         process = subprocess.Popen(
-            [sys.executable, 'web/web_interface.py'],
+            [sys.executable, str(resolve_repository_path('web/web_interface.py', root=INSTALL_ROOT))],
+            cwd=str(INSTALL_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,

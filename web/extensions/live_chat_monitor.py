@@ -19,8 +19,10 @@ import threading
 from datetime import datetime
 from typing import Any, Callable
 
+from utils.repo_paths import resolve_repository_path
 
-LIVE_CHAT_LOG_FILE = "debug/logs/live_chat_monitor.json"
+
+LIVE_CHAT_LOG_FILE = str(resolve_repository_path("debug/logs/live_chat_monitor.json"))
 MAX_CHAT_ENTRIES = 100
 ORIGINAL_EMIT_ATTR = "_tabletop_mode_original_emit"
 LOG_FN_ATTR = "_tabletop_mode_log_chat_event"

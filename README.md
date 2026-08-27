@@ -36,6 +36,25 @@ cp config_template.py config.py     # Add your OpenAI API key
 - **Module Toolkit**: `.venv/bin/python launch_toolkit.py`
 - **Terminal mode**: `.venv/bin/python main.py` (limited features)
 
+### Local Web Server and Deliberate LAN Access
+
+The web server listens on localhost by default (`WEB_HOST = "127.0.0.1"`) and
+keeps the configured `WEB_PORT` (normally `8357`). Socket.IO also accepts only
+finite loopback browser origins by default.
+
+For a deliberate LAN deployment, set both values in `config.py` to specific,
+trusted values, for example:
+
+```python
+WEB_HOST = "192.168.1.50"
+WEB_CORS_ALLOWED_ORIGINS = ["http://192.168.1.50:8357"]
+```
+
+`WEB_HOST` controls which network interface accepts connections;
+`WEB_CORS_ALLOWED_ORIGINS` separately controls which browser origins may use
+Socket.IO. List trusted origins explicitly. Never use a wildcard (`*`) CORS
+allowlist. Leave the loopback defaults in place for local-only play.
+
 ---
 
 ## What This Fork Adds (Tabletop Mode)

@@ -12,11 +12,12 @@ NeverEndingQuest → LM Studio (port 1234)
 ```
 Direct connection with zero overhead. This is the easiest and fastest method.
 
-### Method 2: Proxy Connection (Advanced - For Debugging)
+### Method 2: Proxy Connection (Advanced - Optional Capture and Debugging)
 ```
 NeverEndingQuest → mitmproxy (port 8080) → LM Studio (port 1234)
 ```
-Routes through a proxy for request/response logging. Use this for troubleshooting.
+Routes through a proxy. Optional payload capture can be enabled for
+troubleshooting; it is disabled by default.
 
 ## Quick Start (Windows)
 
@@ -57,7 +58,8 @@ Routes through a proxy for request/response logging. Use this for troubleshootin
    **Option A: One-Click Launch**
    - Double-click `launch_lmstudio_mode.bat`
    - Two windows will open automatically
-   - Logs saved to `lmstudio_logs/`
+   - If payload capture is explicitly enabled, capture files are saved to
+     `lmstudio_logs/`
 
    **Option B: Manual Launch**
    - Terminal 1: Run `start_lmstudio_proxy.bat` (starts proxy)
@@ -108,14 +110,18 @@ If your LM Studio runs on a different port (default is 1234):
 3. Change to your port number
 4. Save and restart the forwarder
 
-### Disable Logging
+### Optional Payload Capture
 
-To disable request/response logging:
+Payload capture is disabled unless you explicitly set the environment
+variable `NEQ_LMSTUDIO_CAPTURE_PAYLOADS` to `true`, `1`, `yes`, or `on` before
+starting the forwarder. If the variable is absent, blank, false, or invalid,
+capture remains disabled and the forwarder does not create payload capture
+files. Captured prompts, responses, headers, and authorization credentials may
+be sensitive; enable this only for deliberate troubleshooting.
 
-1. Open `lmstudio_forwarder.py`
-2. Find line 21: `CAPTURE_LOGS = True`
-3. Change to `CAPTURE_LOGS = False`
-4. Save and restart
+When enabled, capture files are written under the project-local
+`lmstudio_logs/` directory beside the forwarder, regardless of the caller's
+current working directory. Normal forwarding does not require capture.
 
 ### Advanced: Different LM Studio Host
 
@@ -247,12 +253,19 @@ Running locally with LM Studio eliminates all API costs:
 
 ### Request Logs
 
-If `CAPTURE_LOGS = True` in `lmstudio_forwarder.py`:
+Only when `NEQ_LMSTUDIO_CAPTURE_PAYLOADS=true` (or another recognized true
+value) is explicitly configured:
 
-- Requests/responses saved to: `lmstudio_logs/lmstudio_capture_TIMESTAMP.jsonl`
-- Forwarder activity logged to: `lmstudio_logs/lmstudio_forwarder.log`
+- Requests/responses may be saved to: `lmstudio_logs/lmstudio_capture_TIMESTAMP.jsonl`
+- Forwarder activity may be logged to: `lmstudio_logs/lmstudio_forwarder.log`
+
+These files can contain sensitive prompts, responses, headers, and credentials.
+No payload logs are created by default.
 
 ### Viewing Logs
+
+The following files exist only after payload capture has been explicitly
+enabled with `NEQ_LMSTUDIO_CAPTURE_PAYLOADS`:
 
 ```bash
 # View latest capture (Windows)

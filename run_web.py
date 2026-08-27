@@ -30,15 +30,22 @@ import subprocess
 import sys
 import os
 import time
+from pathlib import Path
+
+from utils.repo_paths import repository_root, resolve_repository_path
+
+
+INSTALL_ROOT = repository_root()
 
 def create_default_party_tracker():
     """Create a default party_tracker.json if it doesn't exist"""
-    if not os.path.exists('party_tracker.json'):
+    tracker_path = resolve_repository_path('party_tracker.json', root=INSTALL_ROOT)
+    if not tracker_path.exists():
         default_tracker = {}
         
         try:
             import json
-            with open('party_tracker.json', 'w', encoding='utf-8') as f:
+            with open(tracker_path, 'w', encoding='utf-8') as f:
                 json.dump(default_tracker, f, indent=2, ensure_ascii=False)
             print("[INFO] Created default party_tracker.json for first-time setup")
             return True
@@ -51,13 +58,17 @@ def main():
     import shutil
     
     # Check if config.py exists first
-    if not os.path.exists('config.py'):
+    config_path = resolve_repository_path('config.py', root=INSTALL_ROOT)
+    if not config_path.exists():
         print("[D20] Welcome to NeverEndingQuest! [D20]")
         print("\nFirst-time setup detected...")
         
         try:
             # Copy config_template.py to config.py
-            shutil.copy('config_template.py', 'config.py')
+            shutil.copy(
+                resolve_repository_path('config_template.py', root=INSTALL_ROOT),
+                config_path,
+            )
             print("\n[PASS] Created config.py from template")
             print("\n" + "="*60)
             print("IMPORTANT: OpenAI API Key Required")
@@ -93,11 +104,11 @@ def main():
     ]
     
     for dir_path in required_dirs:
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path, exist_ok=True)
+        resolve_repository_path(dir_path, root=INSTALL_ROOT).mkdir(parents=True, exist_ok=True)
     
     print("Launching NeverEndingQuest Web Interface...")
     try:
+        sys.path.insert(0, str(INSTALL_ROOT))
         import config
         port = getattr(config, 'WEB_PORT', 8357)
     except ImportError:
@@ -112,10 +123,20 @@ def main():
             # Prepare environment for child process
             # First spawn: open browser; subsequent restarts: skip browser open
             child_env = os.environ.copy()
+            # TABLETOP MODE: Absolute script paths do not add INSTALL_ROOT to
+            # the child import path; preserve any caller-provided entries.
+            existing_pythonpath = child_env.get("PYTHONPATH", "")
+            child_env["PYTHONPATH"] = os.pathsep.join(
+                entry for entry in (str(INSTALL_ROOT), existing_pythonpath) if entry
+            )
             child_env["NEQ_OPEN_BROWSER"] = "1" if should_open_browser else "0"
             
             # Run the web interface and capture the return code
-            result = subprocess.run([sys.executable, "web/web_interface.py"], env=child_env)
+            result = subprocess.run(
+                [sys.executable, str(resolve_repository_path('web/web_interface.py', root=INSTALL_ROOT))],
+                env=child_env,
+                cwd=str(INSTALL_ROOT),
+            )
             
             # Check if it was a planned restart (exit code 0)
             if result.returncode == 0:
@@ -143,9 +164,14 @@ def main():
 if __name__ == "__main__":
     # Check for updates before starting
     try:
-        from utils.version_checker import check_for_updates, resolve_update_target
-        status, local_ver, remote_ver, message = check_for_updates(silent=True)
-        target = resolve_update_target() or {}
+        from utils.version_checker import (
+            check_for_updates,
+            resolve_update_target,
+        )
+        status, local_ver, remote_ver, message = check_for_updates(
+            silent=True, repo_path=str(INSTALL_ROOT)
+        )
+        target = resolve_update_target(repo_path=str(INSTALL_ROOT)) or {}
         target_owner_repo = target.get('owner_repo', 'origin-unresolved')
         target_branch = target.get('branch', 'main')
 

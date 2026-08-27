@@ -21,13 +21,16 @@ from typing import Any, Dict, Optional, Set
 
 from flask import Flask, jsonify, request
 
-from core.memory.memory_db import DEFAULT_MEMORY_DB_PATH, DEFAULT_WORLD_NARRATIVE_SEED_DB_PATH
+from core.memory.memory_db import DEFAULT_WORLD_NARRATIVE_SEED_DB_PATH
 from core.memory.world_narrative_ingest import ingest_source_anonymous_atoms, validate_source_anonymous_payload
 from utils.enhanced_logger import error, info, warning
+from utils.database_paths import database_target_label, resolve_database_target
+from utils.repo_paths import PathBoundaryError, repository_root, resolve_contained_path, resolve_repository_path
 
 
 ALLOWED_SOURCE_EXTENSIONS: Set[str] = {".pdf"}
-USER_UPLOADS_ROOT = Path("user_uploads") / "text"
+INSTALL_ROOT = repository_root()
+USER_UPLOADS_ROOT = resolve_repository_path("user_uploads/text", root=INSTALL_ROOT)
 INGESTION_ROOT = USER_UPLOADS_ROOT / "ingestion"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 BANNED_TERMS_FILE = USER_UPLOADS_ROOT / "banned_terms.txt"
@@ -75,6 +78,29 @@ def _load_local_banned_terms() -> Set[str]:
     return terms
 
 
+def _resolve_upload_path(raw_path: Any) -> Path:
+    """Resolve an API path against the installed upload root, not CWD."""
+    if raw_path is None or not str(raw_path).strip():
+        raise PathBoundaryError("upload path is empty")
+    value = str(raw_path)
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return resolve_contained_path(
+            candidate,
+            USER_UPLOADS_ROOT,
+            relative_only=False,
+            allow_missing=True,
+            reject_symlinks=True,
+        )
+    return resolve_contained_path(
+        value,
+        USER_UPLOADS_ROOT,
+        relative_only=True,
+        allow_missing=True,
+        reject_symlinks=True,
+    )
+
+
 def _is_within_upload_root(path: Path) -> bool:
     """Return True when path is under the hard-cutover upload root."""
     uploads_root = USER_UPLOADS_ROOT.resolve()
@@ -104,7 +130,9 @@ def _run_extract_job(job_id: str, source_path: Path) -> None:
     """Run chunk extraction script in background."""
     global _active_job_id
     try:
-        script_path = Path("scripts") / "extract_book_pdf_for_ingestion.py"
+        script_path = resolve_repository_path(
+            "scripts/extract_book_pdf_for_ingestion.py", root=INSTALL_ROOT
+        )
         output_dir = INGESTION_ROOT
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,7 +148,9 @@ def _run_extract_job(job_id: str, source_path: Path) -> None:
             "--overlap-chars",
             "400",
         ]
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False, cwd=str(INSTALL_ROOT)
+        )
 
         if result.returncode != 0:
             _set_job_state(
@@ -201,7 +231,7 @@ def register_world_narrative_routes(app: Flask) -> None:
         global _active_job_id
         try:
             data = request.get_json(silent=True) or {}
-            source_path = Path(str(data.get("path") or "")).resolve()
+            source_path = _resolve_upload_path(data.get("path"))
             if not str(source_path).endswith(".pdf"):
                 return jsonify({"status": "error", "message": "Extraction currently supports PDF only"}), 400
 
@@ -245,7 +275,7 @@ def register_world_narrative_routes(app: Flask) -> None:
         """Build source-anonymous atoms from chunk JSONL output."""
         try:
             data = request.get_json(silent=True) or {}
-            chunks_path = Path(str(data.get("chunks_path") or "")).resolve()
+            chunks_path = _resolve_upload_path(data.get("chunks_path"))
             output_path_raw = str(data.get("output_path") or "").strip()
             if not chunks_path.exists():
                 return jsonify({"status": "error", "message": "Chunks file not found"}), 404
@@ -253,12 +283,18 @@ def register_world_narrative_routes(app: Flask) -> None:
             if not _is_within_upload_root(chunks_path):
                 return jsonify({"status": "error", "message": "Chunks file must be inside /user_uploads/text/"}), 400
 
-            output_path = Path(output_path_raw).resolve() if output_path_raw else (INGESTION_ROOT / "anonymous_atoms.json").resolve()
+            output_path = (
+                _resolve_upload_path(output_path_raw)
+                if output_path_raw
+                else (INGESTION_ROOT / "anonymous_atoms.json").resolve()
+            )
             if not _is_within_upload_root(output_path):
                 return jsonify({"status": "error", "message": "Output path must be inside /user_uploads/text/"}), 400
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            script_path = Path("scripts") / "build_source_anonymous_atoms.py"
+            script_path = resolve_repository_path(
+                "scripts/build_source_anonymous_atoms.py", root=INSTALL_ROOT
+            )
             command = [
                 sys.executable,
                 str(script_path),
@@ -273,7 +309,9 @@ def register_world_narrative_routes(app: Flask) -> None:
             if banned_terms_file.exists():
                 command.extend(["--banned-terms-file", str(banned_terms_file)])
 
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                command, capture_output=True, text=True, check=False, cwd=str(INSTALL_ROOT)
+            )
             if result.returncode != 0:
                 return jsonify({
                     "status": "error",
@@ -301,7 +339,7 @@ def register_world_narrative_routes(app: Flask) -> None:
         """Ingest source-anonymous atom payload into memory DB."""
         try:
             data = request.get_json(silent=True) or {}
-            atoms_path = Path(str(data.get("atoms_path") or "")).resolve()
+            atoms_path = _resolve_upload_path(data.get("atoms_path"))
             if not atoms_path.exists():
                 return jsonify({"status": "error", "message": "Atoms file not found"}), 404
 
@@ -319,8 +357,22 @@ def register_world_narrative_routes(app: Flask) -> None:
                     "term_hits": compliance.get("term_hits", []),
                 }), 400
 
-            db_path = str(data.get("db_path") or DEFAULT_MEMORY_DB_PATH)
-            ingest_result = ingest_source_anonymous_atoms(payload, db_path=db_path)
+            # TABLETOP MODE: authorize the database target before SQLite or ingest.
+            try:
+                resolved_db_path = resolve_database_target(data.get("db_path"))
+            except PathBoundaryError as path_error:
+                warning(
+                    f"WORLD_NARRATIVE: Rejected database target ({path_error.reason})",
+                    category="web_interface",
+                )
+                return jsonify({
+                    "status": "error",
+                    "message": "Database path is not allowed",
+                    "error_code": "database_path_policy",
+                }), 400
+
+            db_path = database_target_label(resolved_db_path)
+            ingest_result = ingest_source_anonymous_atoms(payload, db_path=str(resolved_db_path))
             return jsonify({
                 "status": "success",
                 "db_path": db_path,

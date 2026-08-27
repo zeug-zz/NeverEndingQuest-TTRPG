@@ -7,10 +7,13 @@ CONFIGURATION:
 1. Make sure LM Studio is running with a loaded model
 2. Check LM Studio's server port (default: 1234)
 3. Adjust LM_STUDIO_PORT below if needed
-4. Run this script in one terminal, then run the game in another
+4. Optional payload capture: set NEQ_LMSTUDIO_CAPTURE_PAYLOADS to true,
+   1, yes, or on. Missing, blank, false, and other values disable capture.
+5. Run this script in one terminal, then run the game in another
 """
 
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -21,17 +24,27 @@ from mitmproxy import http
 # ============================================================================
 LM_STUDIO_HOST = "localhost"
 LM_STUDIO_PORT = 1234  # LM Studio's default port - change if different
-CAPTURE_LOGS = True    # Set to False to disable logging
+CAPTURE_ENVIRONMENT_VARIABLE = "NEQ_LMSTUDIO_CAPTURE_PAYLOADS"
+_CAPTURE_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
+FORWARDER_DIRECTORY = Path(__file__).resolve().parent
 LOG_DIRECTORY = "lmstudio_logs"
+
+
+def capture_enabled_from_environment(environ=None):
+    """Return whether the operator explicitly enabled payload capture."""
+    values = os.environ if environ is None else environ
+    configured_value = values.get(CAPTURE_ENVIRONMENT_VARIABLE, "")
+    return configured_value.strip().lower() in _CAPTURE_TRUE_VALUES
 
 # ============================================================================
 
 class LMStudioForwarder:
     def __init__(self):
         self.lm_studio_url = f"http://{LM_STUDIO_HOST}:{LM_STUDIO_PORT}/v1/"
+        self.capture_logs = capture_enabled_from_environment()
 
-        if CAPTURE_LOGS:
-            self.capture_dir = Path(LOG_DIRECTORY)
+        if self.capture_logs:
+            self.capture_dir = FORWARDER_DIRECTORY / LOG_DIRECTORY
             self.capture_dir.mkdir(exist_ok=True)
 
             # Create new capture file with timestamp
@@ -47,7 +60,7 @@ class LMStudioForwarder:
         print("=" * 70)
         print(f"Forwarding to: {self.lm_studio_url}")
         print(f"Listening on:  http://localhost:8080")
-        if CAPTURE_LOGS:
+        if self.capture_logs:
             print(f"Logging to:    {self.capture_file}")
         print("=" * 70)
         print()
@@ -81,7 +94,7 @@ class LMStudioForwarder:
                 print(f"[<<] Response from LM Studio: {flow.response.status_code}")
 
                 # Only capture if logging is enabled
-                if not CAPTURE_LOGS or not self.capture_file:
+                if not self.capture_logs or not self.capture_file:
                     return
 
                 # Build capture entry

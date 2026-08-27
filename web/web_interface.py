@@ -52,6 +52,7 @@ import threading
 import queue
 import time
 import webbrowser
+import mimetypes
 from datetime import datetime
 from collections import deque
 import io
@@ -59,6 +60,10 @@ import zipfile
 from contextlib import redirect_stdout, redirect_stderr
 from PIL import Image
 from pathlib import Path  # TABLETOP MODE: Import Path for module preflight validation
+from utils.media_paths import is_safe_media_request, resolve_media_file
+from utils.repo_paths import repository_root, resolve_repository_path
+from utils.web_boundary import resolve_socketio_origins, resolve_web_host
+INSTALL_ROOT = repository_root()
 
 # Add parent directory to path so we can import from utils, core, etc.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -184,6 +189,11 @@ from core.memory.memory_db import (
     bootstrap_memory_db_from_seed,
     init_memory_db,
 )
+# TABLETOP MODE: Keep memory runtime files under the installed repository.
+DEFAULT_MEMORY_DB_PATH = str(resolve_repository_path("data/memory.db", root=INSTALL_ROOT))
+DEFAULT_WORLD_NARRATIVE_SEED_DB_PATH = str(resolve_repository_path(
+    "data/world_narrative_seed.db", root=INSTALL_ROOT
+))
 
 # Import toolkit components for API support
 try:
@@ -317,7 +327,19 @@ app = Flask(__name__,
             template_folder=template_dir,
             static_folder=static_dir)
 app.config['SECRET_KEY'] = 'dungeon-master-secret-key'
-socketio = SocketIO(app, cors_allowed_origins="*")
+# TABLETOP MODE: Keep the installed server loopback-only unless an operator
+# explicitly supplies a validated host and origin allowlist.
+try:
+    import config as _web_config
+except ImportError:
+    _web_config = None
+_configured_web_port = getattr(_web_config, "WEB_PORT", 8357)
+WEB_HOST = resolve_web_host(getattr(_web_config, "WEB_HOST", None))
+SOCKETIO_ALLOWED_ORIGINS = resolve_socketio_origins(
+    getattr(_web_config, "WEB_CORS_ALLOWED_ORIGINS", None),
+    _configured_web_port,
+)
+socketio = SocketIO(app, cors_allowed_origins=SOCKETIO_ALLOWED_ORIGINS)
 
 # TABLETOP MODE: Initialize memory DB foundation as optional startup hook.
 try:
@@ -381,10 +403,12 @@ except Exception as ingest_watch_start_error:
 @app.route('/graphic_packs/<path:filename>')
 def serve_graphic_packs(filename):
     """Serve files from graphic_packs directory as static files for better performance"""
-    from flask import send_from_directory
-    import os
-    graphic_packs_dir = os.path.abspath('graphic_packs')
-    return send_from_directory(graphic_packs_dir, filename)
+    graphic_packs_root = repository_root() / 'graphic_packs'
+    # TABLETOP MODE: Reject traversal and symlinked pack assets.
+    asset_path = resolve_media_file(filename, graphic_packs_root)
+    if asset_path is None:
+        return "Not found", 404
+    return send_file(asset_path)
 
 # Suppress werkzeug HTTP request logs (they clutter the console)
 import logging
@@ -407,12 +431,16 @@ original_stderr = sys.stderr
 original_stdin = sys.stdin
 
 # Message cache for persistence across restarts
-MESSAGE_CACHE_FILE = "modules/conversation_history/game_interface_cache.json"
+MESSAGE_CACHE_FILE = str(resolve_repository_path(
+    "modules/conversation_history/game_interface_cache.json", root=INSTALL_ROOT
+))
 MESSAGE_CACHE_SIZE = 15  # Keep last 15 messages
 message_cache = deque(maxlen=MESSAGE_CACHE_SIZE)
 
 # TABLETOP MODE: Persisted UI settings for server startup behavior
-UI_SETTINGS_FILE = "modules/conversation_history/ui_settings.json"
+UI_SETTINGS_FILE = str(resolve_repository_path(
+    "modules/conversation_history/ui_settings.json", root=INSTALL_ROOT
+))
 ALLOWED_BROWSER_PREFERENCES = {"default", "chrome", "edge"}
 
 # Message cache functions
@@ -1024,45 +1052,45 @@ def index():
 @app.route('/static/media/videos/<path:filename>')
 def serve_video(filename):
     """Serve video files from the media directory"""
-    import os
-    from flask import send_file
-    video_path = os.path.join(os.path.dirname(__file__), 'static', 'media', 'videos', filename)
-    if os.path.exists(video_path):
+    video_root = Path(__file__).parent / 'static' / 'media' / 'videos'
+    # TABLETOP MODE: Resolve and contain untrusted media paths before send_file.
+    video_path = resolve_media_file(filename, video_root, allowed_extensions={'.mp4'})
+    if video_path is not None:
         return send_file(video_path, mimetype='video/mp4')
     return "Video not found", 404
 
 @app.route('/static/dm_logo.png')
 def serve_dm_logo():
     """Serve the DM logo image"""
-    import mimetypes
-    from flask import send_file
-    # Go up one directory to find dm_logo.png at the root
-    logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dm_logo.png')
+    # TABLETOP MODE: Authorize the fixed logo path before send_file.
+    logo_path = resolve_media_file('dm_logo.png', repository_root(), allowed_extensions={'.png'})
+    if logo_path is None:
+        return "Not found", 404
     return send_file(logo_path, mimetype='image/png')
 
 @app.route('/static/icons/<path:filename>')
 def serve_icon(filename):
     """Serve icon images from the icons directory"""
-    import mimetypes
-    from flask import send_file
     # Ensure the filename ends with .png for security
     if not filename.endswith('.png'):
         return "Not found", 404
-    icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'icons', filename)
-    if os.path.exists(icon_path):
+    icon_root = repository_root() / 'icons'
+    # TABLETOP MODE: Resolve and contain untrusted media paths before send_file.
+    icon_path = resolve_media_file(filename, icon_root, allowed_extensions={'.png'})
+    if icon_path is not None:
         return send_file(icon_path, mimetype='image/png')
     return "Not found", 404
 
 @app.route('/static/portraits/<path:filename>')
 def serve_portrait(filename):
     """Serve character portrait images."""
-    import mimetypes
-    from flask import send_file
     # Ensure the filename ends with .png for security
     if not filename.endswith('.png'):
         return "Not found", 404
-    portrait_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'portraits', filename)
-    if os.path.exists(portrait_path):
+    portrait_root = Path(__file__).parent / 'static' / 'portraits'
+    # TABLETOP MODE: Resolve and contain untrusted media paths before send_file.
+    portrait_path = resolve_media_file(filename, portrait_root, allowed_extensions={'.png'})
+    if portrait_path is not None:
         return send_file(portrait_path, mimetype='image/png')
     return "Not found", 404
 
@@ -1077,13 +1105,16 @@ def serve_module_media(media_type, filename):
     media_type: 'monsters', 'npcs', or 'environment'
     filename: the requested file (e.g., 'goblin_thumb.jpg', 'grimjaw_video.mp4')
     """
-    import mimetypes
-    from flask import send_file
     from utils.file_operations import safe_read_json
     
     # Validate media type
     if media_type not in ['monsters', 'npcs', 'environment']:
         return "Invalid media type", 404
+
+    static_media_root = Path(__file__).parent / 'static' / 'media'
+    # TABLETOP MODE: Reject unsafe names before checking any lookup/fallback root.
+    if not is_safe_media_request(Path(media_type) / filename, static_media_root):
+        return "Media not found", 404
     
     # Determine current module from party tracker
     current_module = None
@@ -1093,30 +1124,39 @@ def serve_module_media(media_type, filename):
         current_module = party_data.get('module') or party_data.get('module_name')
     
     # Priority 1: Check current module's media folder first
+    modules_root = repository_root() / 'modules'
     if current_module:
-        module_media_path = os.path.join('modules', current_module, 'media', media_type, filename)
-        if os.path.exists(module_media_path):
-            mimetype, _ = mimetypes.guess_type(module_media_path)
+        module_media_path = resolve_media_file(
+            Path(current_module) / 'media' / media_type / filename,
+            modules_root,
+        )
+        if module_media_path is not None:
+            mimetype, _ = mimetypes.guess_type(str(module_media_path))
             info(f"Serving {media_type}/{filename} from current module: {current_module}")
-            return send_file(os.path.abspath(module_media_path), mimetype=mimetype)
+            return send_file(module_media_path, mimetype=mimetype)
     
     # Priority 2: Check ALL other modules for the media file
-    modules_dir = 'modules'
-    if os.path.exists(modules_dir):
-        for module_name in os.listdir(modules_dir):
+    if modules_root.is_dir():
+        for module_entry in modules_root.iterdir():
+            module_name = module_entry.name
             # Skip non-directories and the current module
-            module_path = os.path.join(modules_dir, module_name)
-            if os.path.isdir(module_path) and module_name != current_module:
-                module_media_path = os.path.join(module_path, 'media', media_type, filename)
-                if os.path.exists(module_media_path):
-                    mimetype, _ = mimetypes.guess_type(module_media_path)
+            if module_entry.is_dir() and not module_entry.is_symlink() and module_name != current_module:
+                module_media_path = resolve_media_file(
+                    Path(module_name) / 'media' / media_type / filename,
+                    modules_root,
+                )
+                if module_media_path is not None:
+                    mimetype, _ = mimetypes.guess_type(str(module_media_path))
                     info(f"Serving {media_type}/{filename} from module: {module_name}")
-                    return send_file(os.path.abspath(module_media_path), mimetype=mimetype)
+                    return send_file(module_media_path, mimetype=mimetype)
     
     # Priority 3: Fall back to static media folder
-    static_media_path = os.path.join(os.path.dirname(__file__), 'static', 'media', media_type, filename)
-    if os.path.exists(static_media_path):
-        mimetype, _ = mimetypes.guess_type(static_media_path)
+    static_media_path = resolve_media_file(
+        Path(media_type) / filename,
+        static_media_root,
+    )
+    if static_media_path is not None:
+        mimetype, _ = mimetypes.guess_type(str(static_media_path))
         info(f"Serving {media_type}/{filename} from static folder")
         return send_file(static_media_path, mimetype=mimetype)
     
@@ -1196,34 +1236,36 @@ def serve_module_media(media_type, filename):
 @app.route('/api/toolkit/modules/<module_name>/media/<media_type>/<path:filename>')
 def serve_toolkit_module_media(module_name, media_type, filename):
     """Serve MMG media scoped to selected module with static fallback only."""
-    import mimetypes
-    from flask import send_file
-
     if media_type not in ['monsters', 'npcs', 'environment']:
         return "Invalid media type", 404
-
-    if (
-        not module_name
-        or '..' in module_name
-        or '..' in filename
-        or filename.startswith('/')
-    ):
+    if not module_name:
         return "Not found", 404
 
-    module_media_dir = os.path.join('modules', module_name, 'media', media_type)
-    module_media_path = os.path.join(module_media_dir, filename)
-
-    if os.path.exists(module_media_path):
-        mimetype, _ = mimetypes.guess_type(module_media_path)
+    modules_root = repository_root() / 'modules'
+    static_media_root = Path(__file__).parent / 'static' / 'media'
+    # TABLETOP MODE: Reject unsafe module and filename inputs before lookup.
+    if not is_safe_media_request(module_name, modules_root):
+        return "Not found", 404
+    if not is_safe_media_request(Path(media_type) / filename, static_media_root):
+        return "Not found", 404
+    module_media_path = resolve_media_file(
+        Path(module_name) / 'media' / media_type / filename,
+        modules_root,
+    )
+    if module_media_path is not None:
+        mimetype, _ = mimetypes.guess_type(str(module_media_path))
         info(
             f"TOOLKIT MMG media: serving {media_type}/{filename} from selected module {module_name}",
             category="module_ingest"
         )
-        return send_file(os.path.abspath(module_media_path), mimetype=mimetype)
+        return send_file(module_media_path, mimetype=mimetype)
 
-    static_media_path = os.path.join(os.path.dirname(__file__), 'static', 'media', media_type, filename)
-    if os.path.exists(static_media_path):
-        mimetype, _ = mimetypes.guess_type(static_media_path)
+    static_media_path = resolve_media_file(
+        Path(media_type) / filename,
+        static_media_root,
+    )
+    if static_media_path is not None:
+        mimetype, _ = mimetypes.guess_type(str(static_media_path))
         info(
             f"TOOLKIT MMG media: serving {media_type}/{filename} from static fallback",
             category="module_ingest"
@@ -2057,16 +2099,15 @@ def get_monsters():
 @app.route('/toolkit/pack_image/<pack_name>/<filename>')
 def serve_pack_image(pack_name, filename):
     """Serve an image from a graphic pack"""
-    from flask import send_from_directory
-    import os
-    
     # Construct the absolute path to the image - all files in monsters folder now
-    pack_dir = os.path.abspath(os.path.join('graphic_packs', pack_name, 'monsters'))
-    
-    # Check if file exists - NO FALLBACK
-    file_path = os.path.join(pack_dir, filename)
-    if os.path.exists(file_path):
-        return send_from_directory(pack_dir, filename)
+    pack_root = repository_root() / 'graphic_packs'
+    file_path = resolve_media_file(
+        Path(pack_name) / 'monsters' / filename,
+        pack_root,
+        allowed_extensions={'.png', '.jpg', '.jpeg'},
+    )
+    if file_path is not None:
+        return send_file(file_path)
     
     # Return 404 if not found - no fallback to other directories
     return '', 404
@@ -2074,16 +2115,15 @@ def serve_pack_image(pack_name, filename):
 @app.route('/toolkit/pack_video/<pack_name>/<filename>')
 def serve_pack_video(pack_name, filename):
     """Serve a video from a graphic pack"""
-    from flask import send_from_directory
-    import os
-    
     # Construct the absolute path to the video - all files in monsters folder now
-    pack_dir = os.path.abspath(os.path.join('graphic_packs', pack_name, 'monsters'))
-    
-    # Check if file exists - NO FALLBACK
-    file_path = os.path.join(pack_dir, filename)
-    if os.path.exists(file_path):
-        return send_from_directory(pack_dir, filename)
+    pack_root = repository_root() / 'graphic_packs'
+    file_path = resolve_media_file(
+        Path(pack_name) / 'monsters' / filename,
+        pack_root,
+        allowed_extensions={'.mp4'},
+    )
+    if file_path is not None:
+        return send_file(file_path)
     
     # Return 404 if not found - no fallback to other directories
     return '', 404
@@ -3047,7 +3087,11 @@ def get_module_adventure_markdown(module_name):
 
     module_name = module_name.replace("-", "_").replace(" ", "_")
 
-    modules_root = Path("modules").resolve()
+    modules_root = (
+        Path(modules_root)
+        if modules_root is not None
+        else resolve_repository_path("modules", root=INSTALL_ROOT)
+    ).resolve()
     module_dir = (modules_root / module_name).resolve()
     if not module_dir.is_relative_to(modules_root):
         return jsonify({"error": "Invalid module name"}), 400
@@ -3114,9 +3158,15 @@ def handle_connect():
 
     # Check for updates and notify client
     try:
-        from utils.version_checker import check_for_updates, resolve_update_target
-        status, local_ver, remote_ver, message = check_for_updates(silent=True)
-        update_target = resolve_update_target(repo_path=os.getcwd())
+        from utils.version_checker import compare_versions, get_latest_remote_version, resolve_update_target
+        version_path = resolve_repository_path("VERSION", root=INSTALL_ROOT)
+        local_ver = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else "0.0.0"
+        update_target = resolve_update_target(repo_path=str(INSTALL_ROOT))
+        remote_ver = get_latest_remote_version(
+            update_target["owner_repo"], update_target["branch"], silent=True
+        ) if update_target else None
+        status = compare_versions(local_ver, remote_ver)
+        message = "Update check unavailable" if status == "unknown" else "Update check complete"
         update_supported = update_target is not None
 
         if update_supported:
@@ -4513,11 +4563,7 @@ def send_output_to_clients_original():
 def open_browser():
     """Open the web browser after a short delay"""
     time.sleep(1.5)  # Wait for server to start
-    try:
-        import config
-        port = getattr(config, 'WEB_PORT', 8357)
-    except ImportError:
-        port = 8357
+    port = _configured_web_port
 
     url = f'http://localhost:{port}'
     preferred_browser = get_preferred_browser_setting()
@@ -5328,26 +5374,31 @@ def get_npc_thumbnail(pack_name, npc_id):
         return '', 404
     
     try:
-        from flask import send_from_directory
-        import os
-        
-        npcs_dir = os.path.abspath(os.path.join('graphic_packs', pack_name, 'npcs'))
+        pack_root = repository_root() / 'graphic_packs'
         
         # Try to find a thumbnail first (png or jpg)
         for ext in ['.png', '.jpg']:
             thumb_filename = f'{npc_id}_thumb{ext}'
-            thumb_path = os.path.join(npcs_dir, thumb_filename)
-            if os.path.exists(thumb_path):
+            thumb_path = resolve_media_file(
+                Path(pack_name) / 'npcs' / thumb_filename,
+                pack_root,
+                allowed_extensions={'.png', '.jpg'},
+            )
+            if thumb_path is not None:
                 info(f"TOOLKIT: Serving NPC thumbnail {thumb_filename} from {pack_name}")
-                return send_from_directory(npcs_dir, thumb_filename)
+                return send_file(thumb_path)
         
         # If no thumbnail, try to find the full portrait
         for ext in ['.png', '.jpg']:
             portrait_filename = f'{npc_id}{ext}'
-            portrait_path = os.path.join(npcs_dir, portrait_filename)
-            if os.path.exists(portrait_path):
+            portrait_path = resolve_media_file(
+                Path(pack_name) / 'npcs' / portrait_filename,
+                pack_root,
+                allowed_extensions={'.png', '.jpg'},
+            )
+            if portrait_path is not None:
                 info(f"TOOLKIT: Serving NPC portrait {portrait_filename} from {pack_name}")
-                return send_from_directory(npcs_dir, portrait_filename)
+                return send_file(portrait_path)
         
         # If nothing is found, return a 404
         warning(f"TOOLKIT: No image found for NPC {npc_id} in {pack_name}")
@@ -5364,18 +5415,19 @@ def get_npc_image(pack_name, npc_id):
         return '', 404
     
     try:
-        from flask import send_from_directory
-        import os
-        
-        npcs_dir = os.path.abspath(os.path.join('graphic_packs', pack_name, 'npcs'))
+        pack_root = repository_root() / 'graphic_packs'
         
         # Try to find the full image (png or jpg)
         for ext in ['.png', '.jpg']:
             image_filename = f'{npc_id}{ext}'
-            image_path = os.path.join(npcs_dir, image_filename)
-            if os.path.exists(image_path):
+            image_path = resolve_media_file(
+                Path(pack_name) / 'npcs' / image_filename,
+                pack_root,
+                allowed_extensions={'.png', '.jpg'},
+            )
+            if image_path is not None:
                 info(f"TOOLKIT: Serving NPC image {image_filename} from {pack_name}")
-                return send_from_directory(npcs_dir, image_filename)
+                return send_file(image_path)
         
         warning(f"TOOLKIT: No full image found for NPC {npc_id} in {pack_name}")
         return '', 404
@@ -5391,10 +5443,7 @@ def get_npc_video(pack_name, npc_id):
         return '', 404
     
     try:
-        from flask import send_from_directory
-        import os
-        
-        npcs_dir = os.path.abspath(os.path.join('graphic_packs', pack_name, 'npcs'))
+        pack_root = repository_root() / 'graphic_packs'
         
         # Try to find video files with different naming patterns
         video_patterns = [
@@ -5404,10 +5453,14 @@ def get_npc_video(pack_name, npc_id):
         ]
         
         for video_filename in video_patterns:
-            video_path = os.path.join(npcs_dir, video_filename)
-            if os.path.exists(video_path):
+            video_path = resolve_media_file(
+                Path(pack_name) / 'npcs' / video_filename,
+                pack_root,
+                allowed_extensions={'.mp4'},
+            )
+            if video_path is not None:
                 info(f"TOOLKIT: Serving NPC video {video_filename} from {pack_name}")
-                return send_from_directory(npcs_dir, video_filename)
+                return send_file(video_path)
         
         warning(f"TOOLKIT: No video found for NPC {npc_id} in {pack_name}")
         return '', 404
@@ -6548,10 +6601,10 @@ def handle_trigger_update():
     print("[AUTO_UPDATE] Handler triggered")
 
     try:
-        repo_path = os.getcwd()
+        repo_path = str(INSTALL_ROOT)
         git_safe_path = repo_path.replace('\\', '/')
 
-        emit('update_log', {'message': f'Repository path: {repo_path}'})
+        emit('update_log', {'message': 'Repository path: installed application root'})
 
         # Resolve explicit fork target from origin.
         target = resolve_update_target(repo_path=repo_path)
@@ -6648,6 +6701,7 @@ def handle_trigger_update():
             capture_output=True,
             text=True,
             timeout=120,
+            cwd=repo_path,
         )
         if pip_result.returncode != 0:
             emit('update_error', {'error': f'Pip install failed: {pip_result.stderr}'})
@@ -6659,14 +6713,14 @@ def handle_trigger_update():
         })
 
         socketio.sleep(1)
-        os.execv(sys.executable, ['python'] + sys.argv)
+        os.execv(sys.executable, [sys.executable, str(INSTALL_ROOT / "web" / "web_interface.py")])
 
     except Exception as e:
         emit('update_error', {'error': str(e)})
 
 if __name__ == '__main__':
     # Create templates directory if it doesn't exist
-    os.makedirs('templates', exist_ok=True)
+    resolve_repository_path('templates', root=INSTALL_ROOT).mkdir(parents=True, exist_ok=True)
     
     # TABLETOP MODE: One-shot browser open per launcher session
     # Read env var from launcher; default to "1" for direct/manual runs
@@ -6683,16 +6737,12 @@ if __name__ == '__main__':
         info("Skipping auto-browser open on restart", category="web_interface")
     
     print("Starting NeverEndingQuest Web Interface...")
-    try:
-        import config
-        port = getattr(config, 'WEB_PORT', 8357)
-    except ImportError:
-        port = 8357
+    port = _configured_web_port
     print(f"Opening browser at http://localhost:{port}")
     
     # Run the Flask app with SocketIO
     socketio.run(app, 
-                host='0.0.0.0',
+                host=WEB_HOST,
                 port=port,
                 debug=False,
                 use_reloader=False,
