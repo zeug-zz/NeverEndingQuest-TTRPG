@@ -22,6 +22,8 @@
 
 **Jev decisions integration (2026-09-21):** The router gains a second primitive alongside generative chat: `llm.decide()` for System One typed decisions (`typesafe/jev-1.13` via the OpenRouter Decisions API). This is additive and runtime-neutral while the codebase remains on OpenAI (`LLM_PROVIDER = "openai"`). The Phase 0 eval spike ran 2026-09-21 and did **not** clear the promotion gate for the action predictor, so the primitive foundation stays deferred pending a question-decomposition pass. See "Decisions Primitive (System One / Jev)" and "Jev Decisions Integration (Workstreams A/B/C)".
 
+**Combat refactor interleave (2026-09-21):** Owner-approved sequencing with `plans/version-2/combat-manager-refactor.md` (section 3.1 there): combat Phase 0 latency baseline -> this plan's Phase 0/1 -> combat Phase 1 decomposition (`core/combat/`) -> this plan's Phase 2 Tier 1 migration for the combat trio + `main.py` + `action_handler.py` -> combat Phase 2 latency hot path -> remaining router tiers. Consequences: `combat_manager.py` migrates as named stage calls instead of edits inside a 2,492-line function; combat's per-call timeouts are superseded by the Phase 0 client-level `httpx.Timeout`; and combat's validation-failure reasoning escalation must survive migration via an explicit `retry_tier` channel through `finalize_chat_params()`. Execution mapping onto OpenSpec changes and gates: `plans/combat-openrouter-alignment.md`.
+
 ## Titan v2 Alignment Stub
 
 - Umbrella reference: `plans/version-2/titan-integration.md`
@@ -640,6 +642,7 @@ class LLMRouter:
         json_output: bool = False,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        retry_tier: Optional[str] = None,
         **kwargs
     ) -> Union[str, Dict[str, Any]]:
         """
@@ -658,6 +661,7 @@ class LLMRouter:
             params=resolved["params"],
             temperature=temperature if temperature is not None else resolved["temperature"],
             is_openrouter=resolved["is_openrouter"],
+            retry_tier=retry_tier,
         )
         api_params["messages"] = messages
         if resolved["provider"]:
@@ -708,6 +712,7 @@ class LLMRouter:
                         params=fb["params"],
                         temperature=None,  # GPT-5 family: no legacy sampling
                         is_openrouter=False,
+                        retry_tier=retry_tier,
                     )
                     api_params["messages"] = messages
                     if json_output:
@@ -873,14 +878,21 @@ llm = LLMRouter()
 **Phase 0 factory addition - `finalize_chat_params()`:** the router resolves the profile, then delegates provider-specific sampling rules to the factory so GPT-5 quirks live in one place:
 
 ```python
-def finalize_chat_params(model, params=None, temperature=None, is_openrouter=False):
+def finalize_chat_params(model, params=None, temperature=None, is_openrouter=False, retry_tier=None):
     """Assemble chat completion kwargs for a resolved model.
 
     - OpenRouter: profile params + temperature as provided
     - Direct OpenAI GPT-5 family: omit temperature (rejected), apply reasoning profile
     - Other direct OpenAI models: platform temperature
+    - retry_tier ("high" / "retry"): reasoning escalation for retry attempts. Required
+      to preserve combat's GPT5_USE_HIGH_REASONING_ON_RETRY escalation across migration
+      (see combat-manager-refactor.md section 3.1).
     """
 ```
+
+**Retry escalation:** `retry_tier` is an explicit `call()` parameter, not a passthrough
+kwarg - leave it out of `**kwargs`, because the OpenAI SDK would reject the unknown
+field. Combat passes `retry_tier="high"` on validation-failure retries.
 
 **Update `model_config.py`:** Add `MODEL_PROFILES` v4, `DEFAULT_PROFILE`, `ACTIVE_PROFILE`, and rename `THINKING_ENABLED_TASKS` to `COMPLEX_TASKS`. Deprecate `OPENROUTER_STRATEGY`, `OPENROUTER_FULL_MODEL`, `OPENROUTER_MINI_MODEL`, and `OPENROUTER_CHAT_MODEL`-as-model-ID (keep as aliases during transition). See Model Agnosticism section above for the full config.
 
@@ -930,7 +942,7 @@ Production files only - test/tooling files are never migrated. Counts re-measure
 
 | File | Calls | Current State | Notes |
 |------|-------|---------------|-------|
-| `core/managers/combat_manager.py` | 9 | Partial (factory client, hardcoded model constants) | Highest call count; validates every combat batch |
+| `core/managers/combat_manager.py` | 9 | Partial (factory client, hardcoded model constants) | Highest call count; validates every combat batch. Sequencing: migrate after `combat-manager-decomposition` lands so calls are named stage calls (combat plan section 3.1) |
 | `core/ai/action_handler.py` | 6 | Partial (inline factory imports, manual fallback) | Complex fallback chains |
 | `main.py` | 5 | Partial (factory client, hardcoded models) | Includes `generate_module_summary()`; migrate as `task="summaries"` |
 
@@ -1301,7 +1313,9 @@ def test_decide_stub_is_gated():
 - [ ] Rename `THINKING_ENABLED_TASKS` to `COMPLEX_TASKS` (keep alias for backward compat)
 - [ ] Mark `OPENROUTER_STRATEGY`, `OPENROUTER_FULL_MODEL`, `OPENROUTER_MINI_MODEL`, `OPENROUTER_CHAT_MODEL` as deprecated in comments
 - [ ] Normalize `extra_body` shape in `ai_client_factory.py` `get_model_config()` (blocker until the router takes over param generation)
-- [ ] Add `finalize_chat_params()` (GPT-5 temperature policy + profile params)
+- [ ] Add `finalize_chat_params()` (GPT-5 temperature policy + profile params + `retry_tier` escalation)
+- [ ] Verify `finalize_chat_params(retry_tier="high")` reproduces the legacy `get_chat_completion_params("combat_validation", ..., retry_tier="high")` kwargs (combat retry parity)
+- [ ] Add `API_TIMEOUT_SECONDS` / `API_CONNECT_TIMEOUT_SECONDS` to `model_config.py` and `timeout=httpx.Timeout(...)` to both client constructors in `ai_client_factory.py` (combat plan section 3.1 depends on this client-level bound)
 - [ ] Delete zero-consumer functions: `get_model_for_task`, `is_thinking_enabled`, `get_task_complexity`
 - [ ] Verify reasoning param shape live (`reasoning: {effort}` vs `reasoning_effort`) and record the result
 - [ ] Verify `preferred_max_latency`, `preferred_min_throughput`, and `max_price` are accepted
@@ -1317,7 +1331,7 @@ def test_decide_stub_is_gated():
 - [ ] Verify cost tracking uses tier pricing including `cache_read`
 
 ### Phase 2: File Migration (54 files / 104 chat call sites -> `llm.call()`)
-- [ ] Tier 1: 3 files / 20 calls (`combat_manager.py`, `action_handler.py`, `main.py`)
+- [ ] Tier 1: 3 files / 20 calls (`combat_manager.py`, `action_handler.py`, `main.py`); `combat_manager.py` runs only after `combat-manager-decomposition` (combat plan section 3.1)
 - [ ] Tier 2: 10 already-factory-migrated files / 16 calls
 - [ ] Tier 3: 12 generator and memory/diary files / 24 calls
 - [ ] Tier 4: 29 toolkit/validation/utility files / 44 calls
@@ -1531,6 +1545,8 @@ This way combat_manager can pass `status_manager.update_status` as the callback,
 **Target:** `core/managers/combat_manager.py` -- the two blocking API calls in the combat retry loop (generation ~3581, validation ~849).
 
 **Scope:** Surgical fix for the active OpenAI-based TT build, to be superseded by the router-level solution.
+
+**Interlock (2026-09-21):** This pre-router fix is now satisfied by the Phase 0 client-level `httpx.Timeout` in this plan. The combat refactor no longer adds per-call timeouts for the remaining 6 sites; it verifies coverage and removes the legacy per-call arguments during migration (see `plans/version-2/combat-manager-refactor.md` section 3.1).
 
 **Changes:**
 1. **`model_config.py`** -- Add `COMBAT_API_TIMEOUT_SECONDS = 120` constant
@@ -1768,6 +1784,9 @@ All items below are deferred until after the router is implemented and a second 
 | **Router keeps its own session stats** | Router stats are per-session and thread-safe. Image-cost events continue to use `utils/llm_usage_tracker.py` (the DALL-E instrumentation pattern); the two are not merged. |
 | **JSON retry kept in Phase 1** | LLM output is non-deterministic — retrying the same call may produce valid JSON when the first didn't. The retry makes a fresh API call each iteration, not a no-op replay. |
 | **Fix factory `extra_body` before router** | Inconsistent shapes between TIER 1 and TASK_OVERRIDES paths would cause TypeError on OpenRouter. Must normalize before router can consume it. Blocker for Phase 1. |
+| **Combat migration follows decomposition (2026-09-21)** | `combat_manager.py` Tier 1 migration runs after `combat-manager-decomposition` so the 9 call sites become named stage calls; the interleave is recorded in the combat plan section 3.1. |
+| **Combat timeout delegation (2026-09-21)** | Combat's per-call timeout work is superseded by this plan's Phase 0 client-level `httpx.Timeout`; the combat plan verifies coverage instead of adding parallel per-call args. |
+| **`retry_tier` is a first-class `call()` parameter** | Combat's validation-failure reasoning escalation must survive migration; `retry_tier` is consumed by `finalize_chat_params()` and never left in passthrough kwargs (the SDK would reject it). |
 | **Deferred until TT build ships** | Testers waiting for OpenAI-based Tabletop Mode fork. OpenRouter migration is a post-ship enhancement, not a blocker. |
 | **Decisions primitive is separate from chat task-routing** | Jev is `text->decisions`: no chat client, no `MODEL_PROFILES` entry (no sampling params), no temperature. Adding it as a `task` would break the router's task-routing contract, so `llm.decide()` is a sibling primitive. |
 | **Jev is never authority; upstream failure is never a negative answer** | Typed answers are consumed by Python. Jev never mutates state, and its fallback is the existing chat/deterministic path, not another Jev model. A 429/503/timeout returns `unavailable` so the caller falls back rather than treating failure as "false". |
@@ -1816,5 +1835,5 @@ Jev decisions: do NOT implement in this session. `utils/action_predictor.py` mus
 ---
 
 **Last Updated:** 2026-09-21
-**Status:** PLANNING - v4.0 model refresh complete; Phase 0/1 ready once the workspace baseline is clean (Jev decisions primitive remains gated by the decomposition eval)
-**Revision:** v4.0 - September 2026 model refresh: five OpenRouter API surfaces documented; `MODEL_PROFILES` v4 with per-tier provider preferences, reasoning effort, and cache-aware pricing; confirmed production models (DeepSeek/GLM/Qwen); image and speech catalog plans (Muse/Krea, OpenRouter speech bake-off); refreshed production audit (107 call sites / 57 files, 54 files to migrate); bake-off harness added to Phase 0/1; Jev sections preserved and gated
+**Status:** PLANNING - v4.0 model refresh complete; Phase 0/1 ready once the workspace baseline is clean (Jev decisions primitive remains gated by the decomposition eval). Interleaved with the combat manager refactor per the 2026-09-21 note above.
+**Revision:** v4.1 - 2026-09-21 combat interlock amendment: interleaved execution order with `combat-manager-refactor.md`, `combat_manager.py` Tier 1 sequencing, combat timeout delegation to the client-level `httpx.Timeout`, and the `retry_tier` escalation channel in `finalize_chat_params()` / `call()`. v4.0 - September 2026 model refresh: five OpenRouter API surfaces documented; `MODEL_PROFILES` v4 with per-tier provider preferences, reasoning effort, and cache-aware pricing; confirmed production models (DeepSeek/GLM/Qwen); image and speech catalog plans (Muse/Krea, OpenRouter speech bake-off); refreshed production audit (107 call sites / 57 files, 54 files to migrate); bake-off harness added to Phase 0/1; Jev sections preserved and gated
