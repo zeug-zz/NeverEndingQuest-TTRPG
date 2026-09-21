@@ -41,6 +41,7 @@
 import json
 from openai import OpenAI
 from config import OPENAI_API_KEY, ACTION_PREDICTION_MODEL
+from utils.ai_client_factory import get_chat_completion_params
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -149,9 +150,14 @@ def predict_actions_required(user_input):
     """
     try:
         # Call action prediction model
+        # Route params through the factory shim so GPT-5-family models omit
+        # legacy sampling controls (direct OpenAI rejects temperature).
         response = client.chat.completions.create(
-            model=ACTION_PREDICTION_MODEL,
-            temperature=0.1,  # Low temperature for consistent predictions
+            **get_chat_completion_params(
+                "action_prediction",
+                ACTION_PREDICTION_MODEL,
+                temperature_override=0.1,  # Low temperature for consistent predictions
+            ),
             messages=[
                 {"role": "system", "content": ACTION_PREDICTION_PROMPT},
                 {"role": "user", "content": f"Analyze this user input: '{user_input}'"}
