@@ -2,7 +2,7 @@
 
 <img src="dm_logo.png" alt="NeverEndingQuest DM Logo" width="96" align="left" style="margin-right: 16px;">
 
-**Tabletop-focused fork of [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions. NEQ-TTRPG is an AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
+**Independently developed tabletop platform originally derived from [NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)** for local, in-person facilitator-led multiplayer sessions. NEQ-TTRPG is an AI-powered Dungeon Master for SRD 5.2.1 compatible tabletop RPG campaigns — designed for a single laptop with a human DM collaborator managing multiple player characters through a tabbed web UI.
 
 <br clear="left">
 
@@ -59,7 +59,7 @@ allowlist. Leave the loopback defaults in place for local-only play.
 
 ## What This Fork Adds (Tabletop Mode)
 
-Built as a merge-safe plugin on top of upstream. Tabletop Mode activates automatically when `partyMembers` in `party_tracker.json` has more than one entry.
+Independently developed, originally derived from upstream. Tabletop Mode activates automatically when `partyMembers` in `party_tracker.json` has more than one entry.
 
 - **Tabbed Multi-PC UI** — Switch between character sheets in the web interface. Each PC gets their own tab with stats, inventory, and portrait.
 - **Deterministic Multi-PC Combat** — Turn queue with initiative tracking, PC phase / enemy phase automation, and `/end` batch resolution. Enemy HP and status changes use structured ops with fail-open prose fallback.

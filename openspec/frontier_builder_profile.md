@@ -40,4 +40,4 @@ Conflict resolution:
 
 - Keep MUST statements specific and unambiguous.
 - Keep SHOULD guidance concise so stronger models can optimize without drifting from contract.
-- Prefer additive compatibility language over rewrite language for merge-safe evolution.
+- Prefer additive compatibility language where a fork requirement needs it; do not preserve legacy structure without a requirement.

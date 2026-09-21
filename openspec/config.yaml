@@ -2,7 +2,10 @@ schema: spec-driven
 
 context: |
   NeverEndingQuest is an AI-powered tabletop RPG DM system with TABLETOP MODE extensions.
-  This repository is a merge-safe plugin/modification of upstream MoonlightByte/NeverEndingQuest.
+  This repository is an independently developed fork originally derived from
+  MoonlightByte/NeverEndingQuest. Upstream is a read-only historical and technical
+  reference; it is not merged, synchronized on a routine cadence, or treated as a
+  compatibility target (see ADR-0031).
 
   Frontier-safe OpenSpec execution profile (all model tiers):
   - Use a two-layer writing model in every artifact:
@@ -13,9 +16,10 @@ context: |
   - Use concise guidance so high-capability models can optimize execution without losing contract fidelity.
 
   Core guardrails:
-  - Preserve upstream behavior and structure whenever possible.
-  - Use minimal hooks in host files and mark all required host edits with "# TABLETOP MODE:" comments.
-  - Prefer extension files over core rewrites.
+  - Prefer local extension boundaries when they improve ownership or testing.
+  - Do not preserve an external implementation unless a fork requirement explicitly needs it.
+  - Mark host changes when the marker communicates fork ownership or authority boundaries.
+  - Evaluate external code as reference material and port it only through an approved contract.
   - Maintain backward compatibility with single-player mode.
   - Runtime activation patterns should favor party-size detection (len(partyMembers) > 1).
   - Python state is ground truth for mechanics; narrative generation must align with persisted state.
@@ -23,15 +27,15 @@ context: |
   - ASCII-only output in Python user-facing console/log text (Windows cp1252 compatibility).
 
   Current initiative:
-  - OpenRouter LLM Router architecture split into two OpenSpec changes based on plans/openrouter_llm_router_architecture.md.
-  - Change 1: router-facade and model-profile infrastructure.
-  - Change 2: tiered callsite migration and cleanup.
+  - Fork independence governance is tracked by two OpenSpec changes:
+    fork-independence-pivot (governance, ADRs, and active guidance) and
+    fork-final-upstream-sweep (approved legacy UI and provider behavior ports).
 
 rules:
   proposal:
     - Include problem statement, objective, and explicit non-goals.
     - Include rollout risk analysis and fallback strategy.
-    - Include merge-safety impact and SP/MP compatibility impact.
+    - Include SP/MP compatibility impact and any external-behavior-port scope.
     - If touching LLM plumbing, include provider outage/quota behavior and recovery path.
     - Label mandatory constraints as MUST and optional preferences as SHOULD.
 

@@ -2,7 +2,7 @@
 
 Thanks for contributing to the tabletop fork.
 
-This repository is a merge-safe extension of upstream NeverEndingQuest focused on facilitator-led multiplayer sessions.
+This repository is an independently developed fork originally derived from [upstream NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest), focused on facilitator-led multiplayer sessions.
 
 ## Source of truth
 

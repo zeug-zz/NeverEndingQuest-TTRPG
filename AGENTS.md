@@ -63,7 +63,7 @@ NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 co
 
 ### Tabletop Multiplayer Context
 
-**This repository is a tabletop multiplayer extension** of [MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest). Core files have diverged through TABLETOP MODE additions; upstream commits are inspected individually and selectively ported when they add value (see ADR-0030).
+**This repository is an independently developed tabletop platform** originally derived from [MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest). Core files have diverged through TABLETOP MODE additions; upstream is read-only historical reference material and is not merged or synchronized routinely (see ADR-0031).
 
 **Core Purpose:**
 - Designed for **local, in-person tabletop RPG sessions** (e.g., public library events, game stores)
@@ -320,51 +320,26 @@ Major subsystems use dedicated managers:
   - See: Multi-PC Combat PC/NPC Type Classification Fix (2026-02-02)
 
 #### 4. Plugin Architecture Pattern
-- **Minimal Core Modifications**: Changes to upstream files marked with `# TABLETOP MODE:` comments
-- **Encapsulated Extensions**: New functionality in separate modules (`utils/pc_manager.py`, `web/static/js/tabletop_mode.js`)
+- **Deliberate Host Edits**: Changes to host files are marked with `# TABLETOP MODE:` comments as lineage and ownership documentation
+- **Encapsulated Extensions**: New functionality lives in separate modules (`utils/pc_manager.py`, `web/static/js/tabletop_mode.js`) for ownership and testability
 - **State Detection**: Tabletop features activate based on `party_tracker.json` state, not configuration flags
-- **Merge Safety**: Clear boundaries allow easy porting of upstream fixes without broad merge conflicts. See ADR-0030 for upstream sync policy.
+- **Ownership Boundaries**: Clear boundaries keep fork-owned behavior testable and independently evolvable. Upstream parity is not a design constraint. See ADR-0031.
 
-#### Upstream Sync Policy (ADR-0030)
+#### Fork Independence Policy (ADR-0031)
 
-**Upstream commits are inspected individually and selectively ported** — not merged wholesale. Upstream ([MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)) is a read-only reference. The plugin architecture (ADR-0002, ADR-0003) remains the internal code discipline.
+**This repository is an independently developed fork.** Upstream ([MoonlightByte/NeverEndingQuest](https://github.com/MoonlightByte/NeverEndingQuest)) is historical and technical reference material only: it is not merged wholesale, not fetched on a routine cadence, and not treated as a compatibility target. There is no Upstream Sync Log and no periodic review obligation. The internal extension discipline (ADR-0003, as amended by ADR-0031) remains in force.
 
 **Policy:**
 
-1. **Do not merge upstream branches.** `upstream/main` is read-only reference.
-2. **Inspect upstream commits one by one.** Review monthly or when GitHub shows upstream activity.
-3. **Classify each commit:** `already covered` (skip), `port manually` (reconcile and apply), `ignore` (not relevant), `investigate` (flag for later).
-4. **Merge-worthy when upstream touches:** security fixes, data corruption fixes, save/load reliability, provider/API compatibility, critical browser/runtime bugs.
-5. **Skip (manual port only) when upstream touches:** `web/web_interface.py`, `web/templates/game_interface.html`, `main.py`, combat flow, character state, module runtime, prompt/validation contracts. These areas are heavily modified here and need manual reconciliation.
-6. **Track skips and ports** in the Upstream Sync Log below.
-7. **Preserve single-player compatibility.** SP mode should be smoke-tested periodically.
+1. **Do not merge upstream branches.** `upstream/main` is read-only reference material.
+2. **Upstream behavior enters the fork only through an approved OpenSpec change** designed against fork contracts, with fork-native tests and verification.
+3. **Evaluate external code as reference material.** Record each port decision in the approved change that implements it, not in a standing sync log.
+4. **Prioritize a port when it fixes:** security issues, data corruption, save/load reliability, provider/API compatibility, or critical browser/runtime defects.
+5. **Design against fork authority.** Python mechanical, persistence, publication, and campaign-state authority must not be weakened by an external port.
+6. **Preserve single-player and TABLETOP MODE compatibility.** SP mode should be smoke-tested when a port could affect shared runtime paths.
+7. **Keep attribution.** Fair Source license terms, upstream copyright notices, and third-party attribution remain in force for any ported or vendored code.
 
-#### Upstream Sync Log
-
-| Date | Upstream Commit | Subject | Action | Reason |
-|------|----------------|---------|--------|--------|
-| 2026-05-26 | [`c149109`](https://github.com/MoonlightByte/NeverEndingQuest/commit/c149109a) | fix(#122): reconnect browser to live game and stop input busy-spin | **Skip** | Combat busy-spin already fixed by TABLETOP MODE idle-input hardening (2026-03-17). Browser reconnect already handled by `request_status` → `status_response` flow. |
-
-#### Upstream Merge Guidelines (Legacy — for reference only)
-
-**These guidelines are superseded by ADR-0030. They remain here as reference for internal code discipline (TABLETOP MODE markers, extension-over-modification, no-breaking-upstream-patterns). Do not use these for actual upstream merging.**
-
-1. **Preserve upstream features intact** - Accept all upstream HTML, CSS, JS, and Python as written. Don't remove, simplify, or restructure upstream features during the merge.
-
-2. **Mark necessary modifications clearly** - When you must modify host files to hook in TABLETOP MODE:
-   ```javascript
-   // TABLETOP MODE: Added party member filtering
-   // TABLETOP MODE: Multi-PC initiative tracking
-   ```
-
-3. **Prefer extension over modification** - Add TABLETOP MODE features in separate files when possible (`multi_pc_combat.py`, `tabletop_mode.js`) and call them from minimal hooks in host files.
-
-4. **Never break upstream patterns** - Don't add null checks that assume elements might be missing. Don't rename upstream variables. Don't move upstream DOM elements.
-
-**Example - The TTS Merge Mistake:**
-- **What went wrong**: Removed the DM Voice settings panel and added broken null-checks, breaking upstream JavaScript
-- **Why it was wrong**: Modified upstream feature structure instead of accepting it as designed
-- **Correct approach**: Keep host TTS feature exactly as upstream designed it, use same Settings dropdown (works for both single and multi)
+The `# TABLETOP MODE:` markers document fork lineage and integration points. They do not promise merge compatibility, and existing markers are not renamed.
 
 #### Git Push Safety Rules
 
@@ -728,7 +703,7 @@ Implemented multi-PC aware conversation compression with message tagging:
 
 **Key Features:**
 - **Zero Upstream Impact:** Standard `ParallelConversationCompressor` used for single-PC mode
-- **Clean Merge Boundaries:** All changes marked with `# TABLETOP MODE:` comments
+- **Clean Extension Boundaries:** All changes marked with `# TABLETOP MODE:` comments
 - **Backward Compatible:** Falls back gracefully if `active_pc` not present
 - **Token Efficient:** Only adds ~4 bytes per tagged message overhead
 
@@ -1022,9 +997,9 @@ Phase 3 of multi-PC combat rebuild: Refactor monolithic `MultiPCCombatManager` i
 
 ## Plugin Architecture & SP/MP Unification Roadmap
 
-### Core Philosophy: "Upstream First, Extend Second"
+### Core Philosophy: "Extension-First Internal Discipline"
 
-This codebase maintains a plugin architecture for clear boundaries between SP and MP modes and for stable internal code discipline. The goal is to make MP feel like a natural extension of SP, not a separate codebase.
+This codebase maintains extension boundaries for clear separation between SP and MP behavior and for stable internal code discipline. The goal is to make MP feel like a natural extension of SP, not a separate codebase. Extension-first is an internal maintainability rule; upstream merge parity is not a design constraint (ADR-0031).
 
 ### Current State: Plugin Mode (Phase 1)
 
@@ -1066,7 +1041,7 @@ if len(party_members) > 1:
 - Remove `MULTIPLAYER_MODE` config entirely
 - SP is simply MP with a single party member
 - All MP-specific files become core files
-- Upstream becomes unified codebase
+- The fork becomes a unified codebase
 
 ### Coding Patterns for Unification
 
@@ -1098,11 +1073,11 @@ character_data = get_character_state("Acheron")
 3. Phase 3: Always use abstraction layer
 
 #### Pattern 3: Hook-Based Extensions
-Add minimal hooks to upstream code:
+Add narrow hooks at host integration points:
 ```python
-# In combat_manager.py (upstream)
+# In combat_manager.py (host integration point)
 def run_combat_simulation():
-    # ... upstream logic ...
+    # ... host logic ...
     _post_turn_hook()  # Single line addition
 
 # In multi_pc_combat.py (extension)
@@ -1122,17 +1097,17 @@ character_data["party_position"] = position
 character_data["is_active_pc"] = True
 ```
 
-### Critical Rules for Maintaining Compatibility
+### Critical Rules for State Authority and Compatibility
 
-1. **Always use upstream persistence functions**
+1. **Use the canonical persistence functions**
    - `update_character_info()` for character changes
    - `safe_write_json()` for file operations
    - Never write direct SQL or raw file I/O in MP code
 
-2. **Never modify upstream data structures**
-   - Don't add MP-specific fields to core JSON schemas
-   - Use extension fields that upstream ignores gracefully
-   - Maintain backward compatibility
+2. **Extend shared data structures deliberately**
+   - Don't create parallel MP-specific copies of core structures
+   - Extend shared schemas through approved changes and keep backward compatibility
+   - Maintain single-player/multiplayer schema parity
 
 3. **Runtime detection over configuration**
    - Check `len(party_members) > 1` instead of `config.MULTIPLAYER_MODE`
@@ -1145,17 +1120,17 @@ character_data["is_active_pc"] = True
    - Combat state lives in encounter files
    - MP managers are caches, not primary storage
 
-5. **Clear merge boundaries**
-   - All modifications marked with `# TABLETOP MODE:`
-   - Extensions in separate files when possible
-   - Minimal changes to upstream logic flow
+5. **Clear extension boundaries**
+   - All modifications marked with `# TABLETOP MODE:` (lineage and ownership documentation)
+   - Extensions in separate files when practical
+   - Host edits deliberate and reversible
 
 ### Benefits of This Architecture
 
-**For Upstream Merges:**
-- Clear boundaries make conflict resolution easy
-- Upstream changes don't break MP features
-- Plugin files are isolated from core changes
+**For Ownership And Testability:**
+- Clear boundaries keep fork-owned behavior testable
+- Extension files stay isolated from host changes
+- Host edits remain deliberate and reversible
 
 **For Future Unification:**
 - Gradual migration path (Phase 1 → 2 → 3)
@@ -1177,11 +1152,11 @@ character_data["is_active_pc"] = True
 3. Is this marked with `# TABLETOP MODE:`?
 4. Will this work if `MULTIPLAYER_MODE` config is removed?
 
-**When Merging Upstream:**
-1. Preserve upstream features intact
-2. Only add hooks if absolutely necessary
-3. Test MP features still work after merge
-4. Update TABLETOP MODE comments if lines shift
+**When Porting External Behavior:**
+1. Use an approved OpenSpec change scoped to the behavior
+2. Adapt the behavior to fork contracts; do not import foreign architecture
+3. Run fork-native tests plus SP/MP smoke checks
+4. Keep license and attribution for any vendored code
 
 **When Planning New Features:**
 1. Design for unified architecture from start

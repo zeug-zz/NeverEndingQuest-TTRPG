@@ -1,6 +1,6 @@
 # Upstream Integration and Selective Merge Plan
 
-**Status:** Open for review and continued updates
+**Status:** Closed and archived on 2026-09-21; upstream synchronization retired per ADR-0031.
 
 **Created:** 2026-08-04
 
@@ -728,4 +728,32 @@ Please review and confirm the following before implementation begins:
 
 ## Current Status
 
-This plan is ready for review. No upstream code has been merged or ported as part of this document update.
+This plan is closed. The final upstream review ledger is recorded below; upstream synchronization is retired per ADR-0031. No further upstream merges, ports, or routine fetches are planned.
+
+## Final Upstream Review Ledger (2026-09-21)
+
+This is the final review ledger for this plan. It closes the upstream integration workstream.
+
+- Review date: 2026-09-21
+- Previous upstream review point: `702796eb55`
+- Current upstream tip: `44f1458e1e` (2026-09-20)
+- Review window: 524 upstream commits from 2026-08-05 through 2026-09-20
+
+### Final decisions
+
+- Ported: upstream PR #399 / merge `2940c9f0` legacy UI output encoding, adapted manually as fork-native `escapeLegacyHtml` / `legacyJsonAttribute` helpers and applied to high-risk legacy template output paths.
+- Ported: upstream `3fa138f7` (#161/#162) transient empty provider response recovery, implemented fork-native in `utils/provider_response_recovery.py` with bounded retry and narrator wiring.
+- Inspected: upstream `3e6dbb6f` (#240) completed provider error reissue - defect NOT reproduced in the fork; no code change for #240.
+- Left behind: typed model registry, agentic combat/referee, NPC voice/episodic memory, Responses API/headless transport, provider liveness/keepalive orchestration, crash-safe transaction coordinator, startup/installer/launcher rewrites, atomic module publication, level-up specialist interviews, desktop/React surfaces, and the remaining upstream window work.
+
+### Reason
+
+Upstream and fork now have incompatible runtime, state-authority, provider, UI, memory, combat, and publication architectures and authority boundaries.
+
+### Replacement policy
+
+ADR-0031 (`adrs/0031-independent-development-fork.md`) and `plans/archive/independent-fork.md`.
+
+### Closing note
+
+The `upstream` remote remains a read-only historical reference with no routine fetch cadence. All fork development and pushes remain on `origin` per ADR-0031.

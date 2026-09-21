@@ -1,9 +1,9 @@
 # ADR-0002: Merge-Safe Tabletop Overlay Architecture
 
 - Date: 2026-03-10
-- Status: Accepted
+- Status: Superseded
 - Supersedes: None
-- Superseded by: None
+- Superseded by: ADR-0031
 
 ## Context
 This repository extends upstream NeverEndingQuest for in-person tabletop multiplayer while still tracking upstream updates.

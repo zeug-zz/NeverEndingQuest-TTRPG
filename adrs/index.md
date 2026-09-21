@@ -6,13 +6,14 @@ Status legend:
 - Accepted: active decision currently guiding implementation
 - Planned: approved direction not fully implemented
 - Superseded: replaced by a later accepted ADR
+- Amended: accepted decision modified by a later ADR
 - Deferred: intentionally postponed
 
 ## ADR List
 
 - 0001 Documentation Authority Hierarchy and Canonical Memory Order (Accepted)
-- 0002 Merge-Safe Tabletop Overlay Architecture (Accepted)
-- 0003 Upstream-First Extend-Do-Not-Replace Policy (Accepted)
+- 0002 Merge-Safe Tabletop Overlay Architecture (Superseded)
+- 0003 Upstream-First Extend-Do-Not-Replace Policy (Amended)
 - 0004 Multiplayer Activation and SP/MP Unification Roadmap (Planned)
 - 0005 Canonical State Ownership by Persistence Domain (Accepted)
 - 0006 Character Data Access Abstraction Layer (Accepted)
@@ -39,12 +40,15 @@ Status legend:
 - 0027 V2 Prime Directive and Approval-Gated Canon Apply (Accepted)
 - 0028 Homebrew Wave 1 Birble Plan Deferred After Dev Ingest Validation (Deferred)
 - 0029 Archive Save/Restore Portability and Routing Contract (Accepted)
-- 0030 Selective Upstream Patch Porting (Accepted)
+- 0030 Selective Upstream Patch Porting (Superseded)
+- 0031 Independent Development Fork (Accepted)
 
 ## Supersession Map
 
 - ADR-0023 supersedes ADR-0028.
 - ADR-0026 is the planned successor to ADR-0025.
+- ADR-0031 supersedes ADR-0002 and ADR-0030.
+- ADR-0031 amends ADR-0003 (rescopes upstream-first requirements).
 
 ## Notes
 
