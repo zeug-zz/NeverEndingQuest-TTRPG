@@ -17,6 +17,8 @@ import re
 from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from utils.enhanced_logger import warning
+
 
 CARDINAL_DIRECTIONS = ("north", "south", "east", "west")
 COORDINATE_PATTERN = re.compile(r"^X([0-9]+)Y([0-9]+)$")
@@ -630,6 +632,10 @@ def _build_spatial_provider_failure(
     retryable: bool = False,
 ) -> Dict[str, Any]:
     """Return the deterministic plan with explicit provider-stage diagnostics."""
+    warning(
+        f"Provider stage failed stage={stage} error_type={type(error).__name__}",
+        category="toolkit_spatial",
+    )
     degraded_plan = dict(fallback_plan)
     degraded_plan["status"] = "degraded"
     degraded_plan["provider_diagnostics"] = {
@@ -661,7 +667,11 @@ def _resolve_semantic_spatial_plan_with_llm(
             handle_provider_error,
         )
     except Exception as exc:
-        return _build_spatial_provider_failure(fallback_plan, provider_stage, exc)
+        return _build_spatial_provider_failure(
+            fallback_plan,
+            provider_stage,
+            exc,
+        )
 
     prompt_text = _build_structured_spatial_prompt(room_records)
 

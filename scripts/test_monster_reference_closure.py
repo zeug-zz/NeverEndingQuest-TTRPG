@@ -203,6 +203,28 @@ class TestCollectExistingMonsterSlugs(unittest.TestCase):
         self.assertIn("goblin", slugs)
         self.assertEqual(len(slugs), 1)
 
+    def test_normalizes_existing_filename_stems_with_reference_rules(self):
+        """Equivalent filename punctuation and spacing resolve to one slug."""
+        for name in ["WILL O WISP.json", "Goblin-King.json"]:
+            path = os.path.join(self.monsters_dir, name)
+            with open(path, 'w') as f:
+                json.dump({"name": name[:-5]}, f)
+
+        slugs = collect_existing_monster_slugs(self.temp_dir.name)
+
+        self.assertIn(normalize_monster_name("Will-o'-Wisp"), slugs)
+        self.assertIn(normalize_monster_name("Goblin King"), slugs)
+
+    def test_unrelated_filename_does_not_match_by_substring(self):
+        """A distinct filename slug must not satisfy a shorter reference."""
+        path = os.path.join(self.monsters_dir, "Goblin-King.json")
+        with open(path, 'w') as f:
+            json.dump({"name": "Goblin King"}, f)
+
+        slugs = collect_existing_monster_slugs(self.temp_dir.name)
+
+        self.assertNotIn(normalize_monster_name("Goblin"), slugs)
+
 
 class TestAmbiguousNpcLikeDetection(unittest.TestCase):
     """Tests for NPC-like ambiguity detection."""
@@ -298,6 +320,34 @@ class TestEnsureMonsterReferenceClosure(unittest.TestCase):
         self.assertEqual(report["generated"], 0)
         self.assertEqual(report["unresolved"], 0)
 
+    def test_equivalent_existing_filename_resolves_without_generation(self):
+        """Reference canonicalization also resolves a variant existing filename."""
+        self._write_json(
+            os.path.join(self.areas_dir, "A01.json"),
+            {
+                "areaId": "A01",
+                "areaName": "Marsh",
+                "locations": [
+                    {
+                        "locationId": "R01",
+                        "locationName": "Fens",
+                        "monsters": [{"name": "Will-o'-Wisp"}],
+                    }
+                ],
+            },
+        )
+        self._write_json(
+            os.path.join(self.monsters_dir, "WILL O WISP.json"),
+            {"name": "Will-o'-Wisp", "armorClass": 19, "hitPoints": 22},
+        )
+
+        report = ensure_monster_reference_closure("test_module", self.temp_dir.name)
+
+        self.assertEqual(report["required"], 1)
+        self.assertEqual(report["existing_before"], 1)
+        self.assertEqual(report["generated"], 0)
+        self.assertEqual(report["unresolved"], 0)
+
     def test_missing_references_attempt_materialization(self):
         """Missing references produce report with materialization attempt."""
         self._write_json(
@@ -326,6 +376,67 @@ class TestEnsureMonsterReferenceClosure(unittest.TestCase):
         self.assertIn("generation", report["details"])
         self.assertIn("generated", report["details"]["generation"])
         self.assertIn("failed", report["details"]["generation"])
+
+    @patch("utils.monster_reference_closure.subprocess.run")
+    def test_final_consistency_check_does_not_generate_missing_references(self, mock_run):
+        """Adaptation final closure reports missing refs without materializing."""
+        self._write_json(
+            os.path.join(self.areas_dir, "A01.json"),
+            {
+                "areaId": "A01",
+                "areaName": "Crypt",
+                "locations": [
+                    {
+                        "locationId": "R01",
+                        "locationName": "Tomb",
+                        "monsters": [{"name": "Missing Beast"}],
+                    }
+                ],
+            },
+        )
+
+        report = ensure_monster_reference_closure(
+            "adaptation_staging",
+            self.temp_dir.name,
+            allow_generation=False,
+        )
+
+        mock_run.assert_not_called()
+        self.assertEqual(report["generated"], 0)
+        self.assertEqual(report["unresolved"], 1)
+        self.assertEqual(
+            report["details"]["generation"]["skipped"][0]["reason"],
+            "generation_disabled_final_consistency_check",
+        )
+
+    @patch("utils.monster_reference_closure.subprocess.run")
+    def test_legacy_default_closure_still_invokes_generation(self, mock_run):
+        """Omitting the option preserves legacy missing-monster generation."""
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "mock generation failure"
+        self._write_json(
+            os.path.join(self.areas_dir, "A01.json"),
+            {
+                "areaId": "A01",
+                "areaName": "Crypt",
+                "locations": [
+                    {
+                        "locationId": "R01",
+                        "locationName": "Tomb",
+                        "monsters": [{"name": "Legacy Beast"}],
+                    }
+                ],
+            },
+        )
+
+        report = ensure_monster_reference_closure(
+            "legacy_module",
+            self.temp_dir.name,
+        )
+
+        mock_run.assert_called_once()
+        self.assertEqual(report["generated"], 0)
+        self.assertEqual(report["unresolved"], 1)
 
     def test_closure_report_persisted(self):
         """monster_closure_report.json is written to module_dir."""

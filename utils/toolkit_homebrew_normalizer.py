@@ -474,16 +474,16 @@ def normalize_homebrew_upload(
                 try:
                     client = create_chat_client()
                     resp = client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": section_prompt},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        timeout=90,
                         **get_chat_completion_params(
                             "builders",
                             DM_MAIN_MODEL,
                             temperature_override=section_config.get("temperature", 0.2),
                         ),
+                        messages=[
+                            {"role": "system", "content": section_prompt},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        timeout=90,
                     )
                     section_raw = _as_string(resp.choices[0].message.content)
                     parsed, err = _extract_json_payload(section_raw)
@@ -551,16 +551,16 @@ def normalize_homebrew_upload(
                 ident_client = create_chat_client()
                 ident_config = get_model_config("builders", DM_MAIN_MODEL)
                 ident_resp = ident_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": identity_prompt},
-                        {"role": "user", "content": identity_user_msg},
-                    ],
-                    timeout=90,
                     **get_chat_completion_params(
                         "builders",
                         DM_MAIN_MODEL,
                         temperature_override=ident_config.get("temperature", 0.2),
                     ),
+                    messages=[
+                        {"role": "system", "content": identity_prompt},
+                        {"role": "user", "content": identity_user_msg},
+                    ],
+                    timeout=90,
                 )
                 ident_raw = _as_string(ident_resp.choices[0].message.content)
                 ident_parsed, ident_err = _extract_json_payload(ident_raw)
@@ -642,16 +642,16 @@ def normalize_homebrew_upload(
                 topo_client = create_chat_client()
                 topo_config = get_model_config("builders", DM_MAIN_MODEL)
                 topo_resp = topo_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": topology_prompt},
-                        {"role": "user", "content": topology_user_msg},
-                    ],
-                    timeout=90,
                     **get_chat_completion_params(
                         "builders",
                         DM_MAIN_MODEL,
                         temperature_override=topo_config.get("temperature", 0.2),
                     ),
+                    messages=[
+                        {"role": "system", "content": topology_prompt},
+                        {"role": "user", "content": topology_user_msg},
+                    ],
+                    timeout=90,
                 )
                 topo_raw = _as_string(topo_resp.choices[0].message.content)
                 topo_parsed, topo_err = _extract_json_payload(topo_raw)
@@ -762,16 +762,16 @@ def normalize_homebrew_upload(
     try:
         client = create_chat_client()
         response = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": prompt_template},
-                {"role": "user", "content": user_prompt},
-            ],
-            timeout=120,
             **get_chat_completion_params(
                 "builders",
                 DM_MAIN_MODEL,
                 temperature_override=model_config.get("temperature", 0.3),
             ),
+            messages=[
+                {"role": "system", "content": prompt_template},
+                {"role": "user", "content": user_prompt},
+            ],
+            timeout=120,
         )
         model_text = _as_string(response.choices[0].message.content)
     except Exception as provider_error:
@@ -888,7 +888,6 @@ def normalize_homebrew_upload(
 
                 repair_prompt = _load_fidelity_repair_prompt()
                 repair_config = get_model_config("builders", DM_MAIN_MODEL)
-                repair_model = repair_config.get("model", DM_MAIN_MODEL)
                 repair_user_msg = (
                     "Propose additive packet repair operations for these fidelity gaps.\n"
                     "Return JSON only.\n\n"
@@ -903,16 +902,16 @@ def normalize_homebrew_upload(
                 try:
                     repair_client = create_chat_client()
                     repair_resp = repair_client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": repair_prompt},
-                            {"role": "user", "content": repair_user_msg},
-                        ],
-                        timeout=90,
                         **get_chat_completion_params(
                             "builders",
                             DM_MAIN_MODEL,
                             temperature_override=repair_config.get("temperature", 0.2),
                         ),
+                        messages=[
+                            {"role": "system", "content": repair_prompt},
+                            {"role": "user", "content": repair_user_msg},
+                        ],
+                        timeout=90,
                     )
                     model_output = _as_string(repair_resp.choices[0].message.content)
                     parsed, parse_err = _extract_json_payload(model_output)

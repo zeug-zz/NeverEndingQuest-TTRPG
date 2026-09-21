@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from utils.ai_client_factory import (
     create_chat_client,
     get_chat_completion_params,
+    get_model_config,
     handle_provider_error,
 )
 from model_config import DM_MAIN_MODEL
@@ -52,6 +53,7 @@ from utils.spatial_contract import (
     resolve_semantic_spatial_plan,
     build_tactical_grid,
 )
+from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
 
 @dataclass
@@ -108,6 +110,11 @@ class MapLayoutGenerator:
                 "barracks",
             ],
         }
+
+    @staticmethod
+    def _adaptation_log(area_context: Dict[str, Any], code: str, message: Any = None, count: Any = None) -> None:
+        if area_context.get("_llm_adaptation_prompt_context"):
+            emit_adaptation_telemetry(code=code, message=message, count=count, force=True)
 
     def generate_thematic_names(
         self, room_data: List[Dict], area_context: Dict[str, Any]
@@ -172,6 +179,9 @@ No explanations, just the JSON array of thematic location names."""
             _source_lock = area_context.get("_source_lock_context")
             if _source_lock:
                 prompt += f"\n\nSOURCE CONSTRAINTS (MUST follow):\n{_source_lock}\n"
+            _adaptation_context = area_context.get("_llm_adaptation_prompt_context")
+            if _adaptation_context:
+                prompt += f"\n\n{_adaptation_context}\n"
 
             client = create_chat_client()
             max_retries = 3
@@ -179,7 +189,8 @@ No explanations, just the JSON array of thematic location names."""
                 try:
                     response = client.chat.completions.create(
                         **get_chat_completion_params(
-                            "generate_thematic_names", DM_MAIN_MODEL,
+                            "generate_thematic_names",
+                            DM_MAIN_MODEL,
                             temperature_override=0.8,
                         ),
                         messages=[
@@ -189,6 +200,7 @@ No explanations, just the JSON array of thematic location names."""
                             },
                             {"role": "user", "content": prompt},
                         ],
+                        **({"timeout": area_context["llm_timeout_seconds"]} if area_context.get("llm_timeout_seconds") is not None else {}),
                     )
                     break
                 except Exception as e:
@@ -206,23 +218,31 @@ No explanations, just the JSON array of thematic location names."""
             try:
                 names = json.loads(response_text)
                 if isinstance(names, list) and len(names) == len(room_data):
-                    print(
-                        f"DEBUG: [Area Generator] AI generated {len(names)} thematic location names for {area_name}"
-                    )
+                    self._adaptation_log(area_context, "area_names_generated", count=len(names))
+                    if not area_context.get("_llm_adaptation_prompt_context"):
+                        print(
+                            f"DEBUG: [Area Generator] AI generated {len(names)} thematic location names for {area_name}"
+                        )
                     return names
                 else:
-                    print(
-                        f"DEBUG: [Area Generator] Warning: AI returned {len(names) if isinstance(names, list) else 'invalid'} names, expected {len(room_data)}"
-                    )
+                    self._adaptation_log(area_context, "area_names_count_mismatch", count=len(room_data))
+                    if not area_context.get("_llm_adaptation_prompt_context"):
+                        print(
+                            f"DEBUG: [Area Generator] Warning: AI returned {len(names) if isinstance(names, list) else 'invalid'} names, expected {len(room_data)}"
+                        )
                     raise ValueError("Invalid AI response format")
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"DEBUG: [Area Generator] Error parsing AI response: {e}")
-                print(f"DEBUG: [Area Generator] AI Response: {response_text}")
+                self._adaptation_log(area_context, "area_names_parse_failed")
+                if not area_context.get("_llm_adaptation_prompt_context"):
+                    print(f"DEBUG: [Area Generator] Error parsing AI response: {e}")
+                    print(f"DEBUG: [Area Generator] AI Response: {response_text}")
                 raise
 
         except Exception as e:
-            print(f"DEBUG: [Area Generator] Error generating thematic names: {e}")
-            print("DEBUG: [Area Generator] Falling back to enhanced generic names...")
+            self._adaptation_log(area_context, "area_names_generation_failed")
+            if not area_context.get("_llm_adaptation_prompt_context"):
+                print(f"DEBUG: [Area Generator] Error generating thematic names: {e}")
+                print("DEBUG: [Area Generator] Falling back to enhanced generic names...")
 
             # Enhanced fallback with better naming
             fallback_names = []
@@ -407,7 +427,8 @@ No explanations, just the JSON array of thematic location names."""
                 for i, room in enumerate(room_data):
                     room["name"] = thematic_names[i]
             except Exception as e:
-                print(f"DEBUG: [Area Generator] Failed to generate thematic names: {e}")
+                if not area_context.get("_llm_adaptation_prompt_context"):
+                    print(f"DEBUG: [Area Generator] Failed to generate thematic names: {e}")
                 # Fallback to enhanced generic names
                 for room in room_data:
                     room["name"] = f"{room['type'].title()} {room['id']}"
@@ -505,12 +526,21 @@ No explanations, just the JSON array of thematic location names."""
 class AreaGenerator:
     """Generates complete area files"""
 
-    def __init__(self):
+    def __init__(self, llm_timeout_seconds=None):
+        self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
         self.map_gen = MapLayoutGenerator()
         self.client = create_chat_client()  # Use factory client
 
+    @staticmethod
+    def _adaptation_log(active: bool, code: str, message: Any = None, count: Any = None) -> None:
+        if active:
+            emit_adaptation_telemetry(code=code, message=message, count=count, force=True)
+
     def generate_area_name_and_description(
-        self, initial_name: str, config: AreaConfig
+        self,
+        initial_name: str,
+        config: AreaConfig,
+        adaptation_context: str = "",
     ) -> tuple[str, str]:
         """
         Generates a thematic area name and description using AI, ensuring the name is
@@ -539,13 +569,17 @@ class AreaGenerator:
 }}
 """
 
+        if adaptation_context:
+            prompt += f"\n\n{adaptation_context}\n"
+
         try:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = self.client.chat.completions.create(
                         **get_chat_completion_params(
-                            "generate_area_name", DM_MAIN_MODEL,
+                            "generate_area_name",
+                            DM_MAIN_MODEL,
                             temperature_override=0.8,
                         ),
                         messages=[
@@ -556,6 +590,7 @@ class AreaGenerator:
                             {"role": "user", "content": prompt},
                         ],
                         response_format={"type": "json_object"},
+                        **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                     )
                     break
                 except Exception as e:
@@ -574,9 +609,11 @@ class AreaGenerator:
             return refined_name, description
 
         except Exception as e:
-            print(
-                f"DEBUG: [Area Generator] Warning: AI name/description generation failed: {e}"
-            )
+            self._adaptation_log(bool(adaptation_context), "area_name_generation_failed")
+            if not adaptation_context:
+                print(
+                    f"DEBUG: [Area Generator] Warning: AI name/description generation failed: {e}"
+                )
             # Fallback to a simple but functional name and description
             return (
                 initial_name,
@@ -593,12 +630,17 @@ class AreaGenerator:
     ) -> Dict[str, Any]:
         """Generate a complete area file"""
 
+        self._adaptation_active = bool(module_context.get("_llm_adaptation_prompt_context"))
+
         # Determine number of locations
         if config.num_locations is not None:
             num_locations = config.num_locations
-            print(
-                f"DEBUG: [AreaGenerator] Using explicit num_locations: {num_locations} for area: {area_name}"
-            )
+            if self._adaptation_active:
+                self._adaptation_log(True, "area_layout_configured", count=num_locations)
+            else:
+                print(
+                    f"DEBUG: [AreaGenerator] Using explicit num_locations: {num_locations} for area: {area_name}"
+                )
         else:
             # Use size-based calculation if not specified
             location_counts = {
@@ -607,14 +649,29 @@ class AreaGenerator:
                 "large": random.randint(25, 35),
             }
             num_locations = location_counts.get(config.size, 15)
-            print(
-                f"DEBUG: [AreaGenerator] Using size-based locations: {num_locations} for size: {config.size}"
-            )
+            if self._adaptation_active:
+                self._adaptation_log(True, "area_layout_configured", count=num_locations)
+            else:
+                print(
+                    f"DEBUG: [AreaGenerator] Using size-based locations: {num_locations} for size: {config.size}"
+                )
+
+        adaptation_context = str(
+            module_context.get("_llm_adaptation_prompt_context") or ""
+        ).strip()
 
         # Generate a refined, general area name and its description
-        refined_area_name, area_description = self.generate_area_name_and_description(
-            area_name, config
-        )
+        if adaptation_context:
+            refined_area_name, area_description = self.generate_area_name_and_description(
+                area_name,
+                config,
+                adaptation_context=adaptation_context,
+            )
+        else:
+            refined_area_name, area_description = self.generate_area_name_and_description(
+                area_name,
+                config,
+            )
 
         # Build context for AI location naming using the refined area name
         area_context = {
@@ -624,9 +681,12 @@ class AreaGenerator:
             "theme": module_context.get("moduleDescription", "fantasy adventure"),
             "danger_level": config.danger_level,
             "recommended_level": config.recommended_level,
+            "llm_timeout_seconds": self.llm_timeout_seconds,
         }
         if "_source_lock_context" in module_context:
             area_context["_source_lock_context"] = module_context["_source_lock_context"]
+        if adaptation_context:
+            area_context["_llm_adaptation_prompt_context"] = adaptation_context
 
         # Generate map layout with AI-powered thematic naming
         map_data = self.map_gen.generate_layout(
@@ -730,8 +790,9 @@ Return ONLY the area description text, no additional formatting or labels."""
                 try:
                     response = self.client.chat.completions.create(
                         **get_chat_completion_params(
-                            "generate_area_description", DM_MAIN_MODEL,
-                            temperature_override=0.8,
+                            "generate_area_description",
+                            DM_MAIN_MODEL,
+                            temperature_override=0.8,  # Higher temperature for more creative variety
                         ),
                         messages=[
                             {
@@ -740,6 +801,7 @@ Return ONLY the area description text, no additional formatting or labels."""
                             },
                             {"role": "user", "content": prompt},
                         ],
+                        **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                     )
                     break
                 except Exception as e:
@@ -759,9 +821,10 @@ Return ONLY the area description text, no additional formatting or labels."""
                 return f"{area_name} presents unique challenges and opportunities for adventurers."
 
         except Exception as e:
-            print(
-                f"DEBUG: [Area Generator] Warning: Failed to generate area description via AI: {e}"
-            )
+            if not getattr(self, "_adaptation_active", False):
+                print(
+                    f"DEBUG: [Area Generator] Warning: Failed to generate area description via AI: {e}"
+                )
             # Fallback to basic description without hardcoded templates
             area_adjectives = {
                 "dungeon": ["ancient", "forgotten", "mysterious", "treacherous"],

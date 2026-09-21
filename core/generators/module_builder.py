@@ -47,6 +47,10 @@ except ImportError:
 from utils.module_context import ModuleContext
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.npc_reconciler import NpcReconciler
+from utils.toolkit_adaptation_builder_context import (
+    build_adaptation_context_bundle,
+)
+from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
 # Set script name for logging
 set_script_name("module_builder")
@@ -59,6 +63,8 @@ class BuilderConfig:
     locations_per_area: int = 15
     output_directory: str = "./modules"
     verbose: bool = True
+    build_mode: str = "legacy"
+    llm_timeout_seconds: Optional[float] = None
 
 class ModuleBuilder:
     """Orchestrates the complete module generation process"""
@@ -73,19 +79,50 @@ class ModuleBuilder:
         self.progress_callback = None  # For progress reporting
         self.per_area_locations = None  # For custom locations per area
         self.source_lock_context = ""  # Accurate-ingest source lock block
+        self.build_mode = str(getattr(config, "build_mode", "legacy") or "legacy")
+        self.llm_timeout_seconds = self._valid_llm_timeout(
+            getattr(config, "llm_timeout_seconds", None)
+        )
+        self.llm_adaptation: Optional[Dict[str, Any]] = None
+        self.adaptation_prompt_context: Dict[str, str] = {}
         
         # Initialize generators
-        self.module_gen = ModuleGenerator()
+        self.module_gen = ModuleGenerator(llm_timeout_seconds=self.llm_timeout_seconds)
         self.plot_gen = PlotGenerator()
-        self.location_gen = LocationGenerator()
-        self.area_gen = AreaGenerator()
+        self.plot_gen.llm_timeout_seconds = self.llm_timeout_seconds
+        self.location_gen = LocationGenerator(llm_timeout_seconds=self.llm_timeout_seconds)
+        self.area_gen = AreaGenerator(llm_timeout_seconds=self.llm_timeout_seconds)
         
         # Create output directory
         os.makedirs(self.config.output_directory, exist_ok=True)
+
+    @staticmethod
+    def _valid_llm_timeout(value: Any) -> Optional[float]:
+        """Return a safe positive bounded timeout, or None for legacy calls."""
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError):
+            return None
+        if 0 < timeout <= 600:
+            return timeout
+        return None
+
+    def _llm_timeout_kwargs(self) -> Dict[str, Any]:
+        """Build request kwargs without changing legacy request shapes."""
+        if self.llm_timeout_seconds is None:
+            return {}
+        return {"timeout": self.llm_timeout_seconds}
     
     def log(self, message: str):
         """Log messages if verbose mode is enabled"""
         if self.config.verbose:
+            if self.build_mode == "llm_adaptation" or self.llm_adaptation is not None:
+                emit_adaptation_telemetry(
+                    code="module_builder_progress",
+                    message=message,
+                    force=True,
+                )
+                return
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"DEBUG: [Module Generator] [{timestamp}] {message}")
     
@@ -133,8 +170,43 @@ MODULE INDEPENDENCE RULES:
             return ""
         return text[idx:].strip()
 
-    def build_module(self, initial_concept: str):
+    def _adaptation_context_for(self, surface: str) -> str:
+        """Return one bounded adaptation prompt block, if this is an adaptation build."""
+        if self.build_mode != "llm_adaptation":
+            return ""
+        return self.adaptation_prompt_context.get(surface, "")
+
+    def _append_adaptation_context(self, text: str, surface: str) -> str:
+        """Append adaptation guidance without changing legacy prompt text."""
+        block = self._adaptation_context_for(surface)
+        if not block:
+            return text
+        return f"{text.rstrip()}\n\n{block}"
+
+    def build_module(
+        self,
+        initial_concept: str,
+        llm_adaptation: Optional[Dict[str, Any]] = None,
+    ):
         """Build a complete module from an initial concept"""
+        if llm_adaptation is not None:
+            # TABLETOP MODE: Store the validated adaptation handoff without
+            # turning it into the legacy source-lock context. The adaptation
+            # context is bounded and only reaches this explicit build mode.
+            import copy
+
+            self.llm_adaptation = copy.deepcopy(llm_adaptation)
+            self.build_mode = "llm_adaptation"
+            self.adaptation_prompt_context = build_adaptation_context_bundle(
+                self.llm_adaptation
+            )
+        else:
+            self.llm_adaptation = None
+            self.adaptation_prompt_context = {}
+        # TABLETOP MODE: Keep the upstream generator's legacy closure disabled
+        # only for adaptation builds; the packet pipeline owns staged semantic
+        # normalization and the later closure check.
+        self.module_gen.adaptation_mode = self.llm_adaptation is not None
         self.log("Starting module build process...")
         self.log(f"Initial concept: {initial_concept}")
         
@@ -146,7 +218,10 @@ MODULE INDEPENDENCE RULES:
             # Get existing characters for context
             existing_characters = self.get_party_members()
             self.context_header = self.create_context_header(existing_characters)
-            self.source_lock_context = self._extract_source_lock_context(initial_concept)
+            if self.llm_adaptation is not None:
+                self.source_lock_context = ""
+            else:
+                self.source_lock_context = self._extract_source_lock_context(initial_concept)
             
             # Report progress
             if self.progress_callback:
@@ -164,11 +239,33 @@ MODULE INDEPENDENCE RULES:
             if self.progress_callback:
                 self.progress_callback('base_structure', 'Generating module overview from AI...')
             
-            # Add number of areas to the concept so AI generates the right amount
-            contextualized_concept = self.context_header + initial_concept
+            # Add number of areas to the concept so AI generates the right amount.
+            # Adaptation receives its dossier block instead of any legacy source
+            # lock block that may have been carried by an older narrative file.
+            concept_for_module = initial_concept
+            if self.llm_adaptation is not None:
+                source_lock_marker = "=== SOURCE LOCK CONTEXT ==="
+                concept_for_module = initial_concept.split(source_lock_marker, 1)[0].rstrip()
+            contextualized_concept = self.context_header + concept_for_module
             contextualized_concept += f"\n\nIMPORTANT: Generate exactly {self.config.num_areas} regions in the worldMap array."
-            
-            self.module_data = self.module_gen.generate_module(contextualized_concept, context=self.context)
+            validation_output_directory = (
+                self.config.output_directory
+                if self.llm_adaptation is not None
+                else None
+            )
+            if self._adaptation_context_for("module"):
+                self.module_data = self.module_gen.generate_module(
+                    contextualized_concept,
+                    context=self.context,
+                    adaptation_context=self._adaptation_context_for("module"),
+                    output_directory=validation_output_directory,
+                )
+            else:
+                self.module_data = self.module_gen.generate_module(
+                    contextualized_concept,
+                    context=self.context,
+                    output_directory=validation_output_directory,
+                )
 
             # Propagate source lock context to downstream generators
             if self.source_lock_context:
@@ -220,7 +317,11 @@ MODULE INDEPENDENCE RULES:
         
         # Step 6.5: Reconcile NPC names across all files
         self.log("Step 6.5: Reconciling NPC names for consistency...")
-        reconciler = NpcReconciler(self.config.module_name)
+        reconciler = NpcReconciler(
+            self.config.module_name,
+            llm_timeout_seconds=self.llm_timeout_seconds,
+            output_directory=self.config.output_directory,
+        )
         if reconciler.load_context():
             reconciler.reconcile_all_areas()
         
@@ -306,7 +407,7 @@ MODULE INDEPENDENCE RULES:
         climactic_location.setdefault("npcs", []).append(antagonist_npc_entry)
         
         # 7. Save the updated area file
-        safe_write_json(area_data, area_file_path)
+        safe_write_json(area_file_path, area_data)
         self.log(f"  - SUCCESS: Mandated placement of '{antagonist_name}' in {climactic_area_id}:{climactic_location_id}.")
 
     def generate_areas(self):
@@ -350,8 +451,12 @@ MODULE INDEPENDENCE RULES:
             
             # Generate area using AreaGenerator
             module_data_for_area = self.module_data
-            if self.source_lock_context:
-                module_data_for_area = {**self.module_data, "_source_lock_context": self.source_lock_context}
+            if self.source_lock_context or self._adaptation_context_for("areas"):
+                module_data_for_area = {**self.module_data}
+                if self.source_lock_context:
+                    module_data_for_area["_source_lock_context"] = self.source_lock_context
+                if self._adaptation_context_for("areas"):
+                    module_data_for_area["_llm_adaptation_prompt_context"] = self._adaptation_context_for("areas")
             area_data = self.area_gen.generate_area(
                 region["regionName"],
                 area_id,
@@ -516,13 +621,23 @@ MODULE INDEPENDENCE RULES:
             plot_data = self.plots_data.get(area_id, {})
             
             # Generate locations using the LocationGenerator with context
+            module_data_for_locations = self.module_data
+            if self._adaptation_context_for("locations"):
+                module_data_for_locations = {
+                    **self.module_data,
+                    "_llm_adaptation_prompt_context": self._adaptation_context_for("locations"),
+                }
+            location_context_header = self._append_adaptation_context(
+                self.context_header,
+                "locations",
+            )
             location_data = self.location_gen.generate_locations(
                 area_data,
                 plot_data,
-                self.module_data,
+                module_data_for_locations,
                 context=self.context,
                 excluded_names=existing_characters,
-                context_header=self.context_header
+                context_header=location_context_header
             )
             
             # Store locations data
@@ -556,14 +671,21 @@ The plot title should reference this specific area, not other locations.
 ===================================
 
 {self.context_header}"""
-            
             plot_data = self.plot_gen.generate_plot(
                 self.module_data,
                 area_data,
                 location_data,
                 f"Create a plot specifically for {area_data['areaName']}, a {area_data.get('areaType', 'region')} area",
                 context=self.context,
-                context_header=area_specific_context
+                context_header=self._append_adaptation_context(
+                    area_specific_context,
+                    "plot",
+                ),
+                **(
+                    {"adaptation_context": self._adaptation_context_for("plot")}
+                    if self._adaptation_context_for("plot")
+                    else {}
+                ),
             )
             
             self.plots_data[area_id] = plot_data
@@ -586,7 +708,8 @@ The plot title should reference this specific area, not other locations.
             return
             
         # Import factory at the function level to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error; from config import DM_MAIN_MODEL
+        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
+        from config import DM_MAIN_MODEL
         
         client = create_chat_client()
         
@@ -686,19 +809,24 @@ IMPORTANT:
 - Each side quest must have a unique number across the entire module, not restarting from SQ001 for each plot point
 - Maintain all existing content but improve flow and connections"""
 
+        prompt = self._append_adaptation_context(prompt, "connective")
+
         try:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
                         **get_chat_completion_params(
-                            "unify_plots", DM_MAIN_MODEL, temperature_override=0.7
+                            "unify_plots",
+                            DM_MAIN_MODEL,
+                            temperature_override=0.7,
                         ),
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating coherent, engaging adventure narratives."},
                             {"role": "user", "content": prompt}
                         ],
                         response_format={"type": "json_object"},
+                        **self._llm_timeout_kwargs(),
                     )
                     break
                 except Exception as e:
@@ -950,19 +1078,24 @@ IMPORTANT:
 - Preserve the existing style and tone
 - Make hooks more specific and actionable"""
 
+        prompt = self._append_adaptation_context(prompt, "connective")
+
         try:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
                         **get_chat_completion_params(
-                            "update_plot_hooks", DM_MAIN_MODEL, temperature_override=0.6
+                            "update_plot_hooks",
+                            DM_MAIN_MODEL,
+                            temperature_override=0.6,
                         ),
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating actionable plot hooks that reference specific plot elements."},
                             {"role": "user", "content": prompt}
                         ],
                         response_format={"type": "json_object"},
+                        **self._llm_timeout_kwargs(),
                     )
                     break
                 except Exception as e:
@@ -1462,7 +1595,8 @@ Return ONLY the JSON object, no explanations or additional text."""
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "parse_module_params", config.DM_SUMMARIZATION_MODEL,
+                        "parse_module_params",
+                        config.DM_SUMMARIZATION_MODEL,
                         temperature_override=0.3,
                     ),
                     messages=[

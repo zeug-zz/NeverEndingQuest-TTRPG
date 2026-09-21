@@ -1,0 +1,149 @@
+{
+  "version": "toolkit_adaptation_dossier.v1",
+  "status": "ready",
+  "adaptation_mode": "llm_adaptation",
+  "source_title": "The Lantern Catalogue",
+  "adapted_title": "The Lantern Market",
+  "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_profile": "catalogue",
+  "module_tone": "Warm market fantasy with a thread of mystery",
+  "level_range": {
+    "min": 1,
+    "max": 4
+  },
+  "starting_location": {
+    "name": "Lantern Market Gate",
+    "description": "A covered market gate where travelers can meet the lantern keeper.",
+    "entry_hook": "A missing shipment has made the market unusually quiet.",
+    "area_name": "Lantern Market"
+  },
+  "areas": [
+    {
+      "name": "Lantern Market",
+      "purpose": "A playable shop district for investigation, trade, and small complications.",
+      "location_seeds": [
+        {
+          "name": "Lantern Market Gate",
+          "purpose": "Introduce the market and the missing shipment.",
+          "description": "A crowded gate opens onto stalls of glass, brass, and colored flame.",
+          "connections": ["Lanternwright Stall"]
+        },
+        {
+          "name": "Lanternwright Stall",
+          "purpose": "Offer item choices and reveal the source of the trouble.",
+          "description": "A narrow stall displays safe travel lights and one sealed black lantern.",
+          "connections": ["Lantern Market Gate"]
+        }
+      ],
+      "connections": []
+    }
+  ],
+  "plot_objective": {
+    "summary": "Find the missing shipment before the market closes for the night.",
+    "success_condition": "The party recovers the shipment or establishes a safe replacement route.",
+    "failure_condition": "The market loses trust and the shipment reaches a dangerous buyer."
+  },
+  "plot_progression": [
+    {
+      "order": 1,
+      "name": "Ask at the gate",
+      "description": "The keeper points the party toward the lanternwright stall.",
+      "objective": "Learn who last handled the shipment."
+    },
+    {
+      "order": 2,
+      "name": "Trace the black lantern",
+      "description": "The party follows clues through the market and chooses how to intervene.",
+      "objective": "Recover the shipment without harming the market community.",
+      "resolution": "A successful resolution opens a future trade or investigation hook."
+    }
+  ],
+  "npc_seeds": [
+    {
+      "name": "Mira Vell",
+      "role": "Lantern keeper",
+      "purpose": "Provide the opening request and a cautious ally.",
+      "disposition": "Helpful but worried",
+      "source_basis": "Merchant role retained from the source concept"
+    }
+  ],
+  "encounter_seeds": [
+    {
+      "name": "The Sealed Lantern",
+      "setup": "A hidden buyer tries to remove the black lantern during the market rush.",
+      "stakes": "The shipment and the safety of nearby customers are at risk.",
+      "resolution_paths": [
+        "Negotiate a surrender and learn who placed the order.",
+        "Chase the buyer through the market without destroying the stalls."
+      ],
+      "adversaries": ["Smuggler", "Market lookout"],
+      "location": "Lanternwright Stall",
+      "source_basis": "Adapted from the source catalogue complication"
+    }
+  ],
+  "item_seeds": [
+    {
+      "name": "Wayfinder Lantern",
+      "purpose": "Give the party a useful travel tool and a reason to return.",
+      "description": "A hooded lantern whose colored flame reveals safe paths through fog.",
+      "category": "utility",
+      "source_basis": "Adapted from the catalogue item family"
+    }
+  ],
+  "puzzle_or_trial_seeds": [
+    {
+      "name": "Three Flame Seal",
+      "premise": "The black lantern opens only when three harmless flames are arranged by color.",
+      "resolution_guidance": "Use observation, experimentation, or a helpful market witness.",
+      "failure_consequence": "The seal dims and delays the party without dealing automatic damage."
+    }
+  ],
+  "retained_source_elements": [
+    {
+      "element": "A catalogue of lanterns and travel lights",
+      "reason": "Retained as the market's item identity and visual theme.",
+      "source_ref": "catalogue.sections.items"
+    }
+  ],
+  "omitted_source_elements": [
+    {
+      "element": "Long item-only listings without play hooks",
+      "reason": "Omitted from rooms and plot beats because they do not add playable action.",
+      "source_ref": "catalogue.sections.listings"
+    }
+  ],
+  "original_adaptation_elements": [
+    {
+      "element": "Lantern Market Gate and its missing-shipment hook",
+      "kind": "original connective setting",
+      "reason": "Creates a playable entry point for a catalogue-shaped source."
+    }
+  ],
+  "world_narrative_hooks": [
+    {
+      "hook": "The black lantern may be part of a wider signal network.",
+      "relationship": "Candidate thread for a later travel or smuggling module.",
+      "proposed_follow_up": "Let a future approved world seed decide whether the signal returns."
+    }
+  ],
+  "continuity_hints": [
+    {
+      "hint": "Mira Vell can recognize the party if they return with the shipment.",
+      "scope": "module_follow_up",
+      "related_module": "The Lantern Market",
+      "entity": "Mira Vell"
+    }
+  ],
+  "rights_class": "user_authored",
+  "rights_basis": "Operator attested that the uploaded source is user-authored.",
+  "rights_review_required": false,
+  "rights_review_status": "not_required",
+  "adaptation_notice": "Adapted for NEQ-TTRPG",
+  "assumptions": [
+    "The catalogue permits a shop-centered playable adaptation.",
+    "Generic fantasy framing is acceptable for the NEQ-TTRPG setting."
+  ],
+  "warnings": [
+    "The adapted module is not a literal source-fidelity reproduction."
+  ]
+}

@@ -33,6 +33,14 @@ from utils.toolkit_homebrew_upload_contract import (
     persist_readiness_validation_artifact,
     persist_repair_report_artifact,
 )
+from utils.toolkit_adaptation_output_safety import (
+    is_adaptation_output_active,
+    project_diagnostic_tail,
+)
+from utils.toolkit_adaptation_staging import (
+    STAGING_METADATA_FILENAME,
+    _validated_target_metadata,
+)
 
 
 VALID_GAME_MONTHS = {
@@ -86,18 +94,26 @@ def _safe_json_load(text: str) -> Dict[str, Any]:
     return {}
 
 
-def _run_validator(module_slug: str) -> Dict[str, Any]:
+def _run_validator(module_slug: str, module_path: Optional[Path] = None) -> Dict[str, Any]:
     """Run module validator and capture structured output."""
     command = [
         sys.executable,
         "core/validation/validate_module_files.py",
-        "--module",
-        module_slug,
+        "--module-path" if module_path else "--module",
+        str(module_path) if module_path else module_slug,
         "--json",
     ]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=180)
     payload = _safe_json_load(completed.stdout)
-    module_report = _extract_module_validation_report(payload, module_slug)
+    module_report = _extract_module_validation_report(
+        payload, module_slug, str(module_path or "") or None
+    )
+    if not module_report and module_path:
+        modules = payload.get("modules") if isinstance(payload, dict) else None
+        if isinstance(modules, dict) and len(modules) == 1:
+            only_report = next(iter(modules.values()))
+            if isinstance(only_report, dict):
+                module_report = only_report
     total_failed = int((module_report or {}).get("total_failed", 0) or 0)
 
     return {
@@ -106,18 +122,28 @@ def _run_validator(module_slug: str) -> Dict[str, Any]:
         else "fail",
         "checked_at": _utc_now_iso(),
         "module": module_slug,
+        "module_path": str(module_path or ""),
         "command": " ".join(command),
         "exit_code": completed.returncode,
         "total_failed": total_failed,
         "report": payload,
-        "stdout_tail": (completed.stdout or "")[-2000:],
-        "stderr_tail": (completed.stderr or "")[-2000:],
+        "stdout_tail": (
+            project_diagnostic_tail(completed.stdout, stream="stdout")
+            if is_adaptation_output_active()
+            else (completed.stdout or "")[-2000:]
+        ),
+        "stderr_tail": (
+            project_diagnostic_tail(completed.stderr, stream="stderr")
+            if is_adaptation_output_active()
+            else (completed.stderr or "")[-2000:]
+        ),
     }
 
 
 def _extract_module_validation_report(
     validator_payload: Dict[str, Any],
     module_slug: str,
+    module_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Extract module-scoped validation report from validator JSON output."""
     if not isinstance(validator_payload, dict):
@@ -128,6 +154,10 @@ def _extract_module_validation_report(
         module_report = modules.get(module_slug)
         if isinstance(module_report, dict):
             return module_report
+        if module_path and len(modules) == 1:
+            only_report = next(iter(modules.values()))
+            if isinstance(only_report, dict):
+                return only_report
 
     results = validator_payload.get("results")
     if isinstance(results, dict):
@@ -146,12 +176,17 @@ def _build_validation_signature(validation_report: Dict[str, Any]) -> str:
     report = _extract_module_validation_report(
         validation_report.get("report") or {},
         str(validation_report.get("module") or "").strip(),
+        str(validation_report.get("module_path") or "").strip() or None,
     )
     grouped = (report or {}).get("files") if isinstance(report, dict) else {}
+    if not isinstance(grouped, dict):
+        grouped = {}
     signature_items: List[str] = []
 
     for category in sorted(grouped.keys()):
         section = grouped.get(category) or {}
+        if not isinstance(section, dict):
+            continue
         failed_count = int(section.get("failed", 0) or 0)
         if failed_count <= 0:
             continue
@@ -177,9 +212,14 @@ def _extract_failure_categories(validation_report: Dict[str, Any]) -> Dict[str, 
     report = _extract_module_validation_report(
         validation_report.get("report") or {},
         str(validation_report.get("module") or "").strip(),
+        str(validation_report.get("module_path") or "").strip() or None,
     )
     grouped = (report or {}).get("files") if isinstance(report, dict) else {}
+    if not isinstance(grouped, dict):
+        grouped = {}
     for category, section in grouped.items():
+        if not isinstance(section, dict):
+            continue
         failed_count = int((section or {}).get("failed", 0) or 0)
         if failed_count > 0:
             result[str(category)] = failed_count
@@ -192,9 +232,14 @@ def _extract_failure_errors(validation_report: Dict[str, Any]) -> Dict[str, List
     report = _extract_module_validation_report(
         validation_report.get("report") or {},
         str(validation_report.get("module") or "").strip(),
+        str(validation_report.get("module_path") or "").strip() or None,
     )
     grouped = (report or {}).get("files") if isinstance(report, dict) else {}
+    if not isinstance(grouped, dict):
+        grouped = {}
     for category, section in grouped.items():
+        if not isinstance(section, dict):
+            continue
         failed_count = int((section or {}).get("failed", 0) or 0)
         if failed_count <= 0:
             continue
@@ -1188,6 +1233,7 @@ def _run_deterministic_repairs(
     module_dir: Path,
     failure_categories: Dict[str, int],
     validation_report: Optional[Dict[str, Any]] = None,
+    staged_module: bool = False,
 ) -> Dict[str, Any]:
     """Run deterministic repair domains for structural failures."""
     report: Dict[str, Any] = {
@@ -1202,7 +1248,12 @@ def _run_deterministic_repairs(
     month_result = _deterministic_fix_party_month(module_dir)
     report["repairs"]["party_month"] = month_result
 
-    if "reference_integrity" in failure_categories:
+    if "reference_integrity" in failure_categories and staged_module:
+        monster_result = {
+            "status": "failed",
+            "reason": "adaptation_staged_monster_repair_unsupported",
+        }
+    elif "reference_integrity" in failure_categories:
         monster_result = _deterministic_materialize_monsters(module_slug)
     else:
         monster_result = {
@@ -1211,7 +1262,12 @@ def _run_deterministic_repairs(
         }
     report["repairs"]["monster_materialization"] = monster_result
 
-    if "reference_integrity" in failure_categories:
+    if "reference_integrity" in failure_categories and staged_module:
+        validator_reference_result = {
+            "status": "failed",
+            "reason": "adaptation_staged_reference_repair_unsupported",
+        }
+    elif "reference_integrity" in failure_categories:
         validator_reference_result = _deterministic_close_monster_references(
             module_slug,
             validation_report or {},
@@ -1260,7 +1316,11 @@ def _run_deterministic_repairs(
         )
         spatial_result = _deterministic_fix_spatial_contract(module_dir)
         if str(spatial_result.get("status") or "") != "failed":
-            post_validation = _run_validator(module_slug)
+            post_validation = (
+                _run_validator(module_slug, module_dir)
+                if staged_module
+                else _run_validator(module_slug)
+            )
             post_spatial_errors = set(
                 _extract_failure_errors(post_validation).get("spatial_contract", [])
             )
@@ -1324,7 +1384,9 @@ def _run_semantic_repairs(module_dir: Path) -> Dict[str, Any]:
     return report
 
 
-def _run_structural_readiness_audit(module_slug: str) -> Dict[str, Any]:
+def _run_structural_readiness_audit(
+    module_slug: str, module_path: Optional[Path] = None
+) -> Dict[str, Any]:
     """Run readiness audit in structural profile and normalize result."""
     report = audit_module_readiness(
         module_slug=module_slug,
@@ -1334,6 +1396,7 @@ def _run_structural_readiness_audit(module_slug: str) -> Dict[str, Any]:
         include_schema_gate=True,
         strict_gameplay=False,
         strict_continuity=False,
+        module_path=str(module_path) if module_path else None,
     )
 
     gates = report.get("gates") if isinstance(report, dict) else {}
@@ -1350,10 +1413,104 @@ def _run_structural_readiness_audit(module_slug: str) -> Dict[str, Any]:
     }
 
 
+def _resolve_adaptation_module_path(
+    build_result: Dict[str, Any], module_slug: str
+) -> Tuple[Optional[Path], Dict[str, Any]]:
+    """Resolve and verify the current isolated adaptation candidate.
+
+    Adaptation readiness is never allowed to fall back to ``modules/<slug>``.
+    The staging marker is checked against its persisted identity when present;
+    a plain output directory remains subject to the same project and workspace
+    containment checks.
+    """
+    mode = str(
+        build_result.get("adaptation_mode") or build_result.get("build_mode") or ""
+    ).strip().lower()
+    if mode != "llm_adaptation":
+        return Path("modules") / module_slug, {"status": "legacy"}
+
+    target = build_result.get("staging_target")
+    candidate_value = ""
+    if isinstance(target, dict):
+        candidate_value = str(target.get("path") or target.get("output_directory") or "").strip()
+    if not candidate_value:
+        candidate_value = str(build_result.get("output_directory") or "").strip()
+    if not candidate_value:
+        return None, {"status": "failed", "reason": "adaptation_staging_path_missing"}
+
+    repo_root = Path.cwd().resolve()
+    candidate = Path(candidate_value)
+    resolved = (candidate if candidate.is_absolute() else repo_root / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root)
+    except ValueError:
+        return None, {"status": "failed", "reason": "adaptation_staging_path_outside_project"}
+    if resolved == (repo_root / "modules").resolve() or (repo_root / "modules").resolve() in resolved.parents:
+        return None, {"status": "failed", "reason": "adaptation_staging_path_live_module"}
+    if not resolved.is_dir() or resolved.is_symlink():
+        return None, {"status": "failed", "reason": "adaptation_staging_workspace_missing"}
+    required = ("module_context.json", "module_plot.json", "areas")
+    if not all((resolved / name).exists() for name in required):
+        return None, {"status": "failed", "reason": "adaptation_staging_workspace_invalid"}
+    if not isinstance(target, dict) and resolved.name != module_slug:
+        context = safe_read_json(str(resolved / "module_context.json"))
+        context_identity = str(
+            context.get("module_name") or context.get("module_id") or context.get("name") or ""
+        ).strip()
+        if context_identity and context_identity != module_slug:
+            return None, {
+                "status": "failed",
+                "reason": "adaptation_staging_module_identity_mismatch",
+            }
+
+    identity: Dict[str, Any] = {"status": "validated", "path": str(resolved)}
+    if isinstance(target, dict):
+        try:
+            normalized, target_path = _validated_target_metadata(
+                target,
+                repo_root=repo_root,
+                expected_module_slug=module_slug,
+            )
+            if target_path != resolved:
+                raise ValueError("staging target path does not match resolved output")
+            persisted = safe_read_json(str(resolved / STAGING_METADATA_FILENAME))
+            if not isinstance(persisted, dict):
+                raise ValueError("staging target metadata is missing")
+            persisted_normalized, _ = _validated_target_metadata(
+                persisted,
+                repo_root=repo_root,
+                expected_module_slug=module_slug,
+            )
+            if persisted_normalized.get("stage_id") != normalized.get("stage_id"):
+                raise ValueError("staging target identity is stale")
+            if normalized.get("module_slug") != module_slug:
+                raise ValueError("staging target module identity mismatch")
+            identity.update(
+                {
+                    "stage_id": normalized.get("stage_id"),
+                    "attempt_id": normalized.get("attempt_id"),
+                    "attempt_number": normalized.get("attempt_number"),
+                    "revision_number": normalized.get("revision_number"),
+                    "source_hash": normalized.get("source_hash"),
+                    "freshness": "current",
+                }
+            )
+        except Exception as exc:
+            return None, {
+                "status": "failed",
+                "reason": "adaptation_staging_identity_invalid",
+                "detail": str(exc)[:160],
+            }
+    else:
+        identity["freshness"] = "unverified_output_directory"
+    return resolved, identity
+
+
 def run_toolkit_homebrew_readiness_gate(
     workspace: Path,
     job_id: str,
     state_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    module_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run post-build structural readiness validation and bounded repair loops."""
     files = get_workspace_files(workspace)
@@ -1367,7 +1524,42 @@ def run_toolkit_homebrew_readiness_gate(
             "job_id": job_id,
         }
 
-    module_dir = Path("modules") / module_slug
+    resolved_module_dir, staging_identity = _resolve_adaptation_module_path(
+        build_result, module_slug
+    )
+    if module_path and resolved_module_dir is not None:
+        supplied = Path(module_path)
+        supplied = (supplied if supplied.is_absolute() else Path.cwd() / supplied).resolve()
+        if supplied != resolved_module_dir:
+            resolved_module_dir = None
+            staging_identity = {
+                "status": "failed",
+                "reason": "adaptation_staging_path_argument_mismatch",
+            }
+    if resolved_module_dir is None:
+        failed_validation = {
+            "status": "fail",
+            "module": module_slug,
+            "module_path": str(module_path or ""),
+            "reason": staging_identity.get("reason", "adaptation_staging_invalid"),
+            "diagnostics": [staging_identity.get("detail", "")[:240]],
+        }
+        persist_readiness_validation_artifact(workspace, failed_validation)
+        return {
+            "status": "staging_validation_failed",
+            "stage": "readiness",
+            "job_id": job_id,
+            "module_name": module_slug,
+            "module_path": "",
+            "staging_identity": staging_identity,
+            "validation": failed_validation,
+            "readiness_audit": {},
+            "repair_attempts": [],
+            "ready_for_finishing": False,
+            "reason": staging_identity.get("reason", "adaptation_staging_invalid"),
+            "completed_at": _utc_now_iso(),
+        }
+    module_dir = resolved_module_dir
     repair_attempts: List[Dict[str, Any]] = []
 
     def _emit_state(status: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -1382,7 +1574,12 @@ def run_toolkit_homebrew_readiness_gate(
             )
 
     _emit_state("validating", {"module_name": module_slug})
-    validation_report = _run_validator(module_slug)
+    staged_validation = staging_identity.get("status") != "legacy"
+    validation_report = (
+        _run_validator(module_slug, module_dir)
+        if staged_validation
+        else _run_validator(module_slug)
+    )
     persist_readiness_validation_artifact(workspace, validation_report)
 
     defect = _detect_build_system_defect(build_result, module_dir, validation_report)
@@ -1431,12 +1628,21 @@ def run_toolkit_homebrew_readiness_gate(
                     "categories": failure_categories,
                 },
             )
-            det_report = _run_deterministic_repairs(
-                module_slug,
-                module_dir,
-                failure_categories,
-                validation_report,
-            )
+            if staged_validation:
+                det_report = _run_deterministic_repairs(
+                    module_slug,
+                    module_dir,
+                    failure_categories,
+                    validation_report,
+                    staged_module=True,
+                )
+            else:
+                det_report = _run_deterministic_repairs(
+                    module_slug,
+                    module_dir,
+                    failure_categories,
+                    validation_report,
+                )
             det_report["pass"] = deterministic_passes
             repair_attempts.append(det_report)
             if det_report.get("status") == "failed":
@@ -1449,7 +1655,11 @@ def run_toolkit_homebrew_readiness_gate(
                             "after_failed_deterministic": True,
                         },
                     )
-                    validation_report = _run_validator(module_slug)
+                    validation_report = (
+                        _run_validator(module_slug, module_dir)
+                        if staged_validation
+                        else _run_validator(module_slug)
+                    )
                     persist_readiness_validation_artifact(workspace, validation_report)
                     previous_signature = _build_validation_signature(validation_report)
                 break
@@ -1476,7 +1686,11 @@ def run_toolkit_homebrew_readiness_gate(
                             "after_failed_semantic": True,
                         },
                     )
-                    validation_report = _run_validator(module_slug)
+                    validation_report = (
+                        _run_validator(module_slug, module_dir)
+                        if staged_validation
+                        else _run_validator(module_slug)
+                    )
                     persist_readiness_validation_artifact(workspace, validation_report)
                     previous_signature = _build_validation_signature(validation_report)
                 break
@@ -1484,7 +1698,11 @@ def run_toolkit_homebrew_readiness_gate(
             break
 
         _emit_state("validating", {"module_name": module_slug, "revalidation": True})
-        validation_report = _run_validator(module_slug)
+        validation_report = (
+            _run_validator(module_slug, module_dir)
+            if staged_validation
+            else _run_validator(module_slug)
+        )
         persist_readiness_validation_artifact(workspace, validation_report)
         current_signature = _build_validation_signature(validation_report)
 
@@ -1508,7 +1726,11 @@ def run_toolkit_homebrew_readiness_gate(
         previous_signature = current_signature
 
     _emit_state("validating", {"module_name": module_slug, "audit": True})
-    audit_report = _run_structural_readiness_audit(module_slug)
+    audit_report = (
+        _run_structural_readiness_audit(module_slug, module_dir)
+        if staged_validation
+        else _run_structural_readiness_audit(module_slug)
+    )
     persist_readiness_audit_artifact(workspace, audit_report)
 
     readiness_ok = (
@@ -1558,6 +1780,8 @@ def run_toolkit_homebrew_readiness_gate(
         "stage": "readiness",
         "job_id": job_id,
         "module_name": module_slug,
+        "module_path": str(module_dir),
+        "staging_identity": staging_identity,
         "build_result": build_result,
         "validation": validation_report,
         "readiness_audit": audit_report,

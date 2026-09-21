@@ -171,7 +171,7 @@ def collect_existing_monster_slugs(module_dir: str) -> Set[str]:
         module_dir: Path to the module directory.
 
     Returns:
-        Set of lowercased slugs derived from existing monster JSON filenames.
+        Set of canonical slugs derived from existing monster JSON filenames.
     """
     monsters_dir = os.path.join(module_dir, "monsters")
     if not os.path.exists(monsters_dir):
@@ -182,8 +182,12 @@ def collect_existing_monster_slugs(module_dir: str) -> Set[str]:
 
     for f in os.listdir(monsters_dir):
         if f.endswith('.json') and not any(pattern in f for pattern in exclude_patterns):
-            slug = f[:-5].lower()
-            slugs.add(slug)
+            # Keep existing-file identity matching identical to reference
+            # matching.  This handles case, whitespace, apostrophe, hyphen,
+            # and punctuation variants without changing the exclusion rules.
+            slug = normalize_monster_name(f[:-5])
+            if slug:
+                slugs.add(slug)
 
     return slugs
 
@@ -345,12 +349,17 @@ def materialize_missing_monsters(
 def ensure_monster_reference_closure(
     module_name: str,
     module_dir: str,
+    *,
+    allow_generation: bool = True,
 ) -> Dict[str, Any]:
     """Ensure all monster references have corresponding stat files.
 
     Orchestrates the full closure workflow: collect referenced monsters,
     identify existing files, detect NPC-like ambiguous names, materialize
-    missing stat blocks, and save a closure report.
+    missing stat blocks, and save a closure report.  Adaptation callers may
+    set ``allow_generation=False`` after their own normalization and
+    materialization pass so this function acts only as a final consistency
+    check.  The default preserves the legacy generation behavior.
 
     Args:
         module_name: Name of the module.
@@ -407,7 +416,29 @@ def ensure_monster_reference_closure(
     closure_report["ambiguous_npc_like"] = ambiguous_npc_like
 
     if missing:
-        generation_results = materialize_missing_monsters(module_name, module_dir, missing)
+        if allow_generation:
+            generation_results = materialize_missing_monsters(module_name, module_dir, missing)
+        else:
+            # Adaptation materialization is responsible for canonical stat
+            # blocks.  Final closure must only observe the staged filesystem;
+            # generating here would turn unresolved references into a legacy
+            # side effect and could reintroduce raw-prose materialization.
+            generation_results = {
+                "generated": [],
+                "failed": [],
+                "skipped": [
+                    {
+                        "slug": slug,
+                        "display_name": (
+                            monster_info["original_names"][0]
+                            if monster_info.get("original_names")
+                            else slug
+                        ),
+                        "reason": "generation_disabled_final_consistency_check",
+                    }
+                    for slug, monster_info in missing.items()
+                ],
+            }
         closure_report["details"]["generation"] = generation_results
         closure_report["generated"] = len(generation_results["generated"])
 

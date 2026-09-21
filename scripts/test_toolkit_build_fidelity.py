@@ -227,6 +227,58 @@ class ToolkitBuildFidelityTests(unittest.TestCase):
         self.assertIn("build_fidelity", rollup)
         self.assertIn("final_blocker_count", rollup)
 
+    def test_source_atom_id_and_bounded_evidence_are_preserved(self) -> None:
+        self._write_base_accurate_workspace()
+        _write_json(
+            self.files["source_graph"],
+            {"atoms": [{
+                "id": "atom-noll",
+                "type": "npc",
+                "name": "Caretaker Noll",
+                "criticality": "required",
+                "source_refs": [{"excerpt": "A" * 500}, {"excerpt": "second"}, {"excerpt": "third"}],
+            }]},
+        )
+        module_dir = Path(self.temp_dir.name) / "module"
+        self._write_minimal_module(module_dir)
+        (module_dir / "characters" / "caretaker_noll.json").unlink()
+        report = build_build_fidelity_report(self.workspace, module_dir)
+        blocker = report["blockers"][0]
+        self.assertEqual(blocker["source_atom_id"], "atom-noll")
+        self.assertEqual(len(blocker["source_refs"]), 2)
+        self.assertEqual(len(blocker["source_excerpt"]), 240)
+
+    def test_adaptation_triage_excludes_non_actor_but_blocks_real_actor(self) -> None:
+        self._write_base_accurate_workspace()
+        _write_json(self.files["builder_input"], {"build_mode": "llm_adaptation"})
+        _write_json(self.files["entity_candidate_triage_report"], {
+            "decisions": [
+                {"candidate_text": "Age of Myth", "adjudicated_type": "location_name", "decision": "keep"},
+                {"candidate_text": "Simon Magus", "adjudicated_type": "true_npc", "decision": "keep"},
+            ]
+        })
+        _write_json(self.files["source_graph"], {"atoms": [
+            {"id": "age-id", "type": "npc", "name": "Age of Myth", "criticality": "required"},
+            {"id": "simon-id", "type": "npc", "name": "Simon Magus", "criticality": "required"},
+        ]})
+        module_dir = Path(self.temp_dir.name) / "module"
+        self._write_minimal_module(module_dir)
+        report = build_build_fidelity_report(self.workspace, module_dir)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual([b["source_atom_id"] for b in report["blockers"]], ["simon-id"])
+        self.assertEqual(report["excluded_non_actor_atoms"][0]["source_atom_id"], "age-id")
+
+    def test_legacy_path_does_not_consume_triage(self) -> None:
+        self._write_base_accurate_workspace()
+        _write_json(self.files["entity_candidate_triage_report"], {
+            "decisions": [{"candidate_text": "Caretaker Noll", "adjudicated_type": "location_name", "decision": "keep"}]
+        })
+        module_dir = Path(self.temp_dir.name) / "module"
+        self._write_minimal_module(module_dir)
+        report = build_build_fidelity_report(self.workspace, module_dir, build_mode="legacy")
+        self.assertTrue(any(b.get("category") == "npc" for b in report["blockers"]) is False)
+        self.assertFalse(report.get("adaptation_mode"))
+
 
 # ---------------------------------------------------------------------------
 # Task 0.2: Punctuation-Normalized Build Fidelity (Numillian blocker)

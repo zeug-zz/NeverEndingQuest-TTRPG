@@ -50,6 +50,36 @@ def _safe_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+def _candidate_location_cardinality(
+    row: Dict[str, Any],
+) -> Tuple[List[str], List[str], str]:
+    """Return raw candidates and the authoritative internal candidate list.
+
+    Raw IDs remain in diagnostics for operator readability, but area-scoped
+    internal IDs are authoritative when the builder supplied them.  An
+    explicitly supplied empty internal list is therefore meaningful and must
+    not fall back to the raw compatibility list.
+    """
+    raw_candidates = [
+        str(value).strip().upper()
+        for value in _safe_list(row.get("candidate_location_ids"))
+        if str(value).strip()
+    ]
+    raw_distinct = sorted(set(raw_candidates))
+    if "candidate_internal_location_ids" in row:
+        internal_candidates = [
+            str(value).strip().upper()
+            for value in _safe_list(row.get("candidate_internal_location_ids"))
+            if str(value).strip()
+        ]
+        return (
+            raw_candidates,
+            sorted(set(internal_candidates)),
+            "candidate_internal_location_ids",
+        )
+    return raw_candidates, raw_distinct, "candidate_location_ids"
+
+
 def _is_player_facing_phrase(row: Dict[str, Any]) -> bool:
     """Return True if phrase row is authored/player-facing for routing risk."""
     if bool(row.get("player_facing")):
@@ -182,11 +212,9 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
     for phrase, row in sorted(location_aliases.items()):
         row_dict = _safe_dict(row)
         status = str(row_dict.get("status", "") or "").strip().lower()
-        candidate_ids = [
-            str(value).strip().upper()
-            for value in _safe_list(row_dict.get("candidate_location_ids"))
-            if str(value).strip()
-        ]
+        candidate_ids, internal_candidate_ids, cardinality_field = (
+            _candidate_location_cardinality(row_dict)
+        )
         sources = [
             str(value).strip()
             for value in _safe_list(row_dict.get("sources"))
@@ -207,28 +235,30 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
                     blocking_errors,
                     blocking_findings,
                 )
-            if len(candidate_ids) != 1:
+            if len(internal_candidate_ids) != 1:
                 _add_blocker(
                     "semantic_payload_contradiction",
-                    f"location_aliases['{phrase}'] resolved but candidate_location_ids count is {len(candidate_ids)}",
+                    f"location_aliases['{phrase}'] resolved but {cardinality_field} count is {len(internal_candidate_ids)}",
                     {
                         "phrase": phrase,
                         "field": "location_aliases",
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                     },
                     blocker_classes,
                     blocking_errors,
                     blocking_findings,
                 )
         elif status == "ambiguous":
-            if len(candidate_ids) < 2:
+            if len(internal_candidate_ids) < 2:
                 _add_blocker(
                     "semantic_payload_contradiction",
-                    f"location_aliases['{phrase}'] ambiguous but candidate_location_ids count is {len(candidate_ids)}",
+                    f"location_aliases['{phrase}'] ambiguous but {cardinality_field} count is {len(internal_candidate_ids)}",
                     {
                         "phrase": phrase,
                         "field": "location_aliases",
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                     },
                     blocker_classes,
                     blocking_errors,
@@ -242,11 +272,9 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
     for phrase, row in sorted(destination_phrases.items()):
         row_dict = _safe_dict(row)
         status = str(row_dict.get("status", "") or "").strip().lower()
-        candidate_ids = [
-            str(value).strip().upper()
-            for value in _safe_list(row_dict.get("candidate_location_ids"))
-            if str(value).strip()
-        ]
+        candidate_ids, internal_candidate_ids, cardinality_field = (
+            _candidate_location_cardinality(row_dict)
+        )
         sources = [
             str(value).strip()
             for value in _safe_list(row_dict.get("sources"))
@@ -274,15 +302,16 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
                     blocking_errors,
                     blocking_findings,
                 )
-            if len(candidate_ids) != 1:
+            if len(internal_candidate_ids) != 1:
                 _add_blocker(
                     "semantic_payload_contradiction",
-                    f"destination_phrases['{phrase}'] resolved but candidate_location_ids count is {len(candidate_ids)}",
+                    f"destination_phrases['{phrase}'] resolved but {cardinality_field} count is {len(internal_candidate_ids)}",
                     {
                         "phrase": phrase,
                         "field": "destination_phrases",
                         "status": status,
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                     },
                     blocker_classes,
                     blocking_errors,
@@ -290,15 +319,16 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
                 )
         elif status == "ambiguous":
             ambiguous_destination_count += 1
-            if len(candidate_ids) < 2:
+            if len(internal_candidate_ids) < 2:
                 _add_blocker(
                     "semantic_payload_contradiction",
-                    f"destination_phrases['{phrase}'] ambiguous but candidate_location_ids count is {len(candidate_ids)}",
+                    f"destination_phrases['{phrase}'] ambiguous but {cardinality_field} count is {len(internal_candidate_ids)}",
                     {
                         "phrase": phrase,
                         "field": "destination_phrases",
                         "status": status,
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                     },
                     blocker_classes,
                     blocking_errors,
@@ -311,6 +341,7 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
                     {
                         "phrase": phrase,
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                         "sources": sources,
                     },
                     blocker_classes,
@@ -323,6 +354,7 @@ def audit_module_semantic_authority(module_dir: Path) -> Dict[str, Any]:
                     {
                         "phrase": phrase,
                         "candidate_location_ids": candidate_ids,
+                        "candidate_internal_location_ids": internal_candidate_ids,
                         "sources": sources,
                     },
                     blocker_classes,

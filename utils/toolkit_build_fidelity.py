@@ -23,7 +23,12 @@ from utils.toolkit_homebrew_upload_contract import (
     load_builder_blueprint_artifact,
     load_builder_blueprint_report_artifact,
     load_normalized_packet_artifact,
+    load_entity_candidate_triage_artifact,
 )
+
+ADAPTATION_BUILD_MODE = "llm_adaptation"
+MAX_SOURCE_REF_COUNT = 2
+MAX_SOURCE_EXCERPT_CHARS = 240
 
 MAX_ATOM_FINDINGS = 3
 ATOM_CATEGORY_KEYS = {
@@ -68,6 +73,60 @@ def _find_required_atoms(source_graph: Dict[str, Any]) -> Dict[str, List[Dict[st
         if atom_type in ATOM_CATEGORY_KEYS:
             atoms.setdefault(atom_type, []).append(raw)
     return atoms
+
+
+def _triage_decision_for_name(
+    name: str, triage_report: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Find a deterministic triage decision by candidate text or slug."""
+    if not isinstance(triage_report, dict):
+        return None
+    normalized = _normalize_name(name)
+    for decision in triage_report.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        candidate = decision.get("candidate_text") or decision.get("name") or ""
+        slug = decision.get("candidate_slug") or ""
+        if _normalize_name(str(candidate)) == normalized or _normalize_name(str(slug)) == normalized:
+            return decision
+    return None
+
+
+def _adaptation_required_atoms(
+    required: Dict[str, List[Dict[str, Any]]],
+    triage_report: Optional[Dict[str, Any]],
+) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """Filter false NPC actors using the existing deterministic triage report.
+
+    This is deliberately adaptation-only.  Missing triage decisions preserve
+    the source graph contract and therefore remain eligible for blocking.
+    """
+    if not isinstance(triage_report, dict):
+        return required, []
+    excluded: List[Dict[str, Any]] = []
+    filtered = dict(required)
+    kept_npcs: List[Dict[str, Any]] = []
+    allowed_types = {"true_npc", "scene_actor"}
+    for atom in required.get("npc") or []:
+        name = str(atom.get("name") or atom.get("label") or "")
+        decision = _triage_decision_for_name(name, triage_report)
+        if decision is None:
+            kept_npcs.append(atom)
+            continue
+        adjudicated = str(decision.get("adjudicated_type") or "").strip().lower()
+        decision_name = decision.get("candidate_text") or name
+        if decision.get("decision") == "reject" or adjudicated not in allowed_types:
+            excluded.append({
+                "category": "npc",
+                "name": decision_name,
+                "source_atom_id": atom.get("source_atom_id") or atom.get("id") or "",
+                "triage_type": adjudicated or "unknown",
+                "reason": "deterministic_triage_non_actor",
+            })
+            continue
+        kept_npcs.append(atom)
+    filtered["npc"] = kept_npcs
+    return filtered, excluded
 
 
 def _find_blueprint_required(
@@ -211,8 +270,19 @@ def _check_atoms_vs_module(
         if not name:
             continue
         normalized = _normalize_name(str(name))
-        atom_id = atom.get("source_atom_id") or ""
+        atom_id = atom.get("source_atom_id") or atom.get("id") or ""
         criticality = str(atom.get("criticality") or "required").lower()
+
+        source_refs = atom.get("source_refs")
+        bounded_refs = (
+            [ref for ref in source_refs[:MAX_SOURCE_REF_COUNT] if isinstance(ref, dict)]
+            if isinstance(source_refs, list) else []
+        )
+        source_excerpt = ""
+        for ref in bounded_refs:
+            if ref.get("excerpt"):
+                source_excerpt = str(ref["excerpt"])[:MAX_SOURCE_EXCERPT_CHARS]
+                break
 
         matched = False
         if category == "npc":
@@ -275,6 +345,8 @@ def _check_atoms_vs_module(
                         "category": category,
                         "message": f"Advisory {category} '{name}' not found in module",
                         "source_atom_id": atom_id,
+                        "source_refs": bounded_refs,
+                        "source_excerpt": source_excerpt,
                     }
                 )
             else:
@@ -283,6 +355,8 @@ def _check_atoms_vs_module(
                         "category": category,
                         "message": f"Required {category} '{name}' not found in module",
                         "source_atom_id": atom_id,
+                        "source_refs": bounded_refs,
+                        "source_excerpt": source_excerpt,
                     }
                 )
 
@@ -320,6 +394,7 @@ def _build_coverage(
 def build_build_fidelity_report(
     workspace: Path,
     module_dir: Path,
+    build_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return artifact-only report comparing generated module to source/blueprint artifacts."""
     ws = Path(workspace)
@@ -330,6 +405,12 @@ def build_build_fidelity_report(
     blueprint = load_builder_blueprint_artifact(ws)
     blueprint_report = load_builder_blueprint_report_artifact(ws)
     packet = load_normalized_packet_artifact(ws)
+    if build_mode is None:
+        builder_input = load_json_artifact(files.get("builder_input")) if files.get("builder_input") else None
+        if isinstance(builder_input, dict):
+            build_mode = str(builder_input.get("build_mode") or "")
+    is_adaptation = str(build_mode or "").strip().lower() == ADAPTATION_BUILD_MODE
+    triage_report = load_entity_candidate_triage_artifact(ws) if is_adaptation else None
 
     source_artifacts: Dict[str, Any] = {
         "source_graph": str(files.get("source_graph", "")),
@@ -402,6 +483,10 @@ def build_build_fidelity_report(
                     existing.append(item)
                     existing_names.add(item_name)
 
+    excluded_atoms: List[Dict[str, Any]] = []
+    if is_adaptation:
+        required, excluded_atoms = _adaptation_required_atoms(required, triage_report)
+
     module_data = _scan_module_areas(md)
     module_data["plot_path"] = md / "module_plot.json"
 
@@ -429,7 +514,15 @@ def build_build_fidelity_report(
                     {
                         "category": cat,
                         "message": f"Source {cat} '{name}' could not be verified against module artifacts",
-                        "source_atom_id": atom.get("source_atom_id") or "",
+                        "source_atom_id": atom.get("source_atom_id") or atom.get("id") or "",
+                        "source_refs": atom.get("source_refs", [])[:MAX_SOURCE_REF_COUNT]
+                        if isinstance(atom.get("source_refs"), list) else [],
+                        "source_excerpt": next(
+                            (str(ref.get("excerpt"))[:MAX_SOURCE_EXCERPT_CHARS]
+                             for ref in (atom.get("source_refs") or [])
+                             if isinstance(ref, dict) and ref.get("excerpt")),
+                            "",
+                        ),
                     }
                 )
 
@@ -469,6 +562,8 @@ def build_build_fidelity_report(
         "coverage": coverage,
         "blockers": all_blockers[:MAX_ATOM_FINDINGS * 4],
         "warnings": all_warnings[:MAX_ATOM_FINDINGS * 4],
+        "adaptation_mode": is_adaptation,
+        "excluded_non_actor_atoms": excluded_atoms[:MAX_ATOM_FINDINGS * 4],
         "stage_results": {
             "areas_count": len(module_data.get("areas", [])),
             "npcs_count": len(module_data.get("npcs", [])),

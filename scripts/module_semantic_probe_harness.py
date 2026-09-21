@@ -24,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from utils.module_semantic_authority import build_module_semantic_authority
 
 
-_LOCATION_SOURCE_PATTERN = re.compile(r"#locations\[([A-Za-z0-9_]+)\]")
+_LOCATION_SOURCE_PATTERN = re.compile(
+    r"#locations\[([A-Za-z0-9][A-Za-z0-9_.-]*(?::[A-Za-z0-9][A-Za-z0-9_.-]*)?)\]"
+)
 _PLOT_SOURCE_PATTERN = re.compile(r"#plotPoints\[([^\]]+)\]")
 _HANDOFF_HINT_PATTERN = re.compile(
     r"\b(handoff|escort|guide|follow|return on their own)\b"
@@ -104,8 +106,103 @@ def _lookup_plot_location(module_plot: Dict[str, Any], plot_id: str) -> str:
     return ""
 
 
+def _location_namespace(semantic_authority: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the probe-local raw/scoped location compatibility index."""
+    authority = semantic_authority if isinstance(semantic_authority, dict) else {}
+    location_index = _safe_dict(authority.get("location_index"))
+    raw_to_scoped: Dict[str, Set[str]] = {}
+    area_ids: Set[str] = set()
+    for key, value in location_index.items():
+        metadata = _safe_dict(value)
+        scoped_id = str(metadata.get("scoped_location_id") or key or "").strip().upper()
+        raw_id = str(metadata.get("raw_location_id") or metadata.get("location_id") or "").strip().upper()
+        area_id = str(metadata.get("area_id") or "").strip().upper()
+        if area_id:
+            area_ids.add(area_id)
+        if raw_id and scoped_id:
+            raw_to_scoped.setdefault(raw_id, set()).add(scoped_id)
+    return {"location_index": location_index, "raw_to_scoped": raw_to_scoped, "area_ids": area_ids}
+
+
+def _normalize_location_reference(
+    value: Any, semantic_authority: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Normalize raw or area-scoped IDs into the probe comparison namespace."""
+    raw_value = str(value or "").strip().upper()
+    if not raw_value:
+        return []
+    namespace = _location_namespace(semantic_authority)
+    location_index = namespace["location_index"]
+    if ":" in raw_value:
+        # A source-owned scoped reference is already in the authoritative
+        # namespace. Retain it even when a legacy index is incomplete.
+        return [raw_value]
+    mapped = sorted(namespace["raw_to_scoped"].get(raw_value, set()))
+    if len(mapped) == 1:
+        return mapped
+    if not location_index:
+        # Preserve raw-only fixtures and legacy payloads without an index.
+        return [raw_value]
+    # A raw ID shared by areas is not deterministic without scope.
+    return []
+
+
+def _normalize_plot_location(
+    value: Any, semantic_authority: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Resolve a plot location, excluding area anchors from room fixtures."""
+    raw_value = str(value or "").strip().upper()
+    if not raw_value:
+        return []
+    namespace = _location_namespace(semantic_authority)
+    if raw_value in namespace["area_ids"]:
+        return []
+    return _normalize_location_reference(raw_value, semantic_authority)
+
+
+def _normalize_hidden_reveal_location(
+    value: Any, semantic_authority: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Normalize a reveal target while excluding area-only anchors."""
+    raw_value = str(value or "").strip().upper()
+    if not raw_value:
+        return []
+    if raw_value in _location_namespace(semantic_authority)["area_ids"]:
+        return []
+    return _normalize_location_reference(raw_value, semantic_authority)
+
+
+def _resolved_location_id(
+    row: Dict[str, Any], semantic_authority: Optional[Dict[str, Any]] = None
+) -> str:
+    """Return one resolved location in the same namespace as expected targets."""
+    internal_candidates = _safe_list(row.get("candidate_internal_location_ids"))
+    value = row.get("scoped_location_id")
+    if not value and len(internal_candidates) == 1:
+        value = internal_candidates[0]
+    if not value:
+        value = row.get("location_id")
+    normalized = _normalize_location_reference(value, semantic_authority)
+    return normalized[0] if len(normalized) == 1 else ""
+
+
+def _normalized_candidate_ids(
+    row: Dict[str, Any], semantic_authority: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Normalize candidate IDs for diagnostics without changing gate policy."""
+    values = _safe_list(row.get("candidate_internal_location_ids"))
+    if not values:
+        values = _safe_list(row.get("candidate_location_ids"))
+    normalized: Set[str] = set()
+    for value in values:
+        normalized.update(_normalize_location_reference(value, semantic_authority))
+    return sorted(normalized)
+
+
 def _expected_locations_from_sources(
-    sources: List[str], module_plot: Dict[str, Any]
+    sources: List[str],
+    module_plot: Dict[str, Any],
+    semantic_authority: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """Derive expected canonical location ids from source provenance."""
     location_ids: Set[str] = set()
@@ -114,18 +211,18 @@ def _expected_locations_from_sources(
         if not source_text:
             continue
 
-        location_match = _LOCATION_SOURCE_PATTERN.search(source_text)
-        if location_match:
-            location_ids.add(location_match.group(1).strip().upper())
+        location_matches = _LOCATION_SOURCE_PATTERN.findall(source_text)
+        if location_matches:
+            for location_reference in location_matches:
+                location_ids.update(
+                    _normalize_location_reference(location_reference, semantic_authority)
+                )
             continue
 
         plot_match = _PLOT_SOURCE_PATTERN.search(source_text)
         if plot_match:
-            plot_location = _lookup_plot_location(
-                module_plot, plot_match.group(1).strip()
-            )
-            if plot_location:
-                location_ids.add(plot_location)
+            plot_location = _lookup_plot_location(module_plot, plot_match.group(1).strip())
+            location_ids.update(_normalize_plot_location(plot_location, semantic_authority))
 
     return sorted(location_ids)
 
@@ -171,7 +268,9 @@ def _derive_travel_probes(
         ]
         if not _is_canonical_travel_phrase(phrase, sources):
             continue
-        expected_location_ids = _expected_locations_from_sources(sources, module_plot)
+        expected_location_ids = _expected_locations_from_sources(
+            sources, module_plot, semantic_authority
+        )
         if not expected_location_ids:
             warnings.append(f"travel_probe_fixture_missing_expected_target:{phrase}")
             continue
@@ -182,14 +281,12 @@ def _derive_travel_probes(
                 "type": "travel",
                 "phrase": phrase,
                 "status": str(row_dict.get("status", "") or "").strip().lower(),
-                "resolved_location_id": str(row_dict.get("location_id", "") or "")
-                .strip()
-                .upper(),
-                "candidate_location_ids": [
-                    str(value).strip().upper()
-                    for value in _safe_list(row_dict.get("candidate_location_ids"))
-                    if str(value).strip()
-                ],
+                "resolved_location_id": _resolved_location_id(
+                    row_dict, semantic_authority
+                ),
+                "candidate_location_ids": _normalized_candidate_ids(
+                    row_dict, semantic_authority
+                ),
                 "expected_location_ids": expected_location_ids,
                 "sources": sources,
             }
@@ -275,12 +372,29 @@ def _derive_hidden_npc_probes(
             continue
 
         expected_location_ids = _expected_locations_from_sources(
-            authored_mention_sources, module_plot
+            authored_mention_sources, module_plot, semantic_authority
         )
         if authored_mentions_count > 0 and not expected_location_ids:
             warnings.append(
                 f"hidden_npc_probe_fixture_missing_expected_target:{npc_name}"
             )
+
+        normalized_reveal_location_ids = {
+            normalized_id
+            for entry in reveal_bindings
+            for normalized_id in _normalize_hidden_reveal_location(
+                entry.get("scoped_location_id") or entry.get("location_id"),
+                semantic_authority,
+            )
+        }
+        area_ids = _location_namespace(semantic_authority)["area_ids"]
+        area_only_reveal_evidence = bool(reveal_bindings) and not normalized_reveal_location_ids and any(
+            str(entry.get("scoped_location_id") or entry.get("location_id") or "")
+            .strip()
+            .upper()
+            in area_ids
+            for entry in reveal_bindings
+        )
 
         probes.append(
             {
@@ -289,13 +403,8 @@ def _derive_hidden_npc_probes(
                 "npc": npc_name,
                 "name_slug": str(row_dict.get("name_slug", "") or "").strip(),
                 "visible_location_ids": visible_location_ids,
-                "reveal_location_ids": sorted(
-                    {
-                        str(entry.get("location_id", "") or "").strip().upper()
-                        for entry in reveal_bindings
-                        if str(entry.get("location_id", "") or "").strip()
-                    }
-                ),
+                "reveal_location_ids": sorted(normalized_reveal_location_ids),
+                "area_only_reveal_evidence": area_only_reveal_evidence,
                 "expected_location_ids": expected_location_ids,
                 "authored_mentions_count": authored_mentions_count,
                 "authored_mention_sources": authored_mention_sources,
@@ -394,6 +503,20 @@ def _evaluate_hidden_npc_probe(probe: Dict[str, Any]) -> Dict[str, Any]:
     reveal_location_ids = probe.get("reveal_location_ids") or []
     visible_location_ids = probe.get("visible_location_ids") or []
 
+    if visible_location_ids and not reveal_location_ids:
+        result["status"] = "pass"
+        result["failure_class"] = ""
+        result["status_detail"] = "Visible NPC authority present"
+        return result
+
+    if probe.get("area_only_reveal_evidence") and not reveal_location_ids:
+        result["status"] = "degraded"
+        result["failure_class"] = "hidden_npc_fixture_missing_expected_target"
+        result["status_detail"] = (
+            "Reveal evidence identifies an area but does not identify a room"
+        )
+        return result
+
     if (
         probe.get("authored_mentions_count", 0) > 0
         and not reveal_location_ids
@@ -404,12 +527,6 @@ def _evaluate_hidden_npc_probe(probe: Dict[str, Any]) -> Dict[str, Any]:
         result["status_detail"] = (
             "Authored hidden or revealable NPC has no reveal location"
         )
-        return result
-
-    if visible_location_ids and not reveal_location_ids:
-        result["status"] = "pass"
-        result["failure_class"] = ""
-        result["status_detail"] = "Visible NPC authority present"
         return result
 
     if expected_location_ids and reveal_location_ids:

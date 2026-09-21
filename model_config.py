@@ -55,6 +55,7 @@ COMBAT_PC_PHASE_NL_FAST_PATH = False                   # Conservative PC_PHASE n
 # --- Narrator System Settings ---
 NARRATOR_API_TIMEOUT_SECONDS = 120                      # Per-call timeout for narrator LLM calls (prevents indefinite hangs)
 NARRATOR_CONNECT_TIMEOUT_SECONDS = 10                   # TCP connection timeout for narrator LLM calls
+MODULE_GENERATION_API_TIMEOUT_SECONDS = 120              # Bounds each in-process ModuleBuilder generation call
 
 # --- Streaming UX Settings ---
 # TABLETOP MODE: Reversion defaults - keep stable block narration UX.
@@ -90,6 +91,20 @@ ENABLE_ACCURATE_INGEST_BUILD_FIDELITY_GATES = True    # Compare generated module
 ENABLE_ACCURATE_INGEST_GUI_BLUEPRINT_BUILD = False   # Blueprint-native deterministic seed + bounded enrichment for accurate-ingest GUI builds (Phase 12; default OFF)
 ENABLE_ACCURATE_INGEST_SEED_WRITER_FALLBACK = False  # Explicit seed-writer fallback/preview mode (support tooling, not default author)
 ENABLE_ACCURATE_INGEST_BLUEPRINT_ENRICHMENT = False  # Bounded LLM enrichment pass over seeded module fields (Phase 12; requires GUI_BLUEPRINT_BUILD)
+
+# --- LLM Adaptation Lane (rollout gated) ---
+# LLM-led adaptation of readable Homebrew sources into NEQ-TTRPG modules.
+# Disabled by default: the legacy accurate-ingest path remains the default
+# route until the adaptation lane is fully validated and rollout explicitly
+# enables this flag. Invalid or missing values resolve safely to False
+# (legacy behavior). Rollback: set to False, no code removal needed.
+ENABLE_LLM_ADAPTATION = True
+# Separate opt-in for canonical monster stat generation; keep disabled until
+# approved-identity, schema, and staging-only rollout checks are complete.
+ENABLE_LLM_ADAPTATION_CANONICAL_MONSTER_GENERATION = True
+# Maximum semantic adaptation revisions after the initial build. Values above
+# the hard limit of two are clamped by the provider-free revision orchestrator.
+LLM_ADAPTATION_MAX_REVISIONS = 1
 
 # --- Conversation Compression Settings ---
 # Enable/disable compression types before API calls

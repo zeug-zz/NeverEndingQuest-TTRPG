@@ -457,7 +457,7 @@ Create atmospheric travel narration that leads into this adventure."""
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
-                        ],
+                        ]
                     )
                     break
                 except Exception as e:
@@ -496,7 +496,6 @@ Create atmospheric travel narration that leads into this adventure."""
                 for item in getattr(self, "provider_stage_errors", [])
             ):
                 self._record_provider_stage_error(provider_stage, e)
-            print(f"Error generating travel narration: {e}")
             return {
                 "status": "degraded",
                 "travelNarration": "The party travels to a new region where fresh adventures await.",
@@ -1142,7 +1141,7 @@ Respond with JSON:
                         messages=[
                             {"role": "system", "content": "You are a content safety reviewer for family-friendly fantasy gaming content. Be strict but reasonable in your assessment."},
                             {"role": "user", "content": safety_prompt}
-                        ],
+                        ]
                     )
                     break
                 except Exception as e:
@@ -1175,7 +1174,6 @@ Respond with JSON:
                 for item in getattr(self, "provider_stage_errors", [])
             ):
                 self._record_provider_stage_error(provider_stage, e)
-            print(f"Warning: AI content validation failed: {e}")
             return True  # Default to safe if validation fails
     
     def _validate_against_schemas(self, module_path: str) -> bool:

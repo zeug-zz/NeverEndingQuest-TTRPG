@@ -39,6 +39,7 @@ from utils.homebrewery_style import (
     _format_damage_dice,
     sanitize_markdown_text,
 )
+from utils.toolkit_adaptation_provenance import render_adaptation_provenance_markdown
 
 MODULES_DIR = Path("modules")
 
@@ -48,12 +49,15 @@ MODULES_DIR = Path("modules")
 # ---------------------------------------------------------------------------
 
 
-def load_module_data(module_slug: str) -> Dict[str, Any]:
+def load_module_data(
+    module_slug: str,
+    module_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Load all module data sources into a unified dict.
 
     Prefers _BU (backup/canonical) files, falling back to live files.
     """
-    module_dir = MODULES_DIR / module_slug
+    module_dir = Path(module_dir) if module_dir is not None else MODULES_DIR / module_slug
     data: Dict[str, Any] = {
         "module_slug": module_slug,
         "display_name": module_slug.replace("_", " "),
@@ -65,6 +69,7 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
         "monsters": [],
         "maps": [],
         "_cross_area_edges": [],
+        "adaptation_provenance": None,
     }
 
     # Module context - prefer BU for structure, merge live for narrative
@@ -82,6 +87,8 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
         data["main_objective"] = ctx.get("mainObjective", "")
         data["author"] = ctx.get("author", "")
         data["license"] = ctx.get("license", "")
+        if isinstance(ctx.get("adaptation_provenance"), dict):
+            data["adaptation_provenance"] = ctx.get("adaptation_provenance")
     # Merge narrative-enriched data from live file where BU is empty
     if ctx_path_live.exists() and ctx_path_live.stat().st_size > 0:
         ctx_live = _safe_json_load(ctx_path_live) or {}
@@ -91,6 +98,10 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
                 data["author"] = ctx_live.get("author", "")
             if ctx_live.get("license"):
                 data["license"] = ctx_live.get("license", "")
+            if isinstance(ctx_live.get("adaptation_provenance"), dict):
+                data["adaptation_provenance"] = ctx_live.get(
+                    "adaptation_provenance"
+                )
             # NPC descriptions, roles, factions
             live_npcs = ctx_live.get("npcs", {})
             for npc_name, live_npc in live_npcs.items():
@@ -216,9 +227,21 @@ def load_module_data(module_slug: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def generate_homebrewery_adventure(module_slug: str) -> str:
-    """Return complete Homebrewery V3 markdown for a module."""
-    data = load_module_data(module_slug)
+def generate_homebrewery_adventure(
+    module_slug: str,
+    module_dir: Optional[Path] = None,
+    adaptation_notice: bool = False,
+    adaptation_provenance: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return complete Homebrewery V3 markdown for a module.
+
+    When adaptation_notice is True the credits include the exact
+    "Adapted for NEQ-TTRPG" notice required by the adaptation Markdown
+    quality contract. Legacy rendering is unchanged when omitted.
+    """
+    data = load_module_data(module_slug, module_dir=module_dir)
+    if isinstance(adaptation_provenance, dict):
+        data["adaptation_provenance"] = dict(adaptation_provenance)
 
     parts: List[str] = []
     parts.append(format_metadata(data["display_name"]))
@@ -232,7 +255,13 @@ def generate_homebrewery_adventure(module_slug: str) -> str:
     parts.append(_build_npc_gallery(data))
     parts.append(_build_monster_appendix(data))
     parts.append(_build_items_appendix(data))
-    parts.append(_build_credits(data))
+    parts.append(
+        _build_credits(
+            data,
+            adaptation_notice=adaptation_notice
+            or isinstance(data.get("adaptation_provenance"), dict),
+        )
+    )
 
     result = "".join(parts)
     return sanitize_markdown_text(result)
@@ -336,13 +365,18 @@ def _llm_intro_narrative(
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+        from utils.ai_client_factory import (
+            create_chat_client,
+            get_chat_completion_params,
+        )
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
             **get_chat_completion_params(
-                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.5
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.5,
             ),
             messages=[{
                 "role": "user",
@@ -423,13 +457,18 @@ def _llm_plot_hook(plot_text: str, plot_count: int, author_name: str) -> Optiona
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+        from utils.ai_client_factory import (
+            create_chat_client,
+            get_chat_completion_params,
+        )
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
             **get_chat_completion_params(
-                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.7
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.7,
             ),
             messages=[{
                 "role": "user",
@@ -663,13 +702,18 @@ def _llm_area_overview(area: Dict[str, Any], data: Dict[str, Any]) -> Optional[s
     )
 
     try:
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+        from utils.ai_client_factory import (
+            create_chat_client,
+            get_chat_completion_params,
+        )
         from model_config import DM_SUMMARIZATION_MODEL
 
         client = create_chat_client()
         response = client.chat.completions.create(
             **get_chat_completion_params(
-                "summaries", DM_SUMMARIZATION_MODEL, temperature_override=0.6
+                "summaries",
+                DM_SUMMARIZATION_MODEL,
+                temperature_override=0.6,
             ),
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=500,
@@ -1213,13 +1257,15 @@ def _build_items_appendix(data: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
-def _build_credits(data: Dict[str, Any]) -> str:
+def _build_credits(data: Dict[str, Any], adaptation_notice: bool = False) -> str:
     """Build credits page with attribution.
 
     Reads data["author"] and data["license"] from module_context.json.
     Parses author field to extract display name and source URL.
     Uses {{credits}} V3 snippet followed by {{wide}} block.
     Source and license URLs are formatted as [URL](URL) markdown links.
+    When adaptation_notice is True the exact "Adapted for NEQ-TTRPG"
+    notice is emitted in the credits block.
     """
     author_raw = data.get("author", "")
     license_val = data.get("license", "")
@@ -1237,6 +1283,11 @@ def _build_credits(data: Dict[str, Any]) -> str:
         "**Module Builder:** [NEQ-TTRPG]"
         "(https://github.com/zeug-zz/NeverEndingQuest-TTRPG)\n\n"
     )
+    adaptation_provenance = data.get("adaptation_provenance")
+    if adaptation_notice or isinstance(adaptation_provenance, dict):
+        lines.append(
+            render_adaptation_provenance_markdown(adaptation_provenance)
+        )
 
     if display_name:
         lines.append("**Author:** {}\n\n".format(sanitize_markdown_text(display_name)))

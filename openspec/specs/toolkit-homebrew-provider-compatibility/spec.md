@@ -1,5 +1,6 @@
-## Purpose
+# toolkit-homebrew-provider-compatibility Specification
 
+## Purpose
 Ensures Homebrew normalization, ModuleBuilder generation, and Markdown enrichment fail with truthful provider diagnostics instead of producing misleading placeholder success artifacts.
 
 ## Requirements

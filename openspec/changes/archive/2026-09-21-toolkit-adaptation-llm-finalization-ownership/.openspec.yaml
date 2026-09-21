@@ -1,0 +1,5 @@
+schema: spec-driven
+
+# Linked change: toolkit-adaptation-build-output-hygiene
+# This change owns content finalization and delegates all emitted diagnostics to
+# the linked adaptation-scoped output safety boundary.

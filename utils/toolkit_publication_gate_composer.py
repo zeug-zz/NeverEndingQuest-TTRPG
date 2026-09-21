@@ -26,6 +26,9 @@ from utils.toolkit_source_fidelity_benchmark import (
     worst_status,
 )
 
+STATUS_NOT_APPLICABLE = "not_applicable"
+ADAPTATION_MODE_LLM = "llm_adaptation"
+
 # Feature flag: set by callers based on their config.
 ENABLE_SOURCE_FIDELITY_ENFORCEMENT = True
 
@@ -55,16 +58,21 @@ def compose_publication_gate(
     source_fidelity_status: str = STATUS_UNKNOWN,
     enable_fidelity_flag: bool = True,
     waiver_active: bool = False,
+    source_fidelity_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compose three publication dimensions into a single final verdict.
 
     Args:
         ready_status: "pass" or "fail" from readiness audit.
         publishable_status: "pass" or "fail" from publishability audit.
-        source_fidelity_status: "pass", "degraded", "blocked", or "unknown".
+        source_fidelity_status: "pass", "degraded", "blocked", "unknown", or
+            "not_applicable".
         enable_fidelity_flag: Feature flag. When False, source_fidelity_status
             is treated as unknown.
         waiver_active: Whether an operator has accepted degraded fidelity.
+        source_fidelity_mode: Explicit source-fidelity mode. The
+            ``not_applicable`` status is pass-through only for the explicit
+            ``llm_adaptation`` mode.
 
     Returns:
         Dict with keys:
@@ -79,10 +87,23 @@ def compose_publication_gate(
     """
     rs = _normalize_status(ready_status)
     ps = _normalize_status(publishable_status)
-    sf = _normalize_status(source_fidelity_status)
+    raw_source_fidelity = str(source_fidelity_status or "").strip().lower()
+    source_fidelity_not_applicable = raw_source_fidelity == STATUS_NOT_APPLICABLE
+    adaptation_fidelity_not_applicable = (
+        source_fidelity_not_applicable
+        and str(source_fidelity_mode or "").strip().lower() == ADAPTATION_MODE_LLM
+    )
+    sf = (
+        STATUS_PASS
+        if adaptation_fidelity_not_applicable
+        else STATUS_BLOCKED
+        if source_fidelity_not_applicable
+        else _normalize_status(source_fidelity_status)
+    )
 
-    # Feature flag: degrade fidelity to unknown when disabled
-    if not enable_fidelity_flag:
+    # Feature flag: degrade legacy fidelity to unknown when disabled. An
+    # explicit adaptation report remains not_applicable and informational.
+    if not enable_fidelity_flag and not adaptation_fidelity_not_applicable:
         sf = STATUS_UNKNOWN
 
     # Waiver: only applies when fidelity is degraded and other gates pass
@@ -107,14 +128,26 @@ def compose_publication_gate(
         blockers.append("Module is not publishable (publishability audit failed)")
 
     if sf == STATUS_BLOCKED:
-        blockers.append(
-            "Source fidelity is blocked: one or more benchmark categories "
-            "fall below the degraded threshold"
-        )
+        if source_fidelity_not_applicable:
+            blockers.append(
+                "Source fidelity is not_applicable without explicit llm_adaptation "
+                "mode"
+            )
+        else:
+            blockers.append(
+                "Source fidelity is blocked: one or more benchmark categories "
+                "fall below the degraded threshold"
+            )
     elif sf == STATUS_DEGRADED:
         warnings.append(
             "Source fidelity is degraded: one or more benchmark categories "
             "fall below the pass threshold but above the degraded threshold"
+        )
+
+    if adaptation_fidelity_not_applicable:
+        warnings.append(
+            "Source fidelity is not_applicable: literal source preservation is not "
+            "the adaptation objective"
         )
 
     if waiver_active and sf == STATUS_DEGRADED:
@@ -123,6 +156,9 @@ def compose_publication_gate(
     publishable = composed == STATUS_PASS
     blocked = composed == STATUS_BLOCKED
     degraded = composed == STATUS_DEGRADED
+    reported_source_fidelity = (
+        STATUS_NOT_APPLICABLE if adaptation_fidelity_not_applicable else effective_sf
+    )
 
     return {
         "final_status": composed,
@@ -133,7 +169,8 @@ def compose_publication_gate(
         "blockers": blockers,
         "ready_status_effective": rs,
         "publishable_status_effective": ps,
-        "source_fidelity_status_effective": effective_sf,
+        "source_fidelity_status_effective": reported_source_fidelity,
+        "source_fidelity_mode": source_fidelity_mode,
         "source_fidelity_raw": source_fidelity_status,
         "waiver_applied": waiver_active and sf == STATUS_DEGRADED and rs == STATUS_PASS and ps == STATUS_PASS,
     }
@@ -145,6 +182,7 @@ def compose_publishability_from_report(
     source_fidelity_status: str = STATUS_UNKNOWN,
     enable_fidelity_flag: bool = True,
     waiver_active: bool = False,
+    source_fidelity_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Convenience wrapper that composes gate and returns a publishability audit
     compatible result dict with source_fidelity_status plus final outcome.
@@ -157,6 +195,7 @@ def compose_publishability_from_report(
         source_fidelity_status=source_fidelity_status,
         enable_fidelity_flag=enable_fidelity_flag,
         waiver_active=waiver_active,
+        source_fidelity_mode=source_fidelity_mode,
     )
 
     # Determine the effective final publishable status

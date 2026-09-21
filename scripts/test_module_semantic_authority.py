@@ -12,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from scripts.module_semantic_authority_audit import audit_module_semantic_authority
-from utils.module_semantic_authority import enrich_module_semantic_authority
+from utils.module_semantic_authority import (
+    _is_prose_shaped_npc_name,
+    enrich_module_semantic_authority,
+)
 
 
 class TestModuleSemanticAuthority(unittest.TestCase):
@@ -216,6 +219,45 @@ class TestModuleSemanticAuthority(unittest.TestCase):
                 for item in diagnostics["missing_npc_authority"]
             )
         )
+
+    def test_prose_shaped_npc_name_is_filtered_but_long_name_is_kept(self):
+        prose_name = (
+            "The party enters the chamber and discovers that the mayor is waiting "
+            "behind the false wall, where the hidden witness explains the ritual "
+            "before the guards arrive."
+        )
+        long_name = ("Aurelian " + "of the Silver Court " * 8).strip()
+        self.assertTrue(_is_prose_shaped_npc_name(prose_name))
+        self.assertFalse(_is_prose_shaped_npc_name(long_name))
+
+        module_dir = self._create_module(
+            "Semantic_Prose_NPC",
+            locations=[
+                {
+                    "locationId": "LOC01",
+                    "name": "Entry Hall",
+                    "npcs": [{"name": prose_name}, {"name": long_name}],
+                }
+            ],
+            context_npcs={"court_npc": {"name": long_name}},
+        )
+        module_context = json.loads(
+            (module_dir / "module_context.json").read_text(encoding="utf-8")
+        )
+        module_plot = json.loads(
+            (module_dir / "module_plot.json").read_text(encoding="utf-8")
+        )
+        result = enrich_module_semantic_authority(
+            "Semantic_Prose_NPC", module_context, module_plot, module_dir
+        )
+        authority = result["semantic_authority"]
+        npc_names = set(authority["npc_scene_authority"])
+        self.assertNotIn(prose_name, npc_names)
+        self.assertIn(long_name, npc_names)
+        filtered = authority["diagnostics"]["filtered_prose_npc_candidates"]
+        self.assertTrue(filtered)
+        self.assertTrue(all("name" not in row for row in filtered))
+        self.assertTrue(all(int(row["length"]) > 0 for row in filtered))
 
     def test_missing_npc_authority_is_diagnostic_not_hard_failure(self):
         module_dir = self._create_module(
@@ -559,6 +601,87 @@ class TestModuleSemanticAuthorityAudit(unittest.TestCase):
                 "candidate_location_ids count is 2" in item
                 for item in result["blocking_errors"]
             )
+        )
+
+    def test_audit_uses_scoped_candidates_for_cardinality(self):
+        payload = {
+            "version": "v1",
+            "location_aliases": {
+                "k01": {
+                    "status": "ambiguous",
+                    "candidate_location_ids": ["K01"],
+                    "candidate_internal_location_ids": ["EVR001:K01", "FC001:K01"],
+                    "sources": ["areas/EVR001.json", "areas/FC001.json"],
+                },
+                "frost gate": {
+                    "status": "resolved",
+                    "location_id": "K01",
+                    "candidate_location_ids": ["K01", "K01"],
+                    "candidate_internal_location_ids": ["FC001:K01"],
+                    "sources": ["areas/FC001.json"],
+                },
+            },
+            "destination_phrases": {
+                "k01": {
+                    "status": "ambiguous",
+                    "candidate_location_ids": ["K01"],
+                    "candidate_internal_location_ids": ["EVR001:K01", "FC001:K01"],
+                    "sources": ["module_plot.json"],
+                    "player_facing": False,
+                },
+                "frost gate": {
+                    "status": "resolved",
+                    "location_id": "K01",
+                    "candidate_location_ids": ["K01", "K01"],
+                    "candidate_internal_location_ids": ["FC001:K01"],
+                    "sources": ["module_plot.json"],
+                },
+            },
+            "npc_scene_authority": {},
+            "diagnostics": {},
+        }
+        module_dir = self._write_module_context("Semantic_Audit_Scoped", payload)
+
+        result = audit_module_semantic_authority(module_dir)
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["blocking_errors"], [])
+
+    def test_audit_blocks_true_scoped_cardinality_contradictions(self):
+        payload = {
+            "version": "v1",
+            "location_aliases": {
+                "bad resolved": {
+                    "status": "resolved",
+                    "location_id": "K01",
+                    "candidate_location_ids": ["K01"],
+                    "candidate_internal_location_ids": [],
+                    "sources": ["areas/EVR001.json"],
+                },
+                "bad ambiguous": {
+                    "status": "ambiguous",
+                    "candidate_location_ids": ["K01"],
+                    "candidate_internal_location_ids": ["EVR001:K01"],
+                    "sources": ["areas/EVR001.json"],
+                },
+            },
+            "destination_phrases": {},
+            "npc_scene_authority": {},
+            "diagnostics": {},
+        }
+        module_dir = self._write_module_context("Semantic_Audit_Scoped_Bad", payload)
+
+        result = audit_module_semantic_authority(module_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["exit_code"], 1)
+        self.assertEqual(len(result["blocking_errors"]), 2)
+        self.assertTrue(
+            any("candidate_internal_location_ids count is 0" in item for item in result["blocking_errors"])
+        )
+        self.assertTrue(
+            any("candidate_internal_location_ids count is 1" in item for item in result["blocking_errors"])
         )
 
     def test_unresolved_player_facing_destination_phrase_fails(self):

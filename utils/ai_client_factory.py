@@ -11,6 +11,7 @@ Provides unified interface for OpenAI, OpenRouter, and future providers
 from typing import Optional, Dict, Any
 from openai import OpenAI
 from utils.enhanced_logger import debug, info, warning, error
+from utils.provider_log_safety import configure_provider_log_safety
 
 # Track fallback status to avoid spamming notifications
 _fallback_status = {
@@ -124,6 +125,17 @@ def create_chat_client(use_fallback: bool = False) -> OpenAI:
         3. Otherwise -> OpenAI (safe default)
     """
     global _fallback_status
+
+    # Keep provider transport logging safe at the shared factory boundary.
+    # Logging policy failure must not alter provider selection or prevent the
+    # existing client/fallback path from running.
+    try:
+        configure_provider_log_safety()
+    except Exception:
+        warning(
+            "Provider log safety initialization degraded; continuing client creation",
+            category="ai_provider",
+        )
     
     # Use single source of truth for provider selection
     provider, is_openrouter = _get_actual_provider(use_fallback)
@@ -161,6 +173,17 @@ def create_chat_client(use_fallback: bool = False) -> OpenAI:
         debug("Creating OpenAI client for chat", category="ai_provider")
         client = OpenAI(api_key=api_key)
         _fallback_status['primary_provider'] = 'openai'
+
+    # SDK transport child loggers may be created during construction. Reapply
+    # the policy at this boundary without allowing logging setup to affect the
+    # existing client path.
+    try:
+        configure_provider_log_safety()
+    except Exception:
+        warning(
+            "Provider log safety post-construction degraded; continuing client creation",
+            category="ai_provider",
+        )
     
     return client
 

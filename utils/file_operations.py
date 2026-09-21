@@ -60,12 +60,44 @@ import os
 import shutil
 import time
 import logging
+import re
 from typing import Any, Dict, Optional
 from pathlib import Path
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+from utils.provider_log_safety import configure_provider_log_safety
+from utils.toolkit_adaptation_output_safety import is_adaptation_output_active
+
+# Defer the legacy root DEBUG setup until a non-adaptation operation needs it.
+# This avoids installing a root handler merely because an adaptation worker
+# imported this module.
+configure_provider_log_safety()
 logger = logging.getLogger(__name__)
+_legacy_logging_configured = False
+_ABSOLUTE_PATH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|/(?:Users|home|tmp|var|private|opt|etc)/)[^\s]+"
+)
+
+
+def _sanitize_file_operation_message(message: str) -> str:
+    """Replace absolute paths while retaining the useful diagnostic text."""
+    return _ABSOLUTE_PATH.sub("<path>", message)
+
+
+def _ensure_legacy_logging() -> None:
+    """Retain historical DEBUG diagnostics outside adaptation scopes."""
+    global _legacy_logging_configured
+    if _legacy_logging_configured or is_adaptation_output_active():
+        return
+    logging.basicConfig(level=logging.DEBUG)
+    _legacy_logging_configured = True
+
+
+def _file_operation_log(level: int, legacy_message: str, code: str) -> None:
+    """Use legacy detail outside adaptation and a path-free code inside it."""
+    if is_adaptation_output_active():
+        logger.log(level, "FILE_OPERATION_EVENT code=%s", code)
+    else:
+        logger.log(level, _sanitize_file_operation_message(legacy_message))
 
 class FileLockError(Exception):
     """Raised when unable to acquire file lock"""
@@ -124,6 +156,7 @@ class AtomicFileWriter:
     
     def acquire_lock(self, filepath: str, timeout: float = 5.0) -> Optional[int]:
         """Acquire exclusive lock on file for writing using lock files"""
+        _ensure_legacy_logging()
         lock_path = f"{filepath}.lock"
         start_time = time.time()
         
@@ -136,7 +169,7 @@ class AtomicFileWriter:
                 os.write(fd, str(os.getpid()).encode())
                 os.close(fd)
                 self.lock_files[filepath] = lock_path
-                logger.debug(f"Acquired lock for {filepath}")
+                _file_operation_log(logging.DEBUG, "Acquired lock for <path>", "lock_acquired")
                 return 1  # Return non-None to indicate success
             except FileExistsError:
                 # Lock file exists, check if it's stale
@@ -145,7 +178,11 @@ class AtomicFileWriter:
                         # Check if lock file is old (stale)
                         lock_age = time.time() - os.path.getmtime(lock_path)
                         if lock_age > 60:  # Lock older than 60 seconds is considered stale
-                            logger.warning(f"Removing stale lock file: {lock_path}")
+                            _file_operation_log(
+                                logging.WARNING,
+                                "Removing stale lock file: <path>",
+                                "stale_lock_removed",
+                            )
                             try:
                                 os.unlink(lock_path)
                             except:
@@ -155,39 +192,56 @@ class AtomicFileWriter:
                 # Wait and retry
                 time.sleep(self.retry_delay)
             except Exception as e:
-                logger.error(f"Error acquiring lock for {filepath}: {e}")
+                _file_operation_log(
+                    logging.ERROR,
+                    f"Error acquiring lock for {filepath}: {e}",
+                    "lock_acquire_error",
+                )
                 raise
         
+        if is_adaptation_output_active():
+            raise FileLockError(f"Could not acquire file lock within {timeout} seconds")
         raise FileLockError(f"Could not acquire lock for {filepath} within {timeout} seconds")
     
     def release_lock(self, filepath: str):
         """Release file lock"""
+        _ensure_legacy_logging()
         if filepath in self.lock_files:
             lock_path = self.lock_files[filepath]
             try:
                 if os.path.exists(lock_path):
                     os.unlink(lock_path)
                 del self.lock_files[filepath]
-                logger.debug(f"Released lock for {filepath}")
+                _file_operation_log(logging.DEBUG, "Released lock for <path>", "lock_released")
             except Exception as e:
-                logger.error(f"Error releasing lock for {filepath}: {e}")
+                _file_operation_log(
+                    logging.ERROR,
+                    f"Error releasing lock for {filepath}: {e}",
+                    "lock_release_error",
+                )
     
     def create_backup(self, filepath: str) -> Optional[str]:
         """Create backup of existing file."""
+        _ensure_legacy_logging()
         if not os.path.exists(filepath):
             return None
 
         backup_path = f"{filepath}.bak"
         try:
             shutil.copy2(filepath, backup_path)
-            logger.debug(f"Created backup: {backup_path}")
+            _file_operation_log(logging.DEBUG, "Created backup: <path>", "backup_created")
             return backup_path
         except Exception as e:
-            logger.error(f"Error creating backup for {filepath}: {e}")
+            _file_operation_log(
+                logging.ERROR,
+                f"Error creating backup for {filepath}: {e}",
+                "backup_create_error",
+            )
             raise
 
     def _atomic_replace(self, temp_path: str, filepath: str) -> None:
         """Replace target file atomically, retrying transient Windows lock errors."""
+        _ensure_legacy_logging()
         last_error = None
         for attempt in range(self.max_retries):
             try:
@@ -195,8 +249,10 @@ class AtomicFileWriter:
                 return
             except PermissionError as e:
                 last_error = e
-                logger.warning(
-                    f"Atomic replace blocked for {filepath} (attempt {attempt + 1}/{self.max_retries}): {e}"
+                _file_operation_log(
+                    logging.WARNING,
+                    f"Atomic replace blocked for {filepath} (attempt {attempt + 1}/{self.max_retries}): {e}",
+                    "atomic_replace_retry",
                 )
                 if attempt >= self.max_retries - 1:
                     raise
@@ -228,6 +284,7 @@ class AtomicFileWriter:
                 type(filepath).__name__,
             )
             return False
+        _ensure_legacy_logging()
         filepath = str(filepath)  # Handle Path objects
         temp_path = f"{filepath}.tmp"
         backup_path = None
@@ -236,10 +293,14 @@ class AtomicFileWriter:
         try:
             # Acquire lock if requested
             if acquire_lock:
-                print(f"DEBUG: [FILE_OPS] Attempting to acquire lock for {filepath}")
+                _file_operation_log(
+                    logging.DEBUG, "Attempting to acquire lock for <path>", "lock_acquire_started"
+                )
                 self.acquire_lock(filepath)
                 lock_acquired = True
-                print(f"DEBUG: [FILE_OPS] Lock acquired successfully")
+                _file_operation_log(
+                    logging.DEBUG, "Lock acquired successfully", "lock_acquire_succeeded"
+                )
             
             # Create backup if requested and file exists
             if create_backup and os.path.exists(filepath):
@@ -277,7 +338,7 @@ class AtomicFileWriter:
             return True
             
         except Exception as e:
-            logger.error(f"Error writing {filepath}: {e}")
+            _file_operation_log(logging.ERROR, f"Error writing {filepath}: {e}", "write_error")
             
             # Clean up temp file if it exists
             if os.path.exists(temp_path):
@@ -290,9 +351,13 @@ class AtomicFileWriter:
             if backup_path and os.path.exists(backup_path):
                 try:
                     shutil.copy2(backup_path, filepath)
-                    logger.info(f"Restored backup for {filepath}")
+                    _file_operation_log(logging.INFO, f"Restored backup for {filepath}", "backup_restored")
                 except Exception as restore_error:
-                    logger.error(f"Failed to restore backup: {restore_error}")
+                    _file_operation_log(
+                        logging.ERROR,
+                        f"Failed to restore backup: {restore_error}",
+                        "backup_restore_error",
+                    )
             
             return False
             
@@ -312,6 +377,7 @@ class AtomicFileWriter:
         Returns:
             Dictionary containing JSON data, or None if error
         """
+        _ensure_legacy_logging()
         filepath = str(filepath)
         lock_acquired = False
         
@@ -322,7 +388,7 @@ class AtomicFileWriter:
                 lock_acquired = True
             
             if not os.path.exists(filepath):
-                logger.warning(f"File not found: {filepath}")
+                _file_operation_log(logging.WARNING, f"File not found: {filepath}", "file_not_found")
                 return None
             
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -332,10 +398,10 @@ class AtomicFileWriter:
                 return data
                 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in {filepath}: {e}")
+            _file_operation_log(logging.ERROR, f"Invalid JSON in {filepath}: {e}", "invalid_json")
             return None
         except Exception as e:
-            logger.error(f"Error reading {filepath}: {e}")
+            _file_operation_log(logging.ERROR, f"Error reading {filepath}: {e}", "read_error")
             return None
         finally:
             if lock_acquired:

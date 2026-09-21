@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-17
+goal: Keep adaptation diagnostics useful while making third-party provider
+  logging safe by default.

@@ -1,0 +1,4 @@
+schema: spec-driven
+
+# Linked change: toolkit-adaptation-llm-finalization-ownership
+# This change protects all adaptation finalization and revision output surfaces.

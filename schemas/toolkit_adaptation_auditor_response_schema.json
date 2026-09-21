@@ -1,0 +1,287 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neverendingquest.local/schemas/toolkit_adaptation_auditor.v1.json",
+  "title": "NeverEndingQuest Toolkit Adaptation Auditor Response v1",
+  "description": "Strict response from the final semantic adaptation auditor. It is an advisory rebuild handoff, not a file patch or publication result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "decision",
+    "reason",
+    "attempt_id",
+    "stage",
+    "revision_number",
+    "source_hash",
+    "model_metadata",
+    "gate_evidence_refs"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "toolkit_adaptation_auditor.v1"
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["revise", "refuse", "failed"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 800
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "stage": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "revision_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "source_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "model_metadata": {
+      "$ref": "#/definitions/model_metadata"
+    },
+    "gate_evidence_refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    },
+    "revised_dossier": {
+      "type": "object"
+    },
+    "rebuild_directive": {
+      "$ref": "#/definitions/rebuild_directive"
+    },
+    "failure": {
+      "$ref": "#/definitions/failure"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {"const": "revise"}
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": ["revised_dossier"],
+            "not": {"required": ["rebuild_directive"]}
+          },
+          {
+            "required": ["rebuild_directive"],
+            "not": {"required": ["revised_dossier"]}
+          }
+        ],
+        "not": {"required": ["failure"]}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {"const": "refuse"}
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["revised_dossier"]},
+            {"required": ["rebuild_directive"]},
+            {"required": ["failure"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {"const": "failed"}
+        }
+      },
+      "then": {
+        "required": ["failure"],
+        "not": {
+          "anyOf": [
+            {"required": ["revised_dossier"]},
+            {"required": ["rebuild_directive"]}
+          ]
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "model_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1, "maxLength": 160},
+        "model": {"type": "string", "minLength": 1, "maxLength": 160},
+        "model_version": {"type": "string", "maxLength": 160},
+        "request_id": {"type": "string", "maxLength": 200},
+        "parameter_profile": {"type": "string", "maxLength": 160},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "reasoning_effort": {"type": "string", "maxLength": 32},
+        "verbosity": {"type": "string", "maxLength": 32}
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_only"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]{1,240}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "role": {"type": "string", "maxLength": 80},
+        "reference_only": {"const": true}
+      },
+      "anyOf": [
+        {"required": ["path"]},
+        {"required": ["sha256"]}
+      ]
+    },
+    "rebuild_directive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "target", "basis"],
+      "anyOf": [
+        {"required": ["guidance"]},
+        {"required": ["constraints"]}
+      ],
+      "properties": {
+        "action": {"const": "fresh_build"},
+        "target": {
+          "oneOf": [
+            {"const": "staging"},
+            {"$ref": "#/definitions/staging_target_identity"}
+          ]
+        },
+        "basis": {"const": "revised_dossier"},
+        "version": {"const": "toolkit_adaptation_rebuild_directive.v1"},
+        "scope": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["semantic", "semantic_adaptation", "content"]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["semantic", "semantic_adaptation", "content"]
+              }
+            }
+          ]
+        },
+        "reason": {"type": "string", "minLength": 1, "maxLength": 800},
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"type": "string", "minLength": 1, "maxLength": 400}
+        },
+        "guidance": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"type": "string", "minLength": 1, "maxLength": 400}
+        }
+      }
+    },
+    "staging_target_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage_id",
+        "attempt_id",
+        "attempt_number",
+        "revision_number",
+        "source_hash"
+      ],
+      "properties": {
+        "kind": {"const": "staging"},
+        "target_kind": {"const": "staging"},
+        "stage_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}:revision_[0-9]{3}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "attempt_number": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "revision_number": {"type": "integer", "minimum": 0, "maximum": 100},
+        "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "oneOf": [
+        {"required": ["kind"], "not": {"required": ["target_kind"]}},
+        {"required": ["target_kind"], "not": {"required": ["kind"]}}
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "status", "code", "message"],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "file",
+            "dependency",
+            "quota",
+            "timeout",
+            "rights",
+            "mechanical",
+            "semantic",
+            "publication",
+            "unknown"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "failed",
+            "invalid",
+            "provider_failed",
+            "parameter_resolution_failed",
+            "timeout",
+            "quota",
+            "refused"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        }
+      }
+    }
+  }
+}

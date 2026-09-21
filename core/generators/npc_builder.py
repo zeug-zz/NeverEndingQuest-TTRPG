@@ -41,7 +41,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from jsonschema import validate, ValidationError
 # Import model configuration from config.py
 from config import NPC_BUILDER_MODEL
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+    handle_provider_error,
+)
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 
@@ -122,7 +127,9 @@ Adhere strictly to 5e rules and the provided schema."""
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "npc_builder", NPC_BUILDER_MODEL, temperature_override=0.7
+                        "npc_builder",
+                        NPC_BUILDER_MODEL,
+                        temperature_override=0.7,
                     ),
                     messages=prompt_messages
                 )

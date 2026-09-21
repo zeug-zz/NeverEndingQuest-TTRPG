@@ -233,10 +233,10 @@ def _call_llm_with_fallback(
             "retryable": bool(error_result.get("should_fallback", False)),
             "fallback": "classification_defaults_or_empty_proposals",
         }
-        if isinstance(error_sink, list):
+        if error_sink is not None:
             error_sink.append(diagnostic)
         warning(
-            f"LLM classification call failed stage={stage}: {exc}",
+            f"Provider stage failed stage={stage} error_type={type(exc).__name__}",
             category="llm_classification",
         )
         return None

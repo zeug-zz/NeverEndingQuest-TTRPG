@@ -8,6 +8,7 @@
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -1410,6 +1411,137 @@ class TestToolkitHomebrewUploadRoutes(unittest.TestCase):
         self.assertIn("repairing_deterministic", template_source)
         self.assertIn("repairing_semantic", template_source)
         self.assertIn("building", template_source)
+
+    def test_module_toolkit_template_has_normalization_activity_ticker(self) -> None:
+        template_source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        self.assertIn("homebrew-upload-activity", template_source)
+        self.assertIn("HOME_BREW_NORMALIZATION_ACTIVITY_INTERVAL_MS = 5000", template_source)
+        self.assertIn("updateHomebrewNormalizationActivity", template_source)
+        self.assertIn("clearHomebrewNormalizationActivity", template_source)
+        self.assertIn("cursor.textContent = ' |';", template_source)
+        self.assertNotIn("cursor.textContent = ' [|';", template_source)
+        self.assertIn("stage === 'normalizing'", template_source)
+
+    def test_module_toolkit_template_has_shared_activity_status_contract(self) -> None:
+        template_source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+
+        self.assertIn("const homebrewActivityState", template_source)
+        self.assertRegex(
+            template_source,
+            r"HOME_BREW_NORMALIZATION_ACTIVITY_INTERVAL_MS\s*=\s*5000",
+        )
+        self.assertIn("function updateHomebrewActivity(", template_source)
+        self.assertIn("if (!homebrewUploadActivity)", template_source)
+        self.assertIn("Array.isArray(messages)", template_source)
+        self.assertIn("homebrewUploadActivity.textContent = ''", template_source)
+
+        self.assertIn("cursor.textContent = ' |';", template_source)
+        self.assertNotIn("cursor.textContent = ' [|';", template_source)
+
+        for marker in (
+            "updateHomebrewNormalizationActivity();",
+            "updateHomebrewUploadActivityGroup('legacy_packet_rebuild');",
+            "updateHomebrewUploadActivityGroup('validation_readiness_deterministic_repair');",
+            "updateHomebrewUploadActivityGroup('finishing_publication');",
+        ):
+            self.assertIn(marker, template_source)
+
+        for marker in (
+            "!response.ok || payload.status !== 'success' || !payload.job",
+            "stopHomebrewUploadPolling();",
+            "return 'unknown';",
+            "clearHomebrewActivity();",
+        ):
+            self.assertIn(marker, template_source)
+
+        activity_groups_start = template_source.index("const HOME_BREW_ACTIVITY_GROUPS")
+        activity_groups_end = template_source.index(
+            "function resolveHomebrewActivityGroup",
+            activity_groups_start,
+        )
+        activity_groups = template_source[activity_groups_start:activity_groups_end]
+        for forbidden_pattern in (r"\bdata\.", r"\bpayload\.", "source_filename", "provider"):
+            self.assertNotRegex(activity_groups, forbidden_pattern)
+
+        activity_helper_start = template_source.index("function updateHomebrewActivity(")
+        activity_helper_end = template_source.index(
+            "function clearHomebrewNormalizationActivity",
+            activity_helper_start,
+        )
+        activity_helper = template_source[activity_helper_start:activity_helper_end]
+        self.assertIn("textContent", activity_helper)
+        self.assertNotIn("innerHTML", activity_helper)
+
+    def test_module_toolkit_activity_rotation_reset_and_terminal_contract(self) -> None:
+        template_source = Path("web/templates/module_toolkit.html").read_text(encoding="utf-8")
+        helper_start = template_source.index("function updateHomebrewActivity(")
+        helper_end = template_source.index(
+            "function clearHomebrewNormalizationActivity",
+            helper_start,
+        )
+        helper = template_source[helper_start:helper_end]
+
+        self.assertIn("const now = Date.now();", helper)
+        self.assertIn("HOME_BREW_ACTIVITY_INTERVAL_MS", helper)
+        self.assertRegex(
+            helper,
+            r"now\s*-\s*homebrewActivityState\.lastUpdatedAt\s*<\s*HOME_BREW_ACTIVITY_INTERVAL_MS",
+        )
+        self.assertIn("const groupChanged =", helper)
+        self.assertRegex(
+            helper,
+            r"messageIndex\s*=\s*groupChanged\s*\?\s*0\s*:\s*\(",
+        )
+        self.assertIn("homebrewActivityState.lastUpdatedAt = now", helper)
+
+        for terminal_marker in (
+            "!response.ok || payload.status !== 'success' || !payload.job",
+            "job.status === 'awaiting_normalization'",
+            "job.status === 'awaiting_review'",
+            "job.status === 'approved_for_build' || job.status === 'rejected'",
+            "job.status === 'awaiting_overwrite_confirmation'",
+            "job.status === 'blocked'",
+            "job.status === 'build_system_failed' || job.status === 'repair_budget_exhausted'",
+            "job.status === 'rebuild_backup_failed' || job.status === 'rebuild_prepare_failed'",
+            "job.status === 'finishing_failed'",
+            "job.status === 'not_publishable'",
+            "job.status === 'completed'",
+            "job.status === 'quarantined'",
+            "job.status === 'final_reconciliation_required'",
+            "Homebrew ingest polling error:",
+        ):
+            self.assertIn(terminal_marker, template_source)
+        self.assertGreaterEqual(
+            template_source.count("setHomebrewConsoleWorking(false)"),
+            10,
+        )
+        self.assertIn("clearHomebrewActivity();", template_source)
+        self.assertIn("return 'unknown';", template_source)
+
+        adaptation_resolver_start = template_source.index(
+            "function resolveHomebrewAdaptationActivityGroup"
+        )
+        adaptation_resolver_end = template_source.index(
+            "// Initialize module builder elements",
+            adaptation_resolver_start,
+        )
+        adaptation_resolver = template_source[
+            adaptation_resolver_start:adaptation_resolver_end
+        ]
+        self.assertIn("if (terminal === true)", adaptation_resolver)
+        self.assertIn("outcomeName !== 'in_progress'", adaptation_resolver)
+        self.assertIn("return '';", adaptation_resolver)
+
+        activity_groups_start = template_source.index("const HOME_BREW_ACTIVITY_GROUPS")
+        activity_groups_end = template_source.index(
+            "function resolveHomebrewActivityGroup",
+            activity_groups_start,
+        )
+        activity_groups = template_source[activity_groups_start:activity_groups_end]
+        self.assertNotRegex(activity_groups, r"\bdata\.")
+        self.assertNotRegex(activity_groups, r"\bpayload\.")
+        self.assertNotIn("source_filename", activity_groups)
+        self.assertNotIn("provider", activity_groups)
 
     def test_route_uses_shared_finisher_helper(self) -> None:
         source = Path("web/routes/toolkit_homebrew_routes.py").read_text(encoding="utf-8")

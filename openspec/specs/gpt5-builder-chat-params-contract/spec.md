@@ -1,5 +1,6 @@
-## Purpose
+# gpt5-builder-chat-params-contract Specification
 
+## Purpose
 Defines the provider-neutral request contract that keeps GPT-5-family build-time calls compatible while preserving existing behavior for other model families.
 
 ## Requirements

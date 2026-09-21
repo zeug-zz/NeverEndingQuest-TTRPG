@@ -1,7 +1,7 @@
 # Remote Multi-Player Browser Clients Architecture Plan
 
 ## Objective
-Adapt the existing NeverEndingQuest web server to support remote browser clients for tabletop multiplayer sessions, starting with LAN-hosted play and leaving internet hardening for a later phase.
+Adapt the existing NeverEndingQuest web server to support remote browser clients for tabletop multiplayer sessions, starting with LAN-hosted play and leaving internet hardening for a later phase. The player-facing client foundation is React/TypeScript, adapted from upstream's `/play` implementation into a fork-owned `/client` surface.
 
 This plan is for architecture review only. It is intentionally scoped as an MVP architecture proposal, not an implementation checklist.
 
@@ -37,6 +37,8 @@ These decisions are deliberate scope controls for the first architecture slice.
 - DM keeps the full host interface at `/`.
 - Players use a dedicated lean client route at `/client`.
 - The client page is not just the DM page with CSS-hidden controls; it should be a deliberately bounded client-facing surface.
+- The `/client` implementation should be React/TypeScript-based, with a typed event contract and component-owned client state.
+- The upstream `/play` application is a manual-port reference. It must not replace `/` or be cherry-picked wholesale.
 
 5. Shutdown model
 - Client disconnect or closing the browser only disconnects that client.
@@ -47,6 +49,11 @@ These decisions are deliberate scope controls for the first architecture slice.
 - This MVP is about shared browser access to the existing game loop.
 - It is not a general multiplayer rewrite.
 - It is not a turn-locking, player-account, or authoritative ownership system.
+
+7. Deployment foundation
+- The React client must work first when the facilitator laptop is the authoritative LAN server.
+- The same client/server contract must support authenticated internet clients later.
+- The authoritative Python server must be movable to hosted infrastructure in v3 or later without a client rewrite.
 
 ## Existing Architecture Observations
 Current codebase characteristics relevant to this plan:
@@ -65,6 +72,11 @@ Current codebase characteristics relevant to this plan:
 4. Tabletop state
 - The existing tabletop mode already has shared party state, shared active character state, and a web tab metaphor.
 - That makes remote-browser access feasible as an extension of the current tabletop model rather than a brand-new game mode.
+
+5. React source and fork boundary
+- Upstream now provides a React player, typed Socket.IO events, client stores, hydration, reconnect handling, and browser tests.
+- The fork's event payloads and TABLETOP behavior differ, so the React client must consume a fork-native contract.
+- React is a client presentation and synchronization layer only. Python remains authoritative for mechanics, combat, persistence, publication, and campaign state.
 
 ## Performance And Asset Strategy
 This architecture should explicitly avoid dragging the full host interface into remote-client mode just because it is already there.
@@ -142,6 +154,47 @@ This performance posture strengthens the earlier UI decision:
 - not a hidden-controls variant of `/`.
 
 If later measurement shows the dedicated client shell is still heavier than desired, that should trigger further extraction and trimming of shared gameplay assets, not a retreat back to the full host template.
+
+## React Foundation Path
+
+React is a required v2 client foundation for the deployment path, not a cosmetic replacement project.
+
+### Stage 1: Facilitator-Hosted LAN
+
+- Keep the full legacy facilitator interface at `/`.
+- Serve the React player surface at `/client`.
+- Connect multiple browsers to the same Flask/SocketIO server.
+- Broadcast a coherent shared transcript, active-PC state, party state, initiative, and relevant combat state.
+- Keep all authoritative changes in the existing Python game loop.
+- Use the shared active-character model for MVP social coordination unless a later contract introduces assignment.
+
+### Stage 2: Authenticated Internet Clients
+
+- Preserve the React client and event contract.
+- Add HTTPS/WSS or an approved secure tunnel.
+- Add client session authentication and websocket authorization.
+- Add rate limits, origin policy, connection limits, and reconnect guarantees.
+- Separate player-scope events from facilitator/admin/toolkit events.
+- Do not expose the facilitator laptop directly to the public internet without an approved security and deployment design.
+
+### Stage 3: Hosted Authoritative Server
+
+- Move the Python/Flask/SocketIO server and durable campaign state to hosted infrastructure.
+- Preserve the React client contract.
+- Add deployment-specific storage, campaign isolation, process supervision, observability, and media handling.
+- Treat scaling, multi-tenant campaigns, and public service operations as v3+ scope.
+
+### React Adoption Order
+
+1. Freeze the fork-native event and payload contract.
+2. Port upstream event types, exact SocketIO arity, stores, hydration, reconnect, and UI-mode patterns.
+3. Add the minimum `/client` shell without changing `/`.
+4. Add TABLETOP parity for PC tabs, active-PC state, initiative, combat, sheets, portraits, and input.
+5. Prove multi-browser LAN operation.
+6. Harden for internet operation.
+7. Prepare the hosted-server migration.
+
+React does not by itself reduce network traffic or provide authentication. The server must still narrow payloads, correct broadcast behavior, protect routes, and maintain the authoritative state boundary.
 
 ## MVP Architecture
 
@@ -296,10 +349,11 @@ Recommended MVP default:
 The client route should not be implemented as a fragile pile of conditionals inside the existing host page unless that proves materially simpler after review.
 
 Preferred direction:
-1. Reuse existing CSS and shared partials where practical.
-2. Create a dedicated client-facing template shell.
+1. Use a dedicated React/TypeScript client shell as the v2 player foundation.
+2. Reuse stable server contracts and visual assets only where they are truly shared.
 3. Include only the components needed for live play.
-4. Keep host-only actions absent from markup, not merely hidden after render.
+4. Keep host-only actions absent from the client bundle and markup, not merely hidden after render.
+5. Keep the legacy interface at `/` during the migration and use `/client` for the React surface.
 
 This reduces the risk of accidental exposure of facilitator controls through JavaScript bindings or stale DOM paths.
 
@@ -320,15 +374,15 @@ Non-goals for MVP:
 - audit logging of player identities
 
 Even with that limited scope, the architecture should still avoid obvious mistakes:
-- Don’t expose admin routes through the client shell.
-- Don’t rely only on hidden buttons for access control.
-- Don’t treat websocket actions as implicitly trusted if page auth exists.
+- Don't expose admin routes through the client shell.
+- Don't rely only on hidden buttons for access control.
+- Don't treat websocket actions as implicitly trusted if page auth exists.
 
 ## Risks And Tradeoffs
 
 1. Shared active PC contention
 - This is the biggest intentional compromise.
-- Multiple players can override each other’s selected PC.
+- Multiple players can override each other's selected PC.
 - Accepted for MVP because the user explicitly prefers social coordination over added system complexity.
 
 2. Shared password model
@@ -351,25 +405,30 @@ The architecture should be considered successfully implemented only if all of th
 1. Connectivity
 - A DM can host the server on LAN and remote browsers can load `/client`.
 
-2. Authentication
+2. Client foundation
+- `/client` is served by the React/TypeScript player surface.
+- The legacy facilitator interface at `/` remains available during the migration.
+- React build failure does not prevent the facilitator host from starting.
+
+3. Authentication
 - If `CLIENT_ACCESS_PASSWORD` is set, `/client` requires login before use.
 - If the password is blank, `/client` remains accessible without login.
 
-3. Shared transcript
+4. Shared transcript
 - When one participant sends input, all connected participants see the same user input echo and resulting narration updates in real time.
 
-4. Shared active PC state
+5. Shared active PC state
 - When any participant changes the active PC tab, all connected browsers reflect the new active character.
 
-5. Client isolation
+6. Client isolation
 - Client browsers cannot access server shutdown behavior from the `/client` UI.
 - Client browsers do not see party-management, PC-edit, toolkit, save/load/reset, or admin/debug surfaces.
 
-6. Gameplay continuity
+7. Gameplay continuity
 - Client input still flows through the existing server-side validation, narration, and combat systems.
 - No parallel gameplay engine is introduced.
 
-7. Host continuity
+8. Host continuity
 - The DM host interface at `/` continues to function as before.
 
 ## Out Of Scope For This Architecture Slice
@@ -399,11 +458,14 @@ Recommended slices:
 - Broadcast shared gameplay events correctly
 - Ensure active PC sync behaves consistently across browsers
 
-3. `remote-client-surface-restriction`
+3. `remote-client-react-foundation`
+- Add the React/TypeScript shell, typed event contract, client stores, hydration, reconnect handling, and component test foundation.
+
+4. `remote-client-surface-restriction`
 - Lock down client-visible controls and routes
 - Ensure client shell excludes admin/facilitator operations
 
-4. `remote-client-lan-verification`
+5. `remote-client-lan-verification`
 - Verification and smoke criteria for multi-browser LAN testing
 - Ensure host and client surfaces coexist without regression
 
@@ -445,7 +507,7 @@ socketio.run(app, host="0.0.0.0", port=8357, allow_unsafe_werkzeug=True)
 
 ### Relationship to This Plan
 
-These hardening items do not change the MVP architecture decisions. They become requirements when the `CLIENT_ACCESS_PASSWORD` alone is insufficient — specifically when the server moves from trusted-LAN to internet deployment in Phase 3.
+These hardening items do not change the MVP architecture decisions. They become requirements when the `CLIENT_ACCESS_PASSWORD` alone is insufficient - specifically when the server moves from trusted-LAN to internet deployment in Phase 3.
 
 ## Recommended Next Step
 After review and refinement of this plan:

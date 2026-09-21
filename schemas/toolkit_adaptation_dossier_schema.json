@@ -1,0 +1,327 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neverendingquest.local/schemas/toolkit_adaptation_dossier.v1.json",
+  "title": "NeverEndingQuest Toolkit LLM Adaptation Dossier v1",
+  "description": "Strict creative handoff from the LLM adaptation author to ModuleBuilder. This is not a publication result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "adaptation_mode",
+    "source_title",
+    "adapted_title",
+    "source_hash",
+    "source_profile",
+    "module_tone",
+    "level_range",
+    "starting_location",
+    "areas",
+    "plot_objective",
+    "plot_progression",
+    "npc_seeds",
+    "encounter_seeds",
+    "item_seeds",
+    "retained_source_elements",
+    "omitted_source_elements",
+    "original_adaptation_elements",
+    "world_narrative_hooks",
+    "continuity_hints",
+    "rights_class",
+    "rights_basis",
+    "rights_review_required",
+    "rights_review_status",
+    "adaptation_notice",
+    "assumptions",
+    "warnings"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["toolkit_adaptation_dossier.v1"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "refused", "failed"]
+    },
+    "adaptation_mode": {
+      "type": "string",
+      "enum": ["llm_adaptation"]
+    },
+    "source_title": {
+      "$ref": "#/definitions/non_empty_text"
+    },
+    "adapted_title": {
+      "$ref": "#/definitions/non_empty_text"
+    },
+    "source_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase SHA-256 digest of the immutable source input."
+    },
+    "source_profile": {
+      "type": "string",
+      "enum": [
+        "adventure",
+        "catalogue",
+        "location",
+        "lore",
+        "encounter",
+        "sandbox"
+      ],
+      "description": "Playable source intent. No implicit aliases are accepted in v1."
+    },
+    "module_tone": {
+      "$ref": "#/definitions/non_empty_text"
+    },
+    "level_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {"type": "integer", "minimum": 1, "maximum": 20},
+        "max": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "starting_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "description": {"$ref": "#/definitions/non_empty_text"},
+        "entry_hook": {"$ref": "#/definitions/non_empty_text"},
+        "area_name": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "areas": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/definitions/area_seed"}
+    },
+    "plot_objective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "success_condition"],
+      "properties": {
+        "summary": {"$ref": "#/definitions/non_empty_text"},
+        "success_condition": {"$ref": "#/definitions/non_empty_text"},
+        "failure_condition": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "plot_progression": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/definitions/plot_beat"}
+    },
+    "npc_seeds": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/npc_seed"}
+    },
+    "encounter_seeds": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/encounter_seed"}
+    },
+    "item_seeds": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/item_seed"}
+    },
+    "puzzle_or_trial_seeds": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/puzzle_seed"}
+    },
+    "retained_source_elements": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/source_decision"}
+    },
+    "omitted_source_elements": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/source_decision"}
+    },
+    "original_adaptation_elements": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/original_element"}
+    },
+    "world_narrative_hooks": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/world_hook"}
+    },
+    "continuity_hints": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/continuity_hint"}
+    },
+    "rights_class": {
+      "type": "string",
+      "enum": [
+        "user_authored",
+        "licensed_or_project_owned",
+        "third_party_copyright_restricted"
+      ]
+    },
+    "rights_basis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "rights_review_required": {
+      "type": "boolean"
+    },
+    "rights_review_status": {
+      "type": "string",
+      "enum": ["not_required", "pending", "approved", "rejected"]
+    },
+    "adaptation_notice": {
+      "type": "string",
+      "enum": ["Adapted for NEQ-TTRPG"]
+    },
+    "assumptions": {
+      "$ref": "#/definitions/string_array"
+    },
+    "warnings": {
+      "$ref": "#/definitions/string_array"
+    }
+  },
+  "definitions": {
+    "non_empty_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "string_array": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/non_empty_text"}
+    },
+    "location_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "purpose"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "purpose": {"$ref": "#/definitions/non_empty_text"},
+        "description": {"$ref": "#/definitions/non_empty_text"},
+        "connections": {"$ref": "#/definitions/string_array"}
+      }
+    },
+    "area_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "purpose", "location_seeds"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "purpose": {"$ref": "#/definitions/non_empty_text"},
+        "location_seeds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/location_seed"}
+        },
+        "connections": {"$ref": "#/definitions/string_array"}
+      }
+    },
+    "plot_beat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "name", "description"],
+      "properties": {
+        "order": {"type": "integer", "minimum": 1},
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "description": {"$ref": "#/definitions/non_empty_text"},
+        "objective": {"$ref": "#/definitions/non_empty_text"},
+        "resolution": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "npc_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "purpose"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "role": {"$ref": "#/definitions/non_empty_text"},
+        "purpose": {"$ref": "#/definitions/non_empty_text"},
+        "disposition": {"$ref": "#/definitions/non_empty_text"},
+        "source_basis": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "encounter_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "setup", "stakes", "resolution_paths"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "setup": {"$ref": "#/definitions/non_empty_text"},
+        "stakes": {"$ref": "#/definitions/non_empty_text"},
+        "resolution_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/non_empty_text"}
+        },
+        "adversaries": {"$ref": "#/definitions/string_array"},
+        "location": {"$ref": "#/definitions/non_empty_text"},
+        "source_basis": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "item_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "purpose", "description"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "purpose": {"$ref": "#/definitions/non_empty_text"},
+        "description": {"$ref": "#/definitions/non_empty_text"},
+        "category": {"$ref": "#/definitions/non_empty_text"},
+        "source_basis": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "puzzle_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "premise", "resolution_guidance"],
+      "properties": {
+        "name": {"$ref": "#/definitions/non_empty_text"},
+        "premise": {"$ref": "#/definitions/non_empty_text"},
+        "resolution_guidance": {"$ref": "#/definitions/non_empty_text"},
+        "failure_consequence": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "source_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["element", "reason"],
+      "properties": {
+        "element": {"$ref": "#/definitions/non_empty_text"},
+        "reason": {"$ref": "#/definitions/non_empty_text"},
+        "source_ref": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "original_element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["element", "kind", "reason"],
+      "properties": {
+        "element": {"$ref": "#/definitions/non_empty_text"},
+        "kind": {"$ref": "#/definitions/non_empty_text"},
+        "reason": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "world_hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hook", "relationship"],
+      "properties": {
+        "hook": {"$ref": "#/definitions/non_empty_text"},
+        "relationship": {"$ref": "#/definitions/non_empty_text"},
+        "proposed_follow_up": {"$ref": "#/definitions/non_empty_text"}
+      }
+    },
+    "continuity_hint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hint", "scope"],
+      "properties": {
+        "hint": {"$ref": "#/definitions/non_empty_text"},
+        "scope": {"$ref": "#/definitions/non_empty_text"},
+        "related_module": {"$ref": "#/definitions/non_empty_text"},
+        "entity": {"$ref": "#/definitions/non_empty_text"}
+      }
+    }
+  }
+}

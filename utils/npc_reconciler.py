@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from pathlib import Path
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_context import ModuleContext
@@ -18,12 +19,24 @@ class NpcReconciler:
     Ensures all NPC names in area files match their canonical names
     from the module context.
     """
-    def __init__(self, module_name: str):
+    def __init__(
+        self,
+        module_name: str,
+        llm_timeout_seconds=None,
+        output_directory=None,
+    ):
         self.path_manager = ModulePathManager(module_name)
+        # Adaptation builds write to an isolated staging module rather than the
+        # legacy module-derived path.  Keep the legacy constructor unchanged
+        # when no explicit directory is supplied.
+        if output_directory is not None:
+            staged_dir = Path(output_directory)
+            self.path_manager.module_dir = os.fspath(staged_dir)
         self.context_path = self.path_manager.get_context_path()
         self.context = None
         self.canonical_map = {}
         self.provider_stage_errors = []
+        self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
         self.client = create_chat_client()
 
     def load_context(self):
@@ -76,6 +89,7 @@ Answer with only the word "true" or "false"."""
                 ),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1,
+                **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
             )
             answer = response.choices[0].message.content.lower().strip()
             return answer == "true"
@@ -89,6 +103,8 @@ Answer with only the word "true" or "false"."""
                 "retryable": bool(error_result.get("should_fallback", False)),
                 "fallback": "do_not_merge",
             }
+            if not isinstance(getattr(self, "provider_stage_errors", None), list):
+                self.provider_stage_errors = []
             self.provider_stage_errors.append(diagnostic)
             print(
                 "WARNING: [NpcReconciler] Provider stage failed "

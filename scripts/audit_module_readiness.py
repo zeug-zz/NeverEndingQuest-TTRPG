@@ -467,8 +467,11 @@ def audit_module_readiness(
     strict_gameplay: bool = True,
     strict_continuity: bool = True,
     source: str = "watcher",
+    module_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run strict module readiness audit across configured gates."""
+    if module_path and not str(module_slug or "").strip():
+        module_slug = Path(module_path).name
     python_exec = sys.executable
     gates: Dict[str, Dict[str, Any]] = {}
     blocking_errors: List[str] = []
@@ -535,8 +538,8 @@ def audit_module_readiness(
         schema_cmd = [
             python_exec,
             str(SCHEMA_VALIDATOR_SCRIPT),
-            "--module",
-            module_slug,
+            "--module-path" if module_path else "--module",
+            str(module_path) if module_path else module_slug,
             "--json",
         ]
         schema_raw = run_gate_command(schema_cmd)
@@ -609,6 +612,7 @@ def audit_module_readiness(
 
     return {
         "module": module_slug,
+        "module_path": str(module_path or ""),
         "overall_status": "pass" if overall_pass else "fail",
         "gates": gates,
         "blocking_errors": blocking_errors,
@@ -634,7 +638,13 @@ def _create_parser() -> argparse.ArgumentParser:
         prog="audit_module_readiness",
         description="Strict module readiness validator for NEQ modules",
     )
-    parser.add_argument("--module", type=str, required=True, help="Module slug to validate")
+    parser.add_argument("--module", type=str, required=False, default="", help="Module slug to validate")
+    parser.add_argument(
+        "--module-path",
+        type=str,
+        default="",
+        help="Explicit module workspace path for staged validation",
+    )
     parser.add_argument("--json", action="store_true", default=False, help="Output JSON report")
     parser.add_argument(
         "--no-sidecar-gate",
@@ -702,6 +712,8 @@ def _print_text_report(report: Dict[str, Any]) -> None:
 def main() -> int:
     parser = _create_parser()
     args = parser.parse_args()
+    if not args.module and not args.module_path:
+        parser.error("Provide --module or --module-path.")
 
     report = audit_module_readiness(
         module_slug=args.module,
@@ -711,6 +723,7 @@ def main() -> int:
         strict_gameplay=not args.gameplay_dev_mode,
         strict_continuity=not args.continuity_warn_mode,
         source=args.source,
+        module_path=args.module_path or None,
     )
 
     if args.json:

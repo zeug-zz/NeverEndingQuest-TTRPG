@@ -75,12 +75,18 @@ import random
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+    handle_provider_error,
+)
 from model_config import DM_MAIN_MODEL
 import jsonschema
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_write_json as save_json_safely
 from utils.enhanced_logger import debug, info, warning, error
+from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
 # Location ID prefix mapping to ensure unique IDs across areas
 LOCATION_PREFIX_MAP = {
@@ -273,7 +279,7 @@ def validate_location_names(area_data):
         room_id = map_room["id"]
         matching_location = next((loc for loc in area_data.get("locations", []) 
                                 if loc["locationId"] == room_id), None)
-        
+
         # If location exists but names differ, update map name to match location
         if matching_location and map_room["name"] != matching_location["name"]:
             map_room["name"] = matching_location["name"]
@@ -398,12 +404,32 @@ def ensure_module_path_manager_usage(module_name):
     
     return modified_files
 
-def validate_module_structure(module_name):
+def validate_module_structure(module_name, output_directory=None):
     """Validate the structure of a module and return any issues"""
     issues = []
-    # Ensure module name uses underscores for directory path
-    module_name_safe = module_name.replace(" ", "_")
-    module_dir = f"modules/{module_name_safe}"
+    # An explicit output directory is authoritative.  In particular, staged
+    # adaptation builds must never fall back to the live module tree.
+    if output_directory is not None:
+        try:
+            repo_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            module_dir = os.path.abspath(os.path.realpath(os.fspath(output_directory)))
+        except (TypeError, ValueError, OSError):
+            return ["Unsafe explicit output directory"]
+        try:
+            if os.path.commonpath((repo_root, module_dir)) != repo_root:
+                return ["Unsafe explicit output directory"]
+            for forbidden_root in ("modules", "characters", "data"):
+                forbidden_path = os.path.join(repo_root, forbidden_root)
+                if os.path.commonpath((forbidden_path, module_dir)) == forbidden_path:
+                    return ["Unsafe explicit output directory"]
+        except ValueError:
+            return ["Unsafe explicit output directory"]
+        if not os.path.isdir(module_dir):
+            return [f"Missing explicit output directory: {module_dir}"]
+    else:
+        # Preserve the legacy module-derived destination for existing callers.
+        module_name_safe = module_name.replace(" ", "_")
+        module_dir = f"modules/{module_name_safe}"
 
     if not os.path.isdir(module_dir):
         return [f"Missing module directory: {module_dir}"]
@@ -461,10 +487,32 @@ def validate_module_structure(module_name):
     
     return issues
 
+
+def _explicit_output_directory_failure(issues: List[str]) -> bool:
+    """Return whether explicit output validation failed before structure checks."""
+    return any(
+        str(issue).startswith((
+            "Unsafe explicit output directory",
+            "Missing explicit output directory:",
+        ))
+        for issue in issues
+    )
+
 class ModuleGenerator:
-    def __init__(self):
+    def __init__(self, llm_timeout_seconds: Optional[float] = None):
         self.prompt_guide = ModulePromptGuide()
         self.schema = self.load_schema()
+        # TABLETOP MODE: Adaptation builds normalize staged monster references
+        # after generation; they must not enter the legacy blind closure path.
+        self.adaptation_mode = False
+        self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
+
+    def _adaptation_log(self, code: str, message: Any = None, count: Any = None) -> None:
+        """Keep adaptation generator diagnostics bounded and payload-free."""
+        if self.adaptation_mode:
+            emit_adaptation_telemetry(
+                code=code, message=message, count=count, force=True
+            )
     
     def load_schema(self) -> Dict[str, Any]:
         """Load the module schema for validation"""
@@ -512,25 +560,38 @@ If the field expects a string, return just the string.
 If the field expects an array, return just the array.
 If the field expects an object, return just the object.
 """
-        
-        print(f"DEBUG: [ModuleGenerator] Making API call to {DM_MAIN_MODEL}...")
-        print(f"DEBUG: [ModuleGenerator] Prompt length: {len(prompt)} characters")
-        print(f"INFO: Calling OpenAI API for {field_path}... This may take 10-30 seconds.")
+
+        adaptation_context = ""
+        if isinstance(context, dict):
+            adaptation_context = str(
+                context.get("_llm_adaptation_prompt_context") or ""
+            ).strip()
+        if adaptation_context:
+            prompt += f"\n\n{adaptation_context}"
+
+        if self.adaptation_mode:
+            self._adaptation_log("module_field_started", count=1)
+        else:
+            print(f"DEBUG: [ModuleGenerator] Making API call to {DM_MAIN_MODEL}...")
+            print(f"DEBUG: [ModuleGenerator] Prompt length: {len(prompt)} characters")
+            print(f"INFO: Calling OpenAI API for {field_path}... This may take 10-30 seconds.")
         import time
         start_time = time.time()
-        
         client = create_chat_client()
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "module_generator", DM_MAIN_MODEL, temperature_override=0.7
+                        "module_generator",
+                        DM_MAIN_MODEL,
+                        temperature_override=0.7,
                     ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e module designer. Return only the requested data in the exact format needed."},
                         {"role": "user", "content": prompt}
-                    ]
+                    ],
+                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                 )
                 break
             except Exception as e:
@@ -541,7 +602,10 @@ If the field expects an object, return just the object.
                 raise
         
         elapsed = time.time() - start_time
-        print(f"DEBUG: [ModuleGenerator] API call completed successfully in {elapsed:.1f} seconds")
+        if self.adaptation_mode:
+            self._adaptation_log("module_field_completed", count=1)
+        else:
+            print(f"DEBUG: [ModuleGenerator] API call completed successfully in {elapsed:.1f} seconds")
         
         content = response.choices[0].message.content.strip()
         
@@ -554,16 +618,33 @@ If the field expects an object, return just the object.
         
         return content
     
-    def generate_module(self, initial_concept: str, custom_values: Dict[str, Any] = None, context=None) -> Dict[str, Any]:
+    def generate_module(
+        self,
+        initial_concept: str,
+        custom_values: Dict[str, Any] = None,
+        context=None,
+        adaptation_context: str = "",
+        output_directory: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Generate a complete module from an initial concept"""
-        print(f"DEBUG: [ModuleGenerator] Starting generate_module")
-        print(f"DEBUG: [ModuleGenerator] Initial concept: {initial_concept[:100]}...")
+        if adaptation_context and str(adaptation_context).strip():
+            marker = "=== LLM ADAPTATION CONTEXT ==="
+            if marker not in initial_concept:
+                initial_concept = f"{initial_concept.rstrip()}\n\n{str(adaptation_context).strip()}"
+        if self.adaptation_mode:
+            self._adaptation_log("module_generation_started")
+        else:
+            print(f"DEBUG: [ModuleGenerator] Starting generate_module")
+            print(f"DEBUG: [ModuleGenerator] Initial concept: {initial_concept[:100]}...")
         module_data = custom_values or {}
         
         # Add context validation if provided
         if context:
             module_data["moduleName"] = context.module_name
-            print(f"DEBUG: [ModuleGenerator] Using module name: {context.module_name}")
+            if self.adaptation_mode:
+                self._adaptation_log("module_context_ready")
+            else:
+                print(f"DEBUG: [ModuleGenerator] Using module name: {context.module_name}")
         
         # Generate fields in order of dependencies
         field_order = [
@@ -592,7 +673,10 @@ If the field expects an object, return just the object.
             schema_info = self.get_field_schema(field_path)
             
             # Progress feedback
-            print(f"MODULE_GENERATION_PROGRESS: Generating field {idx}/{total_fields}: {field_path}")
+            if self.adaptation_mode:
+                self._adaptation_log("module_field_progress", count=idx)
+            else:
+                print(f"MODULE_GENERATION_PROGRESS: Generating field {idx}/{total_fields}: {field_path}")
             
             # Generate the field
             value = self.generate_field(field_path, schema_info, context)
@@ -603,36 +687,75 @@ If the field expects an object, return just the object.
             # Update context with the new field
             self.set_nested_value(context, field_path, value)
             
-            print(f"DEBUG: [Module Generator] Generated: {field_path} (field {idx}/{total_fields} complete)")
+            if self.adaptation_mode:
+                self._adaptation_log("module_field_complete", count=idx)
+            else:
+                print(f"DEBUG: [Module Generator] Generated: {field_path} (field {idx}/{total_fields} complete)")
         
         # Get module name for file operations
         module_name = module_data.get("moduleName", "")
         if module_name:
             # Post-generation cleanup and validation
-            print("DEBUG: [Module Generator] Performing post-generation validation and cleanup...")
+            if self.adaptation_mode:
+                self._adaptation_log("module_validation_started")
+            else:
+                print("DEBUG: [Module Generator] Performing post-generation validation and cleanup...")
             # Standardize location IDs (DISABLED - using prefix system instead)
             # standardize_location_ids(module_name)
             
-            # Validate module structure (skip for custom output directories)
+            # Validate the explicit output directory when supplied.  This is
+            # required for adaptation staging and prevents live-tree writes.
             try:
-                issues = validate_module_structure(module_name)
+                issues = validate_module_structure(module_name, output_directory)
+                if output_directory is not None and _explicit_output_directory_failure(issues):
+                    # An explicit target is authoritative.  Do not let the
+                    # validation-report path create an unsafe or missing
+                    # staging directory, and never fall back to modules/.
+                    raise ValueError(issues[0])
                 if issues:
-                    print("DEBUG: [Module Generator] Validation issues found:")
-                    for issue in issues:
-                        print(f"DEBUG: [Module Generator] - {issue}")
+                    if self.adaptation_mode:
+                        self._adaptation_log("module_validation_issues", count=len(issues))
+                    else:
+                        print("DEBUG: [Module Generator] Validation issues found:")
+                        for issue in issues:
+                            print(f"DEBUG: [Module Generator] - {issue}")
                     
                     # Create validation report
-                    module_dir = f"modules/{module_name}"
-                    save_json_safely(f"{module_dir}/validation_report.json", {"issues": issues})
-                    print(f"DEBUG: [Module Generator] Validation report saved to {module_dir}/validation_report.json")
+                    if output_directory is not None:
+                        report_dir = os.path.abspath(os.path.realpath(os.fspath(output_directory)))
+                    else:
+                        report_dir = f"modules/{module_name}"
+                    report_path = os.path.join(report_dir, "validation_report.json")
+                    if save_json_safely(report_path, {"issues": issues}):
+                        if self.adaptation_mode:
+                            self._adaptation_log("module_validation_report_saved")
+                        else:
+                            print(f"DEBUG: [Module Generator] Validation report saved to {report_path}")
+                    else:
+                        error(
+                            f"Module validation report could not be saved: {report_path}",
+                            category="module_creation",
+                        )
                 else:
-                    print("DEBUG: [Module Generator] Module validation passed!")
-            except FileNotFoundError:
-                print("DEBUG: [Module Generator] Skipping validation (custom output directory)")
+                    if self.adaptation_mode:
+                        self._adaptation_log("module_validation_passed")
+                    else:
+                        print("DEBUG: [Module Generator] Module validation passed!")
             except Exception as e:
-                print(f"DEBUG: [Module Generator] Validation skipped due to error: {e}")
+                if self.adaptation_mode:
+                    self._adaptation_log("module_validation_failed")
+                else:
+                    error(
+                        f"Module validation failed closed before report write: {e}",
+                        category="module_creation",
+                    )
+                if output_directory is not None:
+                    raise
             else:
-                print("DEBUG: [Module Generator] No validation issues found.")
+                if self.adaptation_mode:
+                    self._adaptation_log("module_validation_clean")
+                else:
+                    print("DEBUG: [Module Generator] No validation issues found.")
         
         return module_data
     
@@ -1197,12 +1320,42 @@ If the field expects an object, return just the object.
         save_json_safely(f"{module_dir}/module_plot.json", module_plot)
         print(f"DEBUG: [Module Generator] Generated unified module plot file with {len(module_plot['plotPoints'])} plot points")
     
-    def save_module(self, module_data: Dict[str, Any], filename: str = None):
+    def save_module(
+        self,
+        module_data: Dict[str, Any],
+        filename: str = None,
+        output_directory: Optional[str] = None,
+    ):
         """Save module data to file"""
         # Create module_name for directory creation
         module_name = module_data['moduleName']
-        module_dir = f"modules/{module_name.replace(' ', '_')}"
-        
+        if getattr(self, "adaptation_mode", False):
+            if output_directory is None:
+                raise ValueError(
+                    "Adaptation module save requires an explicit safe output directory"
+                )
+            output_issues = validate_module_structure(module_name, output_directory)
+            if _explicit_output_directory_failure(output_issues):
+                raise ValueError(output_issues[0])
+            module_dir = os.path.abspath(os.path.realpath(os.fspath(output_directory)))
+        elif output_directory is not None:
+            output_issues = validate_module_structure(module_name, output_directory)
+            if _explicit_output_directory_failure(output_issues):
+                raise ValueError(output_issues[0])
+            module_dir = os.path.abspath(os.path.realpath(os.fspath(output_directory)))
+        else:
+            # Preserve the legacy module-derived destination for non-adaptation
+            # callers that do not supply an explicit target.
+            module_dir = f"modules/{module_name.replace(' ', '_')}"
+
+        if getattr(self, "adaptation_mode", False):
+            # save_module's area/plot writers still own legacy module-derived
+            # paths.  Refuse before any write rather than risking live-tree
+            # output or a synthetic closure-success report.
+            raise ValueError(
+                "Adaptation module save requires the staged materialization path"
+            )
+
         # Create module directory
         os.makedirs(module_dir, exist_ok=True)
         
@@ -1215,9 +1368,12 @@ If the field expects an object, return just the object.
         # Generate unified plot file
         self.generate_unified_plot_file(module_data, areas, module_name)
         
-        # MONSTER REFERENCE CLOSURE: Ensure all referenced monsters have stat files
-        print("DEBUG: [Module Generator] Ensuring monster reference closure...")
-        closure_report = self._ensure_monster_reference_closure(module_name, module_dir)
+        # MONSTER REFERENCE CLOSURE: Legacy builds retain the existing closure
+        # path. Adaptation builds defer closure until their semantic guardrail
+        # has removed raw prose references from the staged area files.
+        if not getattr(self, "adaptation_mode", False):
+            print("DEBUG: [Module Generator] Ensuring monster reference closure...")
+            closure_report = self._ensure_monster_reference_closure(module_name, module_dir)
         
         if closure_report["unresolved"] > 0:
             error_msg = f"Monster reference closure failed: {closure_report['unresolved']} unresolved references"

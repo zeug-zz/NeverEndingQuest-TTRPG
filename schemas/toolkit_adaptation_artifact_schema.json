@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neverendingquest.local/schemas/toolkit_adaptation_artifact.v1.json",
+  "title": "NeverEndingQuest Toolkit Adaptation Attempt Artifact v1",
+  "description": "Attempt-scoped diagnostic and provenance envelope for the LLM adaptation lane.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "artifact_kind",
+    "artifact_version",
+    "attempt_id",
+    "attempt_number",
+    "revision_number",
+    "stage",
+    "status",
+    "created_at",
+    "provenance",
+    "metadata",
+    "payload"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["toolkit_adaptation_artifact.v1"]
+    },
+    "artifact_kind": {
+      "type": "string",
+      "enum": [
+        "source_context",
+        "adaptation_dossier",
+        "failure_report",
+        "revision_report",
+        "build_result",
+        "publication_report"
+      ]
+    },
+    "artifact_version": {
+      "type": "string",
+      "pattern": "^[a-z_]+\\.v1$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "attempt_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "revision_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["draft", "failed", "revised", "build", "publication"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "failed",
+        "revised",
+        "pending",
+        "passed",
+        "blocked",
+        "published",
+        "deferred"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "report_freshness": {
+      "$ref": "#/definitions/report_freshness"
+    },
+    "provenance": {
+      "$ref": "#/definitions/provenance"
+    },
+    "metadata": {
+      "$ref": "#/definitions/metadata"
+    },
+    "payload": {
+      "type": "object",
+      "maxProperties": 64
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bounded_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(^|/)\\.\\.(/|$)).+$"
+    },
+    "model_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 8,
+      "properties": {
+        "provider": {"type": "string", "minLength": 1, "maxLength": 120},
+        "model": {"type": "string", "minLength": 1, "maxLength": 160},
+        "model_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        "parameter_profile": {"type": "string", "minLength": 1, "maxLength": 120},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "reasoning_effort": {"type": "string", "minLength": 1, "maxLength": 32},
+        "verbosity": {"type": "string", "minLength": 1, "maxLength": 32}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_title",
+        "source_hash",
+        "source_path",
+        "rights_class",
+        "adaptation_mode"
+      ],
+      "properties": {
+        "source_title": {"$ref": "#/definitions/bounded_text"},
+        "source_hash": {"$ref": "#/definitions/sha256"},
+        "source_path": {"$ref": "#/definitions/relative_path"},
+        "source_size_bytes": {"type": "integer", "minimum": 0, "maximum": 50000000},
+        "rights_class": {
+          "type": "string",
+          "enum": [
+            "user_authored",
+            "licensed_or_project_owned",
+            "third_party_copyright_restricted"
+          ]
+        },
+        "rights_basis": {"type": "string", "minLength": 1, "maxLength": 500},
+        "rights_review_required": {"type": "boolean"},
+        "rights_review_status": {
+          "type": "string",
+          "enum": ["not_required", "pending", "approved", "rejected"]
+        },
+        "adaptation_mode": {
+          "type": "string",
+          "enum": ["llm_adaptation"]
+        },
+        "source_profile": {"type": "string", "minLength": 1, "maxLength": 32},
+        "source_format": {"type": "string", "minLength": 1, "maxLength": 32},
+        "model_metadata": {"$ref": "#/definitions/model_metadata"},
+        "world_seed_status": {
+          "type": "string",
+          "enum": ["available", "unavailable", "invalid"]
+        },
+        "world_seed_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "world_seed_hash": {"$ref": "#/definitions/sha256"},
+        "world_context_status": {
+          "type": "string",
+          "enum": ["available", "fallback", "unavailable"]
+        },
+        "world_context_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "world_context_hash": {"$ref": "#/definitions/sha256"},
+        "context_hash": {"$ref": "#/definitions/sha256"},
+        "world_context_selected_module": {"type": "string", "minLength": 1, "maxLength": 140},
+        "world_context_read_only": {"type": "boolean"},
+        "world_context_provenance": {
+          "$ref": "#/definitions/world_context_provenance"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 20,
+      "properties": {
+        "job_id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "operator_label": {"type": "string", "minLength": 1, "maxLength": 240},
+        "source_profile": {"type": "string", "minLength": 1, "maxLength": 32},
+        "source_format": {"type": "string", "minLength": 1, "maxLength": 32},
+        "world_seed_status": {"type": "string", "minLength": 1, "maxLength": 32},
+        "world_seed_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "world_seed_hash": {"$ref": "#/definitions/sha256"},
+        "world_context_status": {"type": "string", "minLength": 1, "maxLength": 32},
+        "world_context_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "world_context_hash": {"$ref": "#/definitions/sha256"},
+        "context_hash": {"$ref": "#/definitions/sha256"},
+        "world_context_selected_module": {"type": "string", "minLength": 1, "maxLength": 140},
+        "parent_attempt_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "created_by": {"type": "string", "minLength": 1, "maxLength": 80},
+        "source_context_status": {"type": "string", "minLength": 1, "maxLength": 32},
+        "publication_policy": {"type": "string", "minLength": 1, "maxLength": 80}
+      }
+    },
+    "world_context_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance_version",
+        "context_version",
+        "context_status",
+        "fallback_status",
+        "world_seed_status",
+        "read_only",
+        "provider_free",
+        "raw_context_included",
+        "canon_write_allowed",
+        "registry_write_allowed",
+        "mechanical_write_allowed"
+      ],
+      "properties": {
+        "provenance_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "context_version": {"type": "string", "minLength": 1, "maxLength": 120},
+        "context_status": {"type": "string", "enum": ["available", "fallback", "unavailable"]},
+        "fallback_status": {"type": "string", "minLength": 1, "maxLength": 80},
+        "world_seed_status": {"type": "string", "enum": ["available", "unavailable", "invalid"]},
+        "world_seed_version": {"type": ["string", "null"], "maxLength": 120},
+        "world_seed_hash": {"anyOf": [{"$ref": "#/definitions/sha256"}, {"type": "null"}]},
+        "context_hash": {"anyOf": [{"$ref": "#/definitions/sha256"}, {"type": "null"}]},
+        "selected_module": {"type": ["string", "null"], "maxLength": 140},
+        "read_only": {"type": "boolean"},
+        "provider_free": {"type": "boolean"},
+        "raw_context_included": {"type": "boolean"},
+        "canon_write_allowed": {"type": "boolean"},
+        "registry_write_allowed": {"type": "boolean"},
+        "mechanical_write_allowed": {"type": "boolean"}
+      }
+    },
+    "report_freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "authoritative", "written_at"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["current", "authoritative", "degraded", "stale"]
+        },
+        "authoritative": {"type": "boolean"},
+        "written_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "reason": {"type": "string", "maxLength": 240}
+      }
+    }
+  }
+}

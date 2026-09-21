@@ -2730,10 +2730,11 @@
                                 <div style="margin-top: 10px; color: #d0a050; font-size: 0.9em;">
                                     PDF support is text-extraction only. Scanned or image-only PDFs still need manual conversion before upload.
                                 </div>
-                                <div id="homebrew-upload-status" style="display: none; margin-top: 12px; padding: 10px; background: #141414; border: 1px solid #444;">
-                                    <div id="homebrew-upload-message" style="margin-bottom: 8px; color: #ddd;"></div>
-                                    <pre id="homebrew-upload-details" style="max-height: 260px; overflow: auto; color: #bbb; font-size: 0.9em; white-space: pre-wrap;"></pre>
-                                </div>
+                                 <div id="homebrew-upload-status" style="display: none; margin-top: 12px; padding: 10px; background: #141414; border: 1px solid #444;">
+                                     <div id="homebrew-upload-message" style="margin-bottom: 8px; color: #ddd;"></div>
+                                     <div id="homebrew-upload-activity" style="display: none; margin-bottom: 8px; color: #9aa7b8; font-size: 0.85em; font-style: italic;"></div>
+                                     <pre id="homebrew-upload-details" style="max-height: 260px; overflow: auto; color: #bbb; font-size: 0.9em; white-space: pre-wrap;"></pre>
+                                 </div>
                                 <div id="homebrew-review-panel" style="display: none; margin-top: 12px; padding: 12px; background: #121212; border: 1px solid #666;">
                                     <div id="homebrew-review-title" style="margin-bottom: 8px; color: #ffcc66; font-weight: bold;">Advanced Diagnostics</div>
                                     <pre id="homebrew-review-summary" style="max-height: 260px; overflow: auto; color: #bbb; font-size: 0.9em; white-space: pre-wrap;"></pre>
@@ -5994,7 +5995,6 @@
         let progressPercentage = null;
         let progressStages = null;
         let modulesListContainer = null;
-        let homebrewMdFileInput = null;
         // TABLETOP MODE: Page-session-only expansion state for the Existing
         // Modules sidebar, keyed by canonical module name. Held in memory
         // only (never localStorage, module/campaign files, backend calls, or
@@ -6107,10 +6107,12 @@
             }
             syncModulesBannerState();
         }
-        let homebrewUploadButton = null;
-        let homebrewUploadStatus = null;
-        let homebrewUploadMessage = null;
-        let homebrewUploadDetails = null;
+        let homebrewMdFileInput = null;
+         let homebrewUploadButton = null;
+         let homebrewUploadStatus = null;
+         let homebrewUploadMessage = null;
+         let homebrewUploadActivity = null;
+         let homebrewUploadDetails = null;
         let homebrewReviewPanel = null;
         let homebrewReviewTitle = null;
         let homebrewReviewSummary = null;
@@ -6127,10 +6129,154 @@
         let homebrewReviewApproveButton = null;
         let homebrewReviewRejectButton = null;
         let homebrewReviewStartBuildButton = null;
-        let homebrewActiveReviewData = null;
-        let homebrewUploadPollTimer = null;
-        let homebrewActiveReviewJobId = null;
-        let homebrewConsoleIsWorking = false;
+         let homebrewActiveReviewData = null;
+         let homebrewUploadPollTimer = null;
+         let homebrewActiveReviewJobId = null;
+          let homebrewConsoleIsWorking = false;
+          const homebrewActivityState = {
+              statusChannel: '',
+              activityGroup: '',
+              messageIndex: -1,
+              lastUpdatedAt: 0,
+          };
+          const HOME_BREW_NORMALIZATION_ACTIVITY_INTERVAL_MS = 5000;
+          const HOME_BREW_ACTIVITY_INTERVAL_MS = HOME_BREW_NORMALIZATION_ACTIVITY_INTERVAL_MS;
+          const HOME_BREW_NORMALIZATION_ACTIVITY_LINES = [
+              'Reading source sections and identifying locations...',
+              'Extracting NPCs, encounters, and narrative clues...',
+             'Reconciling source details for the build handoff...',
+             'Preparing the normalized packet for the module builder...',
+         ];
+          const HOME_BREW_ACTIVITY_GROUPS = Object.freeze({
+              normalization: HOME_BREW_NORMALIZATION_ACTIVITY_LINES,
+              adaptation_source_context_authoring_staging: Object.freeze([
+                  'Reviewing source context for adaptation...',
+                  'Shaping authoring guidance for the current stage...',
+                  'Preparing bounded staging inputs...',
+              ]),
+              adaptation_build_revision: Object.freeze([
+                  'Building module structure from adaptation context...',
+                  'Reviewing generated areas and connections...',
+                  'Preparing a bounded revision pass...',
+              ]),
+              validation_readiness_deterministic_repair: Object.freeze([
+                  'Checking module structure and readiness...',
+                  'Reviewing deterministic repair inputs...',
+                  'Preparing the next readiness check...',
+              ]),
+              semantic_audit: Object.freeze([
+                  'Reviewing semantic links and authored references...',
+                  'Checking destination and entity consistency...',
+                  'Preparing semantic audit results...',
+              ]),
+              legacy_packet_rebuild: Object.freeze([
+                  'Preparing the packet-driven build handoff...',
+                  'Reviewing rebuild inputs and workspace state...',
+                  'Continuing legacy build preparation...',
+              ]),
+              finishing_publication: Object.freeze([
+                  'Running final module finishing checks...',
+                  'Reviewing publication readiness details...',
+                  'Preparing the generated adventure summary...',
+              ]),
+              registry_campaign_rollback: Object.freeze([
+                  'Verifying module availability metadata...',
+                  'Reviewing campaign registration state...',
+                  'Preparing safe publication follow-up...',
+              ]),
+              direct_builder_publication: Object.freeze([
+                  'Preparing direct builder publication checks...',
+                  'Reviewing generated module artifacts...',
+                  'Preparing final builder progress details...',
+              ]),
+              unknown: Object.freeze([
+                  'Processing the current toolkit build stage...',
+                  'Reviewing bounded build state...',
+                  'Continuing toolkit processing...',
+              ]),
+          });
+
+          function resolveHomebrewActivityGroup(activityGroup) {
+              const requestedGroup = String(activityGroup || '').trim().toLowerCase();
+              return Object.prototype.hasOwnProperty.call(
+                  HOME_BREW_ACTIVITY_GROUPS,
+                  requestedGroup
+              ) ? requestedGroup : 'unknown';
+          }
+
+          function getHomebrewActivityMessages(activityGroup) {
+              return HOME_BREW_ACTIVITY_GROUPS[resolveHomebrewActivityGroup(activityGroup)];
+          }
+
+          function updateHomebrewUploadActivityGroup(activityGroup) {
+              const group = resolveHomebrewActivityGroup(activityGroup);
+              updateHomebrewActivity(
+                  'homebrew_upload',
+                  group,
+                  getHomebrewActivityMessages(group)
+              );
+          }
+
+          function resolveHomebrewLegacyActivityGroup(status, stage) {
+              const statusName = String(status || '').toLowerCase();
+              const stageName = String(stage || '').toLowerCase();
+              if (
+                  statusName === 'validating'
+                  || statusName === 'repairing_deterministic'
+                  || statusName === 'repairing_semantic'
+                  || /validat|readiness|repair/.test(stageName)
+              ) {
+                  return 'validation_readiness_deterministic_repair';
+              }
+              if (
+                  statusName === 'build_completed'
+                  || statusName === 'ready_for_finishing'
+                  || statusName === 'finishing'
+                  || statusName === 'publishability_audit'
+                  || /finish|publish|report|markdown/.test(stageName)
+              ) {
+                  return 'finishing_publication';
+              }
+              if (
+                  statusName === 'rebuild_backup_running'
+                  || statusName === 'rebuild_clean_running'
+                  || statusName === 'building'
+                  || /packet|rebuild|build/.test(stageName)
+              ) {
+                  return 'legacy_packet_rebuild';
+              }
+              return 'unknown';
+          }
+
+          function resolveHomebrewAdaptationActivityGroup(phase, outcome, terminal) {
+              const phaseName = String(phase || '').toLowerCase();
+              const outcomeName = String(outcome || '').toLowerCase();
+              if (terminal === true) {
+                  return '';
+              }
+              if (outcomeName !== 'in_progress' && outcomeName !== 'semantic_revision') {
+                  return '';
+              }
+              if (['adaptation_preflight', 'adaptation_source_context', 'adaptation_authoring', 'adaptation_staging'].includes(phaseName)) {
+                  return 'adaptation_source_context_authoring_staging';
+              }
+              if (['adaptation_build', 'adaptation_revision', 'adaptation_revision_build'].includes(phaseName)) {
+                  return 'adaptation_build_revision';
+              }
+              if (['adaptation_validation', 'adaptation_readiness'].includes(phaseName)) {
+                  return 'validation_readiness_deterministic_repair';
+              }
+              if (phaseName === 'adaptation_semantic_audit') {
+                  return 'semantic_audit';
+              }
+              if (['adaptation_report', 'adaptation_markdown'].includes(phaseName)) {
+                  return 'finishing_publication';
+              }
+              if (['adaptation_registry', 'adaptation_campaign_sync', 'adaptation_rollback'].includes(phaseName)) {
+                  return 'registry_campaign_rollback';
+              }
+              return 'unknown';
+          }
         
         // Initialize module builder elements after DOM is ready
         function initializeModuleBuilderElements() {
@@ -6148,10 +6294,11 @@
             progressStages = document.querySelectorAll('#progress-stages li');
             modulesListContainer = document.getElementById('modules-list');
             homebrewMdFileInput = document.getElementById('homebrew-md-file');
-            homebrewUploadButton = document.getElementById('homebrew-upload-btn');
-            homebrewUploadStatus = document.getElementById('homebrew-upload-status');
-            homebrewUploadMessage = document.getElementById('homebrew-upload-message');
-            homebrewUploadDetails = document.getElementById('homebrew-upload-details');
+             homebrewUploadButton = document.getElementById('homebrew-upload-btn');
+             homebrewUploadStatus = document.getElementById('homebrew-upload-status');
+             homebrewUploadMessage = document.getElementById('homebrew-upload-message');
+             homebrewUploadActivity = document.getElementById('homebrew-upload-activity');
+             homebrewUploadDetails = document.getElementById('homebrew-upload-details');
             homebrewReviewPanel = document.getElementById('homebrew-review-panel');
             homebrewReviewTitle = document.getElementById('homebrew-review-title');
             homebrewReviewSummary = document.getElementById('homebrew-review-summary');
@@ -6272,6 +6419,9 @@
                     resetBuilderUI();
                 });
             }
+
+            // TABLETOP MODE: Existing Modules banner bulk toggle (task 2.3).
+            setupExistingModulesToggle();
         }
 
         // Socket event handlers for builder
@@ -6291,6 +6441,9 @@
 
             if (!modules || modules.length === 0) {
                 modulesListContainer.innerHTML = '<div class="no-modules">No modules found.</div>';
+                // TABLETOP MODE: No visible cards -> banner becomes a safe
+                // disabled no-op.
+                syncModulesBannerState();
                 return;
             }
 
@@ -6302,6 +6455,9 @@
 
             if (validModules.length === 0) {
                 modulesListContainer.innerHTML = '<div class="no-modules">No adventure modules found.</div>';
+                // TABLETOP MODE: No visible cards -> banner becomes a safe
+                // disabled no-op.
+                syncModulesBannerState();
                 return;
             }
 
@@ -6324,6 +6480,16 @@
                 return (a.moduleName || '').localeCompare(b.moduleName || '');
             });
 
+            // TABLETOP MODE: Prune expansion state for module names that are
+            // no longer present in this refreshed response so the session
+            // set only ever holds currently rendered canonical names.
+            const presentModuleNames = new Set(sortedModules.map(m => m.moduleName));
+            for (const name of expandedModuleNames) {
+                if (!presentModuleNames.has(name)) {
+                    expandedModuleNames.delete(name);
+                }
+            }
+
             sortedModules.forEach(module => {
                 // TABLETOP MODE: Each module renders as a native details/summary
                 // disclosure. No `open` attribute means native closed-by-default;
@@ -6332,6 +6498,11 @@
                 // stay in the detail body and are visible only when expanded.
                 const moduleItem = document.createElement('details');
                 moduleItem.className = 'module-item';
+                // TABLETOP MODE: Canonical identity hook used by the bulk
+                // expand/collapse helper to keep expandedModuleNames in sync
+                // for every card it toggles (set via DOM, not innerHTML, so
+                // no escaping concerns for module names).
+                moduleItem.setAttribute('data-module-name', module.moduleName);
                 const levelRange = module.levelRange || { min: '?', max: '?' };
                 
                 moduleItem.innerHTML = `
@@ -6346,8 +6517,37 @@
                         <button class="btn btn-small btn-secondary" style="margin-top: 8px; width: 100%;" onclick="downloadAdventure('${module.moduleName}', this)">Download Adventure</button>
                     </div>
                 `;
+                // TABLETOP MODE: Capture explicit open/close state for the
+                // current page session so later refreshes can reapply it.
+                // Ignore stale toggle events from detached nodes (the toggle
+                // event for programmatic state changes is queued, not
+                // synchronous, so a cleared list can otherwise repollute the
+                // session set with names that were pruned).
+                moduleItem.addEventListener('toggle', () => {
+                    if (!moduleItem.isConnected) {
+                        return;
+                    }
+                    // TABLETOP MODE: Update the session set and this card's
+                    // summary disclosure state, then refresh the banner
+                    // control for the current visible set.
+                    syncModuleExpandedState(moduleItem);
+                    syncModulesBannerState();
+                });
+                // TABLETOP MODE: Reapply explicit session state after a
+                // refresh. Modules newly introduced by this response are not
+                // in the set and remain closed (no `open` attribute).
+                if (expandedModuleNames.has(module.moduleName)) {
+                    moduleItem.open = true;
+                    // The toggle event for programmatic open is queued, not
+                    // synchronous, so sync the summary disclosure state
+                    // explicitly right here as well.
+                    syncModuleSummaryExpanded(moduleItem);
+                }
                 modulesListContainer.appendChild(moduleItem);
             });
+            // TABLETOP MODE: Reflect the rendered visible set in the banner
+            // control after every list render (initial, empty, and refresh).
+            syncModulesBannerState();
         });
 
         // Download Adventure Markdown button handler
@@ -6383,6 +6583,11 @@
         });
         
         socket.on('module_progress', (data) => {
+            updateHomebrewActivity(
+                'module_progress',
+                'direct_builder_publication',
+                getHomebrewActivityMessages('direct_builder_publication')
+            );
             const percentage = Math.round(data.percentage || 0);
             if (progressBar) progressBar.style.width = percentage + '%';
             if (progressPercentage) progressPercentage.textContent = percentage + '%';
@@ -6400,6 +6605,7 @@
         });
         
         socket.on('module_complete', (data) => {
+            clearHomebrewActivity();
             if (progressSection) progressSection.style.display = 'none';
             if (resultsSection) resultsSection.style.display = 'block';
             const finalStatus = data.final_status || 'success';
@@ -6423,10 +6629,8 @@
         });
         
         socket.on('module_error', (data) => {
+            clearHomebrewActivity();
             let message = data.error || 'Unknown module build error';
-
-            // TABLETOP MODE: Existing Modules banner bulk toggle (task 2.3).
-            setupExistingModulesToggle();
             if (data.generation_succeeded && data.readiness_failed) {
                 message += `\n\nGeneration completed, but readiness convergence failed. Review the readiness result for details.`;
                 if (data.readiness_result) {
@@ -6442,31 +6646,86 @@
         });
         
         socket.on('build_cancelled', (data) => {
+            clearHomebrewActivity();
             if (statusMessage) statusMessage.textContent = data.message;
             setTimeout(() => {
                 resetBuilderUI();
             }, 2000);
-                // TABLETOP MODE: No visible cards -> banner becomes a safe
-                // disabled no-op.
-                syncModulesBannerState();
         });
 
-        function getHomebrewStatusWithGuidance(type, message) {
-            const baseMessage = String(message || '').trim();
-            // MMG guidance is only appended in the caller when appropriate.
-            // The upload poll and review flows gate this on actual module existence.
+         function getHomebrewStatusWithGuidance(type, message) {
+             const baseMessage = String(message || '').trim();
+             // MMG guidance is only appended in the caller when appropriate.
+             // The upload poll and review flows gate this on actual module existence.
             if (type === 'error') {
                 return `${baseMessage} If this keeps happening, contact the developer and include this console output: ${HOME_BREW_SUPPORT_URL}`;
             }
-            return baseMessage;
-        }
-                // TABLETOP MODE: No visible cards -> banner becomes a safe
-                // disabled no-op.
-                syncModulesBannerState();
+             return baseMessage;
+         }
 
-        function renderHomebrewUploadStatus(type, message, details = '') {
-            if (!homebrewUploadStatus || !homebrewUploadMessage || !homebrewUploadDetails) {
-                return;
+          function clearHomebrewActivity() {
+              homebrewActivityState.statusChannel = '';
+              homebrewActivityState.activityGroup = '';
+              homebrewActivityState.messageIndex = -1;
+              homebrewActivityState.lastUpdatedAt = 0;
+              if (!homebrewUploadActivity) {
+                  return;
+              }
+              homebrewUploadActivity.textContent = '';
+              homebrewUploadActivity.style.display = 'none';
+          }
+
+          function updateHomebrewActivity(statusChannel, activityGroup, messages) {
+              if (!homebrewUploadActivity) {
+                  return;
+              }
+
+              if (!Array.isArray(messages) || messages.length === 0) {
+                  clearHomebrewActivity();
+                  return;
+              }
+
+              const channel = String(statusChannel || '');
+              const group = String(activityGroup || '');
+              const now = Date.now();
+              const groupChanged = (
+                  homebrewActivityState.statusChannel !== channel
+                  || homebrewActivityState.activityGroup !== group
+              );
+              if (
+                  !groupChanged
+                  && homebrewActivityState.lastUpdatedAt > 0
+                  && now - homebrewActivityState.lastUpdatedAt
+                      < HOME_BREW_ACTIVITY_INTERVAL_MS
+              ) {
+                  return;
+              }
+
+              homebrewActivityState.statusChannel = channel;
+              homebrewActivityState.activityGroup = group;
+              homebrewActivityState.messageIndex = groupChanged
+                  ? 0
+                  : (homebrewActivityState.messageIndex + 1) % messages.length;
+              homebrewActivityState.lastUpdatedAt = now;
+              homebrewUploadActivity.textContent = `Activity: ${messages[homebrewActivityState.messageIndex]}`;
+              homebrewUploadActivity.style.display = 'block';
+          }
+
+          function clearHomebrewNormalizationActivity() {
+              clearHomebrewActivity();
+          }
+
+          function updateHomebrewNormalizationActivity() {
+              updateHomebrewActivity(
+                  'homebrew_upload',
+                  'normalization',
+                  HOME_BREW_NORMALIZATION_ACTIVITY_LINES
+              );
+          }
+
+         function renderHomebrewUploadStatus(type, message, details = '') {
+             if (!homebrewUploadStatus || !homebrewUploadMessage || !homebrewUploadDetails) {
+                 return;
             }
 
             const colorByType = {
@@ -6478,36 +6737,24 @@
 
             homebrewUploadStatus.style.display = 'block';
             homebrewUploadStatus.style.borderColor = colorByType[type] || '#444';
-            homebrewUploadMessage.style.color = colorByType[type] || '#ddd';
-            homebrewUploadMessage.textContent = getHomebrewStatusWithGuidance(type, message);
-            if (homebrewConsoleIsWorking) {
-                const cursor = document.createElement('span');
-                cursor.textContent = ' [|';
-                cursor.style.opacity = '0.9';
-                cursor.style.animation = 'homebrewCursorBlink 1s step-end infinite';
-            // TABLETOP MODE: Prune expansion state for module names that are
-            // no longer present in this refreshed response so the session
-            // set only ever holds currently rendered canonical names.
-            const presentModuleNames = new Set(sortedModules.map(m => m.moduleName));
-            for (const name of expandedModuleNames) {
-                if (!presentModuleNames.has(name)) {
-                    expandedModuleNames.delete(name);
-                }
-            }
-
-                homebrewUploadMessage.appendChild(cursor);
+             homebrewUploadMessage.style.color = colorByType[type] || '#ddd';
+             homebrewUploadMessage.textContent = getHomebrewStatusWithGuidance(type, message);
+             if (homebrewConsoleIsWorking) {
+                 const cursor = document.createElement('span');
+                 cursor.textContent = ' |';
+                 cursor.style.opacity = '0.9';
+                 cursor.style.animation = 'homebrewCursorBlink 1s step-end infinite';
+                 homebrewUploadMessage.appendChild(cursor);
             }
             homebrewUploadDetails.textContent = details;
-                // TABLETOP MODE: Canonical identity hook used by the bulk
-                // expand/collapse helper to keep expandedModuleNames in sync
-                // for every card it toggles (set via DOM, not innerHTML, so
-                // no escaping concerns for module names).
-                moduleItem.setAttribute('data-module-name', module.moduleName);
         }
 
-        function setHomebrewConsoleWorking(isWorking) {
-            homebrewConsoleIsWorking = Boolean(isWorking);
-        }
+          function setHomebrewConsoleWorking(isWorking) {
+              homebrewConsoleIsWorking = Boolean(isWorking);
+              if (!homebrewConsoleIsWorking) {
+                  clearHomebrewActivity();
+              }
+          }
 
         function resolveHomebrewHydrationSummary(payload, job) {
             const fromPayload = payload && payload.hydration_summary;
@@ -6517,37 +6764,8 @@
 
             const summary = {
                 phase: '',
-                // TABLETOP MODE: Capture explicit open/close state for the
-                // current page session so later refreshes can reapply it.
-                // Ignore stale toggle events from detached nodes (the toggle
-                // event for programmatic state changes is queued, not
-                // synchronous, so a cleared list can otherwise repollute the
-                // session set with names that were pruned).
-                moduleItem.addEventListener('toggle', () => {
-                    if (!moduleItem.isConnected) {
-                        return;
-                    }
-                    // TABLETOP MODE: Update the session set and this card's
-                    // summary disclosure state, then refresh the banner
-                    // control for the current visible set.
-                    syncModuleExpandedState(moduleItem);
-                    syncModulesBannerState();
-                });
-                // TABLETOP MODE: Reapply explicit session state after a
-                // refresh. Modules newly introduced by this response are not
-                // in the set and remain closed (no `open` attribute).
-                if (expandedModuleNames.has(module.moduleName)) {
-                    moduleItem.open = true;
-                    // The toggle event for programmatic open is queued, not
-                    // synchronous, so sync the summary disclosure state
-                    // explicitly right here as well.
-                    syncModuleSummaryExpanded(moduleItem);
-                }
                 blocked_count: 0,
                 blocker_classes: {},
-            // TABLETOP MODE: Reflect the rendered visible set in the banner
-            // control after every list render (initial, empty, and refresh).
-            syncModulesBannerState();
                 hydration_modes: {},
                 candidate_sources: {},
                 sample_monsters: [],
@@ -7934,6 +8152,82 @@
             setHomebrewConsoleWorking(false);
         }
 
+        // TABLETOP MODE: Adaptation jobs use a bounded backend-owned status
+        // envelope. Do not render the raw adaptation result or provider text.
+        function isToolkitAdaptationJob(job, payload) {
+            const candidate = (payload && payload.adaptation_job) || (job && job.adaptation_job) || {};
+            return Boolean(
+                (job && String(job.adaptation_mode || '').toLowerCase() === 'llm_adaptation')
+                || (candidate && candidate.is_adaptation === true)
+            );
+        }
+
+        function renderToolkitAdaptationJobStatus(job, payload) {
+            const summary = (payload && payload.adaptation_job) || (job && job.adaptation_job) || {};
+            if (!summary || summary.is_adaptation !== true) return false;
+
+            const outcome = String(summary.outcome || job.adaptation_outcome || 'in_progress').toLowerCase();
+            const phase = String(summary.phase || job.adaptation_phase || 'adaptation_preflight');
+            const terminal = summary.terminal === true || job.adaptation_terminal === true;
+            const retry = summary.retry_diagnostics || job.adaptation_retry_diagnostics || {};
+            const publication = summary.publication || job.adaptation_publication || {};
+            const activityGroup = resolveHomebrewAdaptationActivityGroup(phase, outcome, terminal);
+            if (activityGroup) {
+                updateHomebrewUploadActivityGroup(activityGroup);
+            } else {
+                clearHomebrewActivity();
+            }
+            const messages = {
+                in_progress: String(summary.status_text || 'Adaptation build is in progress.'),
+                semantic_revision: retry.status === 'available'
+                    ? 'Semantic revision/retry is available. A fresh adaptation build is required; publication is not complete.'
+                    : 'Semantic adaptation revision is being evaluated in fresh staging.',
+                revision_exhausted: 'Semantic revision budget exhausted. Publication is blocked; no registry completion is reported.',
+                infrastructure_failure: 'Adaptation infrastructure failure. Semantic revision budget was not consumed.',
+                blocked: 'Adaptation publication is blocked by Python-owned gates. No completed module is reported.',
+                completed: 'Adaptation completed after Python-owned publication and registry verification.'
+            };
+            const message = messages[outcome] || messages.blocked;
+            const kind = outcome === 'completed'
+                ? 'success'
+                : (outcome === 'in_progress' ? 'info' : (outcome === 'semantic_revision' ? 'warning' : 'error'));
+            const details = JSON.stringify({
+                contract_version: summary.contract_version || job.adaptation_status_contract || '',
+                adaptation_mode: 'llm_adaptation',
+                phase,
+                outcome,
+                failure_surface: summary.failure_surface || job.adaptation_failure_surface || 'none',
+                failure_class: summary.failure_class || '',
+                failure_code: summary.failure_code || '',
+                retry_diagnostics: retry,
+                publication,
+                raw_provider_payload_exposed: false
+            }, null, 2);
+
+            renderHomebrewUploadStatus(kind, message, details);
+            if (homebrewReviewTitle) {
+                const titleMap = {
+                    completed: 'Adaptation Completed',
+                    semantic_revision: 'Adaptation Semantic Revision Available',
+                    revision_exhausted: 'Adaptation Revision Budget Exhausted',
+                    infrastructure_failure: 'Adaptation Infrastructure Failure',
+                    blocked: 'Adaptation Publication Blocked',
+                    in_progress: 'Adaptation Build In Progress'
+                };
+                homebrewReviewTitle.textContent = `${titleMap[outcome] || 'Adaptation Status'} [phase: ${phase}]`;
+            }
+
+            if (terminal) {
+                setHomebrewConsoleWorking(false);
+                setHomebrewReviewPanelVisible(false);
+                stopHomebrewUploadPolling();
+                if (homebrewUploadButton) homebrewUploadButton.disabled = false;
+            } else {
+                setHomebrewConsoleWorking(true);
+            }
+            return true;
+        }
+
         async function pollToolkitHomebrewJob(jobId) {
             stopHomebrewUploadPolling();
 
@@ -7951,16 +8245,26 @@
                         return;
                     }
 
-                    const job = payload.job;
-                    const stage = job.stage || 'unknown';
-                    const pipelineStatus = job.pipeline_status || 'pending';
-                    setHomebrewConsoleWorking(true);
+                     const job = payload.job;
+                     const stage = job.stage || 'unknown';
+                     const pipelineStatus = job.pipeline_status || 'pending';
+                     setHomebrewConsoleWorking(true);
+                     const isNormalizingJob = job.status === 'running' && stage === 'normalizing';
+                     if (!isNormalizingJob) {
+                         clearHomebrewNormalizationActivity();
+                     }
 
-                    if (job.status === 'queued' || job.status === 'running') {
-                        if (job.status === 'running' && stage === 'normalizing') {
-                            renderHomebrewUploadStatus(
-                                'info',
-                                'Homebrew normalization in progress before auto-start build handoff.',
+                     if (isToolkitAdaptationJob(job, payload)
+                         && renderToolkitAdaptationJobStatus(job, payload)) {
+                        return;
+                    }
+
+                     if (job.status === 'queued' || job.status === 'running') {
+                         if (job.status === 'running' && stage === 'normalizing') {
+                             updateHomebrewNormalizationActivity();
+                             renderHomebrewUploadStatus(
+                                 'info',
+                                 'Homebrew normalization in progress before auto-start build handoff.',
                                 JSON.stringify({
                                     job_id: job.job_id,
                                     status: job.status,
@@ -7969,12 +8273,15 @@
                                     source_filename: job.source_filename,
                                 }, null, 2)
                             );
-                            return;
-                        }
+                             return;
+                         }
 
-                        renderHomebrewUploadStatus(
-                            'info',
-                            `Homebrew ingest running [stage: ${stage}]`,
+                         updateHomebrewUploadActivityGroup(
+                             resolveHomebrewLegacyActivityGroup(job.status, stage)
+                         );
+                         renderHomebrewUploadStatus(
+                             'info',
+                             `Homebrew ingest running [stage: ${stage}]`,
                             JSON.stringify({
                                 job_id: job.job_id,
                                 status: job.status,
@@ -7986,9 +8293,10 @@
                         return;
                     }
 
-                    if (job.status === 'awaiting_normalization') {
-                        setHomebrewReviewPanelVisible(false);
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'awaiting_normalization') {
+                         setHomebrewConsoleWorking(false);
+                         setHomebrewReviewPanelVisible(false);
+                         renderHomebrewUploadStatus(
                             'warning',
                             'Homebrew upload is waiting for normalization completion before auto-start build.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8066,8 +8374,9 @@
                         return;
                     }
 
-                    if (job.status === 'rebuild_backup_running') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'rebuild_backup_running') {
+                         updateHomebrewUploadActivityGroup('legacy_packet_rebuild');
+                         renderHomebrewUploadStatus(
                             'warning',
                             'Preparing rebuild backup of existing module.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8078,8 +8387,9 @@
                         return;
                     }
 
-                    if (job.status === 'rebuild_clean_running') {
-                        const progressMessage = String(job.progress_message || '').trim();
+                     if (job.status === 'rebuild_clean_running') {
+                         updateHomebrewUploadActivityGroup('legacy_packet_rebuild');
+                         const progressMessage = String(job.progress_message || '').trim();
                         const progressDetails = {
                             ...(job.result || job),
                             progress_message: progressMessage || undefined,
@@ -8098,8 +8408,9 @@
                         return;
                     }
 
-                    if (job.status === 'building') {
-                        const progressMessage = String(job.progress_message || '').trim();
+                     if (job.status === 'building') {
+                         updateHomebrewUploadActivityGroup('legacy_packet_rebuild');
+                         const progressMessage = String(job.progress_message || '').trim();
                         const progressDetails = {
                             ...(job.result || job),
                             progress_message: progressMessage || undefined,
@@ -8148,8 +8459,9 @@
                         return;
                     }
 
-                    if (job.status === 'build_completed') {
-                        const buildResult = job.result || {};
+                     if (job.status === 'build_completed') {
+                         updateHomebrewUploadActivityGroup('finishing_publication');
+                         const buildResult = job.result || {};
                         const bf = buildResult.build_fidelity || {};
                         let statusText = 'Packet-driven Homebrew build completed. Entering shared finishing/publication stages.';
                         if (bf && bf.warning_count > 0) {
@@ -8166,8 +8478,9 @@
                         return;
                     }
 
-                    if (job.status === 'validating') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'validating') {
+                         updateHomebrewUploadActivityGroup('validation_readiness_deterministic_repair');
+                         renderHomebrewUploadStatus(
                             'info',
                             'Structural readiness validation in progress.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8178,8 +8491,9 @@
                         return;
                     }
 
-                    if (job.status === 'repairing_deterministic') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'repairing_deterministic') {
+                         updateHomebrewUploadActivityGroup('validation_readiness_deterministic_repair');
+                         renderHomebrewUploadStatus(
                             'warning',
                             'Applying deterministic readiness repairs.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8190,8 +8504,9 @@
                         return;
                     }
 
-                    if (job.status === 'repairing_semantic') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'repairing_semantic') {
+                         updateHomebrewUploadActivityGroup('validation_readiness_deterministic_repair');
+                         renderHomebrewUploadStatus(
                             'warning',
                             'Applying narrow semantic readiness repairs.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8202,8 +8517,9 @@
                         return;
                     }
 
-                    if (job.status === 'ready_for_finishing') {
-                        const readinessResult = job.result || {};
+                     if (job.status === 'ready_for_finishing') {
+                         updateHomebrewUploadActivityGroup('finishing_publication');
+                         const readinessResult = job.result || {};
                         renderHomebrewUploadStatus(
                             'success',
                             'Module reached structural readiness boundary (ready_for_finishing). Finisher handoff in progress.',
@@ -8215,8 +8531,9 @@
                         return;
                     }
 
-                    if (job.status === 'finishing') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'finishing') {
+                         updateHomebrewUploadActivityGroup('finishing_publication');
+                         renderHomebrewUploadStatus(
                             'info',
                             'Shared finisher running publication parity stages.',
                             JSON.stringify(job.result || job, null, 2)
@@ -8227,8 +8544,9 @@
                         return;
                     }
 
-                    if (job.status === 'publishability_audit') {
-                        renderHomebrewUploadStatus(
+                     if (job.status === 'publishability_audit') {
+                         updateHomebrewUploadActivityGroup('finishing_publication');
+                         renderHomebrewUploadStatus(
                             'info',
                             'Publishability audit in progress.',
                             JSON.stringify(job.result || job, null, 2)

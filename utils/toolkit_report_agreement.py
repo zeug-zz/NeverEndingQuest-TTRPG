@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+from utils.toolkit_adaptation_dossier import ADAPTATION_MODE_LLM
 
 # Canonical status values
 STATUS_PASS = "pass"
@@ -26,9 +28,14 @@ STATUS_STALE = "stale"
 STATUS_FAILED = "failed"
 STATUS_UNKNOWN = "unknown"
 STATUS_DEGRADED = "degraded"
+STATUS_NOT_APPLICABLE = "not_applicable"
 
 # Valid freshness_states for authoritative/current reports (degraded content is still current)
 FRESH_STATES = ("current", "authoritative", "degraded")
+ADAPTATION_REPORT_AGREEMENT_CONTRACT_VERSION = (
+    "toolkit_adaptation_report_agreement.v1"
+)
+_ADAPTATION_FRESH_STATES = frozenset(FRESH_STATES)
 
 
 def _utc_now_iso() -> str:
@@ -40,6 +47,348 @@ def _utc_now_iso() -> str:
     )
 
 
+def _adaptation_artifact_identity(artifact: Mapping[str, Any]) -> Dict[str, Any]:
+    """Extract the bounded identity shared by attempt/publication reports."""
+    provenance = artifact.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    payload = artifact.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    source_ref = payload.get("source_ref")
+    source_ref = source_ref if isinstance(source_ref, Mapping) else {}
+    source_hash = str(
+        provenance.get("source_hash") or source_ref.get("sha256") or ""
+    ).strip().lower()
+    source_path = str(
+        provenance.get("source_path") or source_ref.get("path") or ""
+    ).strip()
+    return {
+        "attempt_id": str(artifact.get("attempt_id") or "").strip(),
+        "attempt_number": artifact.get("attempt_number"),
+        "revision_number": artifact.get("revision_number"),
+        "source_hash": source_hash,
+        "source_path": source_path,
+        "source_title": str(provenance.get("source_title") or "").strip(),
+    }
+
+
+def _artifact_freshness_state(artifact: Mapping[str, Any]) -> str:
+    freshness = artifact.get("report_freshness")
+    if not isinstance(freshness, Mapping):
+        return "unknown"
+    return str(freshness.get("state") or "unknown").strip().lower()
+
+
+def _artifact_status_matches_payload(
+    artifact: Mapping[str, Any],
+    *,
+    kind: str,
+    blockers: List[str],
+) -> None:
+    """Reject an artifact envelope whose status disagrees with its payload."""
+    payload = artifact.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    if kind == "build_result":
+        payload_status = str(payload.get("build_status") or "").strip().lower()
+        envelope_status = str(artifact.get("status") or "").strip().lower()
+        if payload_status and envelope_status != payload_status:
+            blockers.append("contradiction:attempt_report_status_mismatch")
+    elif kind == "publication_report":
+        payload_status = str(payload.get("publication_status") or "").strip().lower()
+        envelope_status = str(artifact.get("status") or "").strip().lower()
+        if payload_status and envelope_status != payload_status:
+            blockers.append("contradiction:publication_report_status_mismatch")
+
+
+def _report_claim_is_completed(report: Any) -> bool:
+    """Return whether a module/report surface claims publication completed."""
+    if not isinstance(report, Mapping):
+        return False
+    status = str(report.get("status") or "").strip().lower()
+    terminal = str(report.get("terminal_status") or "").strip().lower()
+    publication = str(report.get("publication_status") or "").strip().lower()
+    return (
+        status in {"success", "completed", "published"}
+        or terminal == "completed"
+        or publication in {"completed", "published"}
+    )
+
+
+def compose_adaptation_report_agreement(
+    attempt_report: Any,
+    publication_report: Any = None,
+    *,
+    expected_attempt_id: Optional[str] = None,
+    expected_source_hash: Optional[str] = None,
+    expected_revision_number: Optional[int] = None,
+    require_publication: bool = False,
+    completion_claim: Optional[Mapping[str, Any]] = None,
+    checked_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate correlated adaptation attempt/publication report claims.
+
+    This strict contract is intentionally separate from the legacy report
+    composer. It is used only by the explicit ``llm_adaptation`` lane and
+    compares Python-owned artifact identity, source references, freshness, and
+    completion status before a completed adaptation is surfaced.
+    """
+    from utils.toolkit_adaptation_artifacts import validate_adaptation_artifact
+
+    blockers: List[str] = []
+    diagnostics: List[str] = []
+    stale_reports: List[str] = []
+
+    attempt_result = validate_adaptation_artifact(attempt_report)
+    if not attempt_result.get("valid"):
+        blockers.append("attempt_report_invalid")
+        diagnostics.extend(
+            "attempt_report:" + str(item.get("code") or "invalid")
+            for item in (attempt_result.get("diagnostics") or [])[:8]
+            if isinstance(item, Mapping)
+        )
+        attempt = None
+    else:
+        attempt = attempt_result.get("artifact")
+
+    publication = None
+    if publication_report is not None:
+        publication_result = validate_adaptation_artifact(publication_report)
+        if not publication_result.get("valid"):
+            blockers.append("publication_report_invalid")
+            diagnostics.extend(
+                "publication_report:" + str(item.get("code") or "invalid")
+                for item in (publication_result.get("diagnostics") or [])[:8]
+                if isinstance(item, Mapping)
+            )
+        else:
+            publication = publication_result.get("artifact")
+    elif require_publication:
+        blockers.append("publication_report_missing")
+
+    identities: Dict[str, Dict[str, Any]] = {}
+    for label, artifact in (("attempt", attempt), ("publication", publication)):
+        if not isinstance(artifact, Mapping):
+            continue
+        kind = str(artifact.get("artifact_kind") or "").strip().lower()
+        expected_kind = "build_result" if label == "attempt" else "publication_report"
+        if kind != expected_kind:
+            blockers.append(f"{label}_report_kind_invalid")
+        provenance = artifact.get("provenance")
+        if not isinstance(provenance, Mapping) or provenance.get("adaptation_mode") != ADAPTATION_MODE_LLM:
+            blockers.append(f"{label}_report_adaptation_mode_invalid")
+        identity = _adaptation_artifact_identity(artifact)
+        identities[label] = identity
+        if not identity["attempt_id"] or not identity["source_hash"] or not identity["source_path"]:
+            blockers.append(f"{label}_report_source_identity_missing")
+
+        freshness_state = _artifact_freshness_state(artifact)
+        if freshness_state not in _ADAPTATION_FRESH_STATES:
+            stale_reports.append(label)
+            blockers.append(f"stale_report:{label}:{freshness_state}")
+        _artifact_status_matches_payload(artifact, kind=kind, blockers=blockers)
+
+    attempt_identity = identities.get("attempt")
+    if attempt_identity:
+        if expected_attempt_id and attempt_identity["attempt_id"] != str(expected_attempt_id).strip():
+            blockers.append("contradiction:attempt_id_mismatch_expected")
+        if expected_source_hash and attempt_identity["source_hash"] != str(expected_source_hash).strip().lower():
+            blockers.append("contradiction:source_hash_mismatch_expected")
+        if expected_revision_number is not None and attempt_identity["revision_number"] != expected_revision_number:
+            blockers.append("contradiction:revision_number_mismatch_expected")
+
+    publication_identity = identities.get("publication")
+    if attempt_identity and publication_identity:
+        for field in ("attempt_id", "attempt_number", "revision_number", "source_hash", "source_path"):
+            if attempt_identity.get(field) != publication_identity.get(field):
+                blockers.append(f"contradiction:{field}_mismatch_between_reports")
+
+        attempt_created = str(attempt.get("created_at") or "")
+        publication_created = str(publication.get("created_at") or "")
+        if publication_created < attempt_created:
+            stale_reports.append("publication")
+            blockers.append("stale_report:publication_before_attempt")
+
+    if isinstance(attempt, Mapping):
+        attempt_payload = attempt.get("payload")
+        attempt_payload = attempt_payload if isinstance(attempt_payload, Mapping) else {}
+        build_status = str(attempt_payload.get("build_status") or "").strip().lower()
+    else:
+        build_status = ""
+
+    publication_status = ""
+    registry_verified = False
+    if isinstance(publication, Mapping):
+        publication_payload = publication.get("payload")
+        publication_payload = publication_payload if isinstance(publication_payload, Mapping) else {}
+        publication_status = str(publication_payload.get("publication_status") or "").strip().lower()
+        registry = publication_payload.get("registry_evidence")
+        registry = registry if isinstance(registry, Mapping) else {}
+        registry_verified = registry.get("verified") is True and str(
+            registry.get("status") or ""
+        ).strip().lower() in {"pass", "success", "published"}
+
+    if publication_status == "published":
+        if build_status != "passed":
+            blockers.append("contradiction:published_without_passed_attempt")
+        if not registry_verified:
+            blockers.append("contradiction:published_without_verified_registry")
+        if not isinstance(publication, Mapping) or not isinstance(
+            (publication.get("payload") or {}).get("published_at"), str
+        ):
+            blockers.append("publication_timestamp_missing")
+
+    if _report_claim_is_completed(completion_claim):
+        if publication_status != "published":
+            blockers.append("contradiction:completed_claim_without_published_report")
+        if build_status != "passed":
+            blockers.append("contradiction:completed_claim_without_passed_attempt")
+        if isinstance(completion_claim, Mapping):
+            claim_mode = str(
+                completion_claim.get("adaptation_mode")
+                or (completion_claim.get("adaptation_provenance") or {}).get("adaptation_mode")
+                or ""
+            ).strip().lower()
+            if claim_mode and claim_mode != ADAPTATION_MODE_LLM:
+                blockers.append("contradiction:completion_claim_adaptation_mode")
+            claim_freshness = _normalize_freshness(
+                completion_claim.get("report_freshness", completion_claim.get("freshness", {}))
+            )
+            if claim_freshness not in _ADAPTATION_FRESH_STATES:
+                stale_reports.append("completion_claim")
+                blockers.append(f"stale_report:completion_claim:{claim_freshness}")
+
+    checked = checked_at or _utc_now_iso()
+    unique_blockers = list(dict.fromkeys(blockers))
+    unique_diagnostics = list(dict.fromkeys(diagnostics))
+    return {
+        "contract_version": ADAPTATION_REPORT_AGREEMENT_CONTRACT_VERSION,
+        "status": STATUS_BLOCKED if unique_blockers else STATUS_PASS,
+        "internal_coherent": not bool(unique_blockers),
+        "adaptation_mode": ADAPTATION_MODE_LLM,
+        "attempt_identity": attempt_identity or {},
+        "publication_identity": publication_identity or {},
+        "source_reference_agreement": bool(
+            attempt_identity
+            and publication_identity
+            and attempt_identity.get("source_hash") == publication_identity.get("source_hash")
+            and attempt_identity.get("source_path") == publication_identity.get("source_path")
+        ) if publication_identity else bool(attempt_identity),
+        "attempt_report_status": build_status or "unknown",
+        "publication_report_status": publication_status or "not_provided",
+        "registry_verified": registry_verified,
+        "stale_reports": list(dict.fromkeys(stale_reports)),
+        "blockers": unique_blockers,
+        "diagnostics": unique_diagnostics,
+        "checked_at": checked,
+        "published_claim_verified": bool(
+            publication_status == "published"
+            and build_status == "passed"
+            and registry_verified
+            and not unique_blockers
+        ),
+    }
+
+
+def compose_adaptation_report_identity_agreement(
+    reports: Mapping[str, Any],
+    *,
+    expected_identity: Mapping[str, Any],
+    required_reports: Optional[Tuple[str, ...]] = None,
+) -> Dict[str, Any]:
+    """Compare the shared identity on the current adaptation report set.
+
+    This consumes the identity fields already emitted by adaptation callback,
+    convergence, gate, and publication report surfaces.  It intentionally
+    does not define another persisted envelope or alter the legacy agreement
+    composer.  A missing, stale, or mismatched report is non-publishable.
+    """
+
+    labels = required_reports or (
+        "callback",
+        "convergence",
+        "validation",
+        "readiness",
+        "semantic",
+        "gameplay",
+        "publication",
+    )
+    expected = {
+        field: expected_identity.get(field)
+        for field in (
+            "attempt_id",
+            "attempt_number",
+            "revision_number",
+            "source_hash",
+            "staging_path",
+        )
+    }
+    blockers: List[str] = []
+    stale_reports: List[str] = []
+    identities: Dict[str, Dict[str, Any]] = {}
+
+    def _mapping(value: Any) -> Mapping[str, Any]:
+        return value if isinstance(value, Mapping) else {}
+
+    def _first(report: Mapping[str, Any], field: str) -> Any:
+        for candidate in (
+            report,
+            _mapping(report.get("adaptation_provenance")),
+            _mapping(report.get("provenance")),
+            _mapping(report.get("identity")),
+            _mapping(report.get("staging_identity")),
+            _mapping(report.get("staging_reference")),
+            _mapping(report.get("report_freshness")),
+        ):
+            if field in candidate and candidate.get(field) is not None:
+                return candidate.get(field)
+        return None
+
+    def _path(report: Mapping[str, Any]) -> Any:
+        for candidate in (
+            report,
+            _mapping(report.get("staging_identity")),
+            _mapping(report.get("staging_reference")),
+            _mapping(report.get("staging")),
+            _mapping(report.get("report_freshness")),
+        ):
+            for field in ("staging_path", "path", "output_directory", "module_dir"):
+                value = candidate.get(field)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
+
+    for label in labels:
+        report = _mapping(reports.get(label))
+        if not report:
+            blockers.append("missing_report:" + label)
+            continue
+        freshness = _mapping(report.get("report_freshness"))
+        if freshness and str(freshness.get("state") or "").strip().lower() not in FRESH_STATES:
+            stale_reports.append(label)
+            blockers.append("stale_report:" + label)
+        identity = {
+            "attempt_id": _first(report, "attempt_id"),
+            "attempt_number": _first(report, "attempt_number"),
+            "revision_number": _first(report, "revision_number"),
+            "source_hash": _first(report, "source_hash"),
+            "staging_path": _path(report),
+        }
+        identities[label] = identity
+        for field, value in identity.items():
+            if value != expected.get(field):
+                blockers.append("identity_mismatch:%s:%s" % (label, field))
+
+    unique_blockers = list(dict.fromkeys(blockers))
+    return {
+        "contract_version": ADAPTATION_REPORT_AGREEMENT_CONTRACT_VERSION,
+        "status": STATUS_BLOCKED if unique_blockers else STATUS_PASS,
+        "publication_allowed": not unique_blockers,
+        "current_identity": dict(expected),
+        "report_identities": identities,
+        "stale_reports": list(dict.fromkeys(stale_reports)),
+        "blockers": unique_blockers,
+    }
+
+
 def _normalize_status(value: Any) -> str:
     """Normalize a status string to one of the canonical values."""
     raw = str(value or "").strip().lower()
@@ -49,6 +398,8 @@ def _normalize_status(value: Any) -> str:
         return STATUS_BLOCKED
     if raw in {"degraded", "warning", "warn", "reconciled_degraded"}:
         return STATUS_DEGRADED
+    if raw == STATUS_NOT_APPLICABLE:
+        return STATUS_NOT_APPLICABLE
     if raw in {"stale", "unknown"}:
         return raw
     return STATUS_UNKNOWN
@@ -186,6 +537,7 @@ def compose_report_agreement(
     source_fidelity_effective_status: Optional[str] = None,
     final_reconciliation_accepted: bool = False,
     final_reconciliation_status: Optional[str] = None,
+    source_fidelity_mode: Optional[str] = None,
     report_freshness_states: Optional[Dict[str, str]] = None,
     missing_reports: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -195,13 +547,16 @@ def compose_report_agreement(
     use compose_report_agreement_from_module_dir() instead.
 
     Args:
-        source_fidelity_status: "pass", "blocked", "degraded", "unknown"
+        source_fidelity_status: "pass", "blocked", "degraded", "unknown", "not_applicable"
         validation_status: "pass", "blocked", "unknown"
         ready_status: "pass", "fail", "unknown"
         publishable_status: "pass", "fail", "unknown"
         effective_publishable_status: "pass", "fail", "unknown"
         toolkit_top_level_status: Status from toolkit_build_report.json top level
         toolkit_publishability_stage_status: Status from stages.publishability
+        source_fidelity_mode: Explicit source-fidelity mode. The
+            ``not_applicable`` status is informational only for the explicit
+            ``llm_adaptation`` mode.
         report_freshness_states: Dict of report_type -> freshness_state
         missing_reports: List of missing report type names
 
@@ -240,6 +595,35 @@ def compose_report_agreement(
         )
 
     internal_coherent = True
+
+    adaptation_fidelity_not_applicable = (
+        sf == STATUS_NOT_APPLICABLE
+        and str(source_fidelity_mode or "").strip().lower() == ADAPTATION_MODE_LLM
+    )
+    if sf == STATUS_NOT_APPLICABLE and not adaptation_fidelity_not_applicable:
+        blockers.append("source_fidelity_not_applicable_without_adaptation_mode")
+        diagnostics.append(
+            "source_fidelity_status=not_applicable is valid only for the explicit "
+            "llm_adaptation source-fidelity mode"
+        )
+        internal_coherent = False
+    elif adaptation_fidelity_not_applicable:
+        diagnostics.append(
+            "source_fidelity_not_applicable: literal source preservation is not the "
+            "adaptation objective"
+        )
+        if (
+            source_fidelity_effective_status is not None
+            and sfe_normalized != STATUS_NOT_APPLICABLE
+        ):
+            blockers.append(
+                "contradiction:not_applicable_effective_source_fidelity_status"
+            )
+            diagnostics.append(
+                "not_applicable source fidelity cannot be rewritten as a clean "
+                "pass or another effective fidelity status"
+            )
+            internal_coherent = False
 
     # 1) Required reports present
     if missing_reports:
@@ -334,7 +718,11 @@ def compose_report_agreement(
     # 10) Determine playable_publication_status
     if agreement_status != STATUS_PASS:
         playable = STATUS_BLOCKED
-    elif sf != STATUS_PASS and not source_fidelity_reconciled:
+    elif (
+        sf != STATUS_PASS
+        and not source_fidelity_reconciled
+        and not adaptation_fidelity_not_applicable
+    ):
         playable = STATUS_BLOCKED
     elif rs != STATUS_PASS:
         playable = STATUS_BLOCKED
@@ -355,6 +743,7 @@ def compose_report_agreement(
         "final_reconciliation_accepted": final_reconciliation_accepted,
         "final_reconciliation_status": frs,
         "source_fidelity_reconciled": source_fidelity_reconciled,
+        "source_fidelity_mode": source_fidelity_mode,
         "validation_status": vs,
         "ready_status": rs,
         "publishable_status": ps,
@@ -394,11 +783,15 @@ def compose_report_agreement_from_module_dir(
         Same result shape as compose_report_agreement().
     """
     validation_report = _load_report(module_dir / "validation_report.json")
-    source_fidelity_report = _load_report(module_dir / "source_fidelity_report.json")
+    source_fidelity_path = module_dir / "source_fidelity_report.json"
+    source_fidelity_report = _load_report(source_fidelity_path)
+    source_fidelity_malformed = (
+        source_fidelity_path.exists() and source_fidelity_report is None
+    )
     toolkit_report = _load_report(module_dir / "toolkit_build_report.json")
 
     # Fallback: benchmark report for source fidelity
-    if source_fidelity_report is None:
+    if source_fidelity_report is None and not source_fidelity_malformed:
         benchmark_report = _load_report(
             module_dir / "accurate_ingest_benchmark_report.json"
         )
@@ -431,6 +824,8 @@ def compose_report_agreement_from_module_dir(
 
     # Missing reports: check for required report files on disk
     _, missing = _check_required_reports_present(module_dir)
+    if source_fidelity_malformed:
+        missing.append("source_fidelity_malformed")
 
     # Stale reports: only mark as stale if _report_is_fresh returns False.
     # Legacy reports without freshness metadata pass _report_is_fresh
@@ -455,6 +850,7 @@ def compose_report_agreement_from_module_dir(
     final_rec_accepted = False
     final_rec_status = None
     sfe_status = None
+    sf_mode = None
     try:
         from utils.toolkit_final_reconciliation import (
             load_final_reconciliation_report,
@@ -468,6 +864,11 @@ def compose_report_agreement_from_module_dir(
     except Exception:
         pass
 
+    if isinstance(source_fidelity_report, dict):
+        sf_mode = source_fidelity_report.get(
+            "adaptation_mode", source_fidelity_report.get("source_fidelity_mode")
+        )
+
     return compose_report_agreement(
         source_fidelity_status=sf_status,
         validation_status=vs_status,
@@ -479,6 +880,7 @@ def compose_report_agreement_from_module_dir(
         source_fidelity_effective_status=sfe_status,
         final_reconciliation_accepted=final_rec_accepted,
         final_reconciliation_status=final_rec_status,
+        source_fidelity_mode=sf_mode,
         report_freshness_states=freshness_states if freshness_states else None,
         missing_reports=missing if missing else None,
     )

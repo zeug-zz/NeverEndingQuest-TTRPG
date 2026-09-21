@@ -7,6 +7,8 @@ Define the phased path from the current local tabletop workflow to a lean remote
 - later internet-ready thin-client play,
 - one authoritative server-side game loop for all participants.
 
+The implementation foundation for the player-facing client is React/TypeScript. The upstream React player at `/play` is a source of reusable client architecture and components; the fork will adapt it to a fork-owned `/client` contract rather than replacing the facilitator host wholesale.
+
 This roadmap complements `plans/version-2/client_network.md`, which remains the architecture decision document for the MVP slice.
 
 ## Core Position
@@ -17,6 +19,40 @@ The correct long-term foundation is:
 - thin browser clients that observe shared state and submit input.
 
 This is intentionally not a client-authoritative multiplayer rewrite.
+
+## React Foundation Decision
+
+React is a v2 foundation decision for the player-facing surface, not an optional visual experiment.
+
+The current `game_interface.html` is a large host-page monolith containing facilitator controls, player controls, toolkit behavior, admin/debug flows, inline JavaScript state, and substantial DOM mutation logic. Shipping that page to every remote player would preserve the exact coupling and payload weight this roadmap is intended to remove.
+
+The client foundation is therefore:
+
+```text
+DM/facilitator host at /
+    Existing legacy interface initially retained.
+    Full party, toolkit, save/load/reset, debug, and shutdown controls.
+
+React player client at /client
+    Lean player-facing components and client state.
+    Shared transcript, PC tabs, active-PC state, initiative, sheets, and input.
+    No mechanical, publication, toolkit, or server-lifecycle authority.
+
+Shared Python/Flask/SocketIO server
+    Authoritative game loop, validation, persistence, and state transitions.
+```
+
+React is responsible for client presentation, local UI state, event consumption, reconnect hydration, and input submission. Python remains responsible for narration, mechanics, combat, party state, persistence, publication, and campaign authority.
+
+### Deployment Path
+
+The same React client contract must survive three deployment stages:
+
+1. **Facilitator-hosted LAN play:** the DM laptop runs the authoritative server and serves multiple React browser clients.
+2. **Authenticated internet thin clients:** the client uses HTTPS/WSS or an approved secure tunnel with authentication, websocket authorization, rate limiting, and bounded event payloads.
+3. **Hosted authoritative server:** the Python/Flask/SocketIO server and durable state move to hosted infrastructure without requiring a client rewrite.
+
+The upstream React implementation provides useful stores, typed events, hydration, reconnect handling, UI modes, and browser tests. It must be manually adapted because the fork has TABLETOP-specific payloads, active-PC behavior, portrait metadata, combat state, and authority boundaries.
 
 ## Why This Direction Is Strong
 This direction preserves the project's most valuable current property:
@@ -38,12 +74,15 @@ That gives the project the best chance of becoming a notable online LLM-DM 5e SR
 - The DM starts and hosts the existing server.
 - `/` remains the host/facilitator surface.
 - `/client` becomes the lean player surface.
+- The `/client` implementation is React/TypeScript-based; the upstream `/play` implementation is a manual-port reference, not a wholesale merge target.
 - `active_character` remains one shared server-side state across all browsers.
 - Shared active-character contention is acceptable in MVP and mirrors normal in-person table dynamics.
 - Voice and video remain out of band via Meet, Zoom, or similar tools.
 - Client browsers must not expose server shutdown, toolkit, admin, save/load/reset, or party-management controls.
 - Authentication remains simple: optional shared client password only.
 - TTS and DM Voice should default to host-local, not remote-client-facing.
+
+The legacy interface remains the initial facilitator surface while React player parity is built and verified. A future React facilitator surface is possible, but it is not a prerequisite for LAN play and must not delay the thin-client foundation.
 
 ## Long-Term Authority Direction
 The future architecture should distinguish two different kinds of authority.
@@ -80,6 +119,21 @@ Therefore the client architecture should:
 - keep client event payloads narrow,
 - avoid lazy full-state rebroadcast when a smaller refresh is enough.
 
+React does not create these network benefits automatically. The server must still define the event matrix, broadcast user echoes and active-PC changes correctly, protect client routes, and avoid broadcasting facilitator-only state. React is the client implementation that makes the separation maintainable and testable; it is not a replacement for server-side protocol work.
+
+## React Implementation Sequence
+
+The React pathway should be implemented in the following order:
+
+1. **Contract foundation:** freeze event names, payload shapes, SocketIO arity, request IDs, revisions, server-instance IDs, snapshot hydration, and client capability classes.
+2. **Client shell:** add `web/frontend` and serve the minimum React player surface at `/client` while leaving `/` unchanged.
+3. **TABLETOP parity:** port shared PC tabs, active-PC synchronization, initiative, combat-facing state, read-only sheets, portraits, input, processing state, and reconnect recovery.
+4. **LAN verification:** prove one facilitator host and multiple browser clients with shared transcript, shared state, and route isolation.
+5. **Internet hardening:** add HTTPS/WSS or an approved tunnel, client authentication, websocket authorization, rate limits, origin controls, and stronger session continuity.
+6. **Hosted-server preparation:** remove browser-visible filesystem assumptions and preserve the client contract while the authoritative server moves to v3+ infrastructure.
+
+Do not begin with a default launcher switch, mandatory Node.js installer change, or full host UI rewrite. The first success criterion is a reliable React thin client beside the existing facilitator interface.
+
 ## Phase 1: MVP Hybrid Play
 ### Goal
 Enable mixed local-tabletop plus LAN/trusted-remote browser play with minimal new complexity.
@@ -94,6 +148,7 @@ Enable mixed local-tabletop plus LAN/trusted-remote browser play with minimal ne
 - Explicit event matrix.
 - Explicit route allowlist for client-safe surfaces.
 - Reconnect/resync support sufficient for practical remote use.
+- React/TypeScript client shell using the fork-native event contract.
 
 ### Required Contracts
 - `game_output` and other shared gameplay events broadcast correctly.
@@ -110,6 +165,7 @@ Enable mixed local-tabletop plus LAN/trusted-remote browser play with minimal ne
 - The current active PC is visually obvious.
 - The system shows a shared busy/thinking state while the server is processing.
 - The client remains usable on ordinary home internet, even if the initial rollout target is LAN.
+- React client build failure does not prevent the legacy facilitator host from starting.
 
 ### MVP Enhancement Worth Treating As Core
 Reconnect and resync behavior should be treated as part of MVP, not as a later luxury.
@@ -293,16 +349,19 @@ After review, the likely OpenSpec sequence should be:
 2. `remote-client-shared-event-sync`
 - formal event matrix, shared broadcast correctness, active-PC synchronization.
 
-3. `remote-client-surface-restriction`
+3. `remote-client-react-foundation`
+- React/TypeScript shell at `/client`, typed event contract, stores, hydration, and component test foundation.
+
+4. `remote-client-surface-restriction`
 - route allowlist, host/client capability separation, admin exclusion.
 
-4. `remote-client-reconnect-resync`
+5. `remote-client-reconnect-resync`
 - gameplay snapshot contract, reconnect restoration, combat/session continuity.
 
-5. `remote-client-lan-verification`
+6. `remote-client-lan-verification`
 - multi-browser verification and regression checks.
 
-6. later post-MVP slices
+7. later post-MVP slices
 - `remote-client-observer-mode`
 - `remote-client-soft-identity`
 - `remote-client-turn-focus`
@@ -325,5 +384,6 @@ Use `plans/version-2/client_network.md` as the MVP architecture contract and thi
 
 After review:
 - freeze the MVP decisions,
+- freeze the fork-native React client/event boundary,
 - refine any open questions,
 - then scaffold bounded OpenSpec changes from the phased sequence above.

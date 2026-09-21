@@ -52,6 +52,9 @@ def _load_source_fidelity_status(module_path: Path) -> Dict[str, Any]:
                 return {
                     "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
                     "category_results": list(report.get("categories", [])),
+                    "source_fidelity_mode": report.get(
+                        "adaptation_mode", report.get("source_fidelity_mode")
+                    ),
                 }
         except Exception:
             if warning:
@@ -79,6 +82,9 @@ def _load_source_fidelity_status(module_path: Path) -> Dict[str, Any]:
         return {
             "source_fidelity_status": str(report.get("source_fidelity_status", "unknown") or "unknown"),
             "category_results": list(report.get("category_results", [])),
+            "source_fidelity_mode": report.get(
+                "adaptation_mode", report.get("source_fidelity_mode")
+            ),
         }
     except Exception:
         return {"source_fidelity_status": "unknown", "category_results": []}
@@ -108,13 +114,17 @@ def _build_source_fidelity_report_artifact(
     fidelity = publishability_report.get("source_fidelity_status", "unknown")
     categories = publishability_report.get("source_fidelity_categories", [])
 
-    return {
+    artifact = {
         "report_version": _SOURCE_FIDELITY_REPORT_VERSION,
         "module_slug": module_slug,
         "module_path": str(module_path),
         "source_fidelity_status": str(fidelity or "unknown"),
         "categories": list(categories) if isinstance(categories, list) else [],
     }
+    source_fidelity_mode = publishability_report.get("source_fidelity_mode")
+    if source_fidelity_mode:
+        artifact["adaptation_mode"] = str(source_fidelity_mode)
+    return artifact
 
 def _get_gate_composer():
     global _GATE_COMPOSER
@@ -330,6 +340,7 @@ def audit_module_publishability(
     fidelity = _load_source_fidelity_status(resolved_module_path)
     source_fidelity_status = fidelity.get("source_fidelity_status", "unknown")
     category_results = fidelity.get("category_results", [])
+    source_fidelity_mode = fidelity.get("source_fidelity_mode")
 
     compose = _get_gate_composer()
     gate = compose(
@@ -337,6 +348,7 @@ def audit_module_publishability(
         publishable_status=publishable_status,
         source_fidelity_status=source_fidelity_status,
         enable_fidelity_flag=ENABLE_ACCURATE_INGEST_FINAL_BENCHMARK,
+        source_fidelity_mode=source_fidelity_mode,
     )
 
     # Only surface fidelity warnings/blockers if fidelity is meaningful
@@ -359,6 +371,7 @@ def audit_module_publishability(
         "publishable_status": publishable_status,
         "source_fidelity_status": source_fidelity_status,
         "source_fidelity_categories": category_results,
+        "source_fidelity_mode": source_fidelity_mode,
         "effective_publishable_status": effective_publishable,
         "readiness": readiness_report,
         "publication_gates": {

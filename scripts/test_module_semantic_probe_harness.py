@@ -11,7 +11,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from scripts.module_semantic_probe_harness import run_module_semantic_probes
+from scripts.module_semantic_probe_harness import (
+    _expected_locations_from_sources,
+    _normalize_hidden_reveal_location,
+    run_module_semantic_probes,
+)
 
 
 class TestModuleSemanticProbeHarness(unittest.TestCase):
@@ -114,6 +118,224 @@ class TestModuleSemanticProbeHarness(unittest.TestCase):
                 for probe in result["probes"]
             )
         )
+
+    def _scoped_authority(self, destination_row):
+        return {
+            "version": "v1",
+            "location_index": {
+                "HV001:K04": {
+                    "location_id": "K04",
+                    "raw_location_id": "K04",
+                    "scoped_location_id": "HV001:K04",
+                    "area_id": "HV001",
+                },
+                "HV001:K05": {
+                    "location_id": "K05",
+                    "raw_location_id": "K05",
+                    "scoped_location_id": "HV001:K05",
+                    "area_id": "HV001",
+                },
+            },
+            "destination_phrases": {"softstone": destination_row},
+            "npc_scene_authority": {},
+        }
+
+    def test_scoped_location_source_reference_passes(self):
+        module_dir = self._write_module(
+            "Probe_Scoped",
+            {
+                "module_name": "Probe_Scoped",
+                "semantic_authority": self._scoped_authority(
+                    {
+                        "status": "resolved",
+                        "location_id": "K04",
+                        "scoped_location_id": "HV001:K04",
+                        "candidate_location_ids": ["K04"],
+                        "candidate_internal_location_ids": ["HV001:K04"],
+                        "sources": [
+                            "areas/HV001.json#locations[HV001:K04].aliases"
+                        ],
+                        "player_facing": True,
+                    }
+                ),
+                "continuity": {"cross_module_refs": []},
+            },
+            {"plotPoints": []},
+        )
+
+        result = run_module_semantic_probes(module_dir)
+        travel = next(probe for probe in result["probes"] if probe["type"] == "travel")
+        self.assertEqual(travel["status"], "pass")
+        self.assertEqual(travel["expected_location_ids"], ["HV001:K04"])
+        self.assertEqual(travel["resolved_location_id"], "HV001:K04")
+
+    def test_raw_source_id_maps_to_scoped_resolved_id(self):
+        module_dir = self._write_module(
+            "Probe_RawScoped",
+            {
+                "module_name": "Probe_RawScoped",
+                "semantic_authority": self._scoped_authority(
+                    {
+                        "status": "resolved",
+                        "location_id": "K04",
+                        "scoped_location_id": "HV001:K04",
+                        "candidate_location_ids": ["K04"],
+                        "candidate_internal_location_ids": ["HV001:K04"],
+                        "sources": ["areas/HV001.json#locations[K04].aliases"],
+                        "player_facing": True,
+                    }
+                ),
+                "continuity": {"cross_module_refs": []},
+            },
+            {"plotPoints": []},
+        )
+
+        result = run_module_semantic_probes(module_dir)
+        travel = next(probe for probe in result["probes"] if probe["type"] == "travel")
+        self.assertEqual(travel["status"], "pass")
+
+    def test_area_level_plot_location_is_not_a_room_target(self):
+        authority = self._scoped_authority({})
+        expected = _expected_locations_from_sources(
+            ["module_plot.json#plotPoints[PP001].title"],
+            {"plotPoints": [{"id": "PP001", "location": "HV001"}]},
+            authority,
+        )
+        self.assertEqual(expected, [])
+
+    def test_scoped_mismatch_remains_blocking(self):
+        module_dir = self._write_module(
+            "Probe_ScopedMismatch",
+            {
+                "module_name": "Probe_ScopedMismatch",
+                "semantic_authority": self._scoped_authority(
+                    {
+                        "status": "resolved",
+                        "location_id": "K05",
+                        "scoped_location_id": "HV001:K05",
+                        "candidate_location_ids": ["K05"],
+                        "candidate_internal_location_ids": ["HV001:K05"],
+                        "sources": [
+                            "areas/HV001.json#locations[HV001:K04].aliases"
+                        ],
+                        "player_facing": True,
+                    }
+                ),
+                "continuity": {"cross_module_refs": []},
+            },
+            {"plotPoints": []},
+        )
+
+        result = run_module_semantic_probes(module_dir)
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(
+            any(
+                probe.get("failure_class") == "travel_misrouted_destination_phrase"
+                for probe in result["probes"]
+            )
+        )
+
+    def _hidden_authority(self, reveal_binding):
+        return {
+            "version": "v1",
+            "location_index": {
+                "DO001:K01": {
+                    "raw_location_id": "K01",
+                    "scoped_location_id": "DO001:K01",
+                    "area_id": "DO001",
+                },
+                "FC001:K01": {
+                    "raw_location_id": "K01",
+                    "scoped_location_id": "FC001:K01",
+                    "area_id": "FC001",
+                },
+            },
+            "destination_phrases": {},
+            "npc_scene_authority": {
+                "Mayor Corven's Imitation": {
+                    "name_slug": "mayor corvens imitation",
+                    "visible_location_ids": [],
+                    "reveal_bindings": [reveal_binding],
+                    "authored_mentions_count": 1,
+                    "authored_mention_sources": [
+                        "areas/DO001.json#locations[DO001:K01].description"
+                    ],
+                }
+            },
+        }
+
+    def test_hidden_npc_reveal_prefers_scoped_binding_namespace(self):
+        authority = self._hidden_authority(
+            {"location_id": "K01", "scoped_location_id": "DO001:K01", "source": "fixture"}
+        )
+        self.assertEqual(_normalize_hidden_reveal_location("DO001", authority), [])
+        module_dir = self._write_module(
+            "Probe_HiddenScoped",
+            {
+                "module_name": "Probe_HiddenScoped",
+                "semantic_authority": authority,
+                "continuity": {"cross_module_refs": []},
+            },
+            {"plotPoints": []},
+        )
+        result = run_module_semantic_probes(module_dir)
+        probe = next(item for item in result["probes"] if item["type"] == "hidden_npc")
+        self.assertEqual(probe["reveal_location_ids"], ["DO001:K01"])
+        self.assertEqual(probe["status"], "pass")
+
+    def test_hidden_npc_scoped_reveal_mismatch_remains_blocking(self):
+        module_dir = self._write_module(
+            "Probe_HiddenMismatch",
+            {
+                "module_name": "Probe_HiddenMismatch",
+                "semantic_authority": self._hidden_authority(
+                    {"location_id": "K01", "scoped_location_id": "FC001:K01", "source": "fixture"}
+                ),
+                "continuity": {"cross_module_refs": []},
+            },
+            {"plotPoints": []},
+        )
+        result = run_module_semantic_probes(module_dir)
+        self.assertTrue(
+            any(item.get("failure_class") == "hidden_npc_target_mismatch" for item in result["probes"])
+        )
+
+    def test_hidden_npc_area_only_reveal_is_degraded_not_blocking(self):
+        authority = self._hidden_authority(
+            {"location_id": "DO001", "source": "area-only fixture"}
+        )
+        authority["npc_scene_authority"]["Mayor Corven's Imitation"][
+            "authored_mention_sources"
+        ] = ["module_plot.json#plotPoints[PP001].description"]
+        module_dir = self._write_module(
+            "Probe_HiddenAreaOnly",
+            {
+                "module_name": "Probe_HiddenAreaOnly",
+                "semantic_authority": authority,
+                "continuity": {"cross_module_refs": []},
+            },
+            {
+                "plotPoints": [
+                    {"id": "PP001", "location": "DO001", "description": "A hidden figure waits."}
+                ]
+            },
+        )
+
+        result = run_module_semantic_probes(module_dir)
+        probe = next(item for item in result["probes"] if item["type"] == "hidden_npc")
+        self.assertEqual(probe["reveal_location_ids"], [])
+        self.assertEqual(probe["status"], "degraded")
+        self.assertEqual(probe["failure_class"], "hidden_npc_fixture_missing_expected_target")
+        self.assertEqual(result["blocking_errors"], [])
+        self.assertEqual(result["exit_code"], 0)
+
+    def test_raw_only_source_fixture_remains_raw(self):
+        expected = _expected_locations_from_sources(
+            ["areas/TST001.json#locations[LOC08].aliases"],
+            {"plotPoints": []},
+            {},
+        )
+        self.assertEqual(expected, ["LOC08"])
 
     def test_handoff_probe_catches_missing_target_module(self):
         module_dir = self._write_module(

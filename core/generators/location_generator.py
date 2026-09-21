@@ -19,10 +19,12 @@ from utils.module_path_manager import ModulePathManager
 from utils.ai_client_factory import (
     create_chat_client,
     get_chat_completion_params,
+    get_model_config,
     handle_provider_error,
 )
 from model_config import DM_MAIN_MODEL
 from utils.spatial_contract import build_location_aliases, build_tactical_grid
+from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
 
 @dataclass
@@ -382,9 +384,15 @@ class LocationPromptGuide:
 
 
 class LocationGenerator:
-    def __init__(self):
+    def __init__(self, llm_timeout_seconds=None):
         self.prompt_guide = LocationPromptGuide()
         self.schema = self.load_schema()
+        self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
+
+    @staticmethod
+    def _adaptation_log(active: bool, code: str, message: Any = None, count: Any = None) -> None:
+        if active:
+            emit_adaptation_telemetry(code=code, message=message, count=count, force=True)
 
     def load_schema(self) -> Dict[str, Any]:
         """Load the location schema for validation"""
@@ -448,19 +456,28 @@ Detailed Guidelines:
 Context:
 {json.dumps(self._slim_context_for_location(context), indent=2)}
 
-Return ONLY the value for this field in the correct format.
-For strings, return just the string.
-For arrays, return just the array.
-For objects, return just the object.
-"""
+        Return ONLY the value for this field in the correct format.
+        For strings, return just the string.
+        For arrays, return just the array.
+        For objects, return just the object.
+        """
+
+        adaptation_context = str(
+            context.get("_llm_adaptation_prompt_context") or ""
+        ).strip()
+        if adaptation_context:
+            prompt += f"\n\n{adaptation_context}\n"
 
         client = create_chat_client()
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "location_generator", DM_MAIN_MODEL, temperature_override=0.7
+                        "location_generator",
+                        DM_MAIN_MODEL,
+                        temperature_override=0.7,
                     ),
                     messages=[
                         {
@@ -469,6 +486,7 @@ For objects, return just the object.
                         },
                         {"role": "user", "content": prompt},
                     ],
+                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                 )
                 break
             except Exception as e:
@@ -565,7 +583,7 @@ Ensure locations:
 Return a JSON object with a 'locations' array containing all complete location objects.
 Each location must include ALL required fields from the location schema.
 
-CRITICAL: Field names must match the schema EXACTLY:
+        CRITICAL: Field names must match the schema EXACTLY:
 - Use "npcs" NOT "notableNPCs" (must be array of objects with name, description, attitude)
 - Use "monsters" NOT "creatures"
 - Use "lootTable" NOT "items" (must be array of strings, not objects)
@@ -600,13 +618,21 @@ AREA CONNECTIVITY RULES:
 Check the location schema carefully for all required fields.
 """
 
+        adaptation_context = str(
+            module_data.get("_llm_adaptation_prompt_context") or ""
+        ).strip()
+        if adaptation_context and "=== LLM ADAPTATION CONTEXT ===" not in context_header:
+            batch_prompt += f"\n\n{adaptation_context}\n"
+
         client = create_chat_client()
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "location_generator_batch", DM_MAIN_MODEL,
+                        "location_generator_batch",
+                        DM_MAIN_MODEL,
                         temperature_override=0.8,
                     ),
                     messages=[
@@ -617,6 +643,7 @@ Check the location schema carefully for all required fields.
                         {"role": "user", "content": batch_prompt},
                     ],
                     response_format={"type": "json_object"},
+                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                 )
                 break
             except Exception as e:
@@ -639,6 +666,11 @@ Check the location schema carefully for all required fields.
     ) -> Dict[str, Any]:
         """Generate all locations for an area"""
 
+        adaptation_active = bool(
+            module_data.get("_llm_adaptation_prompt_context")
+            or "=== LLM ADAPTATION CONTEXT ===" in context_header
+        )
+
         # Get location stubs from area data or create from map
         location_stubs = area_data.get("locations", [])
 
@@ -656,14 +688,18 @@ Check the location schema carefully for all required fields.
                 location_stubs.append(location_stub)
 
         if not location_stubs:
-            print(
-                "DEBUG: [Location Generator] Warning: No location stubs or map found in area data"
-            )
+            self._adaptation_log(adaptation_active, "location_stubs_missing")
+            if not adaptation_active:
+                print(
+                    "DEBUG: [Location Generator] Warning: No location stubs or map found in area data"
+                )
             return {"locations": []}
 
-        print(
-            f"DEBUG: [Location Generator] Generating {len(location_stubs)} locations for {area_data.get('areaName', 'area')}..."
-        )
+        self._adaptation_log(adaptation_active, "location_generation_started", count=len(location_stubs))
+        if not adaptation_active:
+            print(
+                f"DEBUG: [Location Generator] Generating {len(location_stubs)} locations for {area_data.get('areaName', 'area')}..."
+            )
 
         # Generate all locations in batch
         location_data = self.generate_location_batch(
@@ -717,9 +753,11 @@ Check the location schema carefully for all required fields.
                             location_id=location_id,
                             description=npc_description,  # Pass the description
                         )
-                        print(
-                            f"DEBUG: [Location Generator] Registered/Updated context for: {npc_name} in {area_id}:{location_id}"
-                        )
+                        self._adaptation_log(adaptation_active, "location_npc_registered", count=1)
+                        if not adaptation_active:
+                            print(
+                                f"DEBUG: [Location Generator] Registered/Updated context for: {npc_name} in {area_id}:{location_id}"
+                            )
 
             # Ensure plot-critical locations have appropriate content
             location_id = location["locationId"]
@@ -774,9 +812,11 @@ Check the location schema carefully for all required fields.
                         # If names differ, update map room name to match location
                         if room["name"] != location["name"]:
                             room["name"] = location["name"]
-                            print(
-                                f"DEBUG: [Location Generator] Updated map room {room['id']} name to match location: {location['name']}"
-                            )
+                            self._adaptation_log(adaptation_active, "location_map_name_aligned", count=1)
+                            if not adaptation_active:
+                                print(
+                                    f"DEBUG: [Location Generator] Updated map room {room['id']} name to match location: {location['name']}"
+                                )
                         break
 
         return {"locations": locations}

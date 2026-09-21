@@ -42,8 +42,14 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 import jsonschema
 
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
+from utils.ai_client_factory import (
+    create_chat_client,
+    get_chat_completion_params,
+    get_model_config,
+    handle_provider_error,
+)
 from model_config import DM_MAIN_MODEL
+from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
 @dataclass
 class PlotPromptGuide:
@@ -304,9 +310,15 @@ class PlotPromptGuide:
     """
 
 class PlotGenerator:
-    def __init__(self):
+    def __init__(self, llm_timeout_seconds=None):
         self.prompt_guide = PlotPromptGuide()
         self.schema = self.load_schema()
+        self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
+
+    @staticmethod
+    def _adaptation_log(active: bool, code: str, message: Any = None, count: Any = None) -> None:
+        if active:
+            emit_adaptation_telemetry(code=code, message=message, count=count, force=True)
     
     def load_schema(self) -> Dict[str, Any]:
         """Load the plot schema for validation"""
@@ -341,19 +353,29 @@ For strings, return just the string.
 For arrays, return just the array.
 For objects, return just the object.
 """
-        
+
+        adaptation_context = ""
+        if isinstance(context, dict):
+            adaptation_context = str(
+                context.get("_llm_adaptation_prompt_context") or ""
+            ).strip()
+        if adaptation_context:
+            prompt += f"\n\n{adaptation_context}\n"
         client = create_chat_client()
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "plot_generator", DM_MAIN_MODEL, temperature_override=0.7
+                        "plot_generator",
+                        DM_MAIN_MODEL,
+                        temperature_override=0.7,
                     ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e adventure designer. Return only the requested data in the exact format needed."},
                         {"role": "user", "content": prompt}
-                    ]
+                    ],
+                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {})
                 )
                 break
             except Exception as e:
@@ -460,20 +482,22 @@ Return a JSON object with this structure:
 
 IMPORTANT: Each plot point should have its sideQuests array (can be empty). Side quests are nested within plot points, not at the root level.
 """
-        
         client = create_chat_client()
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     **get_chat_completion_params(
-                        "plot_generator", DM_MAIN_MODEL, temperature_override=0.8
+                        "plot_generator",
+                        DM_MAIN_MODEL,
+                        temperature_override=0.8,
                     ),
                     messages=[
                         {"role": "system", "content": "You are an expert 5e adventure designer."},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"}
+                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
+                    response_format={"type": "json_object"},
                 )
                 break
             except Exception as e:
@@ -486,12 +510,19 @@ IMPORTANT: Each plot point should have its sideQuests array (can be empty). Side
         return json.loads(response.choices[0].message.content)
     
     def generate_plot(self, module_data: Dict[str, Any], 
-                     area_data: Dict[str, Any],
-                     location_data: Dict[str, Any],
-                     initial_concept: str = None,
-                     context=None,
-                     context_header: str = "") -> Dict[str, Any]:
+                      area_data: Dict[str, Any],
+                      location_data: Dict[str, Any],
+                      initial_concept: str = None,
+                      context=None,
+                      context_header: str = "",
+                      adaptation_context: str = "") -> Dict[str, Any]:
         """Generate a complete plot file for an area"""
+
+        adaptation_active = bool(
+            adaptation_context
+            or (isinstance(context, dict) and context.get("_llm_adaptation_prompt_context"))
+            or "=== LLM ADAPTATION CONTEXT ===" in context_header
+        )
         
         # Build generation context from existing data
         generation_context = {
@@ -532,6 +563,10 @@ IMPORTANT: Each plot point should have its sideQuests array (can be empty). Side
             field_context = context.to_dict()
         elif isinstance(context, dict):
             field_context = context
+        if adaptation_context:
+            field_context["_llm_adaptation_prompt_context"] = str(
+                adaptation_context
+            ).strip()
         
         # Generate title and objective first
         plot_data["plotTitle"] = self.generate_field("plotTitle", 
@@ -542,8 +577,10 @@ IMPORTANT: Each plot point should have its sideQuests array (can be empty). Side
             self.schema["properties"]["mainObjective"], field_context)
         field_context["mainObjective"] = plot_data["mainObjective"]
         
-        print(f"Generated plot title: {plot_data['plotTitle']}")
-        print(f"Generated main objective: {plot_data['mainObjective']}")
+        self._adaptation_log(adaptation_active, "plot_fields_generated", count=2)
+        if not adaptation_active:
+            print(f"Generated plot title: {plot_data['plotTitle']}")
+            print(f"Generated main objective: {plot_data['mainObjective']}")
         
         # Generate complete plot structure
         num_plot_points = min(8, max(4, len(location_data.get("locations", [])) // 3))

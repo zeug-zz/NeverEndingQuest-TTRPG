@@ -41,6 +41,8 @@ journal.json
 journal.json.bak
 chronology.json
 data/story_so_far_cache/
+data/*.db-shm
+data/*.db-wal
 data/agent_runs/
 data/players_diary.md
 data/players_diary_bookmark.json
@@ -96,6 +98,9 @@ modules/backups/
 * copy.*
 
 # Temporary files
+/tmp/
+scripts/tmp/
+scripts/data/memory.db
 *.tmp
 *.temp
 temp/

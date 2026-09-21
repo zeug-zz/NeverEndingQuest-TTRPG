@@ -385,6 +385,62 @@ class TestGeneratorSourceLocks(unittest.TestCase):
 
             self.assertNotIn("SOURCE LOCK CONTEXT", user_prompt)
 
+    def test_plot_generator_adaptation_timeout_is_present_once_on_both_calls(self):
+        """Adaptation timeout reaches field and structure calls without duplication."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = FakeResponse(
+            json.dumps({"plotPoints": []})
+        )
+
+        with patch(
+            "core.generators.plot_generator.create_chat_client",
+            return_value=mock_client,
+        ), patch(
+            "core.generators.plot_generator.get_chat_completion_params",
+            return_value={},
+        ):
+            gen = PlotGenerator(llm_timeout_seconds=27)
+            gen.generate_field("plotTitle", {"type": "string"}, {})
+            gen.generate_plot_structure(
+                3,
+                {"module_name": "Test", "areas": {}, "locations": {}, "npcs": {}},
+            )
+
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+        for call in mock_client.chat.completions.create.call_args_list:
+            self.assertEqual(call.kwargs.get("timeout"), 27)
+            self.assertEqual(list(call.kwargs).count("timeout"), 1)
+
+    def test_plot_generator_legacy_calls_omit_timeout(self):
+        """Legacy plot calls omit timeout rather than passing None."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = FakeResponse(
+            json.dumps({"plotPoints": []})
+        )
+
+        with patch(
+            "core.generators.plot_generator.create_chat_client",
+            return_value=mock_client,
+        ), patch(
+            "core.generators.plot_generator.get_chat_completion_params",
+            return_value={},
+        ):
+            gen = PlotGenerator()
+            gen.generate_field("plotTitle", {"type": "string"}, {})
+            gen.generate_plot_structure(
+                3,
+                {"module_name": "Test", "areas": {}, "locations": {}, "npcs": {}},
+            )
+
+        for call in mock_client.chat.completions.create.call_args_list:
+            self.assertNotIn("timeout", call.kwargs)
+
+    def test_module_builder_timeout_kwargs_are_empty_when_unset(self):
+        """The shared legacy timeout helper remains an empty kwargs dict."""
+        builder = object.__new__(ModuleBuilder)
+        builder.llm_timeout_seconds = None
+        self.assertEqual(builder._llm_timeout_kwargs(), {})
+
     def test_module_builder_extract_source_lock_context(self):
         """_extract_source_lock_context returns source block when present."""
         builder = object.__new__(ModuleBuilder)

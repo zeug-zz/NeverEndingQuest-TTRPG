@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neverendingquest.local/schemas/toolkit_adaptation_provenance.v1.json",
+  "title": "NeverEndingQuest Toolkit Adaptation Provenance v1",
+  "description": "Bounded provenance for an intentional non-literal LLM adaptation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "adaptation_mode",
+    "adaptation_status",
+    "adaptation_notice",
+    "source_fidelity_status",
+    "literal_source_fidelity",
+    "fidelity_claim",
+    "rights_class",
+    "rights_classification",
+    "rights_classification_source",
+    "model_metadata",
+    "world_context_provenance"
+  ],
+  "properties": {
+    "contract_version": {"const": "toolkit_adaptation_provenance.v1"},
+    "adaptation_mode": {"const": "llm_adaptation"},
+    "adaptation_status": {
+      "type": "string",
+      "enum": ["adapted", "blocked", "failed", "unknown"]
+    },
+    "adaptation_notice": {"const": "Adapted for NEQ-TTRPG"},
+    "allow_canonical_monster_generation": {"type": "boolean"},
+    "source_title": {"type": "string", "maxLength": 400},
+    "source_hash": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "source_path": {"type": ["string", "null"], "maxLength": 512},
+    "rights_class": {"type": "string", "minLength": 1, "maxLength": 96},
+    "rights_classification": {"type": "string", "minLength": 1, "maxLength": 96},
+    "rights_classification_source": {
+      "type": "string",
+      "enum": ["supplied", "not_supplied"]
+    },
+    "rights_basis": {"type": "string", "maxLength": 500},
+    "rights_review_required": {"type": ["boolean", "null"]},
+    "rights_review_status": {
+      "type": ["string", "null"],
+      "enum": ["not_required", "pending", "approved", "rejected", null]
+    },
+    "source_fidelity_status": {"const": "not_applicable"},
+    "literal_source_fidelity": {"const": "not_applicable"},
+    "fidelity_claim": {"const": "non_literal_adaptation"},
+    "fidelity_explanation": {"type": "string", "maxLength": 500},
+    "model_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 10,
+      "properties": {
+        "provider": {"type": "string", "minLength": 1, "maxLength": 160},
+        "model": {"type": "string", "minLength": 1, "maxLength": 160},
+        "model_version": {"type": "string", "maxLength": 160},
+        "request_id": {"type": "string", "maxLength": 160},
+        "parameter_profile": {"type": "string", "maxLength": 160},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "reasoning_effort": {"type": "string", "maxLength": 160},
+        "verbosity": {"type": "string", "maxLength": 160},
+        "task_id": {"type": "string", "maxLength": 160},
+        "prompt_contract": {"type": "string", "maxLength": 160}
+      }
+    },
+    "world_context_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance_version",
+        "context_version",
+        "context_status",
+        "fallback_status",
+        "world_seed_status",
+        "read_only",
+        "provider_free",
+        "raw_context_included",
+        "canon_write_allowed",
+        "registry_write_allowed",
+        "mechanical_write_allowed"
+      ],
+      "properties": {
+        "provenance_version": {"type": "string", "maxLength": 160},
+        "context_version": {"type": "string", "maxLength": 160},
+        "context_status": {"type": "string", "enum": ["available", "fallback", "unavailable"]},
+        "fallback_status": {"type": "string", "maxLength": 96},
+        "world_seed_status": {"type": "string", "enum": ["available", "unavailable", "invalid"]},
+        "world_seed_version": {"type": ["string", "null"], "maxLength": 160},
+        "world_seed_hash": {
+          "anyOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ]
+        },
+        "context_hash": {
+          "anyOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            {"type": "null"}
+          ]
+        },
+        "selected_module": {"type": ["string", "null"], "maxLength": 160},
+        "read_only": {"const": true},
+        "provider_free": {"const": true},
+        "raw_context_included": {"const": false},
+        "canon_write_allowed": {"const": false},
+        "registry_write_allowed": {"const": false},
+        "mechanical_write_allowed": {"const": false}
+      }
+    },
+    "world_seed_status": {"type": "string", "enum": ["available", "unavailable", "invalid"]},
+    "world_seed_version": {"type": ["string", "null"], "maxLength": 160},
+    "world_seed_hash": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "world_context_status": {"type": "string", "enum": ["available", "fallback", "unavailable"]},
+    "world_context_version": {"type": ["string", "null"], "maxLength": 160},
+    "world_context_hash": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "context_hash": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "world_context_selected_module": {"type": ["string", "null"], "maxLength": 160},
+    "attempt_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "attempt_number": {"type": "integer", "minimum": 0},
+    "revision_number": {"type": "integer", "minimum": 0},
+    "module_slug": {"type": "string", "maxLength": 160}
+  }
+}

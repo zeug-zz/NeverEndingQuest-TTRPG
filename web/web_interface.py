@@ -69,7 +69,12 @@ INSTALL_ROOT = repository_root()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import AI client factory (supports OpenAI and OpenRouter)
-from utils.ai_client_factory import create_chat_client, get_chat_model_name, get_model_config, get_chat_completion_params  # OPENROUTER: Multi-provider support
+from utils.ai_client_factory import (  # OPENROUTER: Multi-provider support
+    create_chat_client,
+    get_chat_completion_params,
+    get_chat_model_name,
+    get_model_config,
+)
 from openai import OpenAI
 
 # Token tracking import
@@ -105,6 +110,11 @@ from updates.update_character_info import normalize_character_name
 from utils.image_response_payload import convert_image_response_payload
 from core.managers.status_manager import set_status_callback, set_compression_callback
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
+from utils.toolkit_adaptation_output_safety import (
+    is_adaptation_output_active,
+    project_gui_payload,
+    sanitize_line,
+)
 from utils.character_creation_audit import apply_background_feature_suggestion_if_generic
 from model_config import (
     DM_MINI_MODEL,
@@ -150,6 +160,33 @@ try:
 except ImportError:
     run_toolkit_builder_readiness_gate = None
     TOOLKIT_BUILDER_READINESS_AVAILABLE = False
+
+# TABLETOP MODE: Shared text-description adaptation seam for the toolkit
+# builder worker (tasks 5.1/5.2 of toolkit-llm-adaptation-runtime-unification).
+# When ENABLE_LLM_ADAPTATION is exactly True and the input is eligible, the
+# worker resolves the Python-owned text_description adaptation route, builds
+# the bounded attempt workspace, and invokes the shared adaptation authoring
+# adapter exactly once BEFORE any ModuleBuilder/module write. The branch fails
+# closed with an explicit adaptation outcome and never falls through to the
+# legacy direct builder. A ready authoring handoff is then routed through the
+# SAME staged publication transaction as uploaded adventures (packet build,
+# shared gates, readiness, report agreement, Markdown, registry-last
+# publication, campaign sync, rollback), and success is emitted only after
+# that shared publication verification. When adaptation is missing, invalid,
+# or exactly False, the seam returns None and the legacy path below is
+# preserved unchanged.
+try:
+    from utils.toolkit_adaptation_config import BUILD_MODE_LLM_ADAPTATION
+    from web.extensions.toolkit_text_adaptation_worker import (
+        run_text_description_adaptation_publication,
+        run_text_description_adaptation_seam,
+    )
+    TEXT_DESCRIPTION_ADAPTATION_AVAILABLE = True
+except ImportError:
+    BUILD_MODE_LLM_ADAPTATION = "llm_adaptation"
+    run_text_description_adaptation_publication = None
+    run_text_description_adaptation_seam = None
+    TEXT_DESCRIPTION_ADAPTATION_AVAILABLE = False
 
 # TABLETOP MODE: Import missing media auto-generation worker for allied NPC portrait healing
 try:
@@ -726,6 +763,23 @@ class WebOutputCapture:
                 text = text.decode('utf-8', errors='replace')
             elif not isinstance(text, str):
                 text = str(text)
+
+            # TABLETOP MODE: Adaptation output is projected before it reaches
+            # either the console or the GUI queues.  The scope is opt-in, so
+            # legacy WebOutputCapture behavior remains unchanged.
+            if is_adaptation_output_active():
+                safe_event = sanitize_line(text, stream="stderr" if self.is_error else "stdout")
+                if safe_event is not None:
+                    encoded = json.dumps(safe_event, ensure_ascii=True, sort_keys=True)
+                    self.original_stream.write(encoded + "\n")
+                    self.original_stream.flush()
+                    debug_output_queue.put({
+                        'type': 'debug',
+                        'content': encoded,
+                        'timestamp': datetime.now().isoformat(),
+                        'is_error': self.is_error,
+                    })
+                return len(text)
             
             self.original_stream.write(text)
             self.original_stream.flush()
@@ -918,6 +972,15 @@ class WebOutputCapture:
         return ansi_escape.sub('', text)
     
     def flush(self):
+        if is_adaptation_output_active():
+            self.buffer = ""
+            self.in_dm_section = False
+            self.dm_buffer = []
+            try:
+                self.original_stream.flush()
+            except Exception:
+                pass
+            return
         # If we're in a DM section, flush it as single message
         if self.in_dm_section and self.dm_buffer:
             combined_content = '\n'.join(self.dm_buffer)
@@ -3069,21 +3132,73 @@ def get_module_unified_assets(module_name):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/toolkit/modules/<module_name>/adventure.md')
-def get_module_adventure_markdown(module_name):
-    """Return generated Homebrewery V3 adventure markdown for a module.
+def _validate_download_summary(markdown):
+    """Bounded deterministic re-check before serving a persisted summary.
 
-    Serves the pre-generated MODULE_SUMMARY.md file when it exists (written
-    during post-build finishing). Falls back to one-time generation for
-    legacy modules that predate the builder hook. The generated result is
-    cached to disk for subsequent requests.
+    Mirrors the task-8.1 adaptation Markdown quality contract rules (UTF-8
+    validity, minimum artifact size, no raw JSON dump, no error/traceback
+    text) without requiring the adaptation notice so legacy module summaries
+    remain downloadable. Returns a failure reason string, or None when the
+    summary is servable. Provider-free; performs no file mutation.
     """
-    import re
-    from pathlib import Path
+    from utils.toolkit_adaptation_markdown_quality import (
+        MIN_SUMMARY_BYTES,
+        _check_error_text,
+        _check_raw_json,
+        _check_utf8,
+    )
+
+    if not isinstance(markdown, str) or not markdown.strip():
+        return "summary_empty"
+    utf8_check = _check_utf8(markdown)
+    if utf8_check["status"] != "pass":
+        return "summary_not_utf8"
+    byte_size = len(markdown.encode("utf-8"))
+    if byte_size < int(MIN_SUMMARY_BYTES):
+        return "summary_too_short"
+    if _check_raw_json(markdown)["status"] != "pass":
+        return "summary_contains_raw_json"
+    if _check_error_text(markdown)["status"] != "pass":
+        return "summary_contains_error_text"
+    return None
+
+
+def resolve_adventure_markdown_download(
+    module_name,
+    *,
+    modules_root=None,
+    generator=None,
+):
+    """Resolve the adventure Markdown download payload for a module.
+
+    The persisted module-local MODULE_SUMMARY.md is served verbatim whenever
+    it exists and passes the bounded download validity check. Those requests
+    never invoke a provider and never regenerate the adventure.
+
+    Modules without a persisted summary use the documented bounded legacy
+    fallback: the caller-provided generator (default
+    utils.homebrewery_adventure_writer.generate_homebrewery_adventure) runs
+    once and the result is cached to disk so subsequent requests serve the
+    persisted file. When no generator is available the result is an explicit
+    controlled-unavailable response. Invalid persisted or generated content
+    is never served and never silently regenerated past the quality gate.
+
+    Returns a dict:
+      {"kind": "summary", "source": "persisted"|"generated_legacy",
+       "content": str, "bytes": int, "filename": str}
+      {"kind": "unavailable", "status": int, "reason": str, "module": str}
+      {"kind": "error", "status": 400, "reason": str, "module": str}
+    """
+    import re as _re
 
     module_name = str(module_name or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_ \-]+", module_name):
-        return jsonify({"error": "Invalid module name"}), 400
+    if not _re.fullmatch(r"[A-Za-z0-9_ \-]+", module_name):
+        return {
+            "kind": "error",
+            "status": 400,
+            "reason": "Invalid module name",
+            "module": module_name,
+        }
 
     module_name = module_name.replace("-", "_").replace(" ", "_")
 
@@ -3094,61 +3209,143 @@ def get_module_adventure_markdown(module_name):
     ).resolve()
     module_dir = (modules_root / module_name).resolve()
     if not module_dir.is_relative_to(modules_root):
-        return jsonify({"error": "Invalid module name"}), 400
+        return {
+            "kind": "error",
+            "status": 400,
+            "reason": "Invalid module name",
+            "module": module_name,
+        }
 
+    filename = "{}_adventure.md".format(module_name)
     summary_path = module_dir / "MODULE_SUMMARY.md"
 
-    # Try serving pre-generated file first
+    if not module_dir.is_dir():
+        return {
+            "kind": "unavailable",
+            "status": 404,
+            "reason": "Module not found",
+            "module": module_name,
+        }
+
+    # Persisted summary first -- never regenerate or call a provider here.
     if summary_path.exists():
-        md = summary_path.read_text(encoding="utf-8")
-        if len(md) > 500:
-            response = app.make_response(md)
-            response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
-            response.headers['Content-Disposition'] = (
-                f'attachment; filename="{module_name}_adventure.md"'
-            )
-            return response
-
-    # Fall back to one-time generation for legacy modules
-    try:
-        from utils.homebrewery_adventure_writer import generate_homebrewery_adventure
-
-        md = generate_homebrewery_adventure(module_name)
-        if not md or len(md) < 100:
-            return jsonify({
-                'error': 'Generated adventure markdown is empty or too short',
-                'module': module_name,
-            }), 500
-
-        # Cache to disk for future requests
         try:
-            if module_dir.is_dir():
-                summary_path.write_text(md, encoding="utf-8")
-        except OSError:
-            pass  # Non-blocking - file is optional cache
+            content = summary_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return {
+                "kind": "unavailable",
+                "status": 500,
+                "reason": "module_summary_unreadable",
+                "module": module_name,
+            }
+        invalid_reason = _validate_download_summary(content)
+        if invalid_reason is not None:
+            return {
+                "kind": "unavailable",
+                "status": 500,
+                "reason": invalid_reason,
+                "module": module_name,
+            }
+        return {
+            "kind": "summary",
+            "source": "persisted",
+            "content": content,
+            "bytes": len(content.encode("utf-8")),
+            "filename": filename,
+        }
 
-        response = app.make_response(md)
+    # Missing summary: bounded legacy fallback only when a generator exists.
+    if generator is None:
+        return {
+            "kind": "unavailable",
+            "status": 404,
+            "reason": "module_summary_missing",
+            "module": module_name,
+        }
+
+    try:
+        content = generator(module_name)
+    except FileNotFoundError:
+        return {
+            "kind": "unavailable",
+            "status": 404,
+            "reason": "Module not found",
+            "module": module_name,
+        }
+    except Exception as exc:
+        error(
+            "TOOLKIT: Failed to generate adventure markdown for {}: {}".format(
+                module_name, exc
+            ),
+            category="module_ingest",
+        )
+        return {
+            "kind": "unavailable",
+            "status": 500,
+            "reason": "generation_failed",
+            "module": module_name,
+            "detail": str(exc),
+        }
+
+    invalid_reason = _validate_download_summary(content)
+    if invalid_reason is not None:
+        return {
+            "kind": "unavailable",
+            "status": 500,
+            "reason": invalid_reason,
+            "module": module_name,
+        }
+
+    # Cache to disk for future requests (non-blocking optional cache)
+    try:
+        if module_dir.is_dir():
+            summary_path.write_text(content, encoding="utf-8")
+    except OSError:
+        pass
+
+    return {
+        "kind": "summary",
+        "source": "generated_legacy",
+        "content": content,
+        "bytes": len(content.encode("utf-8")),
+        "filename": filename,
+    }
+
+
+@app.route('/api/toolkit/modules/<module_name>/adventure.md')
+def get_module_adventure_markdown(module_name):
+    """Return the adventure Markdown download for a module.
+
+    Serves the persisted module-local MODULE_SUMMARY.md verbatim when it
+    exists (written during post-build finishing / the task-8.1 summary
+    stage). Those requests never invoke a provider and never regenerate the
+    adventure. Legacy modules that predate the builder hook regenerate once
+    through the documented bounded fallback and cache the result to disk for
+    subsequent requests. Missing or invalid artifacts return a controlled
+    unavailable response.
+    """
+    from utils.homebrewery_adventure_writer import generate_homebrewery_adventure
+
+    result = resolve_adventure_markdown_download(
+        module_name,
+        generator=generate_homebrewery_adventure,
+    )
+
+    if result["kind"] == "summary":
+        response = app.make_response(result["content"])
         response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
         response.headers['Content-Disposition'] = (
-            f'attachment; filename="{module_name}_adventure.md"'
+            'attachment; filename="{}"'.format(result["filename"])
         )
         return response
 
-    except FileNotFoundError:
-        return jsonify({
-            'error': 'Module not found',
-            'module': module_name,
-        }), 404
-    except Exception as e:
-        error(
-            f"TOOLKIT: Failed to generate adventure markdown for {module_name}: {e}",
-            category="module_ingest",
-        )
-        return jsonify({
-            'error': 'Failed to generate adventure markdown',
-            'module': module_name,
-            'detail': str(e),
-        }), 500
+    payload = {
+        'error': result.get('reason', 'Unavailable'),
+        'module': result.get('module', ''),
+    }
+    if result.get('detail'):
+        payload['detail'] = result['detail']
+    return jsonify(payload), result.get('status', 500)
 
 
 @socketio.on('connect')
@@ -5551,6 +5748,155 @@ def handle_request_module_list():
         error(f"Error fetching detailed module list: {e}")
         emit('module_list_response', [])  # Send an empty list on error
 
+def _emit_text_description_adaptation_outcome(module_name: str, result: dict) -> None:
+    """Emit the explicit adaptation outcome for the text-description worker.
+
+    TABLETOP MODE (task 5.1 of toolkit-llm-adaptation-runtime-unification).
+    Bounded scalars only. Never emits the legacy ``module_complete`` success
+    event: a selected adaptation attempt reports completion only after the
+    shared publication transaction (task 5.2) verifies it, and never falls
+    back to direct legacy generation.
+    """
+    outcome = str(result.get("outcome") or 'blocked')
+    route_decision = result.get("route_decision")
+    route_decision = route_decision if isinstance(route_decision, dict) else {}
+    if outcome == 'authoring_ready_pending_publication':
+        handoff = result.get("adaptation_handoff")
+        handoff = handoff if isinstance(handoff, dict) else {}
+        attempt = handoff.get("attempt")
+        attempt = attempt if isinstance(attempt, dict) else {}
+        message = (
+            f'Adaptation authoring completed for "{module_name}". '
+            f'The shared adaptation publication transaction is pending; '
+            f'no module was written and no legacy fallback occurred.'
+        )
+        socketio.emit('module_error', {
+            'error': message,
+            'generation_succeeded': False,
+            'module_name': module_name,
+            'adaptation_route': BUILD_MODE_LLM_ADAPTATION,
+            'adaptation_job': True,
+            'adaptation_outcome': outcome,
+            'adaptation_handoff_ready': True,
+            'adaptation_attempt_id': attempt.get("attempt_id"),
+            'adaptation_source_hash': handoff.get("source_hash"),
+            'adaptation_workspace_path': handoff.get("workspace_path"),
+            'adaptation_staging_target_path': handoff.get("staging_target_path"),
+            'adaptation_dossier_artifact_path': handoff.get("dossier_artifact_path"),
+            'adaptation_route_decision': route_decision,
+        })
+        return
+    reason_code = str(result.get("reason_code") or 'adaptation_blocked')
+    diagnostics = result.get("diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, list) else []
+    bounded_diagnostics = []
+    for item in diagnostics[:6]:
+        if isinstance(item, dict):
+            safe = project_gui_payload({
+                'phase': 'adaptation_build',
+                'status': 'blocked',
+                'code': item.get('code'),
+                'message': item.get('message'),
+            })
+            bounded_diagnostics.append({
+                'code': safe['code'],
+                'message': safe.get('message', ''),
+            })
+    socketio.emit('module_error', {
+        'error': (
+            f'Adaptation build blocked for "{module_name}": {reason_code}'
+        ),
+        'generation_succeeded': False,
+        'module_name': module_name,
+        'adaptation_route': BUILD_MODE_LLM_ADAPTATION,
+        'adaptation_job': True,
+        'adaptation_outcome': 'blocked',
+        'adaptation_reason_code': reason_code,
+        'adaptation_diagnostics': bounded_diagnostics,
+        'adaptation_route_decision': route_decision,
+    })
+
+
+def _emit_text_description_publication_outcome(module_name: str, result: dict) -> None:
+    """Emit the terminal adaptation publication outcome for the text worker.
+
+    TABLETOP MODE (task 5.2 of toolkit-llm-adaptation-runtime-unification).
+    A success event is emitted ONLY after the shared publication transaction
+    verified the staged module (schema/mechanical/readiness gates, semantic/
+    report agreement, Markdown quality, registry integration, post-write
+    verification, campaign synchronization, final report persistence). Every
+    pre-publication or publication failure remains an explicit blocked outcome
+    with bounded diagnostics; no raw ModuleBuilder completion can ever emit
+    this success event and no legacy fallback occurs.
+    """
+    outcome = str(result.get("outcome") or 'blocked')
+    publication = result.get("adaptation_publication")
+    publication = publication if isinstance(publication, dict) else {}
+    handoff = result.get("adaptation_handoff")
+    handoff = handoff if isinstance(handoff, dict) else {}
+    attempt = handoff.get("attempt")
+    attempt = attempt if isinstance(attempt, dict) else {}
+    route_decision = result.get("route_decision")
+    route_decision = route_decision if isinstance(route_decision, dict) else {}
+    if outcome == 'completed':
+        message = (
+            f'Adaptation publication completed for "{module_name}". '
+            f'The staged module passed the shared readiness, semantic, report, '
+            f'Markdown, registry, campaign, and rollback transaction and was '
+            f'verified after publication.'
+        )
+        socketio.emit('module_complete', {
+            'module_name': module_name,
+            'message': message,
+            'generation_succeeded': True,
+            'final_status': 'success',
+            'post_build_status': 'success',
+            'ready_status': 'pass',
+            'publishable_status': 'pass',
+            'build_report': publication,
+            'adaptation_route': BUILD_MODE_LLM_ADAPTATION,
+            'adaptation_job': True,
+            'adaptation_outcome': 'completed',
+            'adaptation_attempt_id': attempt.get("attempt_id"),
+            'adaptation_source_hash': handoff.get("source_hash"),
+            'adaptation_workspace_path': handoff.get("workspace_path"),
+            'adaptation_staging_target_path': handoff.get("staging_target_path"),
+            'adaptation_dossier_artifact_path': handoff.get("dossier_artifact_path"),
+            'adaptation_route_decision': route_decision,
+        })
+        return
+    reason_code = str(result.get("reason_code") or 'text_description_publication_blocked')
+    diagnostics = result.get("diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, list) else []
+    bounded_diagnostics = []
+    for item in diagnostics[:6]:
+        if isinstance(item, dict):
+            safe = project_gui_payload({
+                'phase': 'adaptation_build',
+                'status': 'blocked',
+                'code': item.get('code'),
+                'message': item.get('message'),
+            })
+            bounded_diagnostics.append({
+                'code': safe['code'],
+                'message': safe.get('message', ''),
+            })
+    socketio.emit('module_error', {
+        'error': (
+            f'Adaptation publication blocked for "{module_name}": {reason_code}'
+        ),
+        'generation_succeeded': False,
+        'module_name': module_name,
+        'adaptation_route': BUILD_MODE_LLM_ADAPTATION,
+        'adaptation_job': True,
+        'adaptation_outcome': 'blocked',
+        'adaptation_reason_code': reason_code,
+        'adaptation_diagnostics': bounded_diagnostics,
+        'adaptation_publication': publication,
+        'adaptation_route_decision': route_decision,
+    })
+
+
 def simulate_build_process(params):
     """A target function for a thread that runs the actual module builder."""
     global cancel_build_flag
@@ -5575,7 +5921,70 @@ def simulate_build_process(params):
         
         # Sanitize module name
         module_name = module_name.replace(' ', '_')
-        
+
+        # TABLETOP MODE: Tasks 5.1/5.2 adaptation-enabled branch. When the
+        # operator flag is exactly True and the input is eligible, the build
+        # resolves the Python-owned text_description adaptation route, builds
+        # the bounded attempt workspace, and invokes the shared adaptation
+        # authoring adapter exactly once BEFORE any ModuleBuilder/module
+        # write. A ready authoring handoff is then routed through the SAME
+        # staged publication transaction as uploaded adventures (packet build,
+        # shared gates, readiness, report agreement, Markdown, registry-last
+        # publication, campaign sync, rollback); success is emitted only after
+        # that shared publication verification. The branch fails closed with
+        # an explicit adaptation outcome on refusal/invalid workspace/invalid
+        # dossier/infrastructure/gate/publication failure and never falls
+        # through to the legacy direct builder below. When adaptation is
+        # missing, invalid, or exactly False, the seam returns None and the
+        # legacy path is preserved unchanged.
+        if TEXT_DESCRIPTION_ADAPTATION_AVAILABLE and run_text_description_adaptation_seam:
+            adaptation_result = run_text_description_adaptation_seam(
+                module_name, narrative, params
+            )
+            if adaptation_result is not None:
+                outcome = str(adaptation_result.get("outcome") or "")
+                if outcome == 'authoring_ready_pending_publication':
+
+                    def _adaptation_publication_progress(stage, message):
+                        # Bounded adaptation progress (task 4.4 phase contract)
+                        # surfaced through the existing module_progress channel.
+                        if cancel_build_flag.is_set():
+                            return False
+                        try:
+                            safe_event = project_gui_payload({
+                                'phase': stage,
+                                'status': 'running',
+                                'code': stage,
+                                'message': message,
+                                'percentage': 96,
+                            })
+                            socketio.emit('module_progress', {
+                                'stage': 13,
+                                'stage_name': 'Adaptation Publication',
+                                'percentage': safe_event.get('percentage', 96),
+                                'message': safe_event.get('message', ''),
+                                'adaptation_phase': safe_event['phase'],
+                                'adaptation_status': safe_event['status'],
+                                'adaptation_code': safe_event['code'],
+                                'raw_provider_payload_exposed': False,
+                            })
+                        except Exception:
+                            pass
+                        return True
+
+                    publication_result = run_text_description_adaptation_publication(
+                        adaptation_result,
+                        progress_callback=_adaptation_publication_progress,
+                    )
+                    _emit_text_description_publication_outcome(
+                        module_name, publication_result
+                    )
+                else:
+                    _emit_text_description_adaptation_outcome(
+                        module_name, adaptation_result
+                    )
+                return
+
         info(f"Starting actual module build for: {module_name}")
         info(f"Parameters - Areas: {num_areas}, Default locations per area: {locations_per_area}")
         info(f"Raw params received: {params}")  # Debug full params
@@ -5861,6 +6270,7 @@ def handle_cancel_build():
     else:
         emit('module_error', {'error': 'No active build to cancel.'})
 
+
 def _generate_toolkit_npc_description(
     asset_name: str,
     client=None,
@@ -5871,7 +6281,7 @@ def _generate_toolkit_npc_description(
     try:
         if client is None:
             client = create_chat_client()
-        model_config = get_model_config("npc_builder", NPC_BUILDER_MODEL)
+        config = get_model_config("npc_builder")
         ai_prompt = (
             f"Generate a 150-200 word visual description for {asset_name} "
             f"suitable for AI image generation. Include physical appearance, "
@@ -5881,7 +6291,7 @@ def _generate_toolkit_npc_description(
             **get_chat_completion_params(
                 "npc_builder",
                 NPC_BUILDER_MODEL,
-                temperature_override=model_config.get("temperature", 0.7),
+                temperature_override=config.get("temperature", 0.7),
             ),
             messages=[
                 {
@@ -6116,6 +6526,8 @@ def handle_generate_unified_assets(data):
 
                                 # If still no description, generate new one with AI
                                 if not description_found:
+                                    # TABLETOP MODE: Use direct AI client instead of
+                                    # the removed NPCBuilder class.
                                     info(f"Generating AI description for NPC {asset_name}")
                                     description_result = _generate_toolkit_npc_description(
                                         asset_name

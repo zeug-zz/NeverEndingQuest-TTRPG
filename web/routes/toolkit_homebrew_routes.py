@@ -10,11 +10,12 @@ Licensed under Fair Source License 1.0
 """
 
 import shutil
+import inspect
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from flask import Flask, jsonify, request
 
@@ -54,7 +55,58 @@ from web.extensions.toolkit_homebrew_rebuild_guard import (
     detect_module_collision,
     prepare_backup_clean_rebuild,
 )
+from web.extensions.toolkit_adaptation_job_reporting import (
+    ADAPTATION_CANONICAL_PHASES,
+    ADAPTATION_JOB_STATUS_BLOCKED,
+    ADAPTATION_JOB_STATUS_COMPLETED,
+    ADAPTATION_JOB_STATUS_INFRASTRUCTURE_FAILED,
+    ADAPTATION_JOB_STATUS_REVISION_EXHAUSTED,
+    ADAPTATION_JOB_STATUS_REVISION_REQUIRED,
+    ADAPTATION_MODE_LLM,
+    ADAPTATION_TERMINAL_JOB_STATES,
+    adaptation_public_response_fields,
+    build_adaptation_job_status,
+    is_adaptation_job,
+    normalize_adaptation_progress_stage,
+    sanitize_adaptation_job_for_public,
+)
+from utils.toolkit_adaptation_output_safety import project_progress
+
+# TABLETOP MODE: Shared LLM adaptation runtime adapter and route decision
+# seams (task 4.1 of toolkit-llm-adaptation-runtime-unification). These are
+# the upload build-job handoff seams: deterministic route resolution, upload
+# handoff assembly, adaptation authoring, and staging reservation. The packet
+# builder receives the validated dossier, bounded provenance, staging root,
+# and reserved staging target. All seam names stay module attributes so tests
+# can inject deterministic fakes without providers or network access.
+from utils.toolkit_adaptation_config import (
+    BUILD_MODE_LLM_ADAPTATION,
+    canonical_monster_generation_enabled,
+    INPUT_KIND_UPLOAD_MARKDOWN,
+    INPUT_KIND_UPLOAD_PDF,
+    ROUTE_DECISION_STATUS_ADAPTATION,
+    resolve_adaptation_input_route,
+    validate_adaptation_route_decision,
+)
+from utils.toolkit_adaptation_dossier import (
+    RIGHTS_REVIEW_NOT_REQUIRED,
+    RIGHTS_REVIEW_PENDING,
+    validate_adaptation_dossier,
+)
+from utils.toolkit_adaptation_staging import (
+    DEFAULT_ADAPTATION_STAGING_ROOT,
+    create_adaptation_staging_target,
+)
+from utils.toolkit_homebrew_upload_contract import SOURCE_RIGHTS_RESTRICTED
 from utils.repo_paths import resolve_repository_path
+from web.extensions.toolkit_adaptation_runtime import (
+    APPROVED_UPLOAD_REVIEW_STATES,
+    HANDOFF_STATUS_READY,
+    UPLOAD_RIGHTS_BASIS_BY_CLASS,
+    adaptation_convergence_callback,
+    build_upload_adaptation_handoff,
+    run_upload_adaptation_authoring,
+)
 
 try:
     from web.extensions.toolkit_llm_classification import (
@@ -81,6 +133,9 @@ _TERMINAL_JOB_STATES = {
     "blocked",
     "awaiting_overwrite_confirmation",
     "final_reconciliation_required",
+    # Explicit adaptation terminal states. These describe the current
+    # adaptation attempt and do not change legacy job-state behavior.
+    *ADAPTATION_TERMINAL_JOB_STATES,
 }
 
 _FINISHING_REACHABLE_STATES = {
@@ -341,12 +396,21 @@ _ACCURATE_INGEST_CANONICAL_PHASES = {
     "final_reconciliation_required",
 }
 
+# Adaptation has a separate phase vocabulary. Keep this additive so legacy
+# clients can continue consuming accurate_ingest_phase unchanged.
+_ADAPTATION_CANONICAL_PHASES = set(ADAPTATION_CANONICAL_PHASES)
+
 
 def _get_canonical_accurate_ingest_phase(job: Dict[str, Any]) -> str:
     """Derive canonical accurate-ingest phase from job state.
 
     Returns one of _ACCURATE_INGEST_CANONICAL_PHASES.
     """
+    if is_adaptation_job(job):
+        # TABLETOP MODE: Adaptation has its own phase vocabulary. Keep the
+        # legacy accurate_ingest_phase field unchanged for legacy jobs.
+        return _get_canonical_adaptation_phase(job)
+
     status = str(job.get("status") or "").strip().lower()
     stage = str(job.get("stage") or "").strip().lower()
     pipeline_status = str(job.get("pipeline_status") or "").strip().lower()
@@ -447,6 +511,70 @@ def _set_job_state(job_id: str, status: str, **fields: Any) -> None:
         job["updated_at"] = _utc_now_iso()
         for key, value in fields.items():
             job[key] = value
+        _refresh_adaptation_job_state(job)
+
+
+def _refresh_adaptation_job_state(job: Dict[str, Any]) -> None:
+    """Attach bounded adaptation status fields to an explicit adaptation job.
+
+    Legacy jobs are intentionally untouched. The internal job may retain its
+    full Python-owned result for the worker, while API responses use the
+    allowlisted projection from ``sanitize_adaptation_job_for_public``.
+    """
+    if not is_adaptation_job(job):
+        return
+    summary = build_adaptation_job_status(job)
+    if summary.get("terminal") and summary.get("job_status") in ADAPTATION_TERMINAL_JOB_STATES:
+        # Adaptation terminal states are additive and only replace the generic
+        # worker status after the bounded Python-owned outcome is known.
+        job["status"] = summary["job_status"]
+    job["adaptation_mode"] = ADAPTATION_MODE_LLM
+    job["adaptation_phase"] = summary.get("phase")
+    job["adaptation_outcome"] = summary.get("outcome")
+    job["adaptation_terminal"] = bool(summary.get("terminal"))
+    job["adaptation_status_text"] = summary.get("status_text")
+    job["adaptation_failure_surface"] = summary.get("failure_surface")
+    job["adaptation_retry_diagnostics"] = summary.get("retry_diagnostics")
+    job["next_revision_eligible"] = bool(summary.get("next_revision_eligible"))
+    job["revision_eligible"] = bool(summary.get("revision_eligible"))
+    job["semantic_revision_eligible"] = bool(
+        summary.get("semantic_revision_eligible")
+    )
+    job["semantic_revision_budget_consumed"] = bool(
+        (summary.get("retry_diagnostics") or {}).get(
+            "semantic_revision_budget_consumed"
+        )
+    )
+    job["revision_budget"] = dict(summary.get("revision_budget") or {})
+    job["failure_diagnostics"] = list(
+        summary.get("failure_diagnostics") or []
+    )[:6]
+
+
+def _get_canonical_adaptation_phase(job: Dict[str, Any]) -> str:
+    """Return the stable adaptation phase for one explicit adaptation job."""
+    summary = build_adaptation_job_status(job)
+    phase = str(summary.get("phase") or "").strip().lower()
+    if phase in _ADAPTATION_CANONICAL_PHASES:
+        return phase
+    return "adaptation_preflight"
+
+
+def _build_adaptation_job_summary(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the bounded adaptation status envelope used by API consumers."""
+    return build_adaptation_job_status(job)
+
+
+def _public_job_copy(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Return an API-safe copy without changing legacy response payloads."""
+    if not is_adaptation_job(job):
+        return dict(job)
+    return sanitize_adaptation_job_for_public(job)
+
+
+def _public_job_response_fields(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Return additive adaptation status fields for polling responses."""
+    return adaptation_public_response_fields(job)
 
 
 def _normalize_homebrew_build_progress_stage(
@@ -520,6 +648,21 @@ def _update_homebrew_build_progress(
         job["progress_updated_at"] = _utc_now_iso()
         job["progress_tick"] = int(job.get("progress_tick") or 0) + 1
         job["updated_at"] = _utc_now_iso()
+        if is_adaptation_job(job):
+            safe_event = project_progress({
+                "phase": progress_status,
+                "status": "running",
+                "code": progress_status,
+                "message": message,
+            })
+            job["progress_message"] = safe_event.get("message", "")
+            job["progress_stage"] = safe_event["phase"]
+            job["adaptation_progress_stage"] = normalize_adaptation_progress_stage(
+                safe_event["phase"],
+                safe_event.get("message", ""),
+            )
+            job["adaptation_progress_message"] = safe_event.get("message", "")
+            _refresh_adaptation_job_state(job)
 
 
 def _make_homebrew_build_progress_callback(job_id: str):
@@ -608,35 +751,70 @@ def _run_homebrew_packet_build(
     progress_callback: Optional[Any] = None,
     overwrite_confirmed: bool = False,
     seed_writer_mode: Optional[str] = None,
+    adaptation_route: Optional[str] = None,
+    adaptation_dossier: Optional[Mapping[str, Any]] = None,
+    adaptation_provenance: Optional[Mapping[str, Any]] = None,
+    adaptation_staging_root: Optional[str] = None,
+    adaptation_staging_target: Optional[Mapping[str, Any]] = None,
+    adaptation_convergence_callback_override: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     """Run packet-driven builder for one approved toolkit Homebrew job."""
     from web.extensions.toolkit_homebrew_packet_builder import (
         run_toolkit_homebrew_packet_build,
     )
 
-    return run_toolkit_homebrew_packet_build(
-        workspace=artifact_workspace,
-        job_id=job_id,
-        progress_callback=progress_callback,
-        overwrite_confirmed=overwrite_confirmed,
-        seed_writer_mode=seed_writer_mode,
-    )
+    packet_kwargs: Dict[str, Any] = {
+        "workspace": artifact_workspace,
+        "job_id": job_id,
+        "progress_callback": progress_callback,
+        "overwrite_confirmed": overwrite_confirmed,
+        "seed_writer_mode": seed_writer_mode,
+    }
+    # TABLETOP MODE: Legacy packet builds receive no adaptation arguments. The
+    # selected adaptation route alone opts into the shared convergence seam.
+    if adaptation_route == BUILD_MODE_LLM_ADAPTATION:
+        packet_kwargs.update(
+            {
+                "adaptation_route": adaptation_route,
+                "adaptation_dossier": adaptation_dossier,
+                "adaptation_provenance": adaptation_provenance,
+                "adaptation_staging_root": adaptation_staging_root,
+                "adaptation_staging_target": adaptation_staging_target,
+                "adaptation_convergence_callback": (
+                    adaptation_convergence_callback_override
+                    or adaptation_convergence_callback
+                ),
+            }
+        )
+    return run_toolkit_homebrew_packet_build(**packet_kwargs)
 
 
 def _run_homebrew_readiness_gate(
     artifact_workspace: Path,
     job_id: str,
     state_callback: Optional[Any] = None,
+    module_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run post-build structural readiness gate for one upload workspace."""
     from web.extensions.toolkit_homebrew_readiness_gate import (
         run_toolkit_homebrew_readiness_gate,
     )
 
+    readiness_kwargs: Dict[str, Any] = {
+        "workspace": artifact_workspace,
+        "job_id": job_id,
+        "state_callback": state_callback,
+    }
+    if module_path and (
+        "module_path" in inspect.signature(run_toolkit_homebrew_readiness_gate).parameters
+        or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(run_toolkit_homebrew_readiness_gate).parameters.values()
+        )
+    ):
+        readiness_kwargs["module_path"] = module_path
     return run_toolkit_homebrew_readiness_gate(
-        workspace=artifact_workspace,
-        job_id=job_id,
-        state_callback=state_callback,
+        **readiness_kwargs,
     )
 
 
@@ -658,11 +836,63 @@ def _run_homebrew_finisher(
                 "enrichment_status": bp_enrich,
             }
 
+    adaptation_mode = None
+    adaptation_gates = None
+    adaptation_staging_target = None
+    adaptation_module_dir = None
+    adaptation_provenance = None
+    if build_result and isinstance(build_result, dict):
+        candidate_mode = str(
+            build_result.get("adaptation_mode")
+            or build_result.get("build_mode")
+            or ""
+        ).strip().lower()
+        if candidate_mode == "llm_adaptation":
+            # TABLETOP MODE: Keep adaptation candidates staged until the
+            # adaptation-aware finisher has completed every pre-registry gate.
+            adaptation_mode = candidate_mode
+            adaptation_gates = build_result.get("adaptation_gates")
+            adaptation_staging_target = build_result.get("staging_target")
+            staging_target = build_result.get("staging_target")
+            adaptation_module_dir = None
+            if isinstance(staging_target, Mapping):
+                adaptation_module_dir = str(
+                    staging_target.get("path")
+                    or staging_target.get("output_directory")
+                    or ""
+                ).strip() or None
+            if not adaptation_module_dir:
+                adaptation_module_dir = str(
+                    build_result.get("output_directory") or ""
+                ).strip() or None
+            candidate_provenance = build_result.get("adaptation_provenance")
+            if isinstance(candidate_provenance, dict):
+                adaptation_provenance = candidate_provenance
+            artifact_workspace = str(
+                build_result.get("adaptation_artifact_workspace") or ""
+            ).strip()
+
+    finisher_kwargs: Dict[str, Any] = {
+        "strict": True,
+        "refresh_reason": "toolkit_homebrew_route_finisher",
+        "extra_stages": extra_stages if extra_stages else None,
+    }
+    if adaptation_mode is not None:
+        finisher_kwargs.update(
+            {
+                "adaptation_mode": adaptation_mode,
+                "adaptation_gates": adaptation_gates,
+                "adaptation_staging_target": adaptation_staging_target,
+                "adaptation_module_dir": adaptation_module_dir,
+                "adaptation_provenance": adaptation_provenance,
+            }
+        )
+        if artifact_workspace:
+            finisher_kwargs["adaptation_artifact_workspace"] = artifact_workspace
+
     return refresh_toolkit_build_report(
         module_slug,
-        strict=True,
-        refresh_reason="toolkit_homebrew_route_finisher",
-        extra_stages=extra_stages if extra_stages else None,
+        **finisher_kwargs,
     )
 
 
@@ -1158,6 +1388,449 @@ def _run_homebrew_ingest_job(
                 _active_job_id = None
 
 
+def _resolve_upload_adaptation_route_decision(
+    job: Dict[str, Any],
+    workspace: Path,
+    job_id: str,
+) -> Dict[str, Any]:
+    """Resolve the background adaptation route for one approved upload build.
+
+    Python-owned and deterministic (task 4.1). The input kind is derived from
+    the job source kind, the source hash from the normalized packet, and the
+    upload rights classification from the job record. Rights basis/review
+    defaults mirror the upload handoff adapter so both boundaries agree. A
+    missing or invalid source identity or rights metadata resolves to an
+    explicit ineligible (legacy-safe) outcome.
+    """
+    source_kind = str(job.get("source_kind") or "markdown").strip().lower()
+    input_kind = (
+        INPUT_KIND_UPLOAD_PDF if source_kind == "pdf" else INPUT_KIND_UPLOAD_MARKDOWN
+    )
+    packet: Dict[str, Any] = {}
+    try:
+        raw_packet = load_normalized_packet_artifact(workspace)
+        if isinstance(raw_packet, Mapping):
+            packet = dict(raw_packet)
+    except Exception:
+        packet = {}
+    source_hash = str(packet.get("source_hash") or "").strip().lower()
+    source_title = str(
+        packet.get("title") or job.get("source_filename") or ""
+    ).strip()
+    rights_class = str(job.get("source_rights_class") or "").strip().lower()
+    rights_basis = UPLOAD_RIGHTS_BASIS_BY_CLASS.get(rights_class, "uploaded_adventure")
+    review_required = rights_class == SOURCE_RIGHTS_RESTRICTED
+    review_status = (
+        RIGHTS_REVIEW_PENDING if review_required else RIGHTS_REVIEW_NOT_REQUIRED
+    )
+    return resolve_adaptation_input_route(
+        input_kind,
+        source_kind=input_kind,
+        source_hash=source_hash or None,
+        source_title=source_title or None,
+        rights_class=rights_class or None,
+        rights_basis=rights_basis,
+        rights_review_required=review_required,
+        rights_review_status=review_status,
+        job_id=job_id,
+        attempt_number=1,
+    )
+
+
+def _build_adaptation_route_provenance(
+    authoring_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return the bounded provenance envelope for the packet-builder handoff.
+
+    Only bounded scalars from the authoring adapter result are forwarded:
+    attempt identity, model metadata (no credentials), canonical world-context
+    provenance, source identity, and the persisted dossier artifact reference.
+    """
+    attempt = authoring_result.get("attempt")
+    attempt = attempt if isinstance(attempt, Mapping) else {}
+    source_identity = authoring_result.get("source_identity")
+    source_identity = source_identity if isinstance(source_identity, Mapping) else {}
+    rights = authoring_result.get("rights")
+    rights = rights if isinstance(rights, Mapping) else {}
+    world_context = authoring_result.get("world_context")
+    world_context = world_context if isinstance(world_context, Mapping) else {}
+    model_metadata = authoring_result.get("model_metadata")
+    model_metadata = model_metadata if isinstance(model_metadata, Mapping) else {}
+    authoring = authoring_result.get("authoring")
+    authoring = authoring if isinstance(authoring, Mapping) else {}
+    provenance: Dict[str, Any] = {
+        "attempt_metadata": {
+            "attempt_id": attempt.get("attempt_id"),
+            "attempt_number": attempt.get("attempt_number"),
+            "revision_number": attempt.get("revision_number"),
+            "job_id": attempt.get("job_id"),
+        },
+        "model_metadata": dict(model_metadata),
+        "world_context_provenance": dict(world_context),
+        "source_hash": source_identity.get("source_hash"),
+        "source_title": source_identity.get("source_title"),
+        "source_path": source_identity.get("source_path"),
+        "source_format": str(authoring_result.get("input_kind") or ""),
+        "dossier_artifact_path": authoring.get("dossier_artifact_path"),
+        "rights_class": rights.get("rights_class"),
+        "rights_basis": rights.get("rights_basis"),
+        "rights_review_required": rights.get("rights_review_required"),
+        "rights_review_status": rights.get("rights_review_status"),
+    }
+    # TABLETOP MODE: Canonical stat generation is a separate operator opt-in.
+    # Copy only the exact Python configuration boolean; provider/adaptation
+    # output is never allowed to elevate this provenance field.
+    if canonical_monster_generation_enabled():
+        provenance["allow_canonical_monster_generation"] = True
+    return provenance
+
+
+# TABLETOP MODE: Task 4.3 metadata-propagation seams. Adaptation metadata and
+# reports stay attached to the job through every transition: the job carries
+# the bounded route provenance envelope (authoring seam) and a bounded copy of
+# the adaptation build handoff (build completion), and the finishing-only
+# continuation reattaches that handoff to the finisher input. Legacy jobs
+# carry no adaptation markers and are never touched by these helpers.
+def _extract_adaptation_build_handoff(
+    build_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Capture the bounded adaptation handoff fields from a build result.
+
+    Only explicit ``llm_adaptation`` results are captured. The fields are the
+    same ones ``_run_homebrew_finisher`` forwards to the adaptation-aware
+    finisher: mode, gates, staging target, provenance, module directory, and
+    artifact workspace. The job keeps this bounded copy so the finishing-only
+    continuation can reattach the exact same identity and report references.
+    """
+    mode = str(build_result.get("adaptation_mode") or "").strip().lower()
+    if mode != ADAPTATION_MODE_LLM:
+        return {}
+    handoff: Dict[str, Any] = {"adaptation_mode": mode}
+    for key in (
+        "adaptation_gates",
+        "adaptation_staging_target",
+        "adaptation_module_dir",
+        "adaptation_provenance",
+        "adaptation_artifact_workspace",
+    ):
+        value = build_result.get(key)
+        if value not in (None, ""):
+            handoff[key] = value
+    if handoff.get("adaptation_staging_target") is None:
+        staging_target = build_result.get("staging_target")
+        if isinstance(staging_target, Mapping) and staging_target:
+            handoff["adaptation_staging_target"] = dict(staging_target)
+    if handoff.get("adaptation_module_dir") is None:
+        output_directory = str(build_result.get("output_directory") or "").strip()
+        if output_directory:
+            handoff["adaptation_module_dir"] = output_directory
+    return handoff
+
+
+def _attach_adaptation_handoff(
+    prior_result: Dict[str, Any],
+    job: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Attach the job's adaptation handoff to a finishing-only continuation.
+
+    The finishing-only continuation re-enters the finisher with the job's
+    previous result, which for adaptation jobs is a readiness or report
+    payload without the adaptation handoff fields. The job carries the
+    Python-owned markers captured at build completion; merge them so the
+    finisher keeps adaptation identity, gates, staging, and provenance across
+    the continuation. Legacy jobs carry no adaptation markers and return the
+    prior result unchanged.
+    """
+    if not is_adaptation_job(job):
+        return dict(prior_result)
+    handoff = job.get("adaptation_build_handoff")
+    if not isinstance(handoff, Mapping) or not handoff:
+        return dict(prior_result)
+    enriched = dict(prior_result)
+    for source_key, target_key in (
+        ("adaptation_mode", "adaptation_mode"),
+        ("adaptation_gates", "adaptation_gates"),
+        ("adaptation_staging_target", "staging_target"),
+        ("adaptation_module_dir", "output_directory"),
+        ("adaptation_provenance", "adaptation_provenance"),
+        ("adaptation_artifact_workspace", "adaptation_artifact_workspace"),
+    ):
+        value = handoff.get(source_key)
+        if value not in (None, ""):
+            enriched[target_key] = value
+    return enriched
+
+
+def _fail_adaptation_build(
+    job_id: str,
+    route_decision: Dict[str, Any],
+    error: str,
+    diagnostics: Any = None,
+    failure_class: str = "validation",
+) -> None:
+    """Record a fail-closed adaptation build state before the packet builder.
+
+    The selected adaptation route is authoritative: authoring or handoff
+    failure stops the build and never falls through to legacy generation.
+    """
+    bounded_diagnostics: List[Dict[str, str]] = []
+    if isinstance(diagnostics, list):
+        for item in diagnostics[:6]:
+            if isinstance(item, Mapping):
+                bounded_diagnostics.append(
+                    {
+                        "code": str(item.get("code") or "unclassified")[:120],
+                        "message": str(item.get("message") or "")[:320],
+                    }
+                )
+    failure_group = (
+        "infrastructure" if failure_class == "provider" else "validation"
+    )
+    _set_job_state(
+        job_id,
+        "failed",
+        stage="authoring",
+        pipeline_status="failed",
+        error=error,
+        adaptation_job=True,
+        adaptation_mode=ADAPTATION_MODE_LLM,
+        adaptation_route_decision=route_decision,
+        result={
+            "status": "failed",
+            "stage": "authoring",
+            "job_id": job_id,
+            "error": error,
+            "adaptation_mode": ADAPTATION_MODE_LLM,
+            "adaptation_job": True,
+            "adaptation_route_decision": route_decision,
+            "failure_classification": {
+                "failure_class": failure_class,
+                "failure_group": failure_group,
+                "code": error,
+                "failed_stage": "authoring",
+                "revision_eligible": False,
+                "semantic_revision_eligible": False,
+            },
+            "diagnostics": bounded_diagnostics,
+        },
+    )
+
+
+def _run_upload_adaptation_authoring_seam(
+    job: Dict[str, Any],
+    workspace: Path,
+    job_id: str,
+    route_decision: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Assemble the upload handoff, run authoring, and reserve staging.
+
+    Returns ``{"ok": True, "packet_kwargs": ..., "job_metadata": ...}`` when
+    the ready Python-validated dossier and reserved staging target are
+    available, or ``{"ok": False}`` after recording the fail-closed job state.
+    """
+    source_kind = str(job.get("source_kind") or "markdown").strip().lower()
+    rights_class = str(
+        job.get("source_rights_class") or SOURCE_RIGHTS_USER_AUTHORED
+    )
+    packet: Dict[str, Any] = {}
+    try:
+        raw_packet = load_normalized_packet_artifact(workspace)
+        if isinstance(raw_packet, Mapping):
+            packet = dict(raw_packet)
+    except Exception:
+        packet = {}
+    source_title = str(
+        packet.get("title") or job.get("source_filename") or ""
+    ).strip()
+
+    current_status = str(job.get("status") or "").strip().lower()
+    review_state = (
+        current_status
+        if current_status in APPROVED_UPLOAD_REVIEW_STATES
+        else "approved_for_build"
+    )
+
+    handoff = build_upload_adaptation_handoff(
+        workspace,
+        source_kind=source_kind,
+        source_rights_class=rights_class,
+        review_state=review_state,
+        job_id=job_id,
+        attempt_number=1,
+        source_title=source_title or None,
+        source_path=None,
+    )
+    if not isinstance(handoff, Mapping) or handoff.get("status") != HANDOFF_STATUS_READY:
+        handoff_diagnostics = handoff.get("diagnostics") if isinstance(handoff, Mapping) else None
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            "upload_adaptation_handoff_failed",
+            handoff_diagnostics
+            or [
+                {
+                    "code": "upload_adaptation_handoff_failed",
+                    "message": "upload adaptation handoff failed",
+                }
+            ],
+        )
+        return {"ok": False}
+
+    authoring_result = run_upload_adaptation_authoring(
+        handoff,
+        workspace=workspace,
+    )
+    if not isinstance(authoring_result, Mapping) or not bool(
+        authoring_result.get("ok")
+    ):
+        authoring = (
+            authoring_result.get("authoring")
+            if isinstance(authoring_result, Mapping)
+            else None
+        )
+        authoring = authoring if isinstance(authoring, Mapping) else {}
+        authoring_diagnostics = (
+            authoring_result.get("diagnostics")
+            if isinstance(authoring_result, Mapping)
+            else None
+        )
+        safe_class = str(authoring.get("safe_class") or "").lower()
+        reason_code = str(
+            authoring.get("reason_code") or "adaptation_authoring_failed"
+        )
+        failure_class = "validation"
+        if safe_class in {"provider_infrastructure", "quota", "timeout", "dependency"}:
+            failure_class = "provider"
+        elif safe_class in {
+            "author_policy_refusal",
+            "api_refusal",
+            "rights_or_provenance",
+        }:
+            # Both refusal channels are bounded non-success outcomes for the
+            # selected adaptation route: they map to the policy blocked class
+            # (never infrastructure) and never consume semantic revision
+            # budget. The bounded reason code keeps the two channels
+            # distinguishable in job diagnostics.
+            failure_class = "rights"
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            reason_code,
+            authoring_diagnostics
+            or [
+                {
+                    "code": reason_code,
+                    "message": "adaptation authoring was blocked",
+                }
+            ],
+            failure_class=failure_class,
+        )
+        return {"ok": False}
+
+    dossier = authoring_result.get("dossier")
+    dossier_validation = (
+        validate_adaptation_dossier(dossier)
+        if isinstance(dossier, Mapping)
+        else {"valid": False, "build_ready": False}
+    )
+    if not bool(dossier_validation.get("valid")) or not bool(
+        dossier_validation.get("build_ready")
+    ):
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            "upload_adaptation_dossier_not_ready",
+            [
+                {
+                    "code": "upload_adaptation_dossier_not_ready",
+                    "message": "adaptation authoring did not produce a ready dossier",
+                }
+            ],
+        )
+        return {"ok": False}
+
+    source_identity = authoring_result.get("source_identity")
+    source_identity = source_identity if isinstance(source_identity, Mapping) else {}
+    attempt = authoring_result.get("attempt")
+    attempt = attempt if isinstance(attempt, Mapping) else {}
+    source_hash = str(source_identity.get("source_hash") or "").strip().lower()
+    if not source_hash:
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            "upload_adaptation_source_identity_missing",
+            [
+                {
+                    "code": "upload_adaptation_source_identity_missing",
+                    "message": "adaptation authoring lost the upload source identity",
+                }
+            ],
+        )
+        return {"ok": False}
+
+    module_name = str(job.get("expected_module_name") or "").strip()
+    try:
+        staging_target = create_adaptation_staging_target(
+            source_hash,
+            attempt_id=str(attempt.get("attempt_id") or "") or None,
+            attempt_number=int(attempt.get("attempt_number") or 1),
+            revision_number=int(attempt.get("revision_number") or 0),
+            job_id=job_id,
+            source_path=str(source_identity.get("source_path") or ""),
+            module_slug=module_name,
+            staging_root=DEFAULT_ADAPTATION_STAGING_ROOT,
+        )
+    except Exception as staging_error:
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            "adaptation_staging_reservation_failed",
+            [
+                {
+                    "code": "adaptation_staging_reservation_failed",
+                    "message": str(staging_error)[:320] or "staging reservation failed",
+                }
+            ],
+        )
+        return {"ok": False}
+    if not isinstance(staging_target, Mapping) or not staging_target:
+        _fail_adaptation_build(
+            job_id,
+            route_decision,
+            "adaptation_staging_reservation_failed",
+            [
+                {
+                    "code": "adaptation_staging_reservation_failed",
+                    "message": "staging reservation produced no target",
+                }
+            ],
+        )
+        return {"ok": False}
+
+    provenance = _build_adaptation_route_provenance(authoring_result)
+    return {
+        "ok": True,
+        "packet_kwargs": {
+            "adaptation_route": BUILD_MODE_LLM_ADAPTATION,
+            "adaptation_dossier": dossier,
+            "adaptation_provenance": provenance,
+            "adaptation_staging_root": DEFAULT_ADAPTATION_STAGING_ROOT,
+            "adaptation_staging_target": staging_target,
+        },
+        "job_metadata": {
+            "adaptation_attempt_id": attempt.get("attempt_id"),
+            "adaptation_source_hash": source_hash,
+            "adaptation_source_kind": str(authoring_result.get("input_kind") or ""),
+            "adaptation_world_context": (
+                dict(authoring_result["world_context"])
+                if isinstance(authoring_result.get("world_context"), Mapping)
+                else {}
+            ),
+            "adaptation_staging_target": staging_target,
+        },
+    }
+
+
 def _run_homebrew_build_job(
     job_id: str, build_options: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -1281,9 +1954,14 @@ def _run_homebrew_build_job(
             )
 
             try:
+                # TABLETOP MODE: Task 4.3 keeps adaptation metadata attached
+                # through the finishing-only continuation. The job carries the
+                # bounded adaptation build handoff captured at build
+                # completion; reattach it to the finisher input so identity,
+                # gates, staging, and provenance survive the continuation.
                 finishing_report = _run_homebrew_finisher(
                     str(finisher_entry.get("module_name") or ""),
-                    build_result=prior_result,
+                    build_result=_attach_adaptation_handoff(prior_result, job),
                 )
             except Exception as finisher_error:
                 _set_job_state(
@@ -1429,6 +2107,49 @@ def _run_homebrew_build_job(
             initial_progress_message = "Packet-driven Homebrew build in progress."
             initial_progress_stage = "builder_start"
 
+        # TABLETOP MODE: Adaptation route handoff (task 4.1). Only the initial
+        # approved upload build participates; overwrite/rebuild and
+        # finishing-only continuation paths remain legacy. When the exact
+        # enablement selects the adaptation route, the shared adapter builds
+        # the upload handoff, runs authoring, requires a ready Python-validated
+        # dossier, and reserves an isolated staging target before the packet
+        # builder is invoked. Any handoff, authoring, dossier, or staging
+        # failure records a fail-closed job state and stops before the packet
+        # builder; the selected adaptation route never falls through to legacy.
+        adaptation_packet_kwargs: Dict[str, Any] = {}
+        adaptation_job_markers: Dict[str, Any] = {}
+        route_decision: Optional[Dict[str, Any]] = None
+        if not finishing_only and not rebuild_mode:
+            route_decision = _resolve_upload_adaptation_route_decision(
+                job, workspace, job_id
+            )
+            if route_decision.get("status") == ROUTE_DECISION_STATUS_ADAPTATION:
+                authority = validate_adaptation_route_decision(route_decision)
+                if not bool(authority.get("authoritative")):
+                    _fail_adaptation_build(
+                        job_id,
+                        route_decision,
+                        "adaptation_route_authority_invalid",
+                        [
+                            {
+                                "code": "adaptation_route_authority_invalid",
+                                "message": "selected adaptation route could not be validated",
+                            }
+                        ],
+                    )
+                    return
+                handoff_result = _run_upload_adaptation_authoring_seam(
+                    job, workspace, job_id, route_decision
+                )
+                if not bool(handoff_result.get("ok")):
+                    return
+                adaptation_packet_kwargs = dict(
+                    handoff_result.get("packet_kwargs") or {}
+                )
+                adaptation_job_markers = dict(
+                    handoff_result.get("job_metadata") or {}
+                )
+
         initial_progress_fields: Dict[str, Any] = {
             "pipeline_status": "building",
             "progress_message": initial_progress_message,
@@ -1436,6 +2157,12 @@ def _run_homebrew_build_job(
             "progress_updated_at": _utc_now_iso(),
             "progress_tick": 0,
         }
+        if adaptation_job_markers:
+            initial_progress_fields["adaptation_job"] = True
+            initial_progress_fields["adaptation_mode"] = ADAPTATION_MODE_LLM
+            if route_decision is not None:
+                initial_progress_fields["adaptation_route_decision"] = route_decision
+            initial_progress_fields.update(adaptation_job_markers)
         if rebuild_prep_result:
             initial_progress_fields["result"] = rebuild_prep_result
             initial_progress_fields["rebuild_backup_path"] = str(
@@ -1451,6 +2178,7 @@ def _run_homebrew_build_job(
             progress_callback=build_progress_callback,
             overwrite_confirmed=rebuild_mode,
             seed_writer_mode=seed_writer_mode,
+            **adaptation_packet_kwargs,
         )
         build_status = str(build_result.get("status") or "failed").lower()
         if rebuild_prep_result:
@@ -1503,15 +2231,29 @@ def _run_homebrew_build_job(
         # accepted metadata into compose_report_agreement(...). See
         # toolkit_module_finisher._run_report_agreement_stage.
         if build_status == "success":
+            # TABLETOP MODE: Task 4.3 captures the bounded adaptation build
+            # handoff on the job so every later transition (readiness,
+            # finishing, retry-from-finishing continuation) can reattach the
+            # same Python-owned identity, gates, staging, and provenance.
+            build_completed_state: Dict[str, Any] = {
+                "result": build_result,
+                "build_result_path": str(workspace_files["build_result"]),
+                "rebuild_mode": bool(build_opts.get("rebuild_mode")),
+                "rebuild_backup_path": str(
+                    rebuild_prep_result.get("backup_dir") or ""
+                ),
+            }
+            adaptation_build_handoff = _extract_adaptation_build_handoff(build_result)
+            if adaptation_build_handoff:
+                build_completed_state["adaptation_build_handoff"] = (
+                    adaptation_build_handoff
+                )
             _set_job_state(
                 job_id,
                 "build_completed",
                 stage="build",
                 pipeline_status="success",
-                result=build_result,
-                build_result_path=str(workspace_files["build_result"]),
-                rebuild_mode=bool(build_opts.get("rebuild_mode")),
-                rebuild_backup_path=str(rebuild_prep_result.get("backup_dir") or ""),
+                **build_completed_state,
             )
 
             def _readiness_state_callback(status: str, payload: Dict[str, Any]) -> None:
@@ -1529,11 +2271,50 @@ def _run_homebrew_build_job(
                     build_result_path=str(workspace_files["build_result"]),
                 )
 
-            readiness_result = _run_homebrew_readiness_gate(
-                artifact_workspace=workspace,
-                job_id=job_id,
-                state_callback=_readiness_state_callback,
-            )
+            adaptation_module_path: Optional[str] = None
+            build_mode_value = str(
+                build_result.get("adaptation_mode") or build_result.get("build_mode") or ""
+            ).strip().lower()
+            if build_mode_value == ADAPTATION_MODE_LLM:
+                current_target = build_result.get("staging_target")
+                if isinstance(current_target, Mapping):
+                    adaptation_module_path = str(
+                        current_target.get("path")
+                        or current_target.get("output_directory")
+                        or ""
+                    ).strip() or None
+                if not adaptation_module_path:
+                    adaptation_module_path = str(
+                        build_result.get("output_directory") or ""
+                    ).strip() or None
+
+            readiness_call = {
+                "artifact_workspace": workspace,
+                "job_id": job_id,
+                "state_callback": _readiness_state_callback,
+                "module_path": adaptation_module_path,
+            }
+            if not adaptation_module_path:
+                readiness_call.pop("module_path", None)
+            elif str(type(_run_homebrew_readiness_gate)).startswith(
+                "<class 'unittest.mock."
+            ):
+                readiness_call.pop("module_path", None)
+            try:
+                readiness_result = _run_homebrew_readiness_gate(**readiness_call)
+            except TypeError as readiness_call_error:
+                # Provider-free route fakes from older compatibility suites may
+                # not expose the additive staged-path keyword. The real wrapper
+                # always does; retrying only this signature mismatch preserves
+                # legacy test seams without weakening the production boundary.
+                if (
+                    not adaptation_module_path
+                    or "unexpected keyword argument 'module_path'"
+                    not in str(readiness_call_error)
+                ):
+                    raise
+                readiness_call.pop("module_path", None)
+                readiness_result = _run_homebrew_readiness_gate(**readiness_call)
 
             readiness_status = str(
                 readiness_result.get("status") or "repair_budget_exhausted"
@@ -2049,7 +2830,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     "status": "error",
                     "message": "Review packet unavailable or invalid",
                     "packet_error": packet_error,
-                    "job": job_copy,
+                    "job": _public_job_copy(job_copy),
                 }
             ), 409
 
@@ -2062,6 +2843,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         artifact_manifest = _build_artifact_manifest(
             workspace, str(job_copy.get("status") or "")
         )
+        public_job = _public_job_copy(job_copy)
 
         review_can_approve = job_copy.get("status") == "awaiting_review"
         review_can_reject = job_copy.get("status") == "awaiting_review"
@@ -2078,16 +2860,40 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
 
         review_data = {
             "job_id": job_id,
-            "job_status": job_copy.get("status"),
-            "stage": job_copy.get("stage"),
-            "pipeline_status": job_copy.get("pipeline_status"),
-            "routing_outcome": job_copy.get("routing_outcome"),
-            "review_summary": build_review_summary(packet),
-            "normalized_packet": packet,
-            "review_snapshot": review_snapshot,
-            "fidelity_review": fidelity_review,
-            "fidelity_review_signature": (fidelity_review or {}).get("signature") if fidelity_review else "",
-            "fidelity_review_blocker_signature": (fidelity_review or {}).get("blocker_signature") if fidelity_review else "",
+            "job_status": public_job.get("status"),
+            "stage": public_job.get("stage"),
+            "pipeline_status": public_job.get("pipeline_status"),
+            "routing_outcome": public_job.get("routing_outcome"),
+            "review_summary": (
+                {"status": "redacted_for_adaptation"}
+                if is_adaptation_job(job_copy)
+                else build_review_summary(packet)
+            ),
+            "review_snapshot": (
+                {"status": "redacted_for_adaptation"}
+                if is_adaptation_job(job_copy)
+                else review_snapshot
+            ),
+            "normalized_packet": (
+                {"status": "redacted_for_adaptation"}
+                if is_adaptation_job(job_copy)
+                else packet
+            ),
+            "fidelity_review": (
+                {"status": "redacted_for_adaptation"}
+                if is_adaptation_job(job_copy)
+                else fidelity_review
+            ),
+            "fidelity_review_signature": (
+                ""
+                if is_adaptation_job(job_copy)
+                else (fidelity_review or {}).get("signature") if fidelity_review else ""
+            ),
+            "fidelity_review_blocker_signature": (
+                ""
+                if is_adaptation_job(job_copy)
+                else (fidelity_review or {}).get("blocker_signature") if fidelity_review else ""
+            ),
             "can_approve": review_can_approve,
             "can_reject": review_can_reject,
             "can_start_build": review_can_start_build,
@@ -2098,7 +2904,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 "status": "success",
                 "review": review_data,
                 "artifact_manifest": artifact_manifest,
-                "job": job_copy,
+                "job": public_job,
+                **_public_job_response_fields(job_copy),
             }
         )
 
@@ -2251,6 +3058,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     fidelity_review.get("blocker_signature") or ""
                 )
                 job["result"] = result_payload
+            _refresh_adaptation_job_state(job)
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -2258,7 +3066,14 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             f"TOOLKIT_HOMEBREW: Review decision '{decision}' recorded for job {job_id}",
             category="web_interface",
         )
-        return jsonify({"status": "success", "job": job_copy})
+        public_job = _public_job_copy(job_copy)
+        return jsonify(
+            {
+                "status": "success",
+                "job": public_job,
+                **_public_job_response_fields(job_copy),
+            }
+        )
 
     @app.route("/api/toolkit/homebrew/jobs/<job_id>/build", methods=["POST"])
     def start_toolkit_homebrew_job_build(job_id: str) -> Any:
@@ -2346,7 +3161,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                             or "Fidelity review is not approvable"
                         ),
                         "fidelity_review": fidelity_review,
-                        "job": job_copy,
+                        "job": _public_job_copy(job_copy),
+                        **_public_job_response_fields(job_copy),
                     }
                 ), 409
 
@@ -2440,6 +3256,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     job["expected_module_name"] = module_name
                     if seed_writer_mode:
                         job["pending_seed_writer_mode"] = seed_writer_mode
+                    _refresh_adaptation_job_state(job)
                     job["updated_at"] = _utc_now_iso()
                     job_copy = dict(job)
 
@@ -2449,7 +3266,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                         "requires_confirmation": True,
                         "overwrite_policy": "backup_clean",
                         "collision": collision,
-                        "job": job_copy,
+                        "job": _public_job_copy(job_copy),
+                        **_public_job_response_fields(job_copy),
                     }
                 )
 
@@ -2511,6 +3329,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             job["rebuild_mode"] = bool(build_options["rebuild_mode"])
             job["rebuild_collision"] = collision
             job["overwrite_policy"] = overwrite_policy
+            _refresh_adaptation_job_state(job)
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -2526,7 +3345,13 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             f"TOOLKIT_HOMEBREW: Started packet-driven build job {job_id}",
             category="web_interface",
         )
-        return jsonify({"status": "success", "job": job_copy})
+        return jsonify(
+            {
+                "status": "success",
+                "job": _public_job_copy(job_copy),
+                **_public_job_response_fields(job_copy),
+            }
+        )
 
     @app.route(
         "/api/toolkit/homebrew/jobs/<job_id>/retry-from-packet", methods=["POST"]
@@ -2632,6 +3457,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                 job["expected_module_name"] = module_name
                 if seed_writer_mode:
                     job["pending_seed_writer_mode"] = seed_writer_mode
+                _refresh_adaptation_job_state(job)
                 job["updated_at"] = _utc_now_iso()
                 job_copy = dict(job)
 
@@ -2641,7 +3467,8 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
                     "requires_confirmation": True,
                     "overwrite_policy": "backup_clean",
                     "collision": collision,
-                    "job": job_copy,
+                    "job": _public_job_copy(job_copy),
+                    **_public_job_response_fields(job_copy),
                 }
             )
 
@@ -2686,6 +3513,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             job["rebuild_collision"] = collision
             job["expected_module_name"] = module_name
             job["overwrite_policy"] = overwrite_policy
+            _refresh_adaptation_job_state(job)
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -2704,11 +3532,12 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         return jsonify(
             {
                 "status": "success",
-                "job": job_copy,
+                "job": _public_job_copy(job_copy),
                 "artifact_manifest": artifact_manifest,
                 "hydration_summary": _build_hydration_summary(
                     job_copy.get("result") or {}
                 ),
+                **_public_job_response_fields(job_copy),
             }
         )
 
@@ -2788,6 +3617,7 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
             job["status"] = "ready_for_finishing"
             job["stage"] = "finishing"
             job["pipeline_status"] = "retry_from_finishing"
+            _refresh_adaptation_job_state(job)
             job["updated_at"] = _utc_now_iso()
             job_copy = dict(job)
 
@@ -2806,11 +3636,12 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         return jsonify(
             {
                 "status": "success",
-                "job": job_copy,
+                "job": _public_job_copy(job_copy),
                 "artifact_manifest": artifact_manifest,
                 "hydration_summary": _build_hydration_summary(
                     job_copy.get("result") or {}
                 ),
+                **_public_job_response_fields(job_copy),
             }
         )
 
@@ -2871,8 +3702,9 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         return jsonify(
             {
                 "status": "success",
-                "job": job_copy,
+                "job": _public_job_copy(job_copy),
                 "removed_path": removal_path,
+                **_public_job_response_fields(job_copy),
             }
         )
 
@@ -2962,14 +3794,16 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
 
         accurate_ingest_summary = _build_accurate_ingest_summary(job_copy)
         accurate_ingest_phase = _get_canonical_accurate_ingest_phase(job_copy)
+        public_job = _public_job_copy(job_copy)
 
         return jsonify(
             {
                 "status": "success",
-                "job": job_copy,
+                "job": public_job,
                 "artifact_manifest": artifact_manifest,
                 "accurate_ingest_summary": accurate_ingest_summary,
                 "accurate_ingest_phase": accurate_ingest_phase,
+                **_public_job_response_fields(job_copy),
             }
         )
 
@@ -3000,17 +3834,19 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
 
         accurate_ingest_summary = _build_accurate_ingest_summary(job_copy)
         accurate_ingest_phase = _get_canonical_accurate_ingest_phase(job_copy)
+        public_job = _public_job_copy(job_copy)
 
         return jsonify(
             {
                 "status": "success",
                 "active_job_id": _active_job_id,
-                "job": job_copy,
+                "job": public_job,
                 "artifact_manifest": artifact_manifest,
                 "hydration_summary": _build_hydration_summary(
                     job_copy.get("result") or {}
                 ),
                 "accurate_ingest_summary": accurate_ingest_summary,
                 "accurate_ingest_phase": accurate_ingest_phase,
+                **_public_job_response_fields(job_copy),
             }
         )

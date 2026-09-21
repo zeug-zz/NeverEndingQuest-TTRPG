@@ -50,9 +50,14 @@ HYDRATION_REQUIRED_MONSTER_FIELDS = (
 
 def normalize_monster_identity(monster_name: Any) -> str:
     """Normalize monster names with the same slug rules as combat lookup."""
-    from updates.update_character_info import normalize_character_name
-
-    return normalize_character_name(str(monster_name or ""))
+    # Keep this helper dependency-light.  Importing update_character_info here
+    # initializes an AI client at module import time, which breaks provider-free
+    # guardrail and compendium scans.
+    name = str(monster_name or "").strip().lower()
+    name = name.replace(" ", "_").replace("'", "_")
+    name = re.sub(r"[^a-z0-9_]", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
 
 
 def _load_json_file(file_path: str) -> Optional[Dict[str, Any]]:

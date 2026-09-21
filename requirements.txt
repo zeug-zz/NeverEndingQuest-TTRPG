@@ -25,13 +25,13 @@ requests>=2.31.0
 tiktoken>=0.5.0
 
 # Image processing for JPEG compression and thumbnail generation
-Pillow>=12.3.0
+Pillow>=10.0.0
 
 # Proxy server for LM Studio mode and API call capture
 mitmproxy>=10.0.0
 
 # PDF form filling
-pypdf>=6.14.2
+pypdf>=6.13.3
 
 # Python standard library extensions (usually included)
 # pathlib - included in Python 3.4+
