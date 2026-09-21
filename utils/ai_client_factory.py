@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any
 from openai import OpenAI
 from utils.enhanced_logger import debug, info, warning, error
 from utils.provider_log_safety import configure_provider_log_safety
+from utils.provider_response_recovery import EmptyProviderResponseError
 
 # Track fallback status to avoid spamming notifications
 _fallback_status = {
@@ -259,7 +260,12 @@ def handle_provider_error(error: Exception, context: str = "") -> Dict[str, Any]
         'overloaded', 'unavailable', 'internal server error', '429'
     ]
     
-    should_fallback = any(err in error_str for err in retryable_errors)
+    # TABLETOP MODE: EmptyProviderResponseError is a fork-native retryable
+    # class; existing substring classification is unchanged.
+    should_fallback = (
+        any(err in error_str for err in retryable_errors)
+        or isinstance(error, EmptyProviderResponseError)
+    )
     
     result = {
         'error': str(error),

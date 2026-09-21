@@ -5090,6 +5090,9 @@ def get_ai_response(
         create_chat_client,
     )
 
+    # Fork-native provider response recovery (bounded empty-completion retry)
+    from utils.provider_response_recovery import request_chat_completion_with_recovery
+
     # Load current scene state for payload hygiene and routing decisions.
     party_tracker_data = load_json_file("party_tracker.json") or {}
 
@@ -5342,13 +5345,12 @@ def get_ai_response(
         print(f"DEBUG: [MAIN.PY] Using GPT-5 model: {selected_model}")
 
         try:
-            response = client.chat.completions.create(
+            response = request_chat_completion_with_recovery(
+                client,
                 messages=messages_to_send,  # Use potentially compressed messages
                 timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                **get_chat_completion_params(
-                    "dm_main",
-                    selected_model,
-                ),
+                request_params=get_chat_completion_params("dm_main", selected_model),
+                context="DM response generation (GPT-5)",
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -5364,13 +5366,12 @@ def get_ai_response(
                 fallback_client = create_chat_client(use_fallback=True)
 
                 # Retry with fallback client using OpenAI model
-                response = fallback_client.chat.completions.create(
+                response = request_chat_completion_with_recovery(
+                    fallback_client,
                     messages=messages_to_send,
                     timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                    **get_chat_completion_params(
-                        "dm_main",
-                        GPT5_MINI_MODEL,
-                    ),
+                    request_params=get_chat_completion_params("dm_main", GPT5_MINI_MODEL),
+                    context="DM response generation fallback (GPT-5)",
                 )
 
                 # Check for fallback notification
@@ -5408,14 +5409,12 @@ def get_ai_response(
         print(f"DEBUG: [MAIN.PY] Using model: {actual_model}")
 
         try:
-            response = client.chat.completions.create(
+            response = request_chat_completion_with_recovery(
+                client,
                 messages=messages_to_send,  # Use potentially compressed messages
                 timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                **get_chat_completion_params(
-                    "dm_main",
-                    actual_model,
-                    temperature_override=TEMPERATURE,
-                ),
+                request_params=get_chat_completion_params("dm_main", actual_model, temperature_override=TEMPERATURE),
+                context="DM response generation (GPT-4.1/OpenRouter)",
             )
         except Exception as api_error:
             # Check if we should fallback to OpenAI
@@ -5431,14 +5430,13 @@ def get_ai_response(
                 fallback_client = create_chat_client(use_fallback=True)
 
                 # Retry with fallback client using OpenAI model
-                response = fallback_client.chat.completions.create(
+                response = request_chat_completion_with_recovery(
+                    fallback_client,
                     messages=messages_to_send,
                     timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                    **get_chat_completion_params(
-                        "dm_main",
-                        selected_model,  # Use original selected_model for fallback
-                        temperature_override=TEMPERATURE,
-                    ),
+                    # Use original selected_model for fallback
+                    request_params=get_chat_completion_params("dm_main", selected_model, temperature_override=TEMPERATURE),
+                    context="DM response generation fallback (GPT-4.1/OpenRouter)",
                 )
 
                 # Check for fallback notification

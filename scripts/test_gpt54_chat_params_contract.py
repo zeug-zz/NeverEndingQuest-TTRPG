@@ -84,13 +84,25 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
         self.assertEqual(params["verbosity"], "low")
 
     def test_main_narrator_callsites_use_shared_helper_and_timeout(self):
-        self.assertEqual(
-            self.main_source.count("client.chat.completions.create("),
-            self.main_source.count("**get_chat_completion_params("),
+        # fork-final-upstream-sweep routes the four main.py narrator request
+        # sites through the fork recovery helper, so every request site is
+        # either a remaining raw create call or a helper-mediated call.
+        raw_calls = self.main_source.count("client.chat.completions.create(")
+        helper_calls = self.main_source.count(
+            "= request_chat_completion_with_recovery("
         )
         self.assertEqual(
-            self.main_source.count("client.chat.completions.create("),
+            raw_calls,
+            self.main_source.count("**get_chat_completion_params("),
+        )
+        self.assertGreaterEqual(helper_calls, 4)
+        self.assertEqual(
+            raw_calls + helper_calls,
             self.main_source.count("timeout=NARRATOR_API_TIMEOUT_SECONDS"),
+        )
+        self.assertEqual(
+            helper_calls,
+            self.main_source.count("request_params=get_chat_completion_params("),
         )
         self.assertIn("handle_provider_error(", self.main_source)
         self.assertIn("create_chat_client(use_fallback=True)", self.main_source)
