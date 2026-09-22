@@ -1,0 +1,15 @@
+{
+  "plotTitle": "Capture Arena Training Run",
+  "mainObjective": "Provide a compact arena for scripted gameplay captures: cross the waystone yard, trigger the goblin scuffle in the training pit, then talk with Warden Mira and work the locked cellar door at the reliquary alcove.",
+  "plotPoints": [
+    {
+      "id": "PP001",
+      "title": "Arrival at the Waystone Gate",
+      "description": "The party stands at the Waystone Gate of the capture arena. The training pit east of the gate holds a hostile goblin scuffle, and the reliquary alcove to the south shelters Warden Mira beside a locked cellar door.",
+      "location": "CA01",
+      "nextPoints": [],
+      "status": "not started",
+      "plotImpact": ""
+    }
+  ]
+}

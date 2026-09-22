@@ -1,0 +1,59 @@
+{
+  "name": "Goblin",
+  "size": "Small",
+  "type": "Humanoid",
+  "alignment": "Neutral Evil",
+  "armorClass": 15,
+  "hitPoints": 7,
+  "maxHitPoints": 7,
+  "speed": 30,
+  "abilities": {
+    "strength": 8,
+    "dexterity": 14,
+    "constitution": 10,
+    "intelligence": 10,
+    "wisdom": 8,
+    "charisma": 8
+  },
+  "savingThrows": [],
+  "skills": {
+    "Stealth": 6
+  },
+  "damageVulnerabilities": [],
+  "damageResistances": [],
+  "damageImmunities": [],
+  "conditionImmunities": [],
+  "senses": {
+    "darkvision": 60,
+    "passivePerception": 9
+  },
+  "languages": "Common, Goblin",
+  "challengeRating": 0.25,
+  "specialAbilities": [
+    {
+      "name": "Nimble Escape",
+      "attackBonus": 0,
+      "damageDice": "",
+      "damageBonus": 0,
+      "damageType": ""
+    }
+  ],
+  "actions": [
+    {
+      "name": "Scimitar",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "slashing"
+    },
+    {
+      "name": "Shortbow",
+      "attackBonus": 4,
+      "damageDice": "1d6",
+      "damageBonus": 2,
+      "damageType": "piercing"
+    }
+  ],
+  "legendaryActions": [],
+  "condition": "Alive"
+}

@@ -347,6 +347,9 @@ modules/*/
 
 # — 2. Published module allowlist —
 # MUST add every README-public module here AND in modules/published_modules.json.
+# Capture_Arena is local test tooling for the scripted capture ensemble, not a
+# README-public module, so it is intentionally absent from published_modules.json.
+!modules/Capture_Arena/
 !modules/The_Thornwood_Watch/
 !modules/Keep_of_Doom/
 !modules/Night_of_the_Restless_Dead/
