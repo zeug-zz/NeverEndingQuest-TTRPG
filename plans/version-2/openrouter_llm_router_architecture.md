@@ -420,7 +420,7 @@ The list classifies tasks by reasoning demand, not by any model-specific feature
 
 ### Provider Detection
 
-Uses `LLM_PROVIDER` from `model_config.py` (via `_get_actual_provider()` in the factory). Does NOT depend on `MULTIPLAYER_MODE` — this aligns with the SP/MP unification roadmap.
+Uses `LLM_PROVIDER` from `model_config.py` (via `_get_actual_provider()` in the factory). Does NOT depend on `MULTIPLAYER_MODE` - this aligns with the single-runtime decision (ADR-0032): provider selection is independent of party size.
 
 **Primary operating mode:** `LLM_PROVIDER = "openrouter"` — all chat models accessed through OpenRouter, selected by `ACTIVE_PROFILE`.
 
@@ -1769,7 +1769,7 @@ All items below are deferred until after the router is implemented and a second 
 | **Model-agnostic via MODEL_PROFILES v4** | No model lock-in. Tiers define model + params + provider preferences + pricing. Swapping models is a config-only change; unknown profiles get DEFAULT_PROFILE (vanilla behavior, no crash). |
 | **COMPLEX_TASKS replaces THINKING_ENABLED_TASKS** | Task complexity is model-agnostic. "Complex" means "needs deeper reasoning" — the profile expresses it (`reasoning.effort` for DeepSeek/GLM, a larger model for OpenAI fallback). |
 | **Per-tier provider preferences** | The same model can be 0.38s/111tps or 0.90s/29tps depending on provider and price. Narrator tiers sort by throughput with a latency floor; background tiers sort by price with a ceiling. |
-| **`LLM_PROVIDER` not `MULTIPLAYER_MODE`** | Aligns with SP/MP unification roadmap. Provider selection is independent of multiplayer mode. |
+| **`LLM_PROVIDER` not `MULTIPLAYER_MODE`** | Aligns with the single-runtime direction (ADR-0032). Provider selection is independent of party runtime and party size. |
 | **`json.loads()` not Pydantic** | Codebase has zero Pydantic usage. Adding a dependency for structured output validation is premature. |
 | **Thread-safe stats with `Lock`** | Flask + SocketIO is multi-threaded. Follows pattern from `pc_manager.py` (`_stats_lock`). |
 | **Model refresh 2026-09** | Narrator/combat: `deepseek/deepseek-v4-flash-0731` ($0.04/$0.16, 0.38s P50 / 111 tps on fast providers, 29 providers). Utility: `z-ai/glm-5.3-flash` (31 providers). Validation: `deepseek/deepseek-v4.1-flash` pending bake-off. Classification: `qwen/qwen3.7-flash`. Fallback: `gpt-5.6-luna` / `gpt-5.4-nano`. |
