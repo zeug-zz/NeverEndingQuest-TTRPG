@@ -1,11 +1,19 @@
 schema: spec-driven
 
 context: |
-  NeverEndingQuest is an AI-powered tabletop RPG DM system with TABLETOP MODE extensions.
-  This repository is an independently developed fork originally derived from
-  MoonlightByte/NeverEndingQuest. Upstream is a read-only historical and technical
-  reference; it is not merged, synchronized on a routine cadence, or treated as a
-  compatibility target (see ADR-0031).
+  NeverEndingQuest is an AI-powered tabletop RPG DM system with TABLETOP MODE
+  extensions. This repository is an independently developed fork originally
+  derived from MoonlightByte/NeverEndingQuest. Upstream is a read-only historical
+  and technical reference; it is not merged, synchronized on a routine cadence, or
+  treated as a compatibility target (see ADR-0031).
+
+  Minimalism Contract (KISS, applies to every artifact):
+  - Default to the smallest change that satisfies the requirement; justify every
+    addition and record the simplest alternative considered.
+  - Non-goals are binding; delete before adding.
+  - Do not invent risks, edge cases, fallbacks, or migration work that no
+    accepted requirement names; remove untraceable items instead of deferring them.
+  - Budget the capability set: one spec file per capability, no more.
 
   Frontier-safe OpenSpec execution profile (all model tiers):
   - Use a two-layer writing model in every artifact:
@@ -20,42 +28,74 @@ context: |
   - Do not preserve an external implementation unless a fork requirement explicitly needs it.
   - Mark host changes when the marker communicates fork ownership or authority boundaries.
   - Evaluate external code as reference material and port it only through an approved contract.
-  - Maintain backward compatibility with single-player mode.
-  - Runtime activation patterns should favor party-size detection (len(partyMembers) > 1).
+  - Maintain 1-PC party and multi-PC party compatibility; a 1-PC party is the regression floor (ADR-0032).
+  - Runtime activation is config-gated today (MULTIPLAYER_MODE defaults True); party-size gates are migration debt and new code must not add them (ADR-0032).
   - Python state is ground truth for mechanics; narrative generation must align with persisted state.
   - Use atomic JSON operations (safe_read_json/safe_write_json), no ad-hoc file writes for game state.
   - ASCII-only output in Python user-facing console/log text (Windows cp1252 compatibility).
 
+  Workflow facts (schema: spec-driven, local openspec/ root; no store declared):
+  - Artifact sequence is proposal -> specs -> design -> tasks; deltas live at
+    openspec/changes/<change>/specs/<capability>/spec.md and main specs at
+    openspec/specs/<capability>/spec.md.
+  - `openspec instructions <artifact> --change <change>` injects this context,
+    the per-artifact rules below, and per-operation guidance. Treat `context` as
+    a required prompt input and `operationGuidance` as advisory.
+  - Validation gate: `openspec validate <change> --strict`; a change with no
+    spec deltas MUST set `skip_specs: true` in its `.openspec.yaml`.
+  - Active changes come from `openspec list --json`; archived changes live under
+    openspec/changes/archive/. Do not hard-code change names here.
+  - Focused verification is `.venv/bin/python -m py_compile <files>` plus the
+    matching `scripts/test_*.py` suite.
+
   Current initiative:
-  - Fork independence governance is tracked by two OpenSpec changes:
-    fork-independence-pivot (governance, ADRs, and active guidance) and
-    fork-final-upstream-sweep (approved legacy UI and provider behavior ports).
+  - Fork independence governance (fork-independence-pivot and
+    fork-final-upstream-sweep) was completed on 2026-09-21; the repository now
+    operates as an independent fork under ADR-0031. Ongoing active work is
+    tracked by `openspec list`, not hard-coded in this block.
 
 rules:
   proposal:
-    - Include problem statement, objective, and explicit non-goals.
-    - Include rollout risk analysis and fallback strategy.
-    - Include SP/MP compatibility impact and any external-behavior-port scope.
+    - MUST state scope and non-goals; risks, fallback, and compatibility impact only when the change has a failure, migration, or compatibility surface.
+    - MUST list the smallest capability set, each with a one-line justification; SHOULD cap at three capabilities unless the objective requires more.
+    - State 1-PC party and multi-PC party compatibility impact when the change can affect shared runtime paths.
     - If touching LLM plumbing, include provider outage/quota behavior and recovery path.
     - Label mandatory constraints as MUST and optional preferences as SHOULD.
+    - "Declare capabilities with exact existing paths; set `skip_specs: true` instead when no spec-level behavior changes."
+    - Do not invent risks, edge cases, fallbacks, or migration work that no accepted requirement names.
 
   specs:
-    - Write requirements in testable terms with clear acceptance criteria.
-    - Include invariants for backward compatibility and runtime behavior.
-    - Explicitly specify error handling classes and expected outcomes.
-    - For architecture work, include state truth-source constraints and no-regression expectations.
-    - Keep normative requirement/scenario text in MUST/SHALL terms; place non-normative advice in separate SHOULD guidance.
+    - MUST define requirements and scenarios with explicit acceptance outcomes; create one spec file per capability and no more.
+    - "Use `### Requirement:` and `#### Scenario:` headings (exactly 4 hashtags); every requirement MUST have at least one WHEN/THEN scenario."
+    - "New capabilities MUST open the delta with `## Purpose` (50+ characters); existing-capability deltas MUST NOT add `## Purpose`."
+    - MODIFIED requirements MUST copy the full requirement block from the main spec; REMOVED requirements MUST include Reason and Migration.
+    - Keep normative text in MUST/SHALL terms; place non-normative advice in separate SHOULD guidance.
+    - Specify failure/error outcomes only when the requirement has an error surface.
 
   design:
-    - "Document architecture boundaries: facade vs factory vs config responsibilities."
-    - Include thread-safety and observability requirements for shared state.
-    - Include migration sequencing and rollback strategy.
+    - MUST preserve architecture boundaries (facade vs factory vs config) and record the simplest alternative considered.
+    - Include migration sequencing and rollback only when that surface exists.
+    - Include thread-safety and observability requirements only for shared mutable state.
     - Avoid model-specific lock-in; prefer profile/capability-based routing.
     - Separate hard design constraints (MUST) from implementation heuristics (SHOULD).
+    - Resolve design Open Questions before tasks.md is authored.
 
   tasks:
-    - Break into small, verifiable tasks with concrete file targets.
-    - Every task should define verification (compile/test/smoke) before completion.
-    - Sequence risky refactors behind prerequisite safety checks.
+    - MUST be dependency-ordered, verifiable, and traceable to a requirement; drop untraceable items.
+    - Every task MUST state its verification (compile/test/smoke) before completion.
+    - Use only `- [ ]` and `- [x]` checkbox markers; the apply phase treats every other marker as unfinished.
+    - Mark a checkbox complete only after its stated verification passes; never check a task that is partially implemented or deferred.
     - Do not include auto-commit, auto-push, or destructive git steps.
-    - Keep checklist items as MUST execution steps; add optional optimization notes as SHOULD outside checkbox items.
+
+operations:
+  apply:
+    guidance:
+      - Read every contextFiles path from `openspec instructions apply` before editing; re-read artifacts from disk after any edit.
+      - Treat `context` as a required prompt input and `operationGuidance` as advisory; neither replaces CLI-returned state, tasks, or missingArtifacts.
+      - Run the task's own verification before checking it off; pause and report instead of narrowing, deferring, or silently absorbing extra scope.
+      - Do not archive, commit, push, or rewrite git history during apply.
+  archive:
+    guidance:
+      - Confirm the change is complete and `openspec validate <change> --strict` passes before archiving.
+      - Archive only when the user explicitly asks; archiving syncs delta specs into main specs.
+      - Do not commit or push as part of the archive flow.
