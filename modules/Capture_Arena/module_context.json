@@ -1,0 +1,51 @@
+{
+  "module_name": "Capture Arena",
+  "module_id": "capture_arena",
+  "areas": {
+    "CTR001": {
+      "name": "Capture Arena",
+      "type": "dungeon",
+      "locations": ["CA01", "CA02", "CA03", "CA04"],
+      "npcs": ["warden_mira"],
+      "plot_points": ["PP001"]
+    }
+  },
+  "npcs": {
+    "warden_mira": {
+      "name": "Warden Mira",
+      "role": "Keeper of the training arena who briefs visitors, watches the pit drills, and holds the cellar key.",
+      "faction": "",
+      "appears_in": ["CA03"]
+    }
+  },
+  "locations": {
+    "CA01": {"name": "Waystone Gate", "aliases": ["arena gate", "gate yard"], "area": "CTR001"},
+    "CA02": {"name": "Training Pit", "aliases": ["the pit", "goblin pit"], "area": "CTR001"},
+    "CA03": {"name": "Reliquary Alcove", "aliases": ["shrine alcove", "alcove"], "area": "CTR001"},
+    "CA04": {"name": "Supply Cellar", "aliases": ["cellar", "stores"], "area": "CTR001"}
+  },
+  "plot_scopes": {
+    "PP001": "CTR001"
+  },
+  "tone": "compact_training_arena",
+  "continuity": {
+    "continuity_version": "v1",
+    "entry_state_variants": {
+      "cold_start": {
+        "summary": "The party arrives at the Capture Arena gate with no prior context. Present the yard, the goblin noise from the pit, and Warden Mira at the alcove."
+      },
+      "partial_context": {
+        "summary": "The party returns to the Capture Arena with partial context. Reuse the known warden and pit details before introducing any new scene."
+      },
+      "late_arc": {
+        "summary": "The party reaches the Capture Arena in a late-arc state. Keep the arena compact and let the facilitator steer the scene order."
+      }
+    },
+    "cross_module_refs": [],
+    "standalone_fallback": {
+      "enabled": true,
+      "clue_sources": ["module_context", "module_plot"],
+      "notes": "Capture Arena is standalone test tooling and never requires another module."
+    }
+  }
+}

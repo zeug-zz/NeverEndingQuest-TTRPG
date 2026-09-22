@@ -1,0 +1,57 @@
+{
+  "mapName": "Capture Arena Map",
+  "mapId": "MAP_CTR001",
+  "totalRooms": 4,
+  "startRoom": "CA01",
+  "spatialContractVersion": 1,
+  "rooms": [
+    {
+      "id": "CA01",
+      "name": "Waystone Gate",
+      "connections": ["CA02"],
+      "coordinates": "X0Y0",
+      "directions": {"east": "CA02"},
+      "type": "yard",
+      "tags": ["hub", "arrival"],
+      "purpose": "safe_haven",
+      "dangerLevel": "low"
+    },
+    {
+      "id": "CA02",
+      "name": "Training Pit",
+      "connections": ["CA01", "CA03"],
+      "coordinates": "X1Y0",
+      "directions": {"west": "CA01", "south": "CA03"},
+      "type": "pit",
+      "tags": ["encounter"],
+      "purpose": "encounter",
+      "dangerLevel": "medium"
+    },
+    {
+      "id": "CA03",
+      "name": "Reliquary Alcove",
+      "connections": ["CA02", "CA04"],
+      "coordinates": "X1Y1",
+      "directions": {"north": "CA02", "west": "CA04"},
+      "type": "shrine",
+      "tags": ["npc", "landmark"],
+      "purpose": "quest_goal",
+      "dangerLevel": "low"
+    },
+    {
+      "id": "CA04",
+      "name": "Supply Cellar",
+      "connections": ["CA03"],
+      "coordinates": "X0Y1",
+      "directions": {"east": "CA03"},
+      "type": "storage",
+      "tags": ["locked", "optional"],
+      "purpose": "optional",
+      "dangerLevel": "low"
+    }
+  ],
+  "layout": [
+    ["CA01", "CA02"],
+    ["CA04", "CA03"]
+  ]
+}

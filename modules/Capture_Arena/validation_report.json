@@ -1,0 +1,102 @@
+{
+  "module": "Capture_Arena",
+  "timestamp": "2026-09-22T14:04:35.833147",
+  "summary": {
+    "total_files": 10,
+    "total_passed": 12,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "CTR001_BU.json (areas/)",
+        "CTR001.json (areas/)"
+      ],
+      "passed": 2,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "goblin.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_CTR001.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/CTR001.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "CTR001.json <-> map_CTR001.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "CTR001.json <-> map_CTR001.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
+  }
+}

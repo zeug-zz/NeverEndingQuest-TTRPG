@@ -1,0 +1,175 @@
+{
+  "areaId": "CTR001",
+  "areaName": "Capture Arena",
+  "areaType": "dungeon",
+  "areaDescription": "A compact walled training compound built for deterministic gameplay captures: a waystone gate, a sunken goblin pit, a reliquary alcove with a resident warden, and a locked supply cellar.",
+  "dangerLevel": "Low",
+  "recommendedLevel": 1,
+  "spatialContractVersion": 1,
+  "locations": [
+    {
+      "locationId": "CA01",
+      "name": "Waystone Gate",
+      "type": "room",
+      "description": "A gravel yard inside a low stone wall. A cracked waystone leans between the gate posts, and the clatter of practice stakes carries from the east.",
+      "dmInstructions": "Open the scene at the gate and give one clear look at the arena: gate posts behind the party, the training pit to the east, and the shrine roof to the south. Use the waystone for one short sensory beat, then hand the turn back.",
+      "coordinates": "X0Y0",
+      "aliases": ["Waystone Gate", "CA01", "arena gate", "gate yard"],
+      "tactical_grid": ["northwest:wall", "north:gate", "northeast:wall", "west:gatepost", "center_yard:Waystone Gate", "east:pit path", "southwest:wall", "south:shrine path", "southeast:cover"],
+      "accessibility": "Open access from the arena approach.",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Low",
+      "connectivity": ["CA02"],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [
+        {
+          "name": "Cracked Waystone",
+          "description": "A waist-high standing stone veined with old silver cracks. It hums faintly under a living hand."
+        }
+      ],
+      "dcChecks": [
+        "Perception DC 10: Hear the goblin scuffle and the rattle of practice stakes from the training pit to the east.",
+        "Arcana DC 12: Sense a dormant ward inside the cracked waystone."
+      ],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "locationId": "CA02",
+      "name": "Training Pit",
+      "type": "room",
+      "description": "A sunken sand pit ringed by splintered practice stakes and scarred shield racks. A pack of goblins squabbles over a looted supply crate at the far lip of the pit.",
+      "dmInstructions": "The pit is the combat stage. When the party enters or provokes the goblins, run the pack as one hostile scuffle and keep the first beat on the goblins, the stakes, and the stolen crate. Do not add new monster types.",
+      "coordinates": "X1Y0",
+      "aliases": ["Training Pit", "CA02", "goblin pit", "the pit"],
+      "tactical_grid": ["northwest:stakes", "north:shield rack", "northeast:sand lip", "west:pit stair", "center_pit:Training Pit", "east:sand wall", "southwest:cover", "south:pit path", "southeast:stakes"],
+      "accessibility": "Open access down the pit stair from the gate yard.",
+      "npcs": [],
+      "monsters": [
+        {
+          "name": "Goblin",
+          "quantity": {"min": 2, "max": 4},
+          "disposition": "hostile",
+          "strategy": "The goblins rush in pairs, jeer at intruders, and fall back behind the practice stakes when hurt."
+        }
+      ],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Medium",
+      "connectivity": ["CA01", "CA03"],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [
+        {
+          "name": "Practice Stake Racks",
+          "description": "Rows of splintered wooden stakes and burst straw dummies."
+        },
+        {
+          "name": "Looted Supply Crate",
+          "description": "A cracked crate of arena stores dragged to the pit lip by the goblins."
+        }
+      ],
+      "dcChecks": [
+        "Survival DC 10: Read the scuffle tracks and pick out how many goblins have been fighting here.",
+        "Perception DC 12: Spot a goblin lookout crouched behind the stacked shields."
+      ],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    },
+    {
+      "locationId": "CA03",
+      "name": "Reliquary Alcove",
+      "type": "room",
+      "description": "A grey slate alcove holding a small shrine, a dented bronze offering bowl, and an iron-banded cellar door. Warden Mira sorts pit tokens on a folding table while she watches the room.",
+      "dmInstructions": "Warden Mira is the calm counterpoint to the pit. She greets the party, names the locked cellar door behind her, and asks them to log what they find. The shrine and the offering bowl are the check objects, and the cellar door is the blocked path to the cellar.",
+      "coordinates": "X1Y1",
+      "aliases": ["Reliquary Alcove", "CA03", "shrine alcove"],
+      "tactical_grid": ["northwest:shrine", "north:slate wall", "northeast:table", "west:offering bowl", "center_alcove:Reliquary Alcove", "east:cellar door", "southwest:pew", "south:pew", "southeast:cover"],
+      "accessibility": "Open access from the training pit; the cellar beyond is locked.",
+      "npcs": [
+        {
+          "name": "Warden Mira",
+          "description": "A steady arena warden in patched leathers who keeps the pit logs and the cellar key.",
+          "attitude": "Friendly"
+        }
+      ],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Low",
+      "connectivity": ["CA02", "CA04"],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [
+        {
+          "name": "Waystone Shrine",
+          "description": "A waist-high slab carved with three concentric rings and a shallow offering channel."
+        },
+        {
+          "name": "Bronze Offering Bowl",
+          "description": "A dented bronze bowl holding dried petals and a single copper token."
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 12: Notice fresh scratches around the cellar door lock and an empty keyhook above it.",
+        "Religion DC 12: Recognize the three-ring shrine mark as an old wayfarer ward of safe passage."
+      ],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": [
+        {
+          "name": "Iron-Banded Cellar Door",
+          "description": "A low iron-banded door set into the alcove wall. The lock is bright with recent use, and something shifts in the dark beyond.",
+          "type": "Iron",
+          "locked": true,
+          "lockDC": 13,
+          "breakDC": 15,
+          "keyname": "cellar key",
+          "trapped": false,
+          "trap": ""
+        }
+      ]
+    },
+    {
+      "locationId": "CA04",
+      "name": "Supply Cellar",
+      "type": "room",
+      "description": "A low, dry cellar under the alcove. Shelves of arena stores line the walls, and a nail-sealed crate rests on a stone plinth beneath a skin of dust.",
+      "dmInstructions": "Keep the cellar quiet and small. The sealed crate is the payoff object behind the locked door. Describe stores, dust, and one odd detail, and do not add new enemies here.",
+      "coordinates": "X0Y1",
+      "aliases": ["Supply Cellar", "CA04", "cellar", "stores"],
+      "tactical_grid": ["northwest:shelf", "north:shelf", "northeast:plinth", "west:shelf", "center_cellar:Supply Cellar", "east:door stair", "southwest:crate stack", "south:dust", "southeast:cover"],
+      "accessibility": "Locked behind the iron-banded cellar door.",
+      "npcs": [],
+      "monsters": [],
+      "plotHooks": [],
+      "lootTable": [],
+      "dangerLevel": "Low",
+      "connectivity": ["CA03"],
+      "areaConnectivity": [],
+      "areaConnectivityId": [],
+      "traps": [],
+      "features": [
+        {
+          "name": "Sealed Supply Crate",
+          "description": "A nail-sealed crate stamped with the arena mark and heavy enough to need two hands."
+        }
+      ],
+      "dcChecks": [
+        "Investigation DC 10: Confirm the dust has been disturbed only around the sealed crate."
+      ],
+      "encounters": [],
+      "adventureSummary": "",
+      "doors": []
+    }
+  ]
+}
