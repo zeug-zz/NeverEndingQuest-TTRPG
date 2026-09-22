@@ -51,6 +51,7 @@ COMBAT_API_TIMEOUT_SECONDS = 120                        # Per-call timeout for c
 COMBAT_CONNECT_TIMEOUT_SECONDS = 10                     # TCP connection timeout for combat LLM calls
 COMBAT_FAST_DETERMINISTIC_NARRATION = True             # Fast-path local narration for deterministic PC_PHASE commands
 COMBAT_PC_PHASE_NL_FAST_PATH = False                   # Conservative PC_PHASE natural-language action parser (default OFF; enable after testing)
+ENABLE_COMBAT_TURN_TRACE = False                       # Opt-in combat latency trace writer (default OFF)
 
 # --- Narrator System Settings ---
 NARRATOR_API_TIMEOUT_SECONDS = 120                      # Per-call timeout for narrator LLM calls (prevents indefinite hangs)

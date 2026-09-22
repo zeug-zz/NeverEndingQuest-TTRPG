@@ -12,6 +12,7 @@ import json
 import hashlib
 import re
 import copy
+import time
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import sys
@@ -21,6 +22,7 @@ from datetime import datetime
 
 # Import the combat compression engine from same directory
 from core.ai.combat_compression_engine import CombatCompressor
+from utils.combat_latency_trace import trace_compression_event
 
 class CombatUserMessageCompressor:
     """Compress user combat messages in parallel for AI consumption."""
@@ -127,16 +129,38 @@ class CombatUserMessageCompressor:
         idx, content = message_data
         
         content_hash = self.get_content_hash(content)
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        compression_started_at = time.perf_counter()
+        cached_content = None
+        cache_hit = False
         
         # Check cache first (thread-safe)
         with self.cache_lock:
             if content_hash in self.cache:
                 self._update_progress(from_cache=True)
-                return (idx, self.cache[content_hash], True)
+                cached_content = self.cache[content_hash]
+                cache_hit = True
+
+        if cache_hit:
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            trace_compression_event(
+                "combat_message_compressor",
+                call_occurred=False,
+                cache_hit=True,
+                started_at=compression_started_at,
+            )
+            return (idx, cached_content, True)
         
         # Compress using combat compressor
         try:
             compressed = self.combat_compressor.compress(content)
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            trace_compression_event(
+                "combat_message_compressor",
+                call_occurred=True,
+                cache_hit=False,
+                started_at=compression_started_at,
+            )
             
             # Cache the result (thread-safe)
             with self.cache_lock:

@@ -29,6 +29,7 @@ import hashlib
 import random
 import json
 import re
+import time
 from typing import Dict, List, Optional, Any, Tuple, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ except ImportError:
 from utils.encoding_utils import safe_json_load
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, error
+from utils.combat_latency_trace import trace_decision
 
 # TABLETOP MODE: Debug utilities
 # Defer import to method level to handle missing module gracefully during development
@@ -1353,6 +1355,8 @@ class MultiPCCombatManager:
             
         command = parts[0].lower()
         args = parts[1:]
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        _decision_start = time.perf_counter()
         fast_path_enabled = COMBAT_FAST_DETERMINISTIC_NARRATION
 
         normalized_actor = _normalize_combat_identity(actor_name)
@@ -1511,6 +1515,13 @@ class MultiPCCombatManager:
                 )
                 
                 if fast_path_enabled:
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_decision(
+                        "combat_command_fast_path",
+                        "deterministic",
+                        _decision_start,
+                        True,
+                    )
                     return (
                         f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Miss. (Rolled {roll} vs AC {ac}). Attack result committed.",
                         f"Dungeon Master: {narration}",
@@ -1518,6 +1529,13 @@ class MultiPCCombatManager:
                         True,
                     )
 
+                # TABLETOP MODE: combat latency trace (Phase 0)
+                trace_decision(
+                    "combat_command_fast_path",
+                    "llm_fallback",
+                    _decision_start,
+                    False,
+                )
                 return (None, None, log_msg, False)
                 
         elif command == "/dmg":
@@ -1625,6 +1643,13 @@ class MultiPCCombatManager:
             )
 
             if fast_path_enabled:
+                # TABLETOP MODE: combat latency trace (Phase 0)
+                trace_decision(
+                    "combat_command_fast_path",
+                    "deterministic",
+                    _decision_start,
+                    True,
+                )
                 return (
                     f"[skipTTS][ALREADY_APPLIED] Dungeon Master: Damage applied ({amount}). {result_hp_text}",
                     f"Dungeon Master: {narration}",
@@ -1632,6 +1657,13 @@ class MultiPCCombatManager:
                     True,
                 )
 
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            trace_decision(
+                "combat_command_fast_path",
+                "llm_fallback",
+                _decision_start,
+                False,
+            )
             return (None, None, log_msg, False)
             
         return None, None, None, False
