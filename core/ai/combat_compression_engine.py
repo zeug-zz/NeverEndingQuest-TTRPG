@@ -15,9 +15,11 @@ from typing import Dict, Optional
 from pathlib import Path
 import sys
 import os
+import time
 
 from model_config import NARRATIVE_COMPRESSION_MODEL
 from utils.ai_client_factory import create_chat_client, get_chat_model_name
+from utils.combat_latency_trace import trace_provider_call
 
 # Import usage tracking
 try:
@@ -150,6 +152,8 @@ class CombatCompressor:
         try:
             # Call AI for compression
             print(f"[DEBUG] Calling AI compression with model: {self.model}")
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            _trace_start = time.perf_counter()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -158,6 +162,8 @@ class CombatCompressor:
                 ],
                 temperature=0.3
             )
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            trace_provider_call("combat_compression", _trace_start, response)
             
             # Track usage
             if USAGE_TRACKING_AVAILABLE:

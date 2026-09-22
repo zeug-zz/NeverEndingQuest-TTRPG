@@ -163,6 +163,14 @@ from core.generators.generate_prerolls import generate_prerolls
 # Import safe JSON functions
 from utils.encoding_utils import safe_json_load
 from utils.file_operations import safe_write_json
+from utils.combat_latency_trace import (
+    trace_file_operation,
+    trace_provider_call,
+    trace_stage,
+    trace_decision,
+    trace_enabled,
+    set_trace_context,
+)
 import core.ai.cumulative_summary as cumulative_summary
 from utils.enhanced_logger import debug, info, warning, error, game_event, set_script_name
 from utils.save_roll_contract import calculate_concentration_dc
@@ -484,6 +492,8 @@ def load_monster_stats(monster_name):
 
 def load_json_file(file_path):
     data = safe_json_load(file_path)
+                # TABLETOP MODE: combat latency trace (Phase 0)
+    trace_file_operation("read", "combat_history_load")
     if data is None:
         # If file doesn't exist or has invalid JSON, return an empty list
         return []
@@ -492,6 +502,8 @@ def load_json_file(file_path):
 def save_json_file(file_path, data):
     try:
         safe_write_json(file_path, data)
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        trace_file_operation("write", str(file_path))
     except Exception as e:
         error(f"FILE_OP: Failed to save {file_path}: {str(e)}", category="file_operations")
 
@@ -1415,6 +1427,8 @@ def validate_combat_response(response, encounter_data, user_input, conversation_
     max_validation_retries = 5
     for attempt in range(max_validation_retries):
         try:
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            _trace_start = time.perf_counter()
             validation_result = client.chat.completions.create(
                 messages=validation_conversation,
                 timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
@@ -1424,6 +1438,8 @@ def validate_combat_response(response, encounter_data, user_input, conversation_
                     temperature_override=0.3,  # Lower temperature for more consistent validation
                 ),
             )
+            # TABLETOP MODE: combat latency trace (Phase 0)
+            trace_provider_call("combat_validation", _trace_start, validation_result)
 
             # Log API call to master log
             try:
@@ -1848,6 +1864,8 @@ def summarize_dialogue(conversation_history_param, location_data, party_tracker_
     ]
 
     # Generate dialogue summary
+    # TABLETOP MODE: combat latency trace (Phase 0)
+    _trace_start = time.perf_counter()
     response = client.chat.completions.create(
         messages=dialogue_summary_prompt,
         **get_chat_completion_params(
@@ -1856,6 +1874,8 @@ def summarize_dialogue(conversation_history_param, location_data, party_tracker_
             temperature_override=TEMPERATURE,
         ),
     )
+    # TABLETOP MODE: combat latency trace (Phase 0)
+    trace_provider_call("combat_dialogue_summary", _trace_start, response)
 
     # Log API call to master log
     try:
@@ -2783,6 +2803,8 @@ Create a JSON summary with EXACTLY this structure:
 Focus on mechanical accuracy for the actions. For narrative_highlights, extract the most dramatic or memorable moments that happened this round - critical hits, character deaths, powerful spells, clutch saves, or impactful dialogue. Keep each highlight to one evocative sentence."""
 
         # Use the mini model for efficiency
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        _trace_start = time.perf_counter()
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a combat log analyzer. Extract mechanical game information and key narrative moments. Always return valid JSON."},
@@ -2796,6 +2818,8 @@ Focus on mechanical accuracy for the actions. For narrative_highlights, extract 
             # Note: response_format removed for LM Studio compatibility
             # The prompt already instructs the model to return JSON
         )
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        trace_provider_call("compression", _trace_start, response)
         
         # Track usage with context for telemetry
         if USAGE_TRACKING_AVAILABLE:
@@ -3425,6 +3449,8 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
                    json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
                print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
 
+               # TABLETOP MODE: combat latency trace (Phase 0)
+               _trace_start = time.perf_counter()
                response = client.chat.completions.create(
                    messages=messages_to_send,
                    **get_chat_completion_params(
@@ -3432,6 +3458,8 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
                        GPT5_MINI_MODEL,
                    ),
                )
+               # TABLETOP MODE: combat latency trace (Phase 0)
+               trace_provider_call("combat_reengage", _trace_start, response)
 
                # Log API call to master log
                try:
@@ -3453,6 +3481,8 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
                    json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
                print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
 
+               # TABLETOP MODE: combat latency trace (Phase 0)
+               _trace_start = time.perf_counter()
                response = client.chat.completions.create(
                    messages=messages_to_send,
                    **get_chat_completion_params(
@@ -3461,6 +3491,8 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
                        temperature_override=temperature_used,
                    ),
                )
+               # TABLETOP MODE: combat latency trace (Phase 0)
+               trace_provider_call("combat_reengage", _trace_start, response)
 
                # Log API call to master log
                try:
@@ -3597,13 +3629,19 @@ Player: {initial_prompt_text}"""
                         })
                     
                     # Compress conversation history before sending to AI
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    _prompt_prep_start = time.perf_counter()
                     messages_to_send = combat_message_compressor.process_combat_conversation(retry_local_history)
                     
                     # Export compressed conversation for review
                     with open("debug/api_captures/combat_messages_to_api.json", "w", encoding="utf-8") as f:
                         json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_stage("prompt_prep", _prompt_prep_start)
                     print(f"DEBUG: [COMBAT] Exported compressed messages to debug/api_captures/combat_messages_to_api.json")
                     
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    _trace_start = time.perf_counter()
                     response = client.chat.completions.create(
                         messages=messages_to_send,
                         timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
@@ -3613,6 +3651,8 @@ Player: {initial_prompt_text}"""
                             temperature_override=temperature_used,
                         ),
                     )
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_provider_call("combat_main", _trace_start, response)
                     
                     # Track usage
                     if USAGE_TRACKING_AVAILABLE:
@@ -3634,6 +3674,8 @@ Player: {initial_prompt_text}"""
 
                     # FIX: Use the correct variable for the user input parameter
                     # PASS MULTI-PC MANAGER FOR INITIAL VALIDATION
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    _validation_stage_start = time.perf_counter()
                     validation_result = validate_combat_response(
                         initial_response,
                         encounter_data,
@@ -3641,6 +3683,8 @@ Player: {initial_prompt_text}"""
                         retry_validation_history,
                         multi_pc_manager=multi_pc_manager,
                     )
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_stage("validation", _validation_stage_start)
                     
                     if validation_result is True:
                         initial_retry_feedback_note = None
@@ -3688,6 +3732,28 @@ Player: {initial_prompt_text}"""
    except Exception as e:
        debug(f"Could not update status: {e}", category="status")
    while True:
+       # TABLETOP MODE: combat latency trace (Phase 0)
+       _turn_trace_start = time.perf_counter()
+       # TABLETOP MODE: combat latency trace (Phase 0)
+       if trace_enabled():
+           try:
+               trace_context = {"mode": "mp" if multi_pc_manager else "one_pc"}
+               if isinstance(encounter_data, dict):
+                   combat_round = encounter_data.get("combat_round")
+               else:
+                   combat_round = None
+               if combat_round is None and multi_pc_manager:
+                   combat_round = getattr(multi_pc_manager, "current_round", None)
+               if combat_round is not None:
+                   trace_context["combat_round"] = combat_round
+               if multi_pc_manager:
+                   phase = getattr(multi_pc_manager, "combat_phase", None)
+                   if phase is not None:
+                       trace_context["phase"] = phase
+               set_trace_context(**trace_context)
+           except Exception:
+               pass
+       trace_stage("turn_start", _turn_trace_start)
        # Ensure all character data is synced to the encounter
        debug("[COMBAT_MANAGER] Syncing character data to encounter", category="combat_events")
        print("DEBUG: [COMBAT_LOOP] Top of while loop - syncing character data")
@@ -3695,6 +3761,8 @@ Player: {initial_prompt_text}"""
        # TABLETOP MODE: Reload party tracker to get latest active character
        if multi_pc_manager:
            party_tracker_data = safe_json_load("party_tracker.json") or party_tracker_data
+           # TABLETOP MODE: combat latency trace (Phase 0)
+           trace_file_operation("read", "party_tracker_turn_start")
            active_pc = party_tracker_data.get("active_character")
            if active_pc:
                multi_pc_manager.set_current_pc(active_pc)
@@ -3749,6 +3817,8 @@ Player: {initial_prompt_text}"""
        json_file_path = f"modules/encounters/encounter_{encounter_id}.json"
        try:
            encounter_data = safe_json_load(json_file_path)
+           # TABLETOP MODE: combat latency trace (Phase 0)
+           trace_file_operation("read", "encounter_turn_start")
            if encounter_data:
                # Find and update the encounter data in conversation history
                for i, msg in enumerate(conversation_history):
@@ -4327,6 +4397,8 @@ Player: {initial_prompt_text}"""
                    or multi_pc_manager.current_pc_name
                    or party_tracker_data.get("active_character", "Player")
                )
+               # TABLETOP MODE: combat latency trace (Phase 0)
+               _decision_start = time.perf_counter()
                parse_result = parse_pc_phase_action(
                    clean_input,
                    encounter_data,
@@ -4341,6 +4413,13 @@ Player: {initial_prompt_text}"""
                        encounter_id,
                        parser_actor,
                    ):
+                       # TABLETOP MODE: combat latency trace (Phase 0)
+                       trace_decision(
+                           "pc_phase_parser",
+                           "deterministic",
+                           _decision_start,
+                           True,
+                       )
                        p_mech = parse_result.get("mechanical_feedback")
                        p_spoken = parse_result.get("spoken_narration")
                        p_log = parse_result.get("log_msg")
@@ -4360,8 +4439,26 @@ Player: {initial_prompt_text}"""
                            save_json_file(conversation_history_file, conversation_history)
 
                        continue
+                   # TABLETOP MODE: combat latency trace (Phase 0)
+                   trace_decision(
+                       "pc_phase_parser",
+                       "llm_fallback",
+                       _decision_start,
+                       False,
+                   )
+               else:
+                   # TABLETOP MODE: combat latency trace (Phase 0)
+                   trace_decision(
+                       "pc_phase_parser",
+                       "llm_fallback",
+                       _decision_start,
+                       False,
+                   )
            except ImportError:
-               pass
+               debug(
+                   "Combat PC phase parser import failed; continuing to LLM path",
+                   category="combat_events",
+               )
        if True:
         # Enhance player input with inventory context for combat
         try:
@@ -4873,13 +4970,19 @@ Player: {initial_prompt_text}"""
                     # After first failure, use high reasoning effort
                     if attempt >= 1 and GPT5_USE_HIGH_REASONING_ON_RETRY:
                         print(f"DEBUG: [COMBAT] GPT-5 - Using HIGH reasoning effort after {attempt} attempts")
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        _prompt_prep_start = time.perf_counter()
                         messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
 
                         # Export compressed conversation for review
                         with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
                             json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        trace_stage("prompt_prep", _prompt_prep_start)
                         print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        _trace_start = time.perf_counter()
                         response = client.chat.completions.create(
                             messages=messages_to_send,
                             **get_chat_completion_params(
@@ -4888,16 +4991,24 @@ Player: {initial_prompt_text}"""
                                 retry_tier="high",
                             ),
                         )
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        trace_provider_call("combat_main", _trace_start, response)
                     else:
                         # Default is medium reasoning (no need to specify)
                         print(f"DEBUG: [COMBAT] Using GPT-5 model: {combat_model} (default medium reasoning)")
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        _prompt_prep_start = time.perf_counter()
                         messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
 
                         # Export compressed conversation for review
                         with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
                             json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        trace_stage("prompt_prep", _prompt_prep_start)
                         print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        _trace_start = time.perf_counter()
                         response = client.chat.completions.create(
                             messages=messages_to_send,
                             **get_chat_completion_params(
@@ -4905,18 +5016,26 @@ Player: {initial_prompt_text}"""
                                 combat_model,
                             ),
                         )
+                        # TABLETOP MODE: combat latency trace (Phase 0)
+                        trace_provider_call("combat_main", _trace_start, response)
                 else:
                     # GPT-4.1: Keep existing temperature escalation
                     temperature_used = get_combat_temperature(encounter_data, validation_attempt=attempt)
 
                     print(f"DEBUG: [COMBAT] Using GPT-4.1 model: {COMBAT_MAIN_MODEL} (temp: {temperature_used})")
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    _prompt_prep_start = time.perf_counter()
                     messages_to_send = combat_message_compressor.process_combat_conversation(retry_request_history)
 
                     # Export compressed conversation for review
                     with open("combat_messages_to_api.json", "w", encoding="utf-8") as f:
                         json.dump(messages_to_send, f, indent=2, ensure_ascii=False)
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_stage("prompt_prep", _prompt_prep_start)
                     print(f"DEBUG: [COMBAT] Exported compressed messages to combat_messages_to_api.json")
 
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    _trace_start = time.perf_counter()
                     response = client.chat.completions.create(
                         messages=messages_to_send,
                         timeout=COMBAT_API_TIMEOUT_SECONDS,  # TABLETOP MODE: Prevent indefinite hang
@@ -4926,6 +5045,8 @@ Player: {initial_prompt_text}"""
                             temperature_override=temperature_used,
                         ),
                     )
+                    # TABLETOP MODE: combat latency trace (Phase 0)
+                    trace_provider_call("combat_main", _trace_start, response)
 
                 # Track usage
                 if USAGE_TRACKING_AVAILABLE:
@@ -5028,6 +5149,8 @@ Player: {initial_prompt_text}"""
                 # ---------------------------------------------------------
 
                 # PASS MULTI-PC MANAGER FOR VALIDATION GUARDRAIL
+                # TABLETOP MODE: combat latency trace (Phase 0)
+                _validation_stage_start = time.perf_counter()
                 validation_result = validate_combat_response(
                     ai_response,
                     encounter_data,
@@ -5035,6 +5158,8 @@ Player: {initial_prompt_text}"""
                     retry_validation_history,
                     multi_pc_manager=multi_pc_manager,
                 )
+                # TABLETOP MODE: combat latency trace (Phase 0)
+                trace_stage("validation", _validation_stage_start)
 
                 if validation_result is True:
                     valid_response = True
@@ -5417,6 +5542,8 @@ Player: {initial_prompt_text}"""
 
         # Save updated conversation history after processing all actions
         save_json_file(conversation_history_file, conversation_history)
+        # TABLETOP MODE: combat latency trace (Phase 0)
+        trace_stage("turn_end", _turn_trace_start)
 
 def main():
     debug("INITIALIZATION: Starting main function in combat_manager", category="combat_events")
