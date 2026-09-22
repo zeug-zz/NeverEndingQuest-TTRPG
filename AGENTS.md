@@ -70,12 +70,12 @@ NeverEndingQuest is an AI-powered Dungeon Master system for running SRD 5.2.1 co
 - A facilitator/staff member manages **multiple player characters (PCs)** on a single laptop
 - Provides a **tabbed UI** for switching between character sheets
 - Replaces LLM-prompted PC management with **hard-wired Python functions** to prevent PCs being misidentified as NPCs
-- Maintains **full backward compatibility** with single-player mode
+- Runs a **single tabletop runtime** with a 1..x PC party plus NPCs; a one-PC party is the minimum tabletop party (ADR-0032)
 
 **Plugin Architecture:**
 - **TABLETOP MODE: markers** - Changes to core files are clearly marked with `# TABLETOP MODE:` comments
 - **Encapsulated functionality** - New features in separate files (e.g., `tabletop_mode.js`, `multi_pc_combat.py`)
-- **State-driven activation** - Tabletop Mode activates when `partyMembers` in `party_tracker.json` has more than one entry
+- **Config-gated tabletop runtime** - Tabletop mode runs for any 1..x PC party; `MULTIPLAYER_MODE` defaults True, and remaining party-size gates are migration debt (ADR-0032)
 
 ## Security Stack
 
@@ -322,7 +322,7 @@ Major subsystems use dedicated managers:
 #### 4. Plugin Architecture Pattern
 - **Deliberate Host Edits**: Changes to host files are marked with `# TABLETOP MODE:` comments as lineage and ownership documentation
 - **Encapsulated Extensions**: New functionality lives in separate modules (`utils/pc_manager.py`, `web/static/js/tabletop_mode.js`) for ownership and testability
-- **State Detection**: Tabletop features activate based on `party_tracker.json` state, not configuration flags
+- **State Detection**: Transitional only - activation is config-gated today (`MULTIPLAYER_MODE`), and the end state removes the flag entirely (ADR-0032); new code must not add party-size gates
 - **Ownership Boundaries**: Clear boundaries keep fork-owned behavior testable and independently evolvable. Upstream parity is not a design constraint. See ADR-0031.
 
 #### Fork Independence Policy (ADR-0031)
@@ -336,7 +336,7 @@ Major subsystems use dedicated managers:
 3. **Evaluate external code as reference material.** Record each port decision in the approved change that implements it, not in a standing sync log.
 4. **Prioritize a port when it fixes:** security issues, data corruption, save/load reliability, provider/API compatibility, or critical browser/runtime defects.
 5. **Design against fork authority.** Python mechanical, persistence, publication, and campaign-state authority must not be weakened by an external port.
-6. **Preserve single-player and TABLETOP MODE compatibility.** SP mode should be smoke-tested when a port could affect shared runtime paths.
+6. **Preserve 1-PC party and tabletop runtime compatibility.** A 1-PC party smoke is the regression floor when a port could affect shared runtime paths (ADR-0032).
 7. **Keep attribution.** Fair Source license terms, upstream copyright notices, and third-party attribution remain in force for any ported or vendored code.
 
 The `# TABLETOP MODE:` markers document fork lineage and integration points. They do not promise merge compatibility, and existing markers are not renamed.
@@ -995,82 +995,65 @@ Phase 3 of multi-PC combat rebuild: Refactor monolithic `MultiPCCombatManager` i
 
 ---
 
-## Plugin Architecture & SP/MP Unification Roadmap
+## Plugin Architecture & Single-Runtime Unification Roadmap
 
 ### Core Philosophy: "Extension-First Internal Discipline"
 
-This codebase maintains extension boundaries for clear separation between SP and MP behavior and for stable internal code discipline. The goal is to make MP feel like a natural extension of SP, not a separate codebase. Extension-first is an internal maintainability rule; upstream merge parity is not a design constraint (ADR-0031).
+This codebase maintains extension boundaries for stable internal code discipline and for clear separation between 1-PC party and multi-PC party behavior. Extension-first is an internal maintainability rule (ADR-0031); upstream parity is not a design constraint.
 
-### Current State: Plugin Mode (Phase 1)
+### Current State: Single Runtime, Config-Gated
 
-**Activation Pattern:**
+There is exactly one runtime mode: the tabletop runtime, with a 1..x PC party plus NPCs (ADR-0032). `MULTIPLAYER_MODE` defaults to True, and combat activation is config-gated through `is_enabled()`, not a party-size check. Remaining `len(party_members) > 1` branches are migration debt listed in ADR-0032's Deferred Cleanup Inventory.
+
+**Transitional Activation Pattern (migration debt):**
 ```python
-# Dual-check: Config flag + runtime detection
+# Dual-check: config flag + legacy party-size detection
 if config.MULTIPLAYER_MODE and len(party_members) > 1:
-    # MP features activate
+    # tabletop features activate
 ```
 
 **Key Principles:**
 - **Minimal core file modifications** - Changes marked with `# TABLETOP MODE:` comments
 - **Encapsulated extensions** - New features in separate files (`multi_pc_combat.py`, `tabletop_mode.js`)
-- **Runtime detection** - Features activate based on party size, not just config flags
-- **Shared data structures** - MP uses identical schemas to SP (character files, encounters, etc.)
+- **Shared data structures** - 1-PC and multi-PC parties use identical schemas (character files, encounters, etc.)
+- **No new party-size gates** - New code targets the single runtime; party-size dual-checks are retired only by the dedicated unification change
 
-### Phase 2: Runtime Detection Only (Target: v0.4.0)
+### Target: Unification Cleanup (Dedicated Change)
 
-**Migration Goal:** Remove `MULTIPLAYER_MODE` config requirement
+**End State:** One always-tabletop runtime. `MULTIPLAYER_MODE` and the party-size dual-checks are removed by the dedicated change (working name `tt-single-runtime-unification`) after the router/combat workstreams land (ADR-0032). The 1-PC party is the regression floor, and a 4-PC party remains the primary test shape.
 
-**Activation Pattern:**
-```python
-# Runtime detection only
-if len(party_members) > 1:
-    # MP features activate automatically
-```
-
-**Benefits:**
-- No configuration required
-- Automatic activation at runtime
-- Simpler deployment
-- Backward compatible (SP = MP with 1 party member)
-
-### Phase 3: Full Unification (Target: v0.5.0)
-
-**End State:** MP becomes the default behavior
-
-**Changes:**
-- Remove `MULTIPLAYER_MODE` config entirely
-- SP is simply MP with a single party member
-- All MP-specific files become core files
-- The fork becomes a unified codebase
+**Rules:**
+- No drive-by edits to `MULTIPLAYER_MODE` checks or `len(party_members) > 1` branches.
+- The Deferred Cleanup Inventory in ADR-0032 is owned by the dedicated change.
+- 1-PC and multi-PC party smoke checks both remain required at shared runtime paths.
 
 ### Coding Patterns for Unification
 
 #### Pattern 1: Dual-Path Functions
-Handle both SP and MP in the same function:
+Handle both 1-PC and multi-PC party cases in the same function:
 ```python
 def process_character_update(character_name, changes):
-    # SP path (always works)
+    # Base path (always works)
     update_character_info(character_name, changes)
     
-    # MP extension (conditional)
+    # Tabletop extension (transitional dual-check; retired by tt-single-runtime-unification)
     if multi_pc_manager and len(get_party_members()) > 1:
         multi_pc_manager.queue_update(character_name, changes)
 ```
 
 #### Pattern 2: Abstraction Layers
-Use abstraction functions that work for both modes:
+Use abstraction functions that work for any party size:
 ```python
 # utils/pc_manager.py
 from utils.pc_manager import get_character_state
 
-# Works for both SP and MP
+# Works for 1-PC and multi-PC parties
 character_data = get_character_state("Acheron")
 ```
 
 **Migration Path:**
-1. Phase 1: `if config.MULTIPLAYER_MODE and len(party) > 1`
-2. Phase 2: `if len(party) > 1`
-3. Phase 3: Always use abstraction layer
+1. Current: `if config.MULTIPLAYER_MODE and len(party) > 1` (transitional dual-check)
+2. After `tt-single-runtime-unification`: always tabletop; no config flag or party-size gate
 
 #### Pattern 3: Hook-Based Extensions
 Add narrow hooks at host integration points:
@@ -1082,14 +1065,14 @@ def run_combat_simulation():
 
 # In multi_pc_combat.py (extension)
 def _post_turn_hook():
-    if len(get_party_members()) > 1:
+    if len(get_party_members()) > 1:  # transitional; retired by tt-single-runtime-unification
         persist_combat_changes()
 ```
 
 #### Pattern 4: Extend Don't Replace
 Add fields to existing structures rather than creating new ones:
 ```python
-# BAD: Separate MP structure
+# BAD: Separate party-size-specific structure
 mp_character = {"mp_hp": value, "mp_slots": value}
 
 # GOOD: Extend existing structure
@@ -1102,23 +1085,23 @@ character_data["is_active_pc"] = True
 1. **Use the canonical persistence functions**
    - `update_character_info()` for character changes
    - `safe_write_json()` for file operations
-   - Never write direct SQL or raw file I/O in MP code
+   - Never write direct SQL or raw file I/O in tabletop extension code
 
 2. **Extend shared data structures deliberately**
-   - Don't create parallel MP-specific copies of core structures
+   - Don't create parallel party-size-specific copies of core structures
    - Extend shared schemas through approved changes and keep backward compatibility
-   - Maintain single-player/multiplayer schema parity
+   - Maintain 1-PC/multi-PC party schema parity
 
-3. **Runtime detection over configuration**
-   - Check `len(party_members) > 1` instead of `config.MULTIPLAYER_MODE`
-   - Check `multi_pc_manager is not None`
-   - Remove hard dependencies on config flags
+3. **Transitional activation detection**
+   - Current transitional dual-check: `config.MULTIPLAYER_MODE and len(party_members) > 1`
+   - Prefer `multi_pc_manager is not None` guards where available
+   - End state (ADR-0032): `MULTIPLAYER_MODE` and party-size gates are removed by `tt-single-runtime-unification`; do not add new hard dependencies on config flags
 
 4. **Single source of truth**
-   - Character state lives in character JSON files (not MP cache)
+   - Character state lives in character JSON files (not the manager cache)
    - Party state lives in `party_tracker.json`
    - Combat state lives in encounter files
-   - MP managers are caches, not primary storage
+   - Tabletop managers are caches, not primary storage
 
 5. **Clear extension boundaries**
    - All modifications marked with `# TABLETOP MODE:` (lineage and ownership documentation)
@@ -1133,40 +1116,58 @@ character_data["is_active_pc"] = True
 - Host edits remain deliberate and reversible
 
 **For Future Unification:**
-- Gradual migration path (Phase 1 → 2 → 3)
+- One runtime today (ADR-0032); cleanup converges remaining dual-checks into unconditional tabletop paths
 - No rewrite required
-- Tested MP code becomes core code
+- Tabletop extension code becomes core code
 - Single codebase to maintain
 
 **For Development:**
-- Test SP mode works? It will work in unified build
-- Test MP mode works? It validates unified architecture
+- Does a 1-PC party work? It is the regression floor for the single runtime
+- Does a multi-PC party work? It validates the same unified architecture
 - No duplicate code paths to maintain
 - Consistent patterns across entire codebase
 
 ### Action Items for Maintaining Compatibility
 
-**When Adding MP Features:**
-1. Can this use existing SP functions?
+**When Adding Tabletop Features:**
+1. Can this use existing tabletop functions?
 2. Can this extend existing data structures?
 3. Is this marked with `# TABLETOP MODE:`?
-4. Will this work if `MULTIPLAYER_MODE` config is removed?
+4. Will this work if the `MULTIPLAYER_MODE` config is removed by `tt-single-runtime-unification`?
 
 **When Porting External Behavior:**
 1. Use an approved OpenSpec change scoped to the behavior
 2. Adapt the behavior to fork contracts; do not import foreign architecture
-3. Run fork-native tests plus SP/MP smoke checks
+3. Run fork-native tests plus 1-PC and multi-PC party smoke checks
 4. Keep license and attribution for any vendored code
 
 **When Planning New Features:**
 1. Design for unified architecture from start
 2. Use abstraction layers (`pc_manager`)
-3. Implement runtime detection patterns
+3. Prefer manager-presence guards (`multi_pc_manager is not None`); do not add new party-size gates
 4. Document unification path in comments
 
 ---
 
 ## Recent Changes
+
+### Single Tabletop Runtime Decision + ADR-0032 (COMPLETED - 2026-09-21)
+
+**Status:** COMPLETED - Accepted `adrs/0032-single-tabletop-runtime.md` (supersedes ADR-0004): one tabletop runtime with a 1..x PC party plus NPCs, where a one-PC party is the minimum tabletop party rather than a separate mode.
+
+**Implementation Summary:**
+- `adrs/0032-single-tabletop-runtime.md` - Recorded the decision, consequences, and the Deferred Cleanup Inventory of `len(party_members) > 1` gates owned by the dedicated unification change (working name `tt-single-runtime-unification`).
+- `AGENTS.md` - Reframed forward-looking guidance to 1-PC party terminology: Core Purpose, Fork Independence Policy item 6, and the Plugin Architecture & Single-Runtime Unification Roadmap section. Historical records (Recent Changes and dated Future Work notes) keep their original wording.
+- `plans/` and the `combat-latency-baseline` fixtures - Same wording discipline applies: retire SP terminology in forward-looking text and treat the 1-PC party as the regression floor (`scripts/combat_latency_fixtures.py`, `openspec/changes/combat-latency-baseline/`).
+
+**Runtime Contract:**
+- One runtime: tabletop, with a 1..x PC party plus NPCs; `MULTIPLAYER_MODE` defaults True and combat activation is config-gated through `is_enabled()`, not a party-size check.
+- The 1-PC party is the regression floor; a 4-PC party remains the primary test shape.
+- `MULTIPLAYER_MODE` and the remaining party-size dual-checks are migration debt removed only by `tt-single-runtime-unification`, never by drive-by edits.
+
+**Verification:**
+- `python3 scripts/check_ascii_compliance.py --summary-only` -> PASS (0 violations)
+- Historical-entry preservation verified via scoped `git diff` of `AGENTS.md`.
 
 ### GPT-5.6 Luna Direct OpenAI Model Swap (COMPLETED - 2026-08-03)
 

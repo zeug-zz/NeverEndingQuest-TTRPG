@@ -5,7 +5,7 @@ Priority: High (combat responsiveness is a product requirement, not a nice-to-ha
 Date: 2026-09-21
 Owner: Combat systems + tabletop mode
 Supersedes: 2026-02-26 revision of this file (its scope is completed or obsolete; see section 3)
-Related: `adrs/0031-independent-development-fork.md`, `plans/archive/upstream-merge-0826.md`,
+Related: `adrs/0031-independent-development-fork.md`, `adrs/0032-single-tabletop-runtime.md`, `plans/archive/upstream-merge-0826.md`,
 `plans/version-2/openrouter_llm_router_architecture.md` (interlock: section 3.1)
 
 ---
@@ -20,7 +20,7 @@ Execute a full structural refactor of the combat runtime so that:
    this plan.
 2. **Multi-PC (TABLETOP MODE) combat is the primary beneficiary.** Every phase must
    comply with, enable, and actively optimise multi-PC combat - not merely avoid
-   breaking it. Single-player remains compatible through shims.
+   breaking it. A 1-PC party remains compatible through shims (ADR-0032).
 3. **Structure becomes navigable.** `core/managers/combat_manager.py` (5,457 lines) and
    `core/managers/multi_pc_combat.py` (2,751 lines) become a `core/combat/` package with
    explicit stage boundaries, one session state object, and one per-turn commit path.
@@ -88,7 +88,7 @@ Kept from the previous revision:
 - Tiny-slice, behavior-preserving extraction.
 - Explicit helper contracts instead of closure/global reliance.
 - Compile checks after each slice; stable log lines for diff-based comparison.
-- SP and MP behavior-equivalence gates.
+- 1-PC party and multi-PC party behavior-equivalence gates.
 
 Dropped or superseded:
 
@@ -274,7 +274,7 @@ Deliverables:
   `provider_call_avoided`, so a future decision-primitive classifier can be evaluated in
   shadow mode without new instrumentation.
 - Summary report script (provider-free) printing the tables used for target ratification.
-- Fixed smoke fixtures: MP 4 PCs x 3 rounds + 1 enemy batch; SP x 1 round.
+- Fixed smoke fixtures: MP 4 PCs x 3 rounds + 1 enemy batch; 1-PC party x 1 round.
 
 Exit criteria:
 
@@ -319,7 +319,7 @@ Exit criteria:
   `test_combat_pc_action_parser` (28), `test_combat_phase_integrity_precheck` (14), and
   the remaining combat/encounter suites (~16 files).
 - Prompt text byte-identical (diff-verified).
-- SP and MP smoke pass; phase markers, death saves, initiative gate, roster integrity,
+- 1-PC party and multi-PC party smoke pass; phase markers, death saves, initiative gate, roster integrity,
   enemy batch, surrender/exit, and resume replay all verified.
 - Line counts: `combat_manager.py` shim < 100 lines; no single function > 600 lines.
 - Decision-seam status contract asserted in tests (`declined` vs `unavailable`), with
@@ -375,7 +375,7 @@ verification because timeout ownership moves to the router (section 3.1).
 Exit criteria:
 
 - Ratified latency targets met on the fixed MP smoke (4 PCs x 3 rounds + enemy batch)
-  and no SP regression.
+  and no 1-PC party regression.
 - Provider calls per uncontested PC action reduced to the ratified target
   (provisional: <= 1 on the fast path, <= 2 on the LLM path).
 - Validation skip rate and NL fast-path hit rate reported with telemetry.
@@ -403,7 +403,7 @@ Exit criteria:
 
 - Crash/restart mid-turn converges with no duplicate mechanics (idempotence verified).
 - Round advancement cannot be driven by prose.
-- All suites green; MP and SP smoke pass.
+- All suites green; 1-PC party and multi-PC party smoke pass.
 
 ---
 
@@ -474,7 +474,7 @@ openspec validate <change-name> --strict
 | Validation skip lets a mechanical contradiction through | Skip only when deterministic prechecks pass on a purely-mechanical action set |
 | Decomposition changes gameplay under MP phase pressure | Prompts byte-identical in Phase 1; MP compliance gate run every phase; small phase-scoped commits |
 | Cache corruption in the compression cache | Delete the legacy caches once unused; any surviving cache is hash-keyed and validated on load |
-| Single-player regression | Shims preserve every public path; SP smoke is a hard gate |
+| 1-PC party regression | Shims preserve every public path; 1-PC party smoke is a hard gate (ADR-0032) |
 | Router slip delays timeout coverage | Section 3.1 delegates per-call timeouts to the router; if `llm-router-facade` has not landed when Phase 2 starts, escalate inside the router change rather than adding a parallel combat timeout path |
 | Decision seams accrete Jev scope | Seams stay contract-only (status vocabulary, trace events, named functions); no Jev code, config, or dependency may enter Phases 0-3 |
 
@@ -538,7 +538,7 @@ gated; they plug into the seams created here and are not part of this plan's bui
 2. Multi-PC compliance gate passes at every phase close.
 3. `core/combat/` package owns the combat runtime; old paths are thin shims; no single
    combat function exceeds 600 lines.
-4. SP and MP smoke pass; prompts byte-identical through Phase 1.
+4. 1-PC party and multi-PC party smoke pass; prompts byte-identical through Phase 1.
 5. All existing combat suites remain green throughout.
 6. Upstream remains untouched and unmerged; only the four concepts in section 2 enter
    the fork, expressed as fork-native work.

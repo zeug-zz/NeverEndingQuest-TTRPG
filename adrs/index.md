@@ -14,7 +14,7 @@ Status legend:
 - 0001 Documentation Authority Hierarchy and Canonical Memory Order (Accepted)
 - 0002 Merge-Safe Tabletop Overlay Architecture (Superseded)
 - 0003 Upstream-First Extend-Do-Not-Replace Policy (Amended)
-- 0004 Multiplayer Activation and SP/MP Unification Roadmap (Planned)
+- 0004 Multiplayer Activation and SP/MP Unification Roadmap (Superseded by ADR-0032)
 - 0005 Canonical State Ownership by Persistence Domain (Accepted)
 - 0006 Character Data Access Abstraction Layer (Accepted)
 - 0007 Python Mechanical Truth and LLM Narrative Freedom Boundary (Accepted)
@@ -42,6 +42,7 @@ Status legend:
 - 0029 Archive Save/Restore Portability and Routing Contract (Accepted)
 - 0030 Selective Upstream Patch Porting (Superseded)
 - 0031 Independent Development Fork (Accepted)
+- 0032 Single Tabletop Runtime (Minimum Party Is One PC) (Accepted)
 
 ## Supersession Map
 
@@ -49,6 +50,7 @@ Status legend:
 - ADR-0026 is the planned successor to ADR-0025.
 - ADR-0031 supersedes ADR-0002 and ADR-0030.
 - ADR-0031 amends ADR-0003 (rescopes upstream-first requirements).
+- ADR-0032 supersedes ADR-0004.
 
 ## Notes
 

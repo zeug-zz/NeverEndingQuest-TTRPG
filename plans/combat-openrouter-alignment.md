@@ -49,13 +49,14 @@ recommendation in section 6.
 | R3 | `retry_tier` is a first-class `call()` parameter (combat escalation parity) | router plan decisions log |
 | D1 | Combat package location: `core/combat/` + `core/combat/multi_pc/` with shims at the old `core/managers/` paths | Owner 2026-09-21, alignment review |
 | AO | Combat artifact authoring order (option b): author `combat-latency-baseline` first, reach G1, then batch-author the remaining four with ratified targets | Owner 2026-09-21, alignment review |
+| S1 | Single tabletop runtime: minimum party is one PC; SP terminology retired (ADR-0032) | Owner 2026-09-21, `adrs/0032-single-tabletop-runtime.md` |
 
 ### 2.2 Open - must resolve before the dependent artifact is authored
 
 | ID | Decision | Needed before | Recommendation |
 |---|---|---|---|
 | A1 | When to flip `LLM_PROVIDER = "openrouter"` | `llm-router-openrouter-activation` | Activate only after all chat call sites are migrated AND the combat hot path is measured on OpenAI; otherwise activation confounds the ratified latency baseline. Owner may pull this earlier for cost reasons, accepting that combat latency targets are then measured on the OpenRouter stack instead |
-| A2 | Router migration change split | `llm-router-core-migration` artifacts | Two changes: Tier 1 core (`llm-router-core-migration`) and tiers 2-4 (`llm-router-remaining-callsite-migration`). Tier 1 carries the SP/MP smoke burden alone and gets its own rollback boundary |
+| A2 | Router migration change split | `llm-router-core-migration` artifacts | Two changes: Tier 1 core (`llm-router-core-migration`) and tiers 2-4 (`llm-router-remaining-callsite-migration`). Tier 1 carries the 1-PC party and multi-PC party smoke burden alone and gets its own rollback boundary |
 | A3 | Jev decomposition eval rerun timing | `jev-decisions-primitive` (gated) | Run after `combat-latency-hot-path` lands so the validator-residual classifier has a measurable residual to target |
 
 ---
@@ -88,6 +89,8 @@ Notes:
 - Step 8 is optional and may be deferred without blocking steps 9-10.
 - Jev track changes are not part of this build path until their gates pass (section 8).
 
+Deferred governance note: the party-size dual-check gates and `MULTIPLAYER_MODE` removal are owned by the future `tt-single-runtime-unification` change per ADR-0032; they are not in this build path and must not be edited opportunistically.
+
 ### 3.1 Gate definitions
 
 | Gate | Requirement | Evidence |
@@ -95,8 +98,8 @@ Notes:
 | G0 | D1 confirmed (2026-09-21); working tree baseline clean for the touched files | Owner decision recorded in section 2; `git status` clean for the change scope |
 | G1 | Baseline captured on the OpenAI stack; targets ratified or adjusted | `debug/combat_turn_trace.jsonl` + `scripts/combat_latency_report.py` output recorded in the change |
 | G2 | Facade is behavior-neutral on `LLM_PROVIDER = "openai"`; bake-off gate clears (narrator/combat match or beat `gpt-5.6-luna` on JSON validity at lower cost) | `scripts/test_llm_router.py`, OpenAI parity smoke, `scripts/benchmark_model_profiles.py` report |
-| G3 | All combat suites green; prompts byte-identical (diff-verified); shims in place; SP/MP smoke pass | Suite commands (section 5.3) + prompt diff + smoke |
-| G4 | 9 combat call sites + `main.py` + `action_handler.py` migrated; timeout coverage verified from the client; retry escalation parity; SP/MP smoke pass | Router-parity tests + combat suites + timeout assertion test |
+| G3 | All combat suites green; prompts byte-identical (diff-verified); shims in place; 1-PC party and multi-PC party smoke pass | Suite commands (section 5.3) + prompt diff + smoke |
+| G4 | 9 combat call sites + `main.py` + `action_handler.py` migrated; timeout coverage verified from the client; retry escalation parity; 1-PC party and multi-PC party smoke pass | Router-parity tests + combat suites + timeout assertion test |
 | G5 | Ratified targets met on the fixed MP smoke; provider-call budgets met; validation-skip and NL hit rates reported | `combat_latency_report.py` + router usage stats |
 | G6 | Tiers 2-4 migrated; provider-tripwire and contract suites unaffected | `scripts/test_gpt54*` suites + compile + smoke |
 | G7 | Crash/restart mid-turn converges with no duplicate mechanics | Idempotence test + resume replay suites |
@@ -112,7 +115,7 @@ Notes:
 Authoring convention for every change below:
 
 - `openspec/changes/<change-id>/proposal.md` - problem, objective, non-goals, rollout
-  risk, fallback, SP/MP compatibility impact, provider-outage behavior where LLM plumbing
+  risk, fallback, 1-PC party and multi-PC party compatibility impact, provider-outage behavior where LLM plumbing
   is touched (per `openspec/config.yaml`).
 - `openspec/changes/<change-id>/design.md` - architecture boundaries, state authority,
   thread safety, sequencing, rollback.
@@ -141,7 +144,7 @@ Proposed delta specs:
 - `combat-decision-trace-events` - `decision_point`, `decision_source`
   (`deterministic` | `llm_fallback` | `jev`), `decision_latency_ms`,
   `provider_call_avoided`.
-- `combat-latency-smoke-fixtures` - MP 4 PCs x 3 rounds + 1 enemy batch; SP x 1 round.
+- `combat-latency-smoke-fixtures` - MP 4 PCs x 3 rounds + 1 enemy batch; 1-PC party x 1 round.
 - `combat-latency-report-script` - provider-free `scripts/combat_latency_report.py`.
 
 Task outline: (1) trace writer + config gate; (2) instrument stages and provider sites;
@@ -233,7 +236,7 @@ Proposed delta specs:
   through `finalize_chat_params(retry_tier=...)`.
 
 Task outline: (1) migrate combat stages; (2) remove legacy timeout args; (3) migrate
-`main.py`; (4) migrate `action_handler.py`; (5) contract/regression tests; (6) SP/MP
+`main.py`; (4) migrate `action_handler.py`; (5) contract/regression tests; (6) 1-PC party and multi-PC party
 smoke.
 
 Gate: G4.
@@ -334,7 +337,7 @@ Proposed delta specs:
 - `llm-router-activation-cost-report` - session/week cost measured before and after.
 
 Task outline: (1) bake-off update; (2) flip in a dev session; (3) measure latency/cost
-against the OpenAI baseline; (4) SP/MP smoke; (5) document rollback; (6) owner sign-off.
+against the OpenAI baseline; (4) 1-PC party and multi-PC party smoke; (5) document rollback; (6) owner sign-off.
 
 Gate: G9.
 
@@ -358,7 +361,7 @@ Gate: G10.
 - ASCII-only Python output (`python3 scripts/check_ascii_compliance.py --summary-only`).
 - Atomic JSON writes for game state (`safe_read_json` / `safe_write_json`).
 - `# TABLETOP MODE:` markers on host edits; extensions in separate modules.
-- SP compatibility is a hard gate for every change.
+- 1-PC party compatibility is a hard gate for every change (ADR-0032).
 
 ### 5.2 Git
 
@@ -472,7 +475,7 @@ When opening a build session for any change in section 4:
 3. Paste the verification command block (section 5.3) with the change-specific additions.
 4. State the rollback: revert the commit range; flags (`COMBAT_PC_PHASE_NL_FAST_PATH`,
    debug trace gate) revert by config.
-5. Remind: no prompt edits outside scope, no Jev code, SP smoke is a hard gate, ASCII
+5. Remind: no prompt edits outside scope, no Jev code, 1-PC party smoke is a hard gate, ASCII
    compliance before commit.
 
 ---
