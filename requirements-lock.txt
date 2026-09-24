@@ -38,7 +38,7 @@ mitmproxy_rs==0.12.8
 msgpack==1.1.2
 openai==2.38.0
 packaging==26.2
-pillow==12.2.0
+pillow==12.3.0
 protobuf==6.33.6
 publicsuffix2==2.20191221
 pyasn1==0.6.3
