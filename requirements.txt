@@ -6,8 +6,8 @@ openai>=1.0.0
 
 # Web interface framework
 Flask>=2.3.0
-Flask-SocketIO>=5.3.0
-python-socketio>=5.9.0
+Flask-SocketIO>=5.7.0
+python-socketio>=5.17.0
 
 # JSON schema validation for game data
 jsonschema>=4.17.0
@@ -16,22 +16,22 @@ jsonschema>=4.17.0
 termcolor>=2.3.0
 
 # Progress bars for long operations
-tqdm>=4.65.0
+tqdm>=4.70.1
 
 # HTTP requests for web interactions
 requests>=2.31.0
 
 # Token counting for OpenAI API usage tracking
-tiktoken>=0.5.0
+tiktoken>=0.14.0
 
 # Image processing for JPEG compression and thumbnail generation
-Pillow>=10.0.0
+Pillow>=12.3.0
 
 # Proxy server for LM Studio mode and API call capture
 mitmproxy>=10.0.0
 
 # PDF form filling
-pypdf>=6.13.3
+pypdf>=6.19.0
 
 # Python standard library extensions (usually included)
 # pathlib - included in Python 3.4+
