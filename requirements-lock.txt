@@ -7,7 +7,7 @@ attrs==25.4.0
 bcrypt==5.0.0
 bidict==0.23.1
 blinker==1.9.0
-brotli==1.2.0
+brotli==1.2.1
 certifi==2025.11.12
 cffi==2.0.0
 charset-normalizer==3.4.4
