@@ -75,7 +75,7 @@ urllib3==2.7.0
 urwid==3.0.3
 wcwidth==0.2.14
 websocket-client==1.9.0
-Werkzeug==3.1.8
+Werkzeug==3.1.9
 wsproto==1.2.0
 zipp==4.1.0
 zstandard==0.25.0
