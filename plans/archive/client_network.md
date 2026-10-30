@@ -1,5 +1,12 @@
 # Remote Multi-Player Browser Clients Architecture Plan
 
+> DEPRECATED DRAFT - archived 2026-10-26. Superseded in full by
+> [V2 Server, React Client, and OpenTunnel Network Implementation Plan](../v2-server-client-network.md).
+> Preserved as historical context only. LAN-first sequencing, optional remote
+> authentication, deferred internet hardening, and server-binding observations
+> below are not current requirements. Historical paths below are intentionally
+> preserved; use the replacement plan for implementation and OpenSpec scope.
+
 ## Objective
 Adapt the existing NeverEndingQuest web server to support remote browser clients for tabletop multiplayer sessions, starting with LAN-hosted play and leaving internet hardening for a later phase. The player-facing client foundation is React/TypeScript, adapted from upstream's `/play` implementation into a fork-owned `/client` surface.
 

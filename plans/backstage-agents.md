@@ -1,5 +1,10 @@
 # Backstage Agentic Harness Plan
 
+> Scope boundary: [V2 Narrator](v2-narrator.md) owns the bounded runtime Archivist
+> and Narrator memory/context build. It does not depend on this broader draft's
+> audit/builder/writer/Memory Doctor/RATIO harness or its audit-first sequencing.
+> Reuse compatible evidence/validation ideas without expanding the Narrator scope.
+
 **Status:** Draft for review  
 **Created:** 2026-05-24  
 **Scope:** Add supervised backstage agentic harnesses for writer, builder, audit, memory, and RATIO workflows while preserving the live runtime rule: Python enforces reality; LLM interprets it.

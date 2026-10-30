@@ -1,5 +1,18 @@
 # NEQ v2 Titan Integration Plan
 
+> ARCHIVED 2026-10-27: Superseded in full by the
+> [V2 TITAN Game Engine master plan](../../v2-titan-game-engine.md).
+> Historical draft only; its six-head, EGO-dependent, ten-minute/free-model design
+> and checklists are not current requirements. Original path:
+> `plans/version-2/titan-integration.md`.
+
+> Narrator handoff: [V2 Narrator](../../v2-narrator.md) defines the current Narrator
+> build and reserved perspective/campaign/timeline memory contracts. Future Titans
+> may read all authorised in-game PC/NPC and other Titan memories within a campaign
+> through the server gateway, not through unrestricted bank access. Titan workers
+> and governance remain out of scope there and speculative here. This draft is not
+> a prerequisite or authorization for the Narrator build.
+
 Status: Planning in progress for next-version rebuild (post-v1 testing)
 Date: 2026-02-26
 Owner: NEQ MP TTRPG architecture (OpenRouter + EGO + world-narrative + memory + seeding)

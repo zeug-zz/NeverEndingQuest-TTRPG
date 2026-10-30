@@ -1,10 +1,152 @@
 {
-  "validation_date": "2026-04-13T13:50:00.614530",
-  "issues": [],
-  "context_summary": {
-    "areas": 6,
-    "npcs": 11,
-    "locations": 0,
-    "plot_points": 4
+  "module": "A_Pottsfield_Burial",
+  "timestamp": "2026-10-24T13:24:16.651009",
+  "summary": {
+    "total_files": 53,
+    "total_passed": 55,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "THG001_BU.json (areas/)",
+        "PPG001_BU.json (areas/)",
+        "PPG001.json (areas/)",
+        "PO001.json (areas/)",
+        "PO001_BU.json (areas/)",
+        "TSW001_BU.json (areas/)",
+        "TAC001_BU.json (areas/)",
+        "PVC001.json (areas/)",
+        "TAC001.json (areas/)",
+        "THG001.json (areas/)",
+        "TSW001.json (areas/)",
+        "PVC001_BU.json (areas/)"
+      ],
+      "passed": 12,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "crawling_claws_2.json",
+        "veilwood_shadow.json",
+        "harvest_wight.json",
+        "crawling_claws.json",
+        "restless_remains.json",
+        "crypt_watchers.json",
+        "veilwood_husk.json",
+        "grave_wight.json",
+        "tomb_rats.json",
+        "grimcorn_stalker.json",
+        "veilwood_wraith.json",
+        "restless_skeleton.json",
+        "strawbound_revenant.json"
+      ],
+      "passed": 13,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_TAC001.json",
+        "map_PVC001.json",
+        "map_THG001.json",
+        "map_TSW001.json",
+        "map_PO001.json",
+        "map_PPG001.json"
+      ],
+      "passed": 6,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/PO001.json",
+        "areas/PPG001.json",
+        "areas/PVC001.json",
+        "areas/TAC001.json",
+        "areas/THG001.json",
+        "areas/TSW001.json"
+      ],
+      "passed": 6,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "PO001.json <-> map_PO001.json",
+        "PPG001.json <-> map_PPG001.json",
+        "PVC001.json <-> map_PVC001.json",
+        "TAC001.json <-> map_TAC001.json",
+        "THG001.json <-> map_THG001.json",
+        "TSW001.json <-> map_TSW001.json"
+      ],
+      "passed": 6,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "PO001.json <-> map_PO001.json",
+        "PPG001.json <-> map_PPG001.json",
+        "PVC001.json <-> map_PVC001.json",
+        "TAC001.json <-> map_TAC001.json",
+        "THG001.json <-> map_THG001.json",
+        "TSW001.json <-> map_TSW001.json"
+      ],
+      "passed": 6,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
   }
 }

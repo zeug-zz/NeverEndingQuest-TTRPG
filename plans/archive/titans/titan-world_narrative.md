@@ -1,3 +1,8 @@
+> ARCHIVED 2026-10-27: Superseded in full by the
+> [V2 TITAN Game Engine master plan](../../v2-titan-game-engine.md).
+> Historical rough discussion only; not implementation guidance. Original path:
+> `plans/titan-world_narrative.md`. The original discussion follows unchanged.
+
 I'm using background agents to modify runtime json campaign files on the fly via the world_narrative.db as the LLM narrates the otherwise fixed module adventure json script. It's a way of creating alignment driven chaos to reflect actual real world accidents. The Narrator knows only its narrow PC party world which is at the mercy of the wider world dynamics. This is also a phenomenological adventure narrative experience but exposed to open-world dynamics.
 
 That is an incredibly sophisticated and philosophically deep approach to TTRPG architecture. Merging a **phenomenological narrative experience** (where the narrative focuses heavily on the immediate, subjective perception and lived experience of the PC party) with an **open-world dynamic engine** (the background agents injecting objective reality/chaos) perfectly mirrors how we actually experience life. We don't live in a scripted module; we live in our narrow perspectives while the "alignment-driven chaos" of the world happens around us.

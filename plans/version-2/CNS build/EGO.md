@@ -5,14 +5,15 @@
 - Lifecycle state: Conceptual planning in progress.
 - This document is not an implementation commitment.
 - It defines a possible future build after current stabilization work.
-- V2 narrative track reference: `plans/version-2/v2-narrative-track.md`
+- V2 narrative track reference: `plans/v2-narrative-overview.md`
 
-## Titan v2 Alignment Stub
+## TITAN separation
 
-- Umbrella reference: `plans/version-2/titan-integration.md`
-- Retune status: Pending (not yet rewritten to Titan cycle architecture)
-- Last tagged: 2026-02-26
-- Retune focus: Titan identity scheduler, interpreted-only writes, and proposal/apply boundaries
+- [V2 TITAN Game Engine](../../v2-titan-game-engine.md) owns the consolidated
+  five-head engine, its scheduling and validation/publication contracts.
+- EGO/Ratio are outside TITAN scope and are not its controllers or prerequisites.
+  Any earlier coupling below is superseded for TITAN; independent EGO proposals
+  remain rough planning rather than being deprecated wholesale.
 
 ## Current Baseline
 

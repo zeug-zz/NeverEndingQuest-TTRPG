@@ -1,5 +1,9 @@
 # LLM Wants To Be Free - Narrative Sovereignty Within Python Mechanics
 
+> Current planning successor: [V2 Narrator](../v2-narrator.md). The intermediate
+> post-gametest continuation is [also archived](narrative-sovereignty-post-gametest.md).
+> Historical sequencing below does not reopen or precede the ongoing router work.
+
 Status: Archived planning record - Lane 1 complete (G1-G4 archived); Lane 2 handed off to version-2 continuation
 Owner: OpenCode planning pass
 Target: `plans/archive/llm-wants-to-be-free.md`
@@ -24,7 +28,7 @@ The remaining work in this document belongs to Lane 2 and should be treated as p
 
 Active continuation path:
 
-- `plans/version-2/narrative-sovereignty-post-gametest.md`
+- `plans/archive/narrative-sovereignty-post-gametest.md`
 
 Sequencing decision:
 
@@ -822,7 +826,7 @@ The following SHOULD be deferred until after testers are playing unless a blocki
 - planner/narrator split,
 - non-essential combat architecture changes.
 
-Deferred items now belong to the version-2 continuation plan at `plans/version-2/narrative-sovereignty-post-gametest.md`.
+Deferred items were handed to the continuation now archived at `plans/archive/narrative-sovereignty-post-gametest.md`; current implementation planning is `plans/v2-narrator.md`.
 
 #### Builder stop points
 
@@ -960,7 +964,7 @@ Key verification:
 Current status note:
 
 - deferred from the gametest lane,
-- promoted to the version-2 continuation plan at `plans/version-2/narrative-sovereignty-post-gametest.md`,
+- promoted to the continuation now archived at `plans/archive/narrative-sovereignty-post-gametest.md`,
 - intended to execute before OpenRouter router re-architecture.
 
 ### Change 6: `prompt-contract-reconcile-first-reset`
@@ -985,7 +989,7 @@ Current status note:
 
 - partially advanced indirectly by G4 validation prompt updates,
 - still open as a broader system-prompt/runtime philosophy cleanup,
-- promoted to the version-2 continuation plan at `plans/version-2/narrative-sovereignty-post-gametest.md`,
+- promoted to the continuation now archived at `plans/archive/narrative-sovereignty-post-gametest.md`,
 - intended to execute before OpenRouter router re-architecture.
 
 ---

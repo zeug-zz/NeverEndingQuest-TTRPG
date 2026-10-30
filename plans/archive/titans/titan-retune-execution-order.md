@@ -1,5 +1,15 @@
 # Titan v2 Retune Execution Order
 
+> ARCHIVED 2026-10-27: Superseded in full by the
+> [V2 TITAN Game Engine master plan](../../v2-titan-game-engine.md), including
+> its delivery phases and acceptance gates. Do not execute the old retune checklist.
+> Original path: `plans/version-2/titan-retune-execution-order.md`.
+
+> This remains speculative Titan sequencing. [V2 Narrator](../../v2-narrator.md)
+> independently owns Narrator memory/context/agendas and reserves future actor
+> access/portable campaign-runtime contracts. Do not impose this draft's Titan
+> prerequisites on that build or assume its workers have been authorised.
+
 Status: Planning in progress (v2 kickoff checklist)
 Date: 2026-02-26
 Owner: NEQ v2 rebuild sequencing

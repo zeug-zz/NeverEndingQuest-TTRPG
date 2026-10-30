@@ -1,16 +1,30 @@
 # Memory Architecture Plan
 
+> Archived historical draft. Its SQL, sequencing, numerical targets and implementation
+> claims are not current instructions. See the provisional [V2 memory draft](../v2-memory-draft.md)
+> and the current Narrator and TITAN plans for planning ownership.
+
+> Scope update: [V2 Narrator](../v2-narrator.md) now owns overlapping Narrator
+> retrieval, first-class Hindsight, event-continuity integration, compaction and
+> agenda implementation planning, including portable campaign-specific runtime.
+> Its phased sequence replaces this draft's historical Narrator rollout order.
+> This file is retained for wider storage, identity, companion-memory unification,
+> recovery and speculative Titan/controller work; those systems are not Narrator
+> prerequisites. Historical implementation claims/examples below require current
+> code verification. This draft does not authorize runtime work.
+
 Date: 2026-02-13
 Project: NeverEndingQuest (Tabletop merge-safe branch)
 Status: Planning in progress (schema + retrieval first)
 Track reference: `plans/version-2/v2-narrative-track.md`
 
-## Titan v2 Alignment Stub
+## TITAN planning ownership
 
-- Umbrella reference: `plans/version-2/titan-integration.md`
-- Retune status: Pending (Titan relationship retrieval requirements not yet folded in)
-- Last tagged: 2026-02-26
-- Retune focus: relationship-edge scoring, Titan provenance traces, and retrieval audit links
+- Master plan: [V2 TITAN Game Engine](../v2-titan-game-engine.md).
+- That plan supersedes this draft's Titan identity, scheduling, controller and
+  scoring assumptions. EGO/Ratio are not prerequisites for TITAN.
+- Preserve shared scoped retrieval, evidence/provenance and relationship contracts;
+  reconcile implementation through OpenSpec rather than deepening a parallel stack.
 
 ## Overview
 

@@ -67,7 +67,7 @@ Independently developed, originally derived from upstream. Tabletop Mode activat
 - **Party & NPC State Sync** — Deterministic arrival validation, travel reconciliation, companion relationship edges, and scene-follower persistence.
 - **Module Publication Pipeline** — Ingest, validate, enrich, and publish homebrew modules with readiness/publishability gating and semantic authority auditing.
 
-All fork modifications are marked with `# TABLETOP MODE:` comments and live in extension files where possible. See `AGENTS.md` for architecture, conventions, and the complete change log.
+All fork modifications are marked with `# TABLETOP MODE:` comments and live in extension files where possible. See `AGENTS.md` for durable architecture and conventions; historical development notes are in `docs/history/agents-changelog.md`.
 
 ---
 
@@ -105,7 +105,8 @@ Create, edit, and publish adventure modules from the web interface:
 
 ## Documentation
 
-- **Engineering conventions & change log**: `AGENTS.md`
+- **Engineering conventions**: `AGENTS.md`
+- **Historical development notes**: `docs/history/agents-changelog.md`
 - **Architecture & development**: `docs/development/`
 - **Architecture decisions**: `adrs/`
 - **Active implementation contracts**: `openspec/changes/`

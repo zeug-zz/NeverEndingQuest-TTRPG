@@ -1,5 +1,10 @@
 # Narrative Sovereignty Post-Gametest Continuation
 
+> Archived as superseded planning on 2026-10-27. Current implementation planning:
+> [V2 Narrator](../v2-narrator.md). Event persistence, prompt alignment and transcript
+> reassessment are absorbed there; the before-OpenRouter sequencing below is retired.
+> The original draft is preserved below, not marked implemented or accepted.
+
 Status: Planned version-2 implementation track
 Date: 2026-03-16
 Owner: NEQ runtime architecture

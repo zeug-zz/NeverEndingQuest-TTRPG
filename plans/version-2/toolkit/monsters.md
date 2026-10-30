@@ -6,12 +6,14 @@ Date: 2026-02-24
 Owner: Tabletop combat + content pipeline
 Target: `plans/version-2/toolkit/monsters.md`
 
-## Titan v2 Alignment Stub
+## TITAN planning ownership
 
-- Umbrella reference: `plans/version-2/titan-integration.md`
-- Retune status: Pending (bridge design not yet integrated)
-- Last tagged: 2026-02-26
-- Retune focus: approved Titan pressure -> declarations -> seeding, with undeclared fail-closed invariants
+- Master plan: [V2 TITAN Game Engine](../../v2-titan-game-engine.md).
+- Titan proposals require validation, approval and trusted declarations before
+  materialisation; undeclared entities remain fail-closed. Actor personification
+  is a separate major runtime workstream, not mandatory build-time dossier creation.
+- The master plan supersedes older Titan scheduling/controller assumptions; this
+  draft's independent resolver work still requires verification and OpenSpec scope.
 
 ---
 

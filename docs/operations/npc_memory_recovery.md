@@ -51,5 +51,5 @@ After a successful rebuild:
 
 - This recovery flow does not require `memory.db`.
 - This recovery flow now rebuilds additive file-backed per-PC relationship edges for the live tabletop path.
-- Deeper relationship retrieval, scoring, and broader memory evolution move to `plans/version-2/memory.md` after this Phase 2A slice.
+- Deeper relationship retrieval, scoring, and broader memory evolution are discussed in the provisional `plans/v2-memory-draft.md` after this Phase 2A slice.
 - If a companion still remains degraded after rebuild, inspect the relevant journal phrasing and extend parser coverage before assuming the save data is corrupt.

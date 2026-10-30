@@ -1,5 +1,12 @@
 # Client Web Thin-Client Roadmap
 
+> DEPRECATED DRAFT - archived 2026-10-26. Superseded in full by
+> [V2 Server, React Client, and OpenTunnel Network Implementation Plan](../v2-server-client-network.md).
+> Preserved as historical context only. LAN-first sequencing, optional remote
+> authentication, and deferred internet hardening below are not current
+> requirements. Historical paths below are intentionally preserved; use the
+> replacement plan for implementation and OpenSpec scope.
+
 ## Purpose
 Define the phased path from the current local tabletop workflow to a lean remote-client architecture that supports:
 - mixed in-person tabletop and browser-based participation,

@@ -6,12 +6,14 @@ Date: 2026-02-28
 Owner: Tabletop UX + world systems
 Target: `plans/version-2/world-mapping.md`
 
-## Titan v2 alignment stub
+## TITAN planning ownership
 
-- Umbrella reference: `plans/version-2/titan-integration.md`
-- Retune status: Pending (overlay and filters not yet implemented)
-- Last tagged: 2026-02-26
-- Retune focus: read-only Titan pressure overlays by scope and debug filters by Titan/status
+- Master plan: [V2 TITAN Game Engine](../../v2-titan-game-engine.md).
+- Optional overlays are read-only projections of committed campaign facts and
+  appropriately scoped pressure data. Player views must not expose hidden Titan
+  assignments, agendas or scores. No-data rendering must remain functional.
+- That plan supersedes older Titan identity/controller/scheduling assumptions;
+  mapping geometry and movement legality remain independently Python-owned.
 
 ---
 
