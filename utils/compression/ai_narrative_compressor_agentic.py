@@ -13,17 +13,8 @@ import sys
 import re
 from typing import Dict, Any, List
 from pathlib import Path
-from openai import OpenAI
-
-# Load API configuration
-try:
-    import config
-    from model_config import NARRATIVE_COMPRESSION_MODEL
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
-except ImportError as e:
-    print(f"ERROR: Missing configuration file - {e}")
-    print("Please ensure both config.py (with OPENAI_API_KEY) and model_config.py exist")
-    sys.exit(1)
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Import token tracking
 try:
@@ -226,24 +217,19 @@ def compress_with_ai(narrative: str, canon: Dict[str, Any] = None, mode: str = "
                 messages.append({"role": "user", "content": json.dumps({
                     "instruction": "Re-emit fixing the format issue. Ensure exactly one EVT block."
                 })})
-            
-            response = client.chat.completions.create(
-                model=NARRATIVE_COMPRESSION_MODEL,
-                messages=messages,
-                temperature=0.1,
-                top_p=1
+
+            observer = make_legacy_receipt_observer(
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
             
-            # Track token usage
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass  # Silently ignore tracking errors
+            ai_output = llm.call(
+                task="compression",
+                messages=messages,
+                json_output=False,
+                observer=observer,
+            )
             
             # Extract and parse the response
-            ai_output = response.choices[0].message.content
-            
             # Strip markdown formatting if present
             if ai_output.startswith("```json"):
                 ai_output = ai_output[7:]  # Remove ```json

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Combat tactical standing orders",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["actors"],
+  "properties": {
+    "actors": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actor", "clauses"],
+        "properties": {
+          "actor": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*"},
+              "kind": {"const": "enemy"}
+            }
+          },
+          "clauses": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["when", "do"],
+              "properties": {
+                "when": {
+                  "enum": [
+                    "always",
+                    "self_bloodied",
+                    "self_near_death",
+                    "commander_down",
+                    "cover_available",
+                    "ally_departed"
+                  ]
+                },
+                "do": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "target"],
+                      "properties": {
+                        "kind": {"const": "attack"},
+                        "target": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["name", "kind"],
+                          "properties": {
+                          "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*"},
+                            "kind": {"enum": ["enemy", "player", "npc"]}
+                          }
+                        },
+                        "action": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": ".*\\S.*"}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind"],
+                      "properties": {
+                        "kind": {"const": "take_cover"},
+                        "feature_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": ".*\\S.*"}
+                      }
+                    },
+                    {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "flee"}}},
+                    {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "surrender"}}},
+                    {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "hold"}}}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "commander_clauses": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["when", "do"],
+        "properties": {
+          "when": {
+            "enum": [
+              "always",
+              "self_bloodied",
+              "self_near_death",
+              "commander_down",
+              "cover_available",
+              "ally_departed"
+            ]
+          },
+          "do": {"enum": ["withdrawal_order", "side_surrender"]}
+        }
+      }
+    },
+    "intent": {"type": "string", "maxLength": 160}
+  }
+}

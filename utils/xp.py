@@ -67,22 +67,22 @@ def calculate_xp(encounter, party_tracker):
 
     return total_xp, defeated_count, xp_breakdown, total_participants
 
-def main():
-    # Load party tracker
-    party_tracker = load_json_file('party_tracker.json')
+def main(encounter=None, party_tracker=None):
+    # Staged combat turns pass their in-memory encounter projection so reward
+    # calculation does not depend on an encounter file written before commit.
+    if party_tracker is None:
+        party_tracker = load_json_file('party_tracker.json')
 
-    # Get the active encounter ID
-    active_encounter_id = party_tracker['worldConditions']['activeCombatEncounter']
-    
-    if not active_encounter_id:
-        return "No active combat encounter found.", 0
+    if encounter is None:
+        active_encounter_id = party_tracker['worldConditions']['activeCombatEncounter']
+        if not active_encounter_id:
+            return "No active combat encounter found.", 0
 
-    # Load the active encounter
-    encounter_filename = f"modules/encounters/encounter_{active_encounter_id}.json"
-    if not os.path.exists(encounter_filename):
-        return f"Encounter file {encounter_filename} not found.", 0
+        encounter_filename = f"modules/encounters/encounter_{active_encounter_id}.json"
+        if not os.path.exists(encounter_filename):
+            return f"Encounter file {encounter_filename} not found.", 0
 
-    encounter = load_json_file(encounter_filename)
+        encounter = load_json_file(encounter_filename)
 
     # Calculate XP
     total_xp, defeated_count, xp_breakdown, total_participants = calculate_xp(encounter, party_tracker)

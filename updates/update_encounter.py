@@ -10,9 +10,6 @@ import time
 import re
 import copy
 from typing import Any, Dict, List, Optional, Tuple
-# Import model configuration from config.py
-from config import ENCOUNTER_UPDATE_MODEL
-
 # Import OpenAI usage tracking (safe - won't break if fails)
 try:
     from utils.openai_usage_tracker import track_response
@@ -22,19 +19,14 @@ except:
     def track_response(r): pass
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params  # OPENROUTER: Multi-provider support
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Set script name for logging
 set_script_name("update_encounter")
 
-# ANSI escape codes - REMOVED per CLAUDE.md guidelines
+# ANSI escape codes - REMOVED per AGENTS.md ASCII rule
 # All color codes have been removed to prevent Windows console encoding errors
-
-# Constants
-TEMPERATURE = 0.7
-
-# Initialize AI client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 def load_encounter_schema():
     with open("schemas/encounter_schema.json", "r") as schema_file:
@@ -375,8 +367,10 @@ def _finalize_encounter_update(
     schema: Dict[str, Any],
     encounter_id: str,
     path_manager: ModulePathManager,
+    *,
+    persist: bool = True,
 ) -> Dict[str, Any]:
-    """Apply sync/normalization, validate, and persist encounter state."""
+    """Apply sync/normalization, validate, and optionally persist encounter state."""
     _normalize_enemy_defeat_states(encounter_info, original_info)
     _sync_non_enemy_creatures(encounter_info, path_manager)
     _normalize_creature_statuses(encounter_info)
@@ -385,12 +379,31 @@ def _finalize_encounter_update(
     compare_json(original_info, encounter_info)
     info("SUCCESS: Encounter update - PASS", category="encounter_updates")
 
-    with open(f"modules/encounters/encounter_{encounter_id}.json", "w") as file:
-        json.dump(encounter_info, file, indent=2)
+    if persist:
+        with open(f"modules/encounters/encounter_{encounter_id}.json", "w") as file:
+            json.dump(encounter_info, file, indent=2)
 
     return encounter_info
 
 def update_encounter(encounter_id, changes, ops=None, max_retries=3):
+    """Update an encounter through the established positional API."""
+    return _update_encounter_impl(
+        encounter_id,
+        changes,
+        ops=ops,
+        max_retries=max_retries,
+    )
+
+
+def _update_encounter_impl(
+    encounter_id,
+    changes,
+    ops=None,
+    max_retries=3,
+    *,
+    encounter_snapshot=None,
+    persist=True,
+):
     # Load the current encounter info and schema
     # Get current module from party tracker for consistent path resolution
     try:
@@ -400,8 +413,16 @@ def update_encounter(encounter_id, changes, ops=None, max_retries=3):
         path_manager = ModulePathManager(current_module)
     except:
         path_manager = ModulePathManager()  # Fallback to reading from file
-    with open(f"modules/encounters/encounter_{encounter_id}.json", "r") as file:
-        encounter_info = json.load(file)
+    if encounter_snapshot is None:
+        with open(f"modules/encounters/encounter_{encounter_id}.json", "r") as file:
+            encounter_info = json.load(file)
+    else:
+        if not isinstance(encounter_snapshot, dict):
+            raise TypeError("encounter_snapshot must be a mapping")
+        encounter_info = copy.deepcopy(encounter_snapshot)
+        snapshot_id = encounter_info.get("encounterId", encounter_info.get("id"))
+        if snapshot_id is not None and snapshot_id != encounter_id:
+            raise ValueError("encounter_snapshot identity does not match encounter_id")
 
     original_info = copy.deepcopy(encounter_info)  # Keep a copy of the original info
     schema = load_encounter_schema()
@@ -431,6 +452,7 @@ def update_encounter(encounter_id, changes, ops=None, max_retries=3):
                     schema,
                     encounter_id,
                     path_manager,
+                    persist=persist,
                 )
             except ValidationError as e:
                 warning(
@@ -483,27 +505,17 @@ Remember to only update monster information and leave player and NPC data unchan
         ]
 
         # Get AI's response
-        # GPT-5 family (gpt-5.6-luna) requires reasoning_effort/verbosity and omits
-        # legacy temperature/top_p. Route through the shared helper so the direct
-        # OpenAI GPT-5 branch is valid while non-GPT-5 temperature and the
-        # OpenRouter thinking extra_body behavior are preserved.
-        response = client.chat.completions.create(
-            messages=prompt,
-            **get_chat_completion_params(
-                "encounter_update",
-                ENCOUNTER_UPDATE_MODEL,
-                temperature_override=TEMPERATURE,
-            ),
+        # TABLETOP MODE: provider transport and model selection are router-owned.
+        observer = make_legacy_receipt_observer(
+            track_usage=USAGE_TRACKING_AVAILABLE,
         )
-        
-        # Track usage
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = llm.call(
+            task="encounter_update",
+            messages=prompt,
+            json_output=False,
+            observer=observer,
+        )
+        ai_response = ai_response.strip()
 
         # Write the raw AI response to a debug file
         os.makedirs("debug", exist_ok=True)
@@ -528,6 +540,7 @@ Remember to only update monster information and leave player and NPC data unchan
                 schema,
                 encounter_id,
                 path_manager,
+                persist=persist,
             )
 
         except json.JSONDecodeError as e:
@@ -545,6 +558,18 @@ Remember to only update monster information and leave player and NPC data unchan
 
     # This line should never be reached, but just in case:
     return original_info
+
+
+def stage_encounter_update(encounter_id, changes, encounter_snapshot, ops=None, max_retries=3):
+    """Validate an encounter action against a staged snapshot without writing it."""
+    return _update_encounter_impl(
+        encounter_id,
+        changes,
+        ops=ops,
+        max_retries=max_retries,
+        encounter_snapshot=encounter_snapshot,
+        persist=False,
+    )
 
 def update_nested_dict(d, u):
     for k, v in u.items():

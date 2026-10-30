@@ -68,14 +68,9 @@ INSTALL_ROOT = repository_root()
 # Add parent directory to path so we can import from utils, core, etc.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import AI client factory (supports OpenAI and OpenRouter)
-from utils.ai_client_factory import (  # OPENROUTER: Multi-provider support
-    create_chat_client,
-    get_chat_completion_params,
-    get_chat_model_name,
-    get_model_config,
-)
 from openai import OpenAI
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Token tracking import
 try:
@@ -117,8 +112,6 @@ from utils.toolkit_adaptation_output_safety import (
 )
 from utils.character_creation_audit import apply_background_feature_suggestion_if_generic
 from model_config import (
-    DM_MINI_MODEL,
-    NPC_BUILDER_MODEL,
     ENABLE_BROWSER_TTS_STREAM_SYNC,
     ENABLE_CHAT_STREAMING,
     ENABLE_BROWSER_WORD_SYNC,
@@ -2627,28 +2620,24 @@ def promote_to_bestiary():
         The description should be concise (around 100-150 words) and focus on its appearance, typical behavior, and combat tactics.
         Make it sound like an entry from an official monster manual. Do not include stat blocks."""
         
-        # Use factory to create client (supports OpenAI and OpenRouter)
-        client = create_chat_client()
-        
-        response = client.chat.completions.create(
-            model=get_chat_model_name(),
+        response_text = llm.call(
+            task="monster_builder",
             messages=[
                 {"role": "system", "content": "You are a creative writer for a fantasy role-playing game, specializing in monster lore."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7
+            json_output=False,
+            observer=make_legacy_receipt_observer(
+                legacy_context={
+                    'endpoint': 'web_dm',
+                    'purpose': 'web_interface_response',
+                    'interface': 'web',
+                },
+                track_usage=USAGE_TRACKING_AVAILABLE,
+            ),
         )
-        
-        # Track token usage with context for telemetry
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                from utils.openai_usage_tracker import get_global_tracker
-                tracker = get_global_tracker()
-                tracker.track(response, context={'endpoint': 'web_dm', 'purpose': 'web_interface_response', 'interface': 'web'})
-            except:
-                pass
-        
-        description = response.choices[0].message.content.strip()
+
+        description = response_text.strip()
 
         # 3. Create and add the new monster entry
         new_entry = {
@@ -3348,12 +3337,8 @@ def get_module_adventure_markdown(module_name):
     return jsonify(payload), result.get('status', 500)
 
 
-@socketio.on('connect')
-def handle_connect():
-    """Handle client connection"""
-    emit('connected', {'data': 'Connected to NeverEndingQuest'})
-
-    # Check for updates and notify client
+def _check_version_status_for_client(client_sid: str) -> None:
+    """Check for updates and notify one connected client."""
     try:
         from utils.version_checker import compare_versions, get_latest_remote_version, resolve_update_target
         version_path = resolve_repository_path("VERSION", root=INSTALL_ROOT)
@@ -3377,16 +3362,27 @@ def handle_connect():
                 "Rerun install_neverendingquest_windows.bat and choose Update existing installation."
             )
 
-        emit('version_status', {
+        payload = {
             'update_available': status == 'update_available',
             'update_supported': update_supported,
             'local_version': local_ver,
             'remote_version': remote_ver,
             'message': message,
             'install_hint': install_hint
-        })
+        }
+        socketio.emit('version_status', payload, to=client_sid)
     except Exception as e:
         print(f"[VERSION_CHECK] Error checking for updates: {e}")
+
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    emit('connected', {'data': 'Connected to NeverEndingQuest'})
+
+    client_sid = request.sid
+    # TABLETOP MODE: Keep Socket.IO connect responsive while update checks use git/network.
+    socketio.start_background_task(_check_version_status_for_client, client_sid)
 
     # Load and send cached messages from previous session
     cached_messages = load_message_cache()
@@ -4503,6 +4499,9 @@ def extract_module_context_for_monsters(module_name):
 def run_game_loop():
     """Run the main game loop with enhanced error handling"""
     global game_thread
+    from utils.llm_runtime import begin_llm_session
+
+    begin_llm_session()
     try:
         # TABLETOP MODE: Web launch path must hydrate runtime files too.
         # main.main() performs this for CLI launches, but web mode calls
@@ -4652,11 +4651,19 @@ def send_output_to_clients():
                         'session_cost_nzd': stats.get('session_cost_nzd', 0.0),
                         'session_cost_source': stats.get('session_cost_source', 'unavailable'),
                         'session_cost_estimate': stats.get('session_cost_estimate', True),
+                        'session_cost_actual_usd': stats.get('session_cost_actual_usd'),
+                        'session_cost_estimated_usd': stats.get('session_cost_estimated_usd'),
+                        'session_unpriced_calls': stats.get('session_unpriced_calls'),
+                        'session_cost_complete': stats.get('session_cost_complete'),
                         # Week rollups with cost (new)
                         'week_tokens': stats.get('week_tokens', 0),
                         'week_cost_usd': stats.get('week_cost_usd', 0.0),
                         'week_cost_nzd': stats.get('week_cost_nzd', 0.0),
                         'week_cost_source': stats.get('week_cost_source', 'unavailable'),
+                        'week_cost_actual_usd': stats.get('week_cost_actual_usd'),
+                        'week_cost_estimated_usd': stats.get('week_cost_estimated_usd'),
+                        'week_unpriced_calls': stats.get('week_unpriced_calls'),
+                        'week_cost_complete': stats.get('week_cost_complete'),
                     # Cost metadata (new)
                     'usd_to_nzd_rate': stats.get('usd_to_nzd_rate', 1.65),
                     'usd_to_nzd_source': stats.get('usd_to_nzd_source', 'fallback'),
@@ -4679,11 +4686,19 @@ def send_output_to_clients():
                             'session_cost_nzd': 0.0,
                             'session_cost_source': 'unavailable',
                             'session_cost_estimate': True,
+                            'session_cost_actual_usd': None,
+                            'session_cost_estimated_usd': None,
+                            'session_unpriced_calls': None,
+                            'session_cost_complete': None,
                             # Week rollups with cost (new - safe defaults)
                             'week_tokens': 0,
                             'week_cost_usd': 0.0,
                             'week_cost_nzd': 0.0,
                             'week_cost_source': 'unavailable',
+                            'week_cost_actual_usd': None,
+                            'week_cost_estimated_usd': None,
+                            'week_unpriced_calls': None,
+                            'week_cost_complete': None,
                             # Cost metadata (new - safe defaults)
                             'usd_to_nzd_rate': 1.65,
                             'usd_to_nzd_source': 'fallback',
@@ -4936,7 +4951,6 @@ def fetch_npc_descriptions():
     def generate_descriptions():
         try:
             import time
-            from openai import OpenAI
             from utils.file_operations import safe_read_json, safe_write_json
             from utils.encoding_utils import sanitize_text
             
@@ -4947,9 +4961,6 @@ def fetch_npc_descriptions():
                 OPENAI_API_KEY = None
                 error("TOOLKIT: OpenAI API key not found")
                 return
-            
-            # Use factory to create client (supports OpenAI and OpenRouter)
-            client = create_chat_client()
             
             # Load NPC compendium
             npc_compendium_path = 'data/bestiary/npc_compendium.json'
@@ -5000,27 +5011,24 @@ Example Output Format:
 """
 
                 try:
-                    # Call OpenAI API with the new system message and prompt
-                    config = get_model_config("dm_mini", DM_MINI_MODEL)  # OPENROUTER: 3-tier model selection
-                    response = client.chat.completions.create(
-                        model=config["model"], **config.get("extra_body", {}),
+                    response_text = llm.call(
+                        task="dm_mini",
                         messages=[
                             {"role": "system", "content": "You are an expert AI prompt engineer specializing in fantasy character art. Your task is to write image generation prompts, not narrative descriptions. The prompts you write will be used to create digital paintings."},
                             {"role": "user", "content": prompt}
                         ],
-                        temperature=0.8
+                        json_output=False,
+                        observer=make_legacy_receipt_observer(
+                            legacy_context={
+                                'endpoint': 'web_validation',
+                                'purpose': 'validate_web_response',
+                                'interface': 'web',
+                            },
+                            track_usage=USAGE_TRACKING_AVAILABLE,
+                        ),
                     )
-                    
-                    # Track token usage
-                    if USAGE_TRACKING_AVAILABLE:
-                        try:
-                            from utils.openai_usage_tracker import get_global_tracker
-                            tracker = get_global_tracker()
-                            tracker.track(response, context={'endpoint': 'web_validation', 'purpose': 'validate_web_response', 'interface': 'web'})
-                        except:
-                            pass
-                    
-                    description = response.choices[0].message.content
+
+                    description = response_text
                     description = sanitize_text(description)
                     
                     # Save to NPC compendium
@@ -6279,20 +6287,13 @@ def _generate_toolkit_npc_description(
     provider_stage = "toolkit_mmg.npc_description"
     fallback_description = f"A fantasy NPC named {asset_name}"
     try:
-        if client is None:
-            client = create_chat_client()
-        config = get_model_config("npc_builder")
         ai_prompt = (
             f"Generate a 150-200 word visual description for {asset_name} "
             f"suitable for AI image generation. Include physical appearance, "
             f"clothing, demeanor, and any notable features."
         )
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "npc_builder",
-                NPC_BUILDER_MODEL,
-                temperature_override=config.get("temperature", 0.7),
-            ),
+        response_text = llm.call(
+            task="npc_builder",
             messages=[
                 {
                     "role": "system",
@@ -6300,9 +6301,10 @@ def _generate_toolkit_npc_description(
                 },
                 {"role": "user", "content": ai_prompt},
             ],
+            json_output=False,
             max_tokens=300,
         )
-        description = response.choices[0].message.content.strip()
+        description = response_text.strip()
         if not description:
             raise ValueError("empty_provider_response")
         return {"status": "success", "description": description}

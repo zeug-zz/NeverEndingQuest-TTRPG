@@ -20,12 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from model_config import DM_MAIN_MODEL
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-)
+from utils.ai_client_factory import get_model_config
 from utils.enhanced_logger import warning
+from utils.llm_router import llm
 from utils.toolkit_homebrew_upload_contract import (
     build_normalized_packet_placeholder,
     compute_sha256,
@@ -472,20 +469,16 @@ def normalize_homebrew_upload(
                     f"### SECTION CONTEXT\n{section_payload}"
                 )
                 try:
-                    client = create_chat_client()
-                    resp = client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "builders",
-                            DM_MAIN_MODEL,
-                            temperature_override=section_config.get("temperature", 0.2),
-                        ),
+                    # TABLETOP MODE: route normalization chat through the shared facade.
+                    resp = llm.call(
+                        task="builders",
                         messages=[
                             {"role": "system", "content": section_prompt},
                             {"role": "user", "content": user_msg},
                         ],
-                        timeout=90,
+                        json_output=False,
                     )
-                    section_raw = _as_string(resp.choices[0].message.content)
+                    section_raw = _as_string(resp)
                     parsed, err = _extract_json_payload(section_raw)
                     if err:
                         result = record_section_extraction_result(
@@ -548,21 +541,16 @@ def normalize_homebrew_upload(
                     f"MECHANICAL_CANDIDATES:\n{json.dumps(identity_atoms[:30], ensure_ascii=True)}\n\n"
                     f"SECTION_FACTS:\n{json.dumps([r.get('evidence_summary', {}) for r in section_results], ensure_ascii=True)}"
                 )
-                ident_client = create_chat_client()
                 ident_config = get_model_config("builders", DM_MAIN_MODEL)
-                ident_resp = ident_client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "builders",
-                        DM_MAIN_MODEL,
-                        temperature_override=ident_config.get("temperature", 0.2),
-                    ),
+                ident_resp = llm.call(
+                    task="builders",
                     messages=[
                         {"role": "system", "content": identity_prompt},
                         {"role": "user", "content": identity_user_msg},
                     ],
-                    timeout=90,
+                    json_output=False,
                 )
-                ident_raw = _as_string(ident_resp.choices[0].message.content)
+                ident_raw = _as_string(ident_resp)
                 ident_parsed, ident_err = _extract_json_payload(ident_raw)
                 if ident_err:
                     identity_degraded = True
@@ -639,21 +627,16 @@ def normalize_homebrew_upload(
                     f"SOURCE_GRAPH_SUMMARY:\n{json.dumps(source_graph_summary or {}, ensure_ascii=True)}\n\n"
                     f"IDENTITY_SUMMARY:\n{json.dumps(identity_report.get('summary', {}), ensure_ascii=True)}"
                 )
-                topo_client = create_chat_client()
                 topo_config = get_model_config("builders", DM_MAIN_MODEL)
-                topo_resp = topo_client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "builders",
-                        DM_MAIN_MODEL,
-                        temperature_override=topo_config.get("temperature", 0.2),
-                    ),
+                topo_resp = llm.call(
+                    task="builders",
                     messages=[
                         {"role": "system", "content": topology_prompt},
                         {"role": "user", "content": topology_user_msg},
                     ],
-                    timeout=90,
+                    json_output=False,
                 )
-                topo_raw = _as_string(topo_resp.choices[0].message.content)
+                topo_raw = _as_string(topo_resp)
                 topo_parsed, topo_err = _extract_json_payload(topo_raw)
                 if topo_err:
                     topology_degraded = True
@@ -760,20 +743,15 @@ def normalize_homebrew_upload(
     )
 
     try:
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "builders",
-                DM_MAIN_MODEL,
-                temperature_override=model_config.get("temperature", 0.3),
-            ),
+        response = llm.call(
+            task="builders",
             messages=[
                 {"role": "system", "content": prompt_template},
                 {"role": "user", "content": user_prompt},
             ],
-            timeout=120,
+            json_output=False,
         )
-        model_text = _as_string(response.choices[0].message.content)
+        model_text = _as_string(response)
     except Exception as provider_error:
         report = {
             "status": "failed",
@@ -900,20 +878,15 @@ def normalize_homebrew_upload(
                 rejected_ops: List[Dict[str, Any]] = []
 
                 try:
-                    repair_client = create_chat_client()
-                    repair_resp = repair_client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "builders",
-                            DM_MAIN_MODEL,
-                            temperature_override=repair_config.get("temperature", 0.2),
-                        ),
+                    repair_resp = llm.call(
+                        task="builders",
                         messages=[
                             {"role": "system", "content": repair_prompt},
                             {"role": "user", "content": repair_user_msg},
                         ],
-                        timeout=90,
+                        json_output=False,
                     )
-                    model_output = _as_string(repair_resp.choices[0].message.content)
+                    model_output = _as_string(repair_resp)
                     parsed, parse_err = _extract_json_payload(model_output)
                     if parse_err:
                         attempt_artifact = build_repair_attempt_artifact(

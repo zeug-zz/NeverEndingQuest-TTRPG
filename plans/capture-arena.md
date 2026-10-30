@@ -1,13 +1,14 @@
 # Capture Arena - Gameplay UX Capture Rig (Tiers 1-5)
 
-Status: ACTIVE PLANNING - capability roadmap, no implementation commitment
-Date: 2026-09-22
+Status: ACTIVE - bounded rollout capture prerequisites approved; broader tiers remain planning
+Date: 2026-10-14
 Owner: Dev tooling / gameplay QA
 Related:
 
 - `.opencode/skills/neq-capture-arena/SKILL.md` - the runbook/skill (primary socket path + browser appendix)
-- `openspec/changes/combat-latency-baseline/` - the change that delivered the rig and the G1 baseline
-- `plans/combat-openrouter-alignment.md` - gate G5 and the router bake-off consume this rig
+- `openspec/changes/archive/2026-09-22-combat-latency-baseline/` - completed rig and G1 baseline
+- `openspec/changes/combat-manager-decomposition/` - required bounded G3 scenario/evidence tasks
+- `plans/combat-openrouter-alignment.md` - primary-owned G3/G4/G5/G7/G9/G10 matrix; candidate bake-off already accepted
 - `plans/version-2/openrouter_llm_router_architecture.md` - model/stack decisions the rig can measure
 - `adrs/0032-single-tabletop-runtime.md`, `adrs/0031-independent-development-fork.md`
 
@@ -15,6 +16,12 @@ This document describes what the rig can do today, then outlines five open-ended
 extension tiers. The intent is that future v2 test scenarios (encumbrance checks,
 Titan/Chaos weather, spell use, Jev decisions) are authored as scenario data and
 expectations, not as new test infrastructure.
+
+The owner-approved 2026-10-14 workflow update promotes only the small scenario/
+assertion subset needed for the current rollout. It does not approve full Tiers
+1-5, new gameplay, a Titan runtime, Jev, browser instrumentation or a new runner.
+The rollout is paused until the owner resumes it; this documentation change is
+not implementation of those capture tasks and contains no new live verdicts.
 
 ---
 
@@ -40,12 +47,15 @@ expectations, not as new test infrastructure.
 | 1-PC party, 1 round + enemy phase | `tmp/combat_baseline_one_pc.jsonl` | 69 | 4 | 0 | 75.6 s |
 
 Numbers and target assessment are recorded in
-`openspec/changes/combat-latency-baseline/design.md` (Gate G1 Baseline).
+`openspec/changes/archive/2026-09-22-combat-latency-baseline/design.md`
+(Gate G1 Baseline). Preserve these historical files and model identity; new
+captures use unique `tmp/router-rollout/<gate>/<run-id>/` directories.
 
 ### 1.3 Skill coverage vs current gaps
 
-The skill is a complete runbook for the combat capture scope. The gaps below are
-deliberate and define Tiers 1-4:
+The skill describes execution and acceptance; the current default driver alone
+does not cover the G3 contract. These gaps define future tiers, with only the
+bounded required rollout subset promoted below:
 
 | Gap | Reality today |
 |---|---|
@@ -77,6 +87,33 @@ deliberate and define Tiers 1-4:
 ---
 
 ## 3) Extension tiers
+
+### Approved rollout subset - before G3
+
+Implement decomposition tasks 4.3 and 4.4 through the existing seeder/driver and
+fixture/report helpers, with provider-free tooling tests. Add bounded named
+`combat-smoke`, `initiative-pc`, `initiative-dm-tie`, `death-save`,
+`surrender-exit` (two separate branches) and `resume-replay` cases for 1-PC/4-PC
+parties. Wrong-actor death-save coverage applies to 4-PC; declare applicability
+before execution. Preserve default fixed latency scripts for G5 comparability.
+Scenario IDs/options are requirements, not already-implemented CLI features.
+
+Capture initial/final sandbox state and check Python-owned effects, legal actors,
+phase/round markers and no-duplicate replay. Preserve a manifest, transcript,
+server log, trace/report, state snapshots and required-check results in each run
+directory before teardown. Record scenario/seed/source-worktree and transport
+identity, bounds and actual counts. Primary review produces PASS/FAIL/BLOCKED;
+driver/report exit zero, timeout warnings or missing required evidence cannot PASS.
+Do not copy credential/config values into evidence or call mocks live evidence.
+
+The primary orchestrator runs and judges live captures after focused tests;
+builders implement tooling/fixes only. Later G4/G5/G7/G9/G10 coverage is defined in
+the alignment matrix and authored into each owning change before implementation.
+Reuse this rig instead of creating a parallel runner or adding an extra rollout
+phase. Completed G1 and owner-attested candidate selection remain accepted.
+
+Broader external scenario formats, generalized narrator traces, optional LLM
+judges, client metrics and matrix/CI orchestration remain unapproved future tiers.
 
 ### Tier 1 - Data-driven scenario packs
 
@@ -212,12 +249,40 @@ regression coverage in CI.
 
 ## 6) Activation path
 
-1. Tier 1 + Tier 2 as one OpenSpec change after `combat-latency-baseline`
-   archives (working name `gameplay-ux-capture-rig`): scenario packs plus the
-   generalized session trace.
+1. Required rollout subset: bounded scenario/evidence support in
+   `combat-manager-decomposition`, followed by primary G3 captures when the goal
+   is active. Subsequent gates reuse the same rig and add their owning criteria.
+   The remaining generalized Tier 1 + Tier 2 work may be proposed separately
+   (working name `gameplay-ux-capture-rig`); it is not a prerequisite for this goal.
 2. Tier 3 per scenario family as features land, using the test-first pattern.
 3. Tier 4 as its own change (touches JS and hot paths; needs its own budget
    discussion).
-4. Tier 5 attaches to the router bake-off and v2 model work.
+4. Tier 5 may support optional future model comparisons and v2 work; the accepted
+   router candidate bake-off is not a required rerun.
 5. The skill (`neq-capture-arena`) remains the single runbook: each tier
    updates it instead of adding parallel test infrastructure.
+
+### G10: usage accounting and primary-owned live review
+
+The cleanup change adds a read-only `/usage` projection: it reports router
+totals and existing session/rolling-week rollups without making a provider
+request or changing gameplay state. Router receipts own chat response cost
+provenance. Actual costs are counted once; estimates are included only when
+verified against the concrete resolved model; otherwise observed chat tokens
+remain while the event is marked unpriced and cost coverage incomplete. Existing
+media events remain cost-only and do not add chat tokens. Debug `token_update`
+adds actual/estimated subtotals, unpriced counts, and completeness to session and
+week rollups while preserving existing token statistics and safe defaults for
+older payloads.
+
+G10 requires one bounded full-session capture for each 1-PC and 4-PC party,
+including narration, combat, save, restart/resume, `/usage`, and Debug
+session/week provenance. Preserve each evidence bundle under
+`tmp/router-rollout/g10/<run-id>/` before teardown, with the isolated real copy
+under `tmp/combat_capture/`, port 8360, `NEQ_OPEN_BROWSER=0`, and the repository
+venv. Retain scenario/party/seed/worktree/model-provider identity, transcript,
+owned-server log, state/save evidence, and expected-versus-observed checks.
+Review resumed state for duplicate mechanics, rewards, or chat costs. The
+provider-free evaluator reports readiness only; only the primary orchestrator
+may record PASS, FAIL, or BLOCKED after evidence review. Exit status, degraded
+or synthetic evidence, and builder results cannot establish PASS.

@@ -30,6 +30,10 @@ import sys
 import unittest
 from types import SimpleNamespace
 
+from scripts.core_chat_test_safety import arm_process_tripwires
+
+_PROCESS_TRIPWIRES = arm_process_tripwires()
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -628,29 +632,27 @@ class TestNoEmptySuccessArtifacts(unittest.TestCase):
 
 
 class TestMainNarratorSourceContract(unittest.TestCase):
-    """The wired narrator sites use the guarded helper, not raw create calls."""
+    """The main narrator delegates bounded recovery and terminal policy to the facade."""
 
     def test_get_ai_response_routes_all_narrator_sites_through_helper(self) -> None:
         segment = _load_get_ai_response_source()
 
-        helper_call = "request_chat_completion_with_recovery("
-        self.assertEqual(segment.count(helper_call), 4)
-        self.assertIn(
-            "from utils.provider_response_recovery import "
-            "request_chat_completion_with_recovery",
-            segment,
-        )
+        self.assertEqual(segment.count("llm.call("), 1)
+        self.assertIn('task="dm_main"', segment)
+        self.assertIn("empty_retry_limit=2", segment)
+        self.assertIn("model_tier=model_tier", segment)
+        self.assertIn("json_output=False", segment)
+        self.assertNotIn("request_chat_completion_with_recovery", segment)
         self.assertNotIn("client.chat.completions.create(", segment)
 
-        content_assignment = "content = response.choices[0].message.content.strip()"
+        content_assignment = "content = content.strip()"
         self.assertIn(content_assignment, segment)
-        self.assertGreater(segment.find(content_assignment), segment.rfind(helper_call))
+        self.assertGreater(segment.find(content_assignment), segment.find("llm.call("))
 
     def test_terminal_empty_still_surfaces_provider_error_in_main(self) -> None:
         segment = _load_get_ai_response_source()
 
-        self.assertIn("handle_provider_error(", segment)
-        self.assertIn('context="DM response generation', segment)
+        self.assertIn("except GameLLMTerminalError:", segment)
 
 
 if __name__ == "__main__":

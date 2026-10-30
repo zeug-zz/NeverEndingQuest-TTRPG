@@ -100,12 +100,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
+from utils.ai_client_factory import handle_provider_error
+from utils.llm_router import llm
 import config
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 
@@ -132,8 +128,6 @@ class ModuleStitcher:
         self.world_registry_file = os.path.join(self.modules_dir, "world_registry.json")
         self.party_tracker_file = os.path.join(self.root_dir, "party_tracker.json")
         self.provider_stage_errors = []
-        self.client = create_chat_client()
-
         # Ensure directories exist
         os.makedirs(self.modules_dir, exist_ok=True)
 
@@ -444,26 +438,21 @@ FIRST AREA: {first_area_name} ({first_area_type})
 Create atmospheric travel narration that leads into this adventure."""
             
             provider_stage = "module_stitcher.travel_narration"
-            model_config = get_model_config("travel_narration", config.DM_SUMMARIZATION_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = self.client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "travel_narration",
-                            config.DM_SUMMARIZATION_MODEL,
-                            temperature_override=model_config.get("temperature", 0.8),
-                        ),
+                    response = llm.call(
+                        task="travel_narration",
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
-                        ]
+                        ],
+                        json_output=False,
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, provider_stage)
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        self.client = create_chat_client(use_fallback=True)
                         continue
                     self._record_provider_stage_error(
                         provider_stage,
@@ -473,7 +462,7 @@ Create atmospheric travel narration that leads into this adventure."""
                     raise
             
             # Parse AI response
-            ai_response = response.choices[0].message.content
+            ai_response = response
             try:
                 narration_data = json.loads(ai_response)
                 return {
@@ -1128,26 +1117,21 @@ Respond with JSON:
 {{"safe": true/false, "reason": "explanation if unsafe"}}"""
             
             provider_stage = "module_stitcher.safety_review"
-            model_config = get_model_config("safety_review", config.DM_SUMMARIZATION_MODEL)
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = self.client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "safety_review",
-                            config.DM_SUMMARIZATION_MODEL,
-                            temperature_override=model_config.get("temperature", 0.1),
-                        ),
+                    response = llm.call(
+                        task="safety_review",
                         messages=[
                             {"role": "system", "content": "You are a content safety reviewer for family-friendly fantasy gaming content. Be strict but reasonable in your assessment."},
                             {"role": "user", "content": safety_prompt}
-                        ]
+                        ],
+                        json_output=False,
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, provider_stage)
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        self.client = create_chat_client(use_fallback=True)
                         continue
                     self._record_provider_stage_error(
                         provider_stage,
@@ -1156,7 +1140,7 @@ Respond with JSON:
                     )
                     raise
             
-            ai_response = response.choices[0].message.content
+            ai_response = response
             try:
                 safety_result = json.loads(ai_response)
                 if not safety_result.get('safe', False):

@@ -16,13 +16,13 @@ Conservative deterministic parser for multi-PC PC_PHASE natural-language actions
 Only handles complete, unambiguous actions. Falls back to full combat LLM on uncertainty.
 """
 
-import hashlib
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils.character_state_hygiene import is_mechanically_dead
 from utils.pc_manager import get_character_state
+from core.combat import narration as combat_narration
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -38,6 +38,22 @@ _HEAL_PATTERN = re.compile(
     r"\b(cure\s*wounds|heal(?:ing)?|healing\s*word|prayer\s*of\s*healing|lay\s*on\s*hands|goodberry)\b",
     re.IGNORECASE,
 )
+_HEALING_SPELL_NAME_RE = re.compile(
+    r"\b(?P<name>mass\s+cure\s+wounds|mass\s+healing\s+word|"
+    r"prayer\s+of\s+healing|cure\s+wounds|healing\s+word|"
+    r"goodberry|lay\s+on\s+hands)\b",
+    re.IGNORECASE,
+)
+_SPELL_SLOT_LEVEL_RE = re.compile(
+    r"\b(?:(?P<ordinal>\d+)(?P<suffix>st|nd|rd|th)[ -]level|"
+    r"level\s+(?P<plain>\d+))\s+(?:spell\s+)?slot\b",
+    re.IGNORECASE,
+)
+_SUPPORTED_SINGLE_TARGET_HEALING_SPELL_LEVELS = {
+    "cure wounds": 1,
+    "healing word": 1,
+}
+_TargetInfo = Dict[str, Any]
 _MAGIC_MISSILE = re.compile(r"\b(magic\s*missile|missile)\b", re.IGNORECASE)
 _MOVEMENT_VERBS = re.compile(
     r"\b(move|step|walk|run|advance|retreat|withdraw|approach|circle|dash|disengage|sprint)\b",
@@ -81,11 +97,7 @@ def _strip_article(text: str) -> str:
 
 def _pick_template(seed_parts: List[Any], templates: List[str]) -> str:
     """Deterministic template selection identical to multi_pc_combat logic."""
-    if not templates:
-        return ""
-    seed = "|".join(str(p or "") for p in seed_parts)
-    digest = hashlib.sha1(seed.encode("utf-8")).digest()
-    return templates[digest[0] % len(templates)]
+    return combat_narration.select_deterministic_template(seed_parts, templates)
 
 
 def _load_authoritative_character_state(character_name: str) -> Optional[Dict[str, Any]]:
@@ -140,6 +152,131 @@ def _choose_lowest_available_spell_slot(character_data: Dict[str, Any]) -> Optio
     return available_levels[0][1]
 
 
+def _declared_healing_spell(text: str) -> Optional[str]:
+    """Return one exact known healing-spell phrase, or an ambiguity sentinel."""
+    matches = list(_HEALING_SPELL_NAME_RE.finditer(text))
+    if len(matches) > 1:
+        return "__ambiguous__"
+    if matches:
+        return _WHITESPACE.sub(" ", matches[0].group("name")).strip().casefold()
+    if re.search(r"\b(?:cast(?:s|ing)?|spell)\s+(?:the\s+)?heal\b", text, re.IGNORECASE):
+        return "heal"
+    return None
+
+
+def _declared_spell_slot_level(text: str) -> Optional[int]:
+    """Resolve exactly one explicit ordinal/numeric spell-slot level."""
+    matches = list(_SPELL_SLOT_LEVEL_RE.finditer(text))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    raw_level = match.group("ordinal") or match.group("plain")
+    try:
+        level = int(raw_level)
+    except (TypeError, ValueError):
+        return None
+    suffix = match.group("suffix")
+    if suffix:
+        last_two = level % 100
+        expected_suffix = (
+            "th" if 11 <= last_two <= 13 else
+            {1: "st", 2: "nd", 3: "rd"}.get(level % 10, "th")
+        )
+        if suffix.casefold() != expected_suffix:
+            return None
+    return level
+
+
+def _available_spell_slot_at_level(
+    character_data: Dict[str, Any], level: int
+) -> Optional[str]:
+    """Return the named available slot only when its exact level is present."""
+    if not isinstance(character_data, dict) or level < 1 or level > 9:
+        return None
+    spellcasting = character_data.get("spellcasting", {})
+    if not isinstance(spellcasting, dict):
+        return None
+    spell_slots = spellcasting.get("spellSlots", {})
+    if not isinstance(spell_slots, dict):
+        return None
+    level_key = f"level{level}"
+    slot_data = spell_slots.get(level_key)
+    if not isinstance(slot_data, dict):
+        return None
+    try:
+        current = int(slot_data.get("current", 0))
+        maximum = int(slot_data.get("max", 0))
+    except (TypeError, ValueError):
+        return None
+    return level_key if current > 0 and maximum > 0 else None
+
+
+def _lowest_available_spell_slot_at_or_above(
+    character_data: Dict[str, Any], minimum_level: int
+) -> Optional[str]:
+    """Return the lowest available legal slot that can cast the given spell."""
+    if not isinstance(character_data, dict) or minimum_level < 1 or minimum_level > 9:
+        return None
+    spellcasting = character_data.get("spellcasting", {})
+    if not isinstance(spellcasting, dict):
+        return None
+    spell_slots = spellcasting.get("spellSlots", {})
+    if not isinstance(spell_slots, dict):
+        return None
+
+    available_levels: List[int] = []
+    for level_key, slot_data in spell_slots.items():
+        level = _spell_slot_level_number(level_key)
+        if (
+            level is None
+            or level < minimum_level
+            or level > 9
+            or not isinstance(slot_data, dict)
+        ):
+            continue
+        try:
+            current = int(slot_data.get("current", 0))
+            maximum = int(slot_data.get("max", 0))
+        except (TypeError, ValueError):
+            continue
+        if current > 0 and maximum > 0:
+            available_levels.append(level)
+
+    if not available_levels:
+        return None
+    return f"level{min(available_levels)}"
+
+
+def _extract_exact_healing_target(text: str) -> Optional[str]:
+    """Extract one explicitly named target without treating a set as one name."""
+    matches = list(re.finditer(
+        r"\b(?:on|to|targeting)\s+(.+?)"
+        r"(?=\s+(?:for|with|using)\b|[.!?]|$)",
+        text,
+        re.IGNORECASE,
+    ))
+    if len(matches) != 1:
+        return None
+    target = matches[0].group(1).strip()
+    target = re.sub(r"\s+within\s+\d+\s+feet?$", "", target, flags=re.IGNORECASE)
+    return target.strip() or None
+
+
+def _exact_target_match(
+    raw_text: str,
+    candidates: List[_TargetInfo],
+) -> Optional[_TargetInfo]:
+    """Resolve a healing target by full normalized identity, never substring."""
+    query = _canonicalize(_strip_article(raw_text))
+    if not query:
+        return None
+    matches = [
+        candidate for candidate in candidates
+        if _canonicalize(_strip_article(candidate["name"])) == query
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _parse_int(text: str) -> Optional[int]:
     """Return the first integer found in text, or None."""
     m = _INT_SEARCH.search(text)
@@ -159,9 +296,6 @@ def _extract_ints(text: str) -> List[int]:
 # ---------------------------------------------------------------------------
 # Target candidate resolution
 # ---------------------------------------------------------------------------
-
-_TargetInfo = Dict[str, Any]
-
 
 def _build_target_candidates(
     encounter_data: Dict[str, Any],
@@ -498,33 +632,102 @@ def parse_pc_phase_action(
 
     # --- Healing ---
     if _is_healing_action(lower):
-        heal_amount = _parse_heal_amount(clean)
+        # TABLETOP MODE: Named spells must resolve as an exact supported spell,
+        # available slot, and single exact target before the fast path may stage
+        # any healing or resource operation.
+        spell_name = _declared_healing_spell(clean)
+        if spell_name == "__ambiguous__":
+            result["fallback_reason"] = "heal_spell_name_ambiguous"
+            return result
+        if spell_name is None and re.search(
+            r"\b(?:cast(?:s|ing)?|spell)\b", lower
+        ):
+            result["fallback_reason"] = "heal_spell_name_unresolved"
+            return result
+
+        caster_slot_key = None
+        if spell_name is not None:
+            base_slot_level = _SUPPORTED_SINGLE_TARGET_HEALING_SPELL_LEVELS.get(
+                spell_name
+            )
+            if base_slot_level is None:
+                result["fallback_reason"] = "heal_spell_mechanics_unsupported"
+                return result
+
+            declared_slot_phrases = list(_SPELL_SLOT_LEVEL_RE.finditer(clean))
+            if len(declared_slot_phrases) > 1:
+                result["fallback_reason"] = "heal_spell_slot_unresolved"
+                return result
+
+            caster_state = _load_authoritative_character_state(actor_name)
+            if not caster_state:
+                result["fallback_reason"] = "heal_casting_state_unavailable"
+                return result
+            if declared_slot_phrases:
+                declared_slot_level = _declared_spell_slot_level(clean)
+                if declared_slot_level is None:
+                    result["fallback_reason"] = "heal_spell_slot_unresolved"
+                    return result
+                if declared_slot_level < base_slot_level or declared_slot_level > 9:
+                    result["fallback_reason"] = "heal_spell_slot_level_mismatch"
+                    return result
+                caster_slot_key = _available_spell_slot_at_level(
+                    caster_state, declared_slot_level
+                )
+            else:
+                caster_slot_key = _lowest_available_spell_slot_at_or_above(
+                    caster_state, base_slot_level
+                )
+            if not caster_slot_key:
+                result["fallback_reason"] = "heal_slot_unavailable"
+                return result
+
+            target_raw = _extract_exact_healing_target(clean)
+            if target_raw is None:
+                result["fallback_reason"] = "heal_target_set_unresolved"
+                return result
+            if re.search(r"[,;]|\b(?:and|or)\b", target_raw, re.IGNORECASE):
+                result["fallback_reason"] = "heal_target_set_unsupported"
+                return result
+            target = _exact_target_match(target_raw, candidates)
+            if not target:
+                result["fallback_reason"] = "heal_target_unresolved"
+                return result
+            heal_amount = _parse_heal_amount(
+                _SPELL_SLOT_LEVEL_RE.sub(" ", clean)
+            )
+        else:
+            heal_amount = _parse_heal_amount(clean)
+            if heal_amount is None:
+                result["fallback_reason"] = "heal_unclear_amount"
+                return result
+
+            # Resolve unspecific healing actions with the legacy conservative
+            # target parser. These are not treated as declared spell casts.
+            target_raw = None
+            for pat in [
+                re.compile(r"\b(?:on|for)\s+([A-Za-z][A-Za-z\s'-]+?)(?:\s+for|\s+with|\s*$)", re.IGNORECASE),
+                re.compile(r"\b(?:heal(?:ing)?|cure)\s+([A-Za-z][A-Za-z\s'-]+?)(?:\s+for|\s*$)", re.IGNORECASE),
+                re.compile(r"^([A-Za-z][A-Za-z\s'-]+?)\s+(?:takes?\s+)?heal(?:ing)?", re.IGNORECASE),
+            ]:
+                m = pat.search(clean)
+                if m:
+                    candidate = m.group(1).strip()
+                    if candidate and len(candidate) < 40:
+                        target_raw = candidate
+                        break
+
+            if target_raw is None:
+                result["fallback_reason"] = "heal_unclear_target"
+                return result
+
+            target = _unique_match(target_raw, candidates)
+            if not target:
+                result["fallback_reason"] = f"heal_ambiguous_target:{target_raw}"
+                return result
+
         if heal_amount is None:
             result["fallback_reason"] = "heal_unclear_amount"
-            return result
-
-        # Resolve target from text
-        # Try "on <target>", "<target> for <n>", "heal <target>"
-        target_raw = None
-        for pat in [
-            re.compile(r"\b(?:on|for)\s+([A-Za-z][A-Za-z\s'-]+?)(?:\s+for|\s+with|\s*$)", re.IGNORECASE),
-            re.compile(r"\b(?:heal(?:ing)?|cure)\s+([A-Za-z][A-Za-z\s'-]+?)(?:\s+for|\s*$)", re.IGNORECASE),
-            re.compile(r"^([A-Za-z][A-Za-z\s'-]+?)\s+(?:takes?\s+)?heal(?:ing)?", re.IGNORECASE),
-        ]:
-            m = pat.search(clean)
-            if m:
-                candidate = m.group(1).strip()
-                if candidate and len(candidate) < 40:
-                    target_raw = candidate
-                    break
-
-        if target_raw is None:
-            result["fallback_reason"] = "heal_unclear_target"
-            return result
-
-        target = _unique_match(target_raw, candidates)
-        if not target:
-            result["fallback_reason"] = f"heal_ambiguous_target:{target_raw}"
             return result
 
         if target.get("type") != "enemy":
@@ -546,19 +749,6 @@ def parse_pc_phase_action(
                     "ledger_event": None,
                 })
                 result["fallback_reason"] = "heal_dead_target"
-                return result
-
-        # Detect spell casting for slot spend
-        has_spell_indicator = bool(re.search(r"\b(cure\s*wounds|healing\s*word|prayer|lay\s*on\s*hands|spell|cast)\b", lower))
-        caster_slot_key = None
-        if has_spell_indicator:
-            caster_state = _load_authoritative_character_state(actor_name)
-            if not caster_state:
-                result["fallback_reason"] = "heal_casting_state_unavailable"
-                return result
-            caster_slot_key = _choose_lowest_available_spell_slot(caster_state)
-            if not caster_slot_key:
-                result["fallback_reason"] = "heal_slot_unavailable"
                 return result
 
         character_updates = [{

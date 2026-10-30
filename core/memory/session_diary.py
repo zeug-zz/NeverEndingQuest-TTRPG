@@ -32,11 +32,10 @@ except ImportError:
 
 try:
     from utils.ai_client_factory import (
-        create_chat_client,
-        get_chat_completion_params,
         get_model_config,
         handle_provider_error,
     )
+    from utils.llm_router import llm
 
     AI_CLIENTS_AVAILABLE = True
 except ImportError:
@@ -886,10 +885,12 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
         return fallback_payload
 
     config = get_model_config("summaries", DM_SUMMARIZATION_MODEL)
-    client = create_chat_client()
 
     try:
-        response = client.chat.completions.create(
+        # TABLETOP MODE: G10 provenance is a fixed capture-only source label.
+        generated = llm.call(
+            task="summaries",
+            g10_source_id="core/memory/session_diary.py:_generate_rebuild_chapter_summary",
             messages=[
                 {
                     "role": "system",
@@ -900,15 +901,9 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
                     "content": prompt,
                 },
             ],
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.7,
-            ),
+            json_output=False,
         )
-        generated = ""
-        if response.choices and response.choices[0].message:
-            generated = str(response.choices[0].message.content or "").strip()
+        generated = str(generated or "").strip()
         sanitized = _sanitize_generated_chapter_summary(generated, fallback_summary)
         if sanitized == fallback_summary:
             return fallback_payload
@@ -921,8 +916,9 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
         error_info = handle_provider_error(generation_error, context="session_diary_chapter_rebuild")
         if error_info.get("should_fallback"):
             try:
-                fallback_client = create_chat_client(use_fallback=True)
-                fallback_response = fallback_client.chat.completions.create(
+                fallback_generated = llm.call(
+                    task="summaries",
+                    g10_source_id="core/memory/session_diary.py:_generate_rebuild_chapter_summary",
                     messages=[
                         {
                             "role": "system",
@@ -933,15 +929,9 @@ def _generate_rebuild_chapter_summary(group: List[Dict[str, Any]], chapter_index
                             "content": prompt,
                         },
                     ],
-                    **get_chat_completion_params(
-                        "summaries",
-                        DM_SUMMARIZATION_MODEL,
-                        temperature_override=0.7,
-                    ),
+                    json_output=False,
                 )
-                generated = ""
-                if fallback_response.choices and fallback_response.choices[0].message:
-                    generated = str(fallback_response.choices[0].message.content or "").strip()
+                generated = str(fallback_generated or "").strip()
                 sanitized = _sanitize_generated_chapter_summary(generated, fallback_summary)
                 if sanitized != fallback_summary:
                     return {
@@ -1512,10 +1502,12 @@ def _generate_checkpoint_summary(
         return fallback_payload
 
     config = get_model_config("summaries", DM_SUMMARIZATION_MODEL)
-    client = create_chat_client()
 
     try:
-        response = client.chat.completions.create(
+        # TABLETOP MODE: G10 provenance is a fixed capture-only source label.
+        generated = llm.call(
+            task="summaries",
+            g10_source_id="core/memory/session_diary.py:_generate_checkpoint_summary",
             messages=[
                 {
                     "role": "system",
@@ -1526,15 +1518,9 @@ def _generate_checkpoint_summary(
                     "content": prompt,
                 },
             ],
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.7,
-            ),
+            json_output=False,
         )
-        generated = ""
-        if response.choices and response.choices[0].message:
-            generated = str(response.choices[0].message.content or "").strip()
+        generated = str(generated or "").strip()
         sanitized = _sanitize_generated_summary(generated, fallback_summary)
         if sanitized == fallback_summary:
             return fallback_payload
@@ -1547,8 +1533,9 @@ def _generate_checkpoint_summary(
         error_info = handle_provider_error(generation_error, context="session_diary")
         if error_info.get("should_fallback"):
             try:
-                fallback_client = create_chat_client(use_fallback=True)
-                fallback_response = fallback_client.chat.completions.create(
+                fallback_generated = llm.call(
+                    task="summaries",
+                    g10_source_id="core/memory/session_diary.py:_generate_checkpoint_summary",
                     messages=[
                         {
                             "role": "system",
@@ -1559,15 +1546,9 @@ def _generate_checkpoint_summary(
                             "content": prompt,
                         },
                     ],
-                    **get_chat_completion_params(
-                        "summaries",
-                        DM_SUMMARIZATION_MODEL,
-                        temperature_override=0.7,
-                    ),
+                    json_output=False,
                 )
-                generated = ""
-                if fallback_response.choices and fallback_response.choices[0].message:
-                    generated = str(fallback_response.choices[0].message.content or "").strip()
+                generated = str(fallback_generated or "").strip()
                 sanitized = _sanitize_generated_summary(generated, fallback_summary)
                 if sanitized != fallback_summary:
                     return {

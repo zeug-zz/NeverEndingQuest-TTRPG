@@ -15,8 +15,20 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
-_FORBIDDEN_ACTION_VERB_PATTERN = re.compile(
-    r"\b(attacks?|hits?|strikes?|shoots?|casts?|uses?|moves?|charges?)\b",
+# Attribute only a verb in the same clause immediately following the named
+# actor. A short, bounded modifier allowance handles ordinary prose without
+# treating targets, attack-roll nouns, or a nearby later clause as actors.
+_ACTOR_ACTION_TAIL = re.compile(
+    r"^\s*(?:(?:then|now|quickly|immediately|finally)\s+)?"
+    r"(?P<verb>attacks?|hits?|strikes?|shoots?|casts?|uses?|moves?|charges?)\b",
+    re.IGNORECASE,
+)
+_PLANNED_ACTOR_ACTION_TAIL = re.compile(
+    r"^\s*(?P<verb>attacks?|hits?|strikes?|shoots?|casts?|uses?|moves?|charges?)\b",
+    re.IGNORECASE,
+)
+_NEGATED_ACTOR_ACTION = re.compile(
+    r"^\s*(?:takes\s+no\s+action|does\s+not\s+(?:attack|hit|strike|shoot|cast|use|move|charge))\b",
     re.IGNORECASE,
 )
 
@@ -148,8 +160,108 @@ def _contains_player_turn_prompt(text: str) -> bool:
     return any(prompt in lowered for prompt in prompts)
 
 
-def _has_forbidden_actor_action(text: str, forbidden_actors: List[str]) -> Optional[str]:
-    """Return actor name when explicit forbidden actor action is found."""
+def _declares_pending_actor_turn(clause: str, actor: str) -> bool:
+    """Recognize a few bounded actor-subject declaration forms in one clause."""
+    words = [part for part in re.split(r"[^a-z0-9]+", actor.strip().lower()) if part]
+    if not words:
+        return False
+    actor_pattern = r"[\s_-]+".join(map(re.escape, words))
+    subject = re.match(
+        r"^\s*(?:(?:then|now|quickly|immediately|finally|the)\s+)?"
+        + actor_pattern
+        + r"(?P<possessive>'s)?(?![a-z0-9])",
+        clause,
+        re.IGNORECASE,
+    )
+    if not subject:
+        return False
+    tail = clause[subject.end():]
+    if re.match(
+        r"\s+(?:attacks?|misses?|hits?|strikes?|shoots?|casts?|uses?|moves?|charges?)\b",
+        tail,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        r"\s*:\s*attack(?:\s+roll\b|\[\d+\](?=\s|$|[.,;])|\b)",
+        tail,
+        re.IGNORECASE,
+    ):
+        return True
+    if subject.group("possessive") and re.match(
+        r"\s+(?:[a-z0-9_-]+\s+){1,3}(?:attacks?|strikes?)\b",
+        tail,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def _complete_enemy_batch_actor_coverage(response_json: Dict[str, Any], pending_enemies: Any) -> bool:
+    """Require explicit canonical actor-subject declarations for the full cohort."""
+    if not isinstance(pending_enemies, list) or not pending_enemies:
+        return False
+    texts: List[str] = []
+    for key in ("plan", "narration"):
+        value = response_json.get(key)
+        if isinstance(value, str):
+            texts.append(value)
+    actions = response_json.get("actions", [])
+    if isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, dict) or str(action.get("action", "")).strip().lower() != "updateencounter":
+                continue
+            params = action.get("parameters", {})
+            if isinstance(params, dict):
+                for key in ("changes", "reason"):
+                    value = params.get(key)
+                    if isinstance(value, str):
+                        texts.append(value)
+    clauses = [
+        clause.strip()
+        for text in texts
+        for clause in re.split(r"[.!?;\n]+", text)
+        if clause.strip()
+    ]
+    covered = set()
+    normalized_pending = set()
+    for actor in pending_enemies:
+        if not isinstance(actor, str) or not actor.strip():
+            return False
+        normalized_actor = _normalize_name_key(actor)
+        if not normalized_actor or normalized_actor in normalized_pending:
+            return False
+        normalized_pending.add(normalized_actor)
+        if any(_declares_pending_actor_turn(clause, actor) for clause in clauses):
+            covered.add(normalized_actor)
+    return covered == normalized_pending
+
+
+def _complete_enemy_batch_handoff(response_json: Dict[str, Any], phase_state: Dict[str, Any]) -> bool:
+    """Validate a trusted input seam, explicit cohort coverage, and legal round shape."""
+    if phase_state.get("full_enemy_batch_intent") is not True:
+        return False
+    pending_enemies = phase_state.get("pending_enemies")
+    if not _complete_enemy_batch_actor_coverage(response_json, pending_enemies):
+        return False
+    current_round = phase_state.get("current_round")
+    candidate_round = response_json.get("combat_round")
+    if type(current_round) is not int or type(candidate_round) is not int:
+        return False
+    if candidate_round == current_round:
+        return True
+    if candidate_round != current_round + 1:
+        return False
+    return (
+        phase_state.get("pc_phase_complete") is True
+        and phase_state.get("opening_batch_pending") is not True
+    )
+
+
+def _find_forbidden_actor_action(
+    text: str, forbidden_actors: List[str]
+) -> Optional[Dict[str, Any]]:
+    """Find a bounded, syntactically attributed forbidden actor action."""
     for actor_name in forbidden_actors:
         if not isinstance(actor_name, str):
             continue
@@ -158,11 +270,80 @@ def _has_forbidden_actor_action(text: str, forbidden_actors: List[str]) -> Optio
             continue
         actor_pattern = re.compile(rf"\b{re.escape(trimmed)}\b", re.IGNORECASE)
         for actor_match in actor_pattern.finditer(text):
-            window_start = max(actor_match.start() - 6, 0)
-            window_end = min(actor_match.end() + 64, len(text))
-            window = text[window_start:window_end]
-            if _FORBIDDEN_ACTION_VERB_PATTERN.search(window):
-                return trimmed
+            suffix = text[actor_match.end():actor_match.end() + 48]
+            if _NEGATED_ACTOR_ACTION.match(suffix):
+                continue
+            action_match = _ACTOR_ACTION_TAIL.match(suffix)
+            if not action_match:
+                # Permit the explicit imperative construction "Have X attack Y";
+                # do not generalize this to arbitrary nearby plan/narration text.
+                prefix = text[max(0, actor_match.start() - 8):actor_match.start()]
+                if re.search(r"\bhave\s+$", prefix, re.IGNORECASE):
+                    action_match = _PLANNED_ACTOR_ACTION_TAIL.match(suffix)
+            if not action_match:
+                continue
+            start = max(actor_match.start() - 6, 0)
+            end = min(actor_match.end() + action_match.end() + 48, len(text))
+            return {
+                "name": trimmed,
+                "start": start,
+                "end": end,
+                "verb": action_match.group("verb"),
+            }
+    return None
+
+
+def _has_forbidden_actor_action(text: str, forbidden_actors: List[str]) -> Optional[str]:
+    """Return actor name only when the same classifier attributes an action."""
+    match = _find_forbidden_actor_action(text, forbidden_actors)
+    return match["name"] if match else None
+
+
+def describe_forbidden_actor_rejection(
+    response_json: Dict[str, Any], phase_state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Return bounded, read-only context for a forbidden-actor rejection.
+
+    This reports the same bounded actor-attribution match used by validation.
+    """
+    if not isinstance(response_json, dict) or not isinstance(phase_state, dict):
+        return None
+    forbidden_actors = phase_state.get("forbidden_actors")
+    if not isinstance(forbidden_actors, list):
+        return None
+
+    texts: List[Tuple[str, str]] = []
+    for key in ("plan", "narration"):
+        value = response_json.get(key)
+        if isinstance(value, str) and value.strip():
+            texts.append((key, value))
+    actions = response_json.get("actions", [])
+    if isinstance(actions, list):
+        for index, action in enumerate(actions):
+            if not isinstance(action, dict):
+                continue
+            params = action.get("parameters", {})
+            if not isinstance(params, dict):
+                continue
+            for field in ("changes", "reason"):
+                value = params.get(field)
+                if isinstance(value, str) and value.strip():
+                    texts.append(("actions[%d].parameters.%s" % (index, field), value))
+
+    for actor_name in forbidden_actors:
+        if not isinstance(actor_name, str) or not actor_name.strip():
+            continue
+        name = actor_name.strip()
+        for field, text in texts:
+            match = _find_forbidden_actor_action(text, [name])
+            if match:
+                window = text[match["start"]:match["end"]]
+                return {
+                    "matched_name": name[:128],
+                    "source_field": field[:96],
+                    "window_excerpt": window[:256],
+                    "matched_verb": match["verb"][:32],
+                }
     return None
 
 
@@ -378,10 +559,13 @@ def validate_combat_phase_integrity_precheck(
         and len(pending_enemies) > 0
         and _contains_player_turn_prompt(combined_text)
     ):
-        return False, (
-            "Combat phase integrity precheck failed: response stopped or prompted during ENEMY_PHASE "
-            "before enemy batch completion."
-        )
+        if _complete_enemy_batch_handoff(response_json, phase_state):
+            pass
+        else:
+            return False, (
+                "Combat phase integrity precheck failed: response stopped or prompted during ENEMY_PHASE "
+                "before enemy batch completion."
+            )
 
     # Guard 3: Illegal exit while hostiles remain.
     if _has_exit_action(response_json):

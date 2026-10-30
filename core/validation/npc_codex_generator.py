@@ -48,11 +48,10 @@ import time
 import tempfile
 import shutil
 from datetime import datetime
-from openai import OpenAI
-import config
 from utils.module_path_manager import ModulePathManager
 from utils.encoding_utils import safe_json_load, safe_json_dump, sanitize_text
 from utils.file_operations import safe_write_json, safe_read_json
+from utils.llm_router import llm
 
 
 def generate_npc_codex(module_name):
@@ -202,8 +201,6 @@ def extract_npcs_with_ai(module_content, module_name):
         list: List of dictionaries with NPC name and source information
     """
     try:
-        client = OpenAI(api_key=config.OPENAI_API_KEY)
-        
         # Create extraction prompt - avoid f-string issues with JSON content
         plot_content = module_content.get('plot_content', 'No plot content found')
         area_content = module_content.get('area_content', 'No area content found')
@@ -253,17 +250,18 @@ EXISTING CHARACTER FILES:
 
 Extract all legitimate NPC names now:"""
 
-        response = client.chat.completions.create(
-            model=config.DM_MAIN_MODEL,
+        # TABLETOP MODE: provider transport and model selection are router-owned.
+        response_text = llm.call(
+            task="npc_builder",
             messages=[
                 {"role": "system", "content": "You are an expert at analyzing 5th edition of the world's most popular roleplaying game module content and extracting NPC names. You understand the difference between NPCs, locations, and monsters."},
                 {"role": "user", "content": extraction_prompt}
             ],
-            temperature=0.1  # Low temperature for consistent extraction
+            json_output=False,
         )
         
         # Parse the response
-        response_text = response.choices[0].message.content.strip()
+        response_text = response_text.strip()
         
         # Try to extract JSON from the response
         try:

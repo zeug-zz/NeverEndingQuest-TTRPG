@@ -65,7 +65,6 @@ import os
 import hashlib
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-from openai import OpenAI
 
 # Import OpenAI usage tracking (safe - won't break if fails)
 try:
@@ -74,9 +73,10 @@ try:
 except:
     USAGE_TRACKING_AVAILABLE = False
     def track_response(r): pass
-from config import OPENAI_API_KEY, CHARACTER_VALIDATOR_MODEL
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Set script name for logging
 set_script_name(__name__)
@@ -85,18 +85,6 @@ class AICharacterValidator:
     def __init__(self):
         """Initialize AI-powered validator with caching"""
         self.logger = logging.getLogger(__name__)
-        try:
-            self.client = OpenAI(api_key=OPENAI_API_KEY)
-        except Exception as e:
-            # Handle OpenAI client initialization error
-            error(f"Failed to initialize OpenAI client: {str(e)}", exception=e, category="character_validation")
-            error(f"OpenAI client initialization failed. This is likely an environment issue.", category="character_validation")
-            error(f"Error details: {type(e).__name__}: {str(e)}", category="character_validation")
-            info("Possible solutions:", category="character_validation")
-            info("1. Check if OpenAI library is properly installed: pip install openai==1.30.3", category="character_validation")
-            info("2. There may be a proxy or environment configuration issue", category="character_validation")
-            info("3. Try running in a different environment", category="character_validation")
-            raise
         self.corrections_made = []
         
         # Load prompts from external files
@@ -955,25 +943,24 @@ class AICharacterValidator:
         validation_prompt = self.build_ac_validation_prompt(ac_relevant_data)
         
         try:
-            response = self.client.chat.completions.create(
-                model=CHARACTER_VALIDATOR_MODEL,
-                temperature=0.1,  # Low temperature for consistent validation
+            observer = make_legacy_receipt_observer(
+                legacy_context={
+                    "endpoint": "character_validation",
+                    "purpose": "validate_character_data",
+                },
+                track_usage=USAGE_TRACKING_AVAILABLE,
+            )
+            # TABLETOP MODE: provider transport and model selection are router-owned.
+            response = llm.call(
+                task="validation",
                 messages=[
                     {"role": "system", "content": self.get_validator_system_prompt()},
                     {"role": "user", "content": validation_prompt}
-                ]
+                ],
+                json_output=False,
+                observer=observer,
             )
-            
-            # Track usage if available
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    from utils.openai_usage_tracker import get_global_tracker
-                    tracker = get_global_tracker()
-                    tracker.track(response, context={'endpoint': 'character_validation', 'purpose': 'validate_character_data'})
-                except:
-                    pass
-            
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response.strip()
             
             # Parse AI response to get corrected character data
             corrected_data = self.parse_ai_validation_response(ai_response, ac_relevant_data)
@@ -1045,26 +1032,25 @@ class AICharacterValidator:
                 # Build prompt with filtered inventory data
                 validation_prompt = self.build_inventory_validation_prompt(inventory_data)
                 
-                response = self.client.chat.completions.create(
-                    model=CHARACTER_VALIDATOR_MODEL,
-                    temperature=0.1,  # Low temperature for consistent validation
+                observer = make_legacy_receipt_observer(
+                    legacy_context={
+                        "endpoint": "character_validation",
+                        "purpose": "validate_character_effects",
+                    },
+                    track_usage=USAGE_TRACKING_AVAILABLE,
+                )
+                # TABLETOP MODE: provider transport and model selection are router-owned.
+                response = llm.call(
+                    task="validation",
                     messages=[
                         {"role": "system", "content": self.get_inventory_validator_system_prompt()},
                         {"role": "user", "content": validation_prompt}
-                    ]
+                    ],
+                    json_output=False,
+                    observer=observer,
                     # No max_tokens - let AI return full response
                 )
-                
-                # Track usage if available
-                if USAGE_TRACKING_AVAILABLE:
-                    try:
-                        from utils.openai_usage_tracker import get_global_tracker
-                        tracker = get_global_tracker()
-                        tracker.track(response, context={'endpoint': 'character_validation', 'purpose': 'validate_character_effects'})
-                    except:
-                        pass
-                
-                ai_response = response.choices[0].message.content.strip()
+                ai_response = response.strip()
                 
                 # Parse AI response to get inventory updates only
                 inventory_updates = self.parse_inventory_validation_response(ai_response, character_data)
@@ -1626,25 +1612,24 @@ IMPORTANT: Return ONLY the items that need their item_type corrected. Do not inc
         validation_prompt = self.build_combined_validation_prompt(character_data)
         
         try:
-            response = self.client.chat.completions.create(
-                model=CHARACTER_VALIDATOR_MODEL,
-                temperature=0.1,  # Low temperature for consistent validation
+            observer = make_legacy_receipt_observer(
+                legacy_context={
+                    "endpoint": "character_validation",
+                    "purpose": "validate_character_data",
+                },
+                track_usage=USAGE_TRACKING_AVAILABLE,
+            )
+            # TABLETOP MODE: provider transport and model selection are router-owned.
+            response = llm.call(
+                task="validation",
                 messages=[
                     {"role": "system", "content": self.get_combined_validator_system_prompt()},
                     {"role": "user", "content": validation_prompt}
-                ]
+                ],
+                json_output=False,
+                observer=observer,
             )
-            
-            # Track usage if available
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    from utils.openai_usage_tracker import get_global_tracker
-                    tracker = get_global_tracker()
-                    tracker.track(response, context={'endpoint': 'character_validation', 'purpose': 'validate_character_data'})
-                except:
-                    pass
-            
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response.strip()
             
             # Parse AI response to get all corrections
             corrected_data = self.parse_combined_validation_response(ai_response, character_data)
@@ -2020,25 +2005,24 @@ Remember to return a single JSON response with all four validation results."""
                 # Build prompt with filtered data
                 consolidation_prompt = self.build_inventory_consolidation_prompt(consolidation_data)
                 
-                response = self.client.chat.completions.create(
-                    model=CHARACTER_VALIDATOR_MODEL,
-                    temperature=0.1,  # Low temperature for consistent validation
+                observer = make_legacy_receipt_observer(
+                    legacy_context={
+                        "endpoint": "character_validation",
+                        "purpose": "validate_character_effects",
+                    },
+                    track_usage=USAGE_TRACKING_AVAILABLE,
+                )
+                # TABLETOP MODE: provider transport and model selection are router-owned.
+                response = llm.call(
+                    task="validation",
                     messages=[
                         {"role": "system", "content": self.get_inventory_consolidation_system_prompt()},
                         {"role": "user", "content": consolidation_prompt}
-                    ]
+                    ],
+                    json_output=False,
+                    observer=observer,
                 )
-                
-                # Track usage if available
-                if USAGE_TRACKING_AVAILABLE:
-                    try:
-                        from utils.openai_usage_tracker import get_global_tracker
-                        tracker = get_global_tracker()
-                        tracker.track(response, context={'endpoint': 'character_validation', 'purpose': 'validate_character_effects'})
-                    except:
-                        pass
-                
-                ai_response = response.choices[0].message.content.strip()
+                ai_response = response.strip()
                 
                 # Parse AI response to get consolidation updates only
                 consolidation_updates = self.parse_currency_consolidation_response(ai_response, character_data)

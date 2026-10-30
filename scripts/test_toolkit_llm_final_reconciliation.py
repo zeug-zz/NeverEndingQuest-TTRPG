@@ -260,17 +260,6 @@ def _fake_response(content: str, model_name: str = "test-model-xyz"):
     return response
 
 
-def _fake_client(response: MagicMock):
-    """Build a MagicMock stand-in for an OpenAI client."""
-    completions = MagicMock()
-    completions.create.return_value = response
-    chat = MagicMock()
-    chat.completions = completions
-    client = MagicMock()
-    client.chat = chat
-    return client
-
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -456,10 +445,10 @@ class TestResponseExtractionHelpers(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestRunnerPlumbing(unittest.TestCase):
-    """Minimal runner plumbing tests with a mocked chat client.
+    """Minimal runner plumbing tests with a mocked facade call.
 
     Comprehensive mock-provider contract is owned by Step 2.3. These
-    tests only prove the runner wires the existing chat-client and
+    tests only prove the runner wires the existing task profile and
     model-routing patterns without making a live provider call.
     """
 
@@ -492,8 +481,8 @@ class TestRunnerPlumbing(unittest.TestCase):
         self.assertEqual(len(result["diagnostics"]), 1)
         self.assertEqual(result["diagnostics"][0]["code"], "invalid_brief")
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
-    def test_runner_success_with_mocked_client(self, mock_create):
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
+    def test_runner_success_with_mocked_facade(self, mock_create):
         raw_text = json.dumps(
             {
                 "version": FINAL_RECONCILIATION_PATCH_VERSION,
@@ -504,8 +493,7 @@ class TestRunnerPlumbing(unittest.TestCase):
                 "file_patches": [],
             }
         )
-        response = _fake_response(raw_text, model_name="mocked-model")
-        mock_create.return_value = _fake_client(response)
+        mock_create.return_value = raw_text
 
         brief = _tiny_brief()
         original = copy.deepcopy(brief)
@@ -514,7 +502,9 @@ class TestRunnerPlumbing(unittest.TestCase):
 
         # Status and provider contract
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        self.assertEqual(result["model"], "mocked-model")
+        from model_config import DM_MAIN_MODEL
+
+        self.assertEqual(result["model"], DM_MAIN_MODEL)
         self.assertEqual(result["raw_response_text"], raw_text)
         self.assertIsNone(result["error"])
 
@@ -523,11 +513,18 @@ class TestRunnerPlumbing(unittest.TestCase):
         self.assertEqual(len(result["messages_used"]), 2)
         self.assertIsInstance(result["params_used"], dict)
         self.assertIn("model", result["params_used"])
+        request = mock_create.call_args.kwargs
+        self.assertEqual(request["task"], FINAL_RECONCILIATION_TASK_ID)
+        self.assertEqual(request["messages"], result["messages_used"])
+        self.assertIs(request["json_output"], False)
+        self.assertFalse(
+            {"model", "temperature", "top_p", "timeout", "client", "extra_body", "observer"}.intersection(request)
+        )
 
         # Brief was not mutated by the runner
         self.assertEqual(brief, original)
 
-        # create_chat_client was invoked exactly once
+        # Facade was invoked exactly once.
         mock_create.assert_called_once()
 
         # Step 2.4: ready status surfaces the parsed patch plan and
@@ -538,17 +535,14 @@ class TestRunnerPlumbing(unittest.TestCase):
         self.assertEqual(result["patch_plan"]["version"], FINAL_RECONCILIATION_PATCH_VERSION)
         self.assertEqual(result["diagnostics"], [])
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_runner_provider_failure_returns_status(self, mock_create):
-        client = MagicMock()
-        client.chat.completions.create.side_effect = RuntimeError(
-            "simulated provider outage"
-        )
-        mock_create.return_value = client
+        mock_create.side_effect = RuntimeError("simulated provider outage")
 
         result = run_llm_final_editor(_tiny_brief())
 
         self.assertEqual(result["status"], RUNNER_STATUS_PROVIDER_FAILED)
+        mock_create.assert_called_once()
         self.assertEqual(result["raw_response_text"], "")
         self.assertIn("simulated provider outage", result["error"])
         # params_used should still be populated so diagnostics can see
@@ -563,7 +557,7 @@ class TestRunnerPlumbing(unittest.TestCase):
         self.assertIn("simulated provider outage", result["diagnostics"][0]["message"])
 
     @patch("utils.toolkit_llm_final_reconciliation.get_chat_completion_params")
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_runner_param_resolution_failure_skips_provider(
         self, mock_create, mock_params
     ):
@@ -582,7 +576,7 @@ class TestRunnerPlumbing(unittest.TestCase):
         )
         self.assertIn("bad config", result["diagnostics"][0]["message"])
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_runner_does_not_write_files_or_call_packet_builder(
         self, mock_create
     ):
@@ -594,19 +588,17 @@ class TestRunnerPlumbing(unittest.TestCase):
         # this test is still that no filesystem side effects occur; we
         # use a refused payload to prove the parser path is also free of
         # writes and packet-builder integration.
-        response = _fake_response(
-            json.dumps(
-                {
-                    "version": FINAL_RECONCILIATION_PATCH_VERSION,
-                    "status": "refused",
-                    "source_fidelity_claim": "reconciled_degraded",
-                    "publication_intent": "playable_module",
-                    "decisions": [],
-                    "file_patches": [],
-                }
-            )
+        response = json.dumps(
+            {
+                "version": FINAL_RECONCILIATION_PATCH_VERSION,
+                "status": "refused",
+                "source_fidelity_claim": "reconciled_degraded",
+                "publication_intent": "playable_module",
+                "decisions": [],
+                "file_patches": [],
+            }
         )
-        mock_create.return_value = _fake_response_via(_fake_client, response)
+        mock_create.return_value = response
 
         brief = _tiny_brief()
         original = copy.deepcopy(brief)
@@ -631,19 +623,14 @@ class TestRunnerPlumbing(unittest.TestCase):
             self.assertNotIn(forbidden_key, result)
 
 
-def _fake_response_via(_builder, response):
-    """Tiny helper to keep the no-write assertion block readable."""
-    return _builder(response)
-
-
 # ---------------------------------------------------------------------------
 # Mock provider output path (Step 2.3)
 # ---------------------------------------------------------------------------
 
 class TestMockProviderOutputPath(unittest.TestCase):
     """Provider-free contract tests for the injected ``mock_provider_output``
-    short-circuit added in Step 2.3. These tests do NOT mock
-    ``create_chat_client`` and would fail loudly if the runner ever
+    short-circuit added in Step 2.3. These tests patch the facade call
+    and would fail loudly if the runner ever
     reached the live provider path while a mock output was supplied.
     """
 
@@ -651,7 +638,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         self.assertEqual(RUNNER_MOCK_MODEL, "mock_provider")
         self.assertEqual(RUNNER_MOCK_PARAMS_MARKER, {"mock_provider": True})
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_returns_exact_raw_text_and_messages(
         self, mock_create
     ):
@@ -697,12 +684,12 @@ class TestMockProviderOutputPath(unittest.TestCase):
         # Brief was not mutated.
         self.assertEqual(brief, original)
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
-    def test_mock_provider_output_does_not_call_create_chat_client(
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
+    def test_mock_provider_output_does_not_call_facade(
         self, mock_create
     ):
-        # This is the core Step 2.3 contract: with mock_provider_output
-        # supplied, the runner must NOT touch the live provider at all.
+        # With mock_provider_output supplied, the runner must NOT call
+        # the live facade path at all.
         # Step 2.4 widens this: the injected output is also parsed, so
         # non-JSON text surfaces as ``invalid_json`` instead of success.
         from utils.toolkit_llm_final_reconciliation import (
@@ -720,7 +707,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         mock_create.assert_not_called()
 
     @patch("utils.toolkit_llm_final_reconciliation.get_chat_completion_params")
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_skips_param_resolution(
         self, mock_create, mock_params
     ):
@@ -740,7 +727,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         mock_params.assert_not_called()
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_does_not_mutate_brief(self, mock_create):
         brief = _tiny_brief()
         original = copy.deepcopy(brief)
@@ -749,7 +736,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         # Sanity: provider was not even considered.
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_with_empty_string_still_short_circuits(
         self, mock_create
     ):
@@ -773,7 +760,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         self.assertIn("empty", result["diagnostics"][0]["message"])
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_with_non_string_coerces_to_string(
         self, mock_create
     ):
@@ -797,7 +784,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         self.assertEqual(result["diagnostics"][0]["code"], "invalid_json")
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_with_non_dict_brief_still_rejected(
         self, mock_create
     ):
@@ -813,7 +800,7 @@ class TestMockProviderOutputPath(unittest.TestCase):
         # Provider was never reached.
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
     def test_mock_provider_output_result_has_no_packet_or_write_fields(
         self, mock_create
     ):
@@ -854,23 +841,23 @@ class TestMockProviderOutputPath(unittest.TestCase):
             self.assertNotIn(forbidden_key, result)
         mock_create.assert_not_called()
 
-    @patch("utils.toolkit_llm_final_reconciliation.create_chat_client")
-    def test_normal_mock_client_path_from_step_2_2_still_works(self, mock_create):
+    @patch("utils.toolkit_llm_final_reconciliation.llm.call")
+    def test_normal_facade_path_from_step_2_2_still_works(self, mock_create):
         # Regression: when mock_provider_output is None, the runner
-        # must continue to use the existing mock-client plumbing
-        # added in Step 2.2. create_chat_client is called exactly
-        # once, the response model is preserved, and the brief is
+        # must continue to use the facade path. The task model is
+        # preserved, and the brief is
         # not mutated.
         raw_text = json.dumps(_valid_patch_plan())
-        response = _fake_response(raw_text, model_name="mocked-model-22")
-        mock_create.return_value = _fake_client(response)
+        mock_create.return_value = raw_text
 
         brief = _tiny_brief()
         original = copy.deepcopy(brief)
         result = run_llm_final_editor(brief)  # no mock_provider_output
 
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        self.assertEqual(result["model"], "mocked-model-22")
+        from model_config import DM_MAIN_MODEL
+
+        self.assertEqual(result["model"], DM_MAIN_MODEL)
         self.assertEqual(result["raw_response_text"], raw_text)
         # params_used is a real params dict, not the mock marker.
         self.assertIn("model", result["params_used"])
@@ -878,8 +865,12 @@ class TestMockProviderOutputPath(unittest.TestCase):
         # Step 2.4: parsed patch plan and empty diagnostics.
         self.assertEqual(result["patch_plan"]["status"], "ready")
         self.assertEqual(result["diagnostics"], [])
-        # Provider was used.
+        # Facade was used with the existing explicit task identifier.
         mock_create.assert_called_once()
+        request = mock_create.call_args.kwargs
+        self.assertEqual(request["task"], FINAL_RECONCILIATION_TASK_ID)
+        self.assertEqual(request["messages"], result["messages_used"])
+        self.assertIs(request["json_output"], False)
         # Brief unchanged.
         self.assertEqual(brief, original)
 
@@ -1255,15 +1246,12 @@ class TestRunnerFailClosedDiagnostics(unittest.TestCase):
             DIAGNOSTIC_CODE_PROVIDER_FAILED,
         )
 
-        client = MagicMock()
-        client.chat.completions.create.side_effect = RuntimeError(
-            "simulated provider outage"
-        )
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client",
-            return_value=client,
-        ):
+            "utils.toolkit_llm_final_reconciliation.llm.call",
+            side_effect=RuntimeError("simulated provider outage"),
+        ) as mock_call:
             result = run_llm_final_editor(_tiny_brief())
+        mock_call.assert_called_once()
         self.assertEqual(result["status"], RUNNER_STATUS_PROVIDER_FAILED)
         self.assertEqual(result["patch_plan"], {})
         self.assertEqual(len(result["diagnostics"]), 1)
@@ -3000,7 +2988,7 @@ class TestRunnerTargetValidationWiring(unittest.TestCase):
         # provider path.
         plan = _ready_plan_with_target("module_plot.json")
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client"
+            "utils.toolkit_llm_final_reconciliation.llm.call"
         ) as mock_create:
             result = run_llm_final_editor(
                 _brief_with_surfaces(["module_context.json"]),
@@ -3570,7 +3558,7 @@ class TestRunnerSourceFidelityClaimWiring(unittest.TestCase):
         # not reach the live provider path.
         plan = _ready_plan_with_source_fidelity_claim("pass")
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client"
+            "utils.toolkit_llm_final_reconciliation.llm.call"
         ) as mock_create:
             result = run_llm_final_editor(
                 _tiny_brief(), mock_provider_output=json.dumps(plan)
@@ -3584,7 +3572,7 @@ class TestRunnerSourceFidelityClaimWiring(unittest.TestCase):
         # any live provider call.
         plan = _ready_plan_with_source_fidelity_claim("reconciled_degraded")
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client"
+            "utils.toolkit_llm_final_reconciliation.llm.call"
         ) as mock_create:
             result = run_llm_final_editor(
                 _tiny_brief(), mock_provider_output=json.dumps(plan)
@@ -8818,7 +8806,7 @@ class TestStep43MockProviderOutputsPlumbing(unittest.TestCase):
         )
 
     @patch(
-        "utils.toolkit_llm_final_reconciliation.create_chat_client"
+        "utils.toolkit_llm_final_reconciliation.llm.call"
     )
     @patch(
         "utils.toolkit_llm_final_reconciliation"
@@ -8828,12 +8816,12 @@ class TestStep43MockProviderOutputsPlumbing(unittest.TestCase):
         "utils.toolkit_llm_final_reconciliation.run_llm_final_editor"
     )
     def test_no_live_provider_calls_when_mock_outputs_supplied(
-        self, mock_runner, mock_av_gate, mock_create_client
+        self, mock_runner, mock_av_gate, mock_facade_call
     ):
         # With mock_provider_outputs supplied, the orchestrator
         # MUST NOT touch the live provider. The runner's existing
         # mock short-circuit prevents the call, but we verify the
-        # create_chat_client mock is never invoked.
+        # The facade-call mock is never invoked.
         mock_runner.return_value = {
             "status": RUNNER_STATUS_SUCCESS,
             "patch_plan": _valid_patch_plan(),
@@ -8846,7 +8834,7 @@ class TestStep43MockProviderOutputsPlumbing(unittest.TestCase):
             mock_provider_outputs=["mock-output-0"],
         )
         # Live provider is never consulted.
-        mock_create_client.assert_not_called()
+        mock_facade_call.assert_not_called()
         self.assertEqual(
             result["status"],
             FINAL_RECONCILIATION_ORCHESTRATOR_STATUS_ACCEPTED,
@@ -8906,7 +8894,7 @@ class TestStep43MockProviderOutputsPlumbing(unittest.TestCase):
     ):
         # An empty list collapses to the live-provider path; the
         # orchestrator must still call the runner. We do not
-        # assert the create_chat_client path here because the
+        # assert the facade-call path here because the
         # live provider is not actually invoked (the test runner
         # has no network). Instead, the runner is called with
         # mock_provider_output=None, which the runner treats as
@@ -9670,15 +9658,14 @@ class TestStep45BlockedFinalReconciliationReport(unittest.TestCase):
 #      source_fidelity_pass) are rejected with
 #      ``DIAGNOSTIC_CODE_INVALID_SOURCE_FIDELITY_CLAIM`` and do not
 #      produce accepted reports.
-#   5. provider unavailable (patched create_chat_client or
-#      client.chat.completions.create failure) returns
+#   5. provider unavailable (a patched facade-call failure) returns
 #      ``RUNNER_STATUS_PROVIDER_FAILED`` with
 #      ``DIAGNOSTIC_CODE_PROVIDER_FAILED``; the runner does not silently
 #      accept and does not perform any file I/O.
 #
 # All tests are provider-free. The runner tests use the
 # ``mock_provider_output=`` short-circuit for invalid JSON cases and
-# patch ``create_chat_client`` for the live-provider unavailable case.
+# patch ``llm.call`` for the live-provider unavailable case.
 # No real LLM, no live CLI subprocess, no real module file is touched.
 #
 
@@ -9707,8 +9694,8 @@ class TestStep63InvalidJsonNegative(_TempModuleDirTestCase):
         )
         # Legacy error field is preserved.
         self.assertEqual(result["error"], "invalid_json")
-        # Mock-provider short-circuit preserved: create_chat_client is
-        # never called for the invalid-JSON path.
+        # Mock-provider short-circuit preserved: llm.call is never
+        # called for the invalid-JSON path.
         self.assertEqual(result["model"], RUNNER_MOCK_MODEL)
         self.assertEqual(result["params_used"], RUNNER_MOCK_PARAMS_MARKER)
 
@@ -9776,14 +9763,15 @@ class TestStep63ProviderUnavailableNegative(unittest.TestCase):
     on this path.
     """
 
-    def test_create_chat_client_raises_returns_provider_failed(self):
-        # create_chat_client itself raises (e.g., configuration error
-        # or initial connection failure).
+    def test_facade_call_raises_returns_provider_failed(self):
+        # The facade reports provider/configuration failures through the
+        # existing terminal provider_failed result.
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client",
+            "utils.toolkit_llm_final_reconciliation.llm.call",
             side_effect=RuntimeError("simulated client init failure"),
-        ):
+        ) as mock_call:
             result = run_llm_final_editor(_tiny_brief())
+        mock_call.assert_called_once()
         self.assertEqual(result["status"], RUNNER_STATUS_PROVIDER_FAILED)
         self.assertEqual(result["patch_plan"], {})
         codes = [d["code"] for d in result["diagnostics"]]
@@ -9791,18 +9779,14 @@ class TestStep63ProviderUnavailableNegative(unittest.TestCase):
         # Legacy error field carries the underlying cause.
         self.assertIn("simulated client init failure", result["error"])
 
-    def test_completions_create_raises_returns_provider_failed(self):
-        # Client initializes fine but the underlying completions
-        # call raises (timeout, 5xx, rate limit, etc.).
-        client = MagicMock()
-        client.chat.completions.create.side_effect = RuntimeError(
-            "rate limit exceeded"
-        )
+    def test_facade_transport_error_returns_provider_failed(self):
+        # A facade transport error remains terminal to this runner.
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client",
-            return_value=client,
-        ):
+            "utils.toolkit_llm_final_reconciliation.llm.call",
+            side_effect=RuntimeError("rate limit exceeded"),
+        ) as mock_call:
             result = run_llm_final_editor(_tiny_brief())
+        mock_call.assert_called_once()
         self.assertEqual(result["status"], RUNNER_STATUS_PROVIDER_FAILED)
         self.assertEqual(result["patch_plan"], {})
         codes = [d["code"] for d in result["diagnostics"]]
@@ -9814,10 +9798,11 @@ class TestStep63ProviderUnavailableNegative(unittest.TestCase):
         # End-to-end: provider failure must not silently fall through
         # to the apply helper.
         with patch(
-            "utils.toolkit_llm_final_reconciliation.create_chat_client",
+            "utils.toolkit_llm_final_reconciliation.llm.call",
             side_effect=RuntimeError("provider down"),
-        ):
+        ) as mock_call:
             runner_result = run_llm_final_editor(_tiny_brief())
+            mock_call.assert_called_once()
             self.assertEqual(
                 runner_result["status"], RUNNER_STATUS_PROVIDER_FAILED
             )

@@ -10,7 +10,6 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, Mapping, Optional
 from unittest.mock import patch
 
@@ -18,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.toolkit_adaptation_author import (
     ADAPTATION_AUTHOR_PROMPT_PATH,
-    ADAPTATION_AUTHOR_RESPONSE_FORMAT_LEGACY,
     ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
     ADAPTATION_AUTHOR_RESPONSE_FORMAT_VERSION,
     ADAPTATION_AUTHOR_STRUCTURED_OUTPUT_NAME,
@@ -48,6 +46,8 @@ from utils.toolkit_adaptation_dossier import (
     ADAPTATION_DOSSIER_VERSION,
     load_adaptation_dossier_schema,
 )
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,28 +60,24 @@ def _load_fixture() -> Dict[str, Any]:
 
 
 def _response(content: Optional[str] = None, *, refusal: Optional[str] = None) -> Any:
-    message = SimpleNamespace(content=content, refusal=refusal)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice], model="gpt-5.6-luna", id="resp-test-1")
+    if refusal:
+        return GameLLMTerminalError("refusal")
+    return content
 
 
-class FakeCompletions:
+class FakeClient:
     def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
         self.response = response
         self.error = error
         self.calls = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
-
-
-class FakeClient:
-    def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
-        self.completions = FakeCompletions(response=response, error=error)
-        self.chat = SimpleNamespace(completions=self.completions)
 
 
 class TestAdaptationAuthorRunner(unittest.TestCase):
@@ -108,7 +104,7 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="mock-adaptation-model",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: {
                 "model": model,
                 "temperature": 0.2,
@@ -125,8 +121,8 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
         self.assertNotIn("raw_response_text", result)
         self.assertNotIn("secret", json.dumps(result, sort_keys=True))
 
-        self.assertEqual(len(client.completions.calls), 1)
-        request = client.completions.calls[0]
+        self.assertEqual(len(client.calls), 1)
+        request = client.calls[0]
         self.assertEqual(
             request["response_format"]["type"],
             ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
@@ -140,26 +136,28 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
         )
         self.assertIn("messages", request)
         self.assertEqual(request["messages"][0]["content"], ADAPTATION_AUTHOR_PROMPT_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(request["model"], "mock-adaptation-model")
+        self.assertNotIn("model", request)
         self.assertEqual(result["request"]["response_format"], ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT)
         self.assertTrue(result["request"]["response_format_strict"])
         self.assertEqual(result["request"]["response_schema"], ADAPTATION_DOSSIER_VERSION)
 
-    def test_default_compatibility_helper_omits_legacy_gpt5_sampling_fields(self) -> None:
+    def test_default_resolver_metadata_does_not_leak_transport_parameters(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
         result = run_llm_adaptation_author(
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
 
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        request = client.completions.calls[0]
-        self.assertIn("reasoning_effort", request)
-        self.assertIn("verbosity", request)
+        request = client.calls[0]
+        self.assertNotIn("reasoning_effort", request)
+        self.assertNotIn("verbosity", request)
         self.assertNotIn("temperature", request)
         self.assertNotIn("top_p", request)
+        self.assertIn("reasoning_effort", result["params_used"])
+        self.assertIn("verbosity", result["params_used"])
         self.assertEqual(
             request["response_format"]["type"],
             ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
@@ -221,7 +219,7 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
                     self.source_context,
                     self.metadata,
                     client=client,
-                    model="gpt-5.6-luna",
+                    model=DM_MAIN_MODEL,
                 )
                 self.assertEqual(result["status"], RUNNER_STATUS_PROVIDER_FAILED)
                 self.assertEqual(result["outcome"], OUTCOME_PROVIDER_FAILURE)
@@ -250,7 +248,7 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
             DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED,
             {item["code"] for item in result["diagnostics"]},
         )
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
         self.assertNotIn("api_key", json.dumps(result, sort_keys=True))
 
     def test_parameter_resolver_and_model_are_injected_deterministically(self) -> None:
@@ -265,14 +263,15 @@ class TestAdaptationAuthorRunner(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-4.1-test",
+            model=DM_MAIN_MODEL,
             parameter_resolver=resolver,
         )
 
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        self.assertEqual(calls, [(ADAPTATION_AUTHOR_TASK_ID, "gpt-4.1-test")])
-        self.assertEqual(client.completions.calls[0]["temperature"], 0.3)
-        self.assertNotIn("reasoning_effort", client.completions.calls[0])
+        self.assertEqual(calls, [(ADAPTATION_AUTHOR_TASK_ID, DM_MAIN_MODEL)])
+        self.assertEqual(result["params_used"]["temperature"], 0.3)
+        self.assertNotIn("temperature", client.calls[0])
+        self.assertNotIn("reasoning_effort", client.calls[0])
 
 
 class TestAdaptationAuthorParser(unittest.TestCase):
@@ -422,27 +421,28 @@ class TestAdaptationAuthorStructuredOutputContract(unittest.TestCase):
         self.assertTrue(serialized.isascii())
         self.assertLess(len(serialized), 60000)
 
-    def test_openrouter_profile_uses_documented_json_object_fallback(self) -> None:
+    def test_task_profile_keeps_direct_openai_strict_response_format(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
         result = run_llm_adaptation_author(
             self.source_context,
             self.metadata,
             client=client,
-            model="moonshotai/kimi-k2.5",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: {"model": model},
         )
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        request = client.completions.calls[0]
+        request = client.calls[0]
         self.assertEqual(
-            request["response_format"],
-            {"type": ADAPTATION_AUTHOR_RESPONSE_FORMAT_LEGACY},
+            request["response_format"]["type"],
+            ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
         )
+        self.assertTrue(request["response_format"]["json_schema"]["strict"])
         self.assertEqual(
             result["request"]["response_format"],
-            ADAPTATION_AUTHOR_RESPONSE_FORMAT_LEGACY,
+            ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
         )
-        self.assertFalse(result["request"]["response_format_strict"])
-        self.assertIsNone(result["request"]["response_schema"])
+        self.assertTrue(result["request"]["response_format_strict"])
+        self.assertEqual(result["request"]["response_schema"], ADAPTATION_DOSSIER_VERSION)
 
     def test_resolver_reserved_keys_remain_rejected_under_strict_contract(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
@@ -456,7 +456,7 @@ class TestAdaptationAuthorStructuredOutputContract(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], RUNNER_STATUS_PARAM_RESOLUTION_FAILED)
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
 
     def test_response_format_build_failure_fails_closed_without_provider_call(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
@@ -475,7 +475,7 @@ class TestAdaptationAuthorStructuredOutputContract(unittest.TestCase):
             DIAGNOSTIC_CODE_INVALID_PARAMS,
             {item["code"] for item in result["diagnostics"]},
         )
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
         self.assertNotIn("schema identity must never leak", json.dumps(result, sort_keys=True))
 
     def test_schema_compliant_response_still_requires_parser_identity(self) -> None:

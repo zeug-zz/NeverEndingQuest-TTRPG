@@ -32,7 +32,6 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -146,34 +145,20 @@ def _blocked_network(*args, **kwargs):
     raise AssertionError("live network access is forbidden in task 10.1")
 
 
-class _FakeCompletions:
-    """Deterministic injected provider seam used by author and auditor tests."""
+class _FakeClient:
+    """Facade-shaped fixture callable with no network implementation."""
 
     def __init__(self, response):
         self.response = response
         self.calls = []
 
-    def create(self, **kwargs):
+    def __call__(self, **kwargs):
         self.calls.append(copy.deepcopy(kwargs))
         return self.response
 
 
-class _FakeClient:
-    """OpenAI-shaped fixture client with no network implementation."""
-
-    def __init__(self, response):
-        self.completions = _FakeCompletions(response)
-        self.chat = SimpleNamespace(completions=self.completions)
-
-
-def _provider_response(content: str, model: str) -> SimpleNamespace:
-    message = SimpleNamespace(content=content, refusal=None)
-    choice = SimpleNamespace(message=message, finish_reason="stop")
-    return SimpleNamespace(
-        choices=[choice],
-        model=model,
-        id="fixture-provider-response",
-    )
+def _provider_response(content: str) -> str:
+    return content
 
 
 def _world_inputs(with_seed: bool = True):
@@ -286,8 +271,8 @@ class AdaptationIntegrationFixture(unittest.TestCase):
         }
 
         self.tripwire_patchers = [
-            patch.object(author_runner_module, "create_chat_client", side_effect=_blocked_provider),
-            patch.object(auditor_runner_module, "create_chat_client", side_effect=_blocked_provider),
+            patch.object(author_runner_module.llm, "call", side_effect=_blocked_provider),
+            patch.object(auditor_runner_module.llm, "call", side_effect=_blocked_provider),
             patch("utils.ai_client_factory.create_chat_client", side_effect=_blocked_provider),
             patch.object(socket, "socket", side_effect=_blocked_network),
             patch.object(socket, "create_connection", side_effect=_blocked_network),
@@ -317,7 +302,7 @@ class AdaptationIntegrationFixture(unittest.TestCase):
     def _author(self) -> tuple[dict, _FakeClient]:
         dossier = _load_dossier()
         model = "provider-free-author"
-        client = _FakeClient(_provider_response(json.dumps(dossier), model))
+        client = _FakeClient(_provider_response(json.dumps(dossier)))
         result = run_adaptation_authoring(
             self.source_context,
             workspace=self.workspace,
@@ -557,8 +542,8 @@ class TestAdaptationAuthorAndWorldBoundary(AdaptationIntegrationFixture):
         self.assertTrue(result["handoff_ready"])
         self.assertFalse(result["completed"])
         self.assertFalse(result["registry_mutated"])
-        self.assertEqual(len(client.completions.calls), 1)
-        self.assertNotIn("api_key", json.dumps(client.completions.calls).lower())
+        self.assertEqual(len(client.calls), 1)
+        self.assertNotIn("api_key", json.dumps(client.calls).lower())
 
         dossier_result = validate_adaptation_dossier(result["dossier"])
         self.assertTrue(dossier_result["valid"], dossier_result)
@@ -754,7 +739,7 @@ class TestAdaptationRevisionBoundary(AdaptationIntegrationFixture):
                 "revised_dossier": copy.deepcopy(dossier),
             }
             client = _FakeClient(
-                _provider_response(json.dumps(response), "provider-free")
+                _provider_response(json.dumps(response))
             )
             parsed = run_llm_adaptation_auditor(
                 request_packet,
@@ -763,7 +748,7 @@ class TestAdaptationRevisionBoundary(AdaptationIntegrationFixture):
                 parameter_resolver=lambda task_id, model: {"model": model},
                 timeout_seconds=1,
             )
-            self.assertEqual(len(client.completions.calls), 1)
+            self.assertEqual(len(client.calls), 1)
             return parsed
 
         def build_callback(staging_target, revised_dossier, directive, **kwargs):

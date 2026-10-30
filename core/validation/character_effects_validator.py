@@ -44,7 +44,6 @@ import json
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
-from openai import OpenAI
 
 # Import OpenAI usage tracking (safe - won't break if fails)
 try:
@@ -54,15 +53,15 @@ except:
     USAGE_TRACKING_AVAILABLE = False
     def track_response(r): pass
 
-from config import OPENAI_API_KEY, CHARACTER_VALIDATOR_MODEL
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_path_manager import ModulePathManager
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 class AICharacterEffectsValidator:
     def __init__(self):
         """Initialize AI-powered effects validator"""
         self.logger = logging.getLogger(__name__)
-        self.client = OpenAI(api_key=OPENAI_API_KEY)
         self.corrections_made = []
         # Get current module from party tracker for consistent path resolution
         try:
@@ -329,23 +328,20 @@ class AICharacterEffectsValidator:
         categorization_prompt = self.build_categorization_prompt(character_data, game_time)
         
         try:
-            response = self.client.chat.completions.create(
-                model=CHARACTER_VALIDATOR_MODEL,
-                temperature=0.1,
+            observer = make_legacy_receipt_observer(
+                track_usage=USAGE_TRACKING_AVAILABLE,
+            )
+            # TABLETOP MODE: provider transport and model selection are router-owned.
+            response = llm.call(
+                task="character_validator",
                 messages=[
                     {"role": "system", "content": self.get_effects_system_prompt()},
                     {"role": "user", "content": categorization_prompt}
-                ]
+                ],
+                json_output=False,
+                observer=observer,
             )
-            
-            # Track usage if available
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass
-            
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response.strip()
             
             # Parse AI response and update character data
             corrected_data = self.parse_ai_categorization_response(ai_response, character_data)

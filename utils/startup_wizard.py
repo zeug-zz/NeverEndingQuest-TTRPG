@@ -32,7 +32,7 @@ from core.managers.status_manager import (
     status_manager, status_processing_ai, status_validating,
     status_loading, status_ready, status_saving
 )
-from utils.ai_client_factory import create_chat_client, get_chat_model_name
+from utils.llm_router import llm
 from utils.character_creator import finalize_character_creation_candidate, persist_dm_created_character
 from utils.spell_slot_utils import normalize_character_spell_slots
 from utils.character_creation_prompt_builder import build_dm_creation_prompt_bundle
@@ -105,9 +105,6 @@ def status_callback(message, is_processing):
 # In web mode, the web interface will have already set its own callback
 if not web_mode:
     status_manager.set_callback(status_callback)
-
-# Initialize AI client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 # Conversation file for character creation (separate from main game)
 STARTUP_CONVERSATION_FILE = "modules/conversation_history/startup_conversation.json"
@@ -1751,13 +1748,13 @@ def get_ai_response(conversation):
     """Get AI response for character creation"""
     try:
         status_processing_ai()
-        response = client.chat.completions.create(
-            model=config.DM_MAIN_MODEL,
-            temperature=0.7,
-            messages=conversation
+        content = llm.call(
+            task="dm_main",
+            messages=conversation,
+            json_output=False,
         )
         
-        content = response.choices[0].message.content.strip()
+        content = content.strip()
         conversation.append({"role": "assistant", "content": content})
         
         # Save conversation
@@ -1848,16 +1845,15 @@ Respond with ONLY a JSON object in this exact format:
   "politicalClimate": "brief political situation"
 }}"""
 
-        # Use factory to create client (supports OpenAI and OpenRouter)
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            model=get_chat_model_name(),
+        ai_response = llm.call(
+            task="dm_main",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
+            json_output=False,
+            json_contract=True,
         )
         
         # Parse AI response
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = ai_response.strip()
         debug(f"AI_RESPONSE: Raw AI response: {ai_response}", category="startup_wizard")
         
         # Extract JSON from response

@@ -22,14 +22,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class _CombatSourceMixin:
     @classmethod
     def setUpClass(cls):
-        combat_manager_path = os.path.join(
+        prompts_path = os.path.join(
             REPO_ROOT,
             "core",
-            "managers",
-            "combat_manager.py",
+            "combat",
+            "prompts.py",
         )
 
-        with open(combat_manager_path, "r", encoding="utf-8") as file_handle:
+        with open(prompts_path, "r", encoding="utf-8") as file_handle:
             cls.combat_manager_source = file_handle.read()
 
     def _extract_multipc_context_template(self):
@@ -38,7 +38,7 @@ class _CombatSourceMixin:
         self.assertNotEqual(
             start_index,
             -1,
-            msg="Could not locate multi_pc_context template in combat_manager.py",
+            msg="Could not locate multi_pc_context template in prompts.py",
         )
 
         content_start = start_index + len(start_marker)
@@ -46,7 +46,7 @@ class _CombatSourceMixin:
         self.assertNotEqual(
             content_end,
             -1,
-            msg="Could not locate end of multi_pc_context template in combat_manager.py",
+            msg="Could not locate end of multi_pc_context template in prompts.py",
         )
 
         return self.combat_manager_source[content_start:content_end]

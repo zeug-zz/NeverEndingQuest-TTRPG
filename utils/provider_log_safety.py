@@ -18,7 +18,7 @@ import threading
 from typing import Any, Dict, Iterable, Optional
 
 
-_PROVIDER_LOGGERS = ("openai", "httpx", "httpcore")
+_PROVIDER_LOGGERS = ("openai", "httpx", "httpcore", "urllib3")
 _SENSITIVE_FIELDS = {
     "messages",
     "json_data",
@@ -229,8 +229,10 @@ def configure_provider_log_safety() -> bool:
     """Apply the provider logging policy once, safely and idempotently.
 
     Provider transport loggers retain warnings and errors but do not emit
-    DEBUG or INFO payload records.  Existing handlers are also filtered so a
-    directly attached child handler receives sanitized records.
+    DEBUG or INFO payload records.  This includes urllib3, whose DEBUG request
+    line contains the path and can expose credentials embedded in URL paths.
+    Existing handlers are also filtered so a directly attached child handler
+    receives sanitized records.
     """
     with _CONFIG_LOCK:
         redaction_filter = ProviderLogRedactionFilter()

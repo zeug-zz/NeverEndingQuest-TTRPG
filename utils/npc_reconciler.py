@@ -7,12 +7,10 @@ from pathlib import Path
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_context import ModuleContext
-from config import DM_MINI_MODEL
 from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
     handle_provider_error,
 )
+from utils.llm_router import llm
 
 class NpcReconciler:
     """
@@ -37,7 +35,6 @@ class NpcReconciler:
         self.canonical_map = {}
         self.provider_stage_errors = []
         self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
-        self.client = create_chat_client()
 
     def load_context(self):
         """Loads the module context and builds a map of all aliases to their canonical name."""
@@ -81,17 +78,13 @@ class NpcReconciler:
 
 Answer with only the word "true" or "false"."""
         try:
-            response = self.client.chat.completions.create(
-                **get_chat_completion_params(
-                    "dm_validation",
-                    DM_MINI_MODEL,
-                    temperature_override=0.0,
-                ),
+            answer = llm.call(
+                task="dm_validation",
                 messages=[{"role": "user", "content": prompt}],
+                json_output=False,
                 max_tokens=1,
-                **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
             )
-            answer = response.choices[0].message.content.lower().strip()
+            answer = answer.lower().strip()
             return answer == "true"
         except Exception as e:
             stage = "module_builder.npc_reconciliation"

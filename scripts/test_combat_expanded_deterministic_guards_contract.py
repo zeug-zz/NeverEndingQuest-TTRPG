@@ -13,6 +13,7 @@ Steps 1.1-1.4 contract tests for combat-expanded-deterministic-guards.
 
 import os
 import sys
+import tempfile
 import unittest
 
 
@@ -35,32 +36,90 @@ PHASE_INTEGRITY_CONTRADICTION_CLASSES = {
 }
 
 
+def _resolve_change_root(change_slug, repo_root=REPO_ROOT):
+    live_root = os.path.join(repo_root, "openspec", "changes", change_slug)
+    if os.path.isdir(live_root):
+        return live_root
+
+    archive_root = os.path.join(repo_root, "openspec", "changes", "archive")
+    matches = sorted(
+        os.path.join(archive_root, name)
+        for name in os.listdir(archive_root)
+        if name.endswith(f"-{change_slug}")
+        and os.path.isdir(os.path.join(archive_root, name))
+    ) if os.path.isdir(archive_root) else []
+    if len(matches) > 1:
+        raise AssertionError(f"Ambiguous archived OpenSpec change {change_slug}: {matches}")
+    if not matches:
+        raise FileNotFoundError(f"OpenSpec change not found (live or archive): {change_slug}")
+    return matches[0]
+
+
+def _resolve_main_or_archive_spec(spec_slug, change_slug, change_root=None, repo_root=REPO_ROOT):
+    main_spec = os.path.join(repo_root, "openspec", "specs", spec_slug, "spec.md")
+    if os.path.isfile(main_spec):
+        return main_spec
+
+    resolved_root = change_root or _resolve_change_root(change_slug, repo_root)
+    archive_spec = os.path.join(resolved_root, "specs", spec_slug, "spec.md")
+    if os.path.isfile(archive_spec):
+        return archive_spec
+    raise FileNotFoundError(f"OpenSpec capability not found in main or unique change path: {spec_slug}")
+
+
+class TestOpenSpecArtifactResolution(unittest.TestCase):
+    def test_canonical_spec_precedes_archived_delta(self):
+        with tempfile.TemporaryDirectory(
+            prefix="combat_guards_spec_resolution_",
+            dir=os.path.join(REPO_ROOT, "tmp"),
+        ) as repo_root:
+            main_spec = os.path.join(repo_root, "openspec", "specs", "capability", "spec.md")
+            delta_spec = os.path.join(repo_root, "archive", "specs", "capability", "spec.md")
+            os.makedirs(os.path.dirname(main_spec), exist_ok=True)
+            os.makedirs(os.path.dirname(delta_spec), exist_ok=True)
+            with open(main_spec, "w", encoding="utf-8") as handle:
+                handle.write("canonical")
+            with open(delta_spec, "w", encoding="utf-8") as handle:
+                handle.write("delta")
+
+            self.assertEqual(
+                _resolve_main_or_archive_spec(
+                    "capability", "change", os.path.join(repo_root, "archive"), repo_root
+                ),
+                main_spec,
+            )
+
+    def test_ambiguous_archive_roots_fail_closed(self):
+        with tempfile.TemporaryDirectory(
+            prefix="combat_guards_archive_resolution_",
+            dir=os.path.join(REPO_ROOT, "tmp"),
+        ) as repo_root:
+            archive_root = os.path.join(repo_root, "openspec", "changes", "archive")
+            os.makedirs(os.path.join(archive_root, "2026-01-first-combat-guards-change"))
+            os.makedirs(os.path.join(archive_root, "2026-02-second-combat-guards-change"))
+            with self.assertRaisesRegex(AssertionError, "Ambiguous archived OpenSpec change"):
+                _resolve_change_root("combat-guards-change", repo_root)
+
+
 class TestCombatExpandedGuardsOpenSpecContracts(unittest.TestCase):
     """Lock OpenSpec artifacts for expanded deterministic combat guards."""
 
     @classmethod
     def setUpClass(cls):
-        change_root = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
-            "combat-expanded-deterministic-guards",
-        )
+        change_root = _resolve_change_root("combat-expanded-deterministic-guards")
         cls.paths = {
             "proposal": os.path.join(change_root, "proposal.md"),
             "design": os.path.join(change_root, "design.md"),
             "tasks": os.path.join(change_root, "tasks.md"),
-            "mechanics_spec": os.path.join(
-                change_root,
-                "specs",
+            "mechanics_spec": _resolve_main_or_archive_spec(
                 "tt-combat-mechanics-contradiction-guards",
-                "spec.md",
-            ),
-            "phase_spec": os.path.join(
+                "combat-expanded-deterministic-guards",
                 change_root,
-                "specs",
+            ),
+            "phase_spec": _resolve_main_or_archive_spec(
                 "tt-combat-phase-integrity-guards",
-                "spec.md",
+                "combat-expanded-deterministic-guards",
+                change_root,
             ),
         }
 
@@ -95,22 +154,13 @@ class TestCombatMechanicsContradictionLocks(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        spec_path = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
-            "combat-expanded-deterministic-guards",
-            "specs",
+        change_root = _resolve_change_root("combat-expanded-deterministic-guards")
+        spec_path = _resolve_main_or_archive_spec(
             "tt-combat-mechanics-contradiction-guards",
-            "spec.md",
-        )
-        design_path = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
             "combat-expanded-deterministic-guards",
-            "design.md",
+            change_root,
         )
+        design_path = os.path.join(change_root, "design.md")
         with open(spec_path, "r", encoding="utf-8") as file_handle:
             cls.spec_text = file_handle.read()
         with open(design_path, "r", encoding="utf-8") as file_handle:
@@ -136,22 +186,13 @@ class TestCombatPhaseIntegrityLocks(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        spec_path = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
-            "combat-expanded-deterministic-guards",
-            "specs",
+        change_root = _resolve_change_root("combat-expanded-deterministic-guards")
+        spec_path = _resolve_main_or_archive_spec(
             "tt-combat-phase-integrity-guards",
-            "spec.md",
-        )
-        design_path = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
             "combat-expanded-deterministic-guards",
-            "design.md",
+            change_root,
         )
+        design_path = os.path.join(change_root, "design.md")
         with open(spec_path, "r", encoding="utf-8") as file_handle:
             cls.spec_text = file_handle.read()
         with open(design_path, "r", encoding="utf-8") as file_handle:
@@ -178,7 +219,9 @@ class TestCombatExpandedGuardsRuntimeTouchpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.paths = {
-            "combat_manager": os.path.join(REPO_ROOT, "core", "managers", "combat_manager.py"),
+            "combat_manager": os.path.join(REPO_ROOT, "core", "combat", "combat_manager.py"),
+            "combat_prompts": os.path.join(REPO_ROOT, "core", "combat", "prompts.py"),
+            "combat_validation": os.path.join(REPO_ROOT, "core", "combat", "validation.py"),
             "action_handler": os.path.join(REPO_ROOT, "core", "ai", "action_handler.py"),
         }
         cls.content = {}
@@ -191,21 +234,31 @@ class TestCombatExpandedGuardsRuntimeTouchpoints(unittest.TestCase):
             self.assertTrue(os.path.exists(path), msg=f"Missing expected runtime file: {path}")
 
     def test_combat_manager_contains_phase_integrity_surfaces(self):
-        source = self.content["combat_manager"]
-        self.assertIn("CURRENT_PHASE", source)
-        self.assertIn("PC_PHASE_COMPLETE", source)
-        self.assertIn("PENDING_ENEMIES", source)
-        self.assertIn("All monsters have been defeated", source)
-        self.assertIn("Include exit action", source)
-        self.assertIn("You CANNOT end the round until ALL PCs have taken their turns", source)
+        prompt_source = self.content["combat_prompts"]
+        validation_source = self.content["combat_validation"]
+        self.assertIn("CURRENT_PHASE", prompt_source)
+        self.assertIn("PC_PHASE_COMPLETE", prompt_source)
+        self.assertIn("PENDING_ENEMIES", prompt_source)
+        self.assertIn("All monsters have been defeated", prompt_source)
+        self.assertIn("Include exit action", prompt_source)
+        self.assertIn("You CANNOT end the round until ALL PCs have taken their turns", validation_source)
 
     def test_combat_manager_wires_phase_integrity_precheck(self):
-        source = self.content["combat_manager"]
-        self.assertIn("validate_combat_phase_integrity_precheck", source)
-        self.assertIn('"forbidden_actors": multi_pc_manager.get_forbidden_actors()', source)
-        self.assertIn('"pending_enemies": multi_pc_manager.get_remaining_enemies_for_round()', source)
-        self.assertIn('"pc_phase_complete": multi_pc_manager.pc_phase_complete', source)
-        self.assertIn('"current_round": current_round', source)
+        manager_source = self.content["combat_manager"]
+        validation_source = self.content["combat_validation"]
+        self.assertIn("phase_precheck=validate_combat_phase_integrity_precheck", manager_source)
+        self.assertIn("def _derive_authoritative_phase_state(", validation_source)
+        self.assertIn("forbidden_actors = multi_pc_manager.get_forbidden_actors()", validation_source)
+        self.assertIn("pending_enemies = multi_pc_manager.get_remaining_enemies_for_round()", validation_source)
+        self.assertIn("pc_phase_complete = multi_pc_manager.pc_phase_complete", validation_source)
+        self.assertIn(
+            'current_round = encounter_data.get("combat_round", encounter_data.get("current_round", 1))',
+            validation_source,
+        )
+        self.assertIn('"forbidden_actors": forbidden_actors', validation_source)
+        self.assertIn('"pending_enemies": pending_enemies', validation_source)
+        self.assertIn('"pc_phase_complete": pc_phase_complete', validation_source)
+        self.assertIn('"current_round": current_round', validation_source)
 
     def test_action_handler_contains_narrow_action_contract_surfaces(self):
         source = self.content["action_handler"]

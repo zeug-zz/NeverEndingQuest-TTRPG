@@ -171,7 +171,7 @@ class JeremysMagicShopAdaptationSmoke(unittest.TestCase):
         self.protected_real_module = _snapshot_tree(self.real_module)
 
         self.tripwire_patchers = [
-            patch.object(adaptation_auditor, "create_chat_client", side_effect=_blocked_provider),
+            patch.object(adaptation_auditor.llm, "call", side_effect=_blocked_provider),
             patch("utils.ai_client_factory.create_chat_client", side_effect=_blocked_provider),
             patch.object(socket, "socket", side_effect=_blocked_network),
             patch.object(socket, "create_connection", side_effect=_blocked_network),

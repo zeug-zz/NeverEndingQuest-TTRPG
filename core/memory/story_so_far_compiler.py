@@ -27,11 +27,10 @@ from utils.enhanced_logger import debug, error, warning
 
 try:
     from utils.ai_client_factory import (
-        create_chat_client,
-        get_chat_completion_params,
         get_model_config,
         handle_provider_error,
     )
+    from utils.llm_router import llm
 
     AI_CLIENTS_AVAILABLE = True
 except ImportError:
@@ -267,10 +266,12 @@ def _generate_story_text_with_llm(
         }
 
     config = get_model_config("summaries", DM_SUMMARIZATION_MODEL)
-    client = create_chat_client()
 
     try:
-        response = client.chat.completions.create(
+        # TABLETOP MODE: G10 provenance is a fixed capture-only source label.
+        story_text = llm.call(
+            task="summaries",
+            g10_source_id="core/memory/story_so_far_compiler.py:_generate_story_text_with_llm",
             messages=[
                 {
                     "role": "system",
@@ -281,15 +282,9 @@ def _generate_story_text_with_llm(
                     "content": prompt,
                 },
             ],
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.7,
-            ),
+            json_output=False,
         )
-        story_text = ""
-        if response.choices and response.choices[0].message:
-            story_text = str(response.choices[0].message.content or "").strip()
+        story_text = str(story_text or "").strip()
         story_text = _sanitize_story_text(story_text)
         if not story_text:
             return {
@@ -306,8 +301,9 @@ def _generate_story_text_with_llm(
         error_info = handle_provider_error(llm_error, context="story_so_far_compiler")
         if error_info.get("should_fallback"):
             try:
-                fallback_client = create_chat_client(use_fallback=True)
-                fallback_response = fallback_client.chat.completions.create(
+                fallback_story_text = llm.call(
+                    task="summaries",
+                    g10_source_id="core/memory/story_so_far_compiler.py:_generate_story_text_with_llm",
                     messages=[
                         {
                             "role": "system",
@@ -318,17 +314,9 @@ def _generate_story_text_with_llm(
                             "content": prompt,
                         },
                     ],
-                    **get_chat_completion_params(
-                        "summaries",
-                        DM_SUMMARIZATION_MODEL,
-                        temperature_override=0.7,
-                    ),
+                    json_output=False,
                 )
-                story_text = ""
-                if fallback_response.choices and fallback_response.choices[0].message:
-                    story_text = str(
-                        fallback_response.choices[0].message.content or ""
-                    ).strip()
+                story_text = str(fallback_story_text or "").strip()
                 story_text = _sanitize_story_text(story_text)
                 if story_text:
                     return {

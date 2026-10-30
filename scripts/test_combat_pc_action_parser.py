@@ -9,11 +9,84 @@ Tests for utils/combat_pc_action_parser.py - Conservative PC_PHASE NL parser.
 
 import os
 import sys
+import builtins
+import io
+import types
 import unittest
 from copy import deepcopy
+from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.core_chat_test_safety import TripwireFailure, arm_process_tripwires  # noqa: E402
+
+
+# Arm fatal SDK, network, and outside-write guards before importing any owners.
+PROCESS_TRIPWIRES = arm_process_tripwires()
+
+
+class _PrivateRootReadDenied(BaseException):
+    """Fatal sentinel for reads of private root configuration/runtime files."""
+
+
+def _is_private_root_read(path):
+    try:
+        candidate = Path(os.fsdecode(path))
+        if not candidate.is_absolute():
+            candidate = REPO_ROOT / candidate
+        return candidate.parent.resolve() == REPO_ROOT.resolve() and candidate.name in {
+            "config.py",
+            "party_tracker.json",
+        }
+    except (TypeError, ValueError, OSError):
+        return False
+
+
+def _arm_private_root_read_guard():
+    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
+    denials = []
+
+    def check(path, operation):
+        if _is_private_root_read(path):
+            denials.append(operation)
+            raise _PrivateRootReadDenied("private root read denied: " + operation)
+
+    def guarded_open(path, mode="r", *args, **kwargs):
+        check(path, "builtins.open")
+        return real_open(path, mode, *args, **kwargs)
+
+    def guarded_io_open(path, mode="r", *args, **kwargs):
+        check(path, "io.open")
+        return real_io_open(path, mode, *args, **kwargs)
+
+    def guarded_os_open(path, flags, *args, **kwargs):
+        check(path, "os.open")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    patches = [
+        mock.patch("builtins.open", guarded_open),
+        mock.patch("io.open", guarded_io_open),
+        mock.patch("os.open", guarded_os_open),
+    ]
+    for patcher in patches:
+        patcher.start()
+    return patches, denials
+
+
+PRIVATE_READ_PATCHES, PRIVATE_READ_DENIALS = _arm_private_root_read_guard()
+
+# Keep configuration nonempty without opening the private root config.py.
+import model_config  # noqa: E402
+
+_DUMMY_CONFIG = types.ModuleType("config")
+for _name in dir(model_config):
+    if _name.isupper():
+        setattr(_DUMMY_CONFIG, _name, getattr(model_config, _name))
+_DUMMY_CONFIG.OPENAI_API_KEY = "DUMMY_OPENAI_KEY_FOR_PC_ACTION_PARSER_TEST"
+_DUMMY_CONFIG.OPENROUTER_API_KEY = "DUMMY_OPENROUTER_KEY_FOR_PC_ACTION_PARSER_TEST"
+sys.modules["config"] = _DUMMY_CONFIG
 
 from utils.combat_pc_action_parser import apply_pc_phase_parse_result, parse_pc_phase_action
 
@@ -225,7 +298,7 @@ class TestHealing(unittest.TestCase):
 
     def test_heal_explicit_amount_and_target(self):
         result = parse_pc_phase_action(
-            "Cure Wounds on Merisiel for 8",
+            "Cure Wounds using one 1st-level spell slot on Merisiel for 8",
             SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
         )
         self.assertTrue(result["handled"])
@@ -233,6 +306,138 @@ class TestHealing(unittest.TestCase):
         self.assertEqual(result["target_name"], "Merisiel")
         self.assertEqual(result["parsed_heal_amount"], 8)
         self.assertEqual(len(result["character_updates"]), 2)  # heal + slot spend
+        self.assertEqual(
+            result["character_updates"][1]["ops"][0]["level"], "level1"
+        )
+
+    def test_mass_healing_word_does_not_fall_through_to_healing_word(self):
+        result = parse_pc_phase_action(
+            "Mass Healing Word on Merisiel for 8",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_spell_mechanics_unsupported")
+        self.assertEqual(result["character_updates"], [])
+        self.assertIsNone(result["ledger_event"])
+
+    def test_undeclared_slot_uses_lowest_available_at_or_above_spell_level(self):
+        caster_state = deepcopy(FAKE_CASTING_STATE)
+        caster_state["spellcasting"]["spellSlots"]["level1"]["current"] = 0
+        caster_state["spellcasting"]["spellSlots"]["level2"]["current"] = 1
+        with mock.patch(
+            "utils.combat_pc_action_parser.get_character_state",
+            side_effect=lambda name: deepcopy(
+                caster_state if name == "Acheron" else FAKE_HEAL_TARGET_STATE
+            ),
+        ):
+            result = parse_pc_phase_action(
+                "Healing Word on Merisiel for 5",
+                SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+            )
+        self.assertTrue(result["handled"])
+        self.assertEqual(result["character_updates"][1]["ops"][0]["level"], "level2")
+
+    def test_undeclared_slot_falls_back_when_no_eligible_slot_is_available(self):
+        caster_state = deepcopy(FAKE_CASTING_STATE)
+        for slot in caster_state["spellcasting"]["spellSlots"].values():
+            slot["current"] = 0
+        with mock.patch(
+            "utils.combat_pc_action_parser.get_character_state",
+            side_effect=lambda name: deepcopy(
+                caster_state if name == "Acheron" else FAKE_HEAL_TARGET_STATE
+            ),
+        ):
+            result = parse_pc_phase_action(
+                "Cure Wounds on Merisiel for 7",
+                SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+            )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_slot_unavailable")
+        self.assertEqual(result["character_updates"], [])
+
+    def test_multiple_declared_slot_levels_fall_back(self):
+        result = parse_pc_phase_action(
+            "Healing Word using a 1st-level spell slot, or a 2nd-level spell slot, on Merisiel for 5",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_spell_slot_unresolved")
+        self.assertEqual(result["character_updates"], [])
+
+    def test_declared_healing_spell_rejects_below_minimum_slot_level(self):
+        result = parse_pc_phase_action(
+            "Cure Wounds using one 0th-level spell slot on Merisiel for 8",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(
+            result["fallback_reason"], "heal_spell_slot_level_mismatch"
+        )
+        self.assertEqual(result["character_updates"], [])
+
+    def test_declared_healing_spell_requires_that_exact_slot_to_be_available(self):
+        result = parse_pc_phase_action(
+            "Healing Word using a 2nd-level spell slot on Merisiel for 8",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_slot_unavailable")
+        self.assertEqual(result["character_updates"], [])
+
+    def test_declared_healing_spell_rejects_non_5e_slot_levels(self):
+        caster_state = deepcopy(FAKE_CASTING_STATE)
+        caster_state["spellcasting"]["spellSlots"]["level10"] = {
+            "current": 1, "max": 1
+        }
+        with mock.patch(
+            "utils.combat_pc_action_parser.get_character_state",
+            side_effect=lambda name: deepcopy(
+                caster_state if name == "Acheron" else FAKE_HEAL_TARGET_STATE
+            ),
+        ):
+            result = parse_pc_phase_action(
+                "Healing Word using a 10th-level spell slot on Merisiel for 8",
+                SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+            )
+        self.assertFalse(result["handled"])
+        self.assertEqual(
+            result["fallback_reason"], "heal_spell_slot_level_mismatch"
+        )
+        self.assertEqual(result["character_updates"], [])
+
+    def test_declared_single_target_spell_rejects_multiple_targets(self):
+        result = parse_pc_phase_action(
+            "Cure Wounds using one 1st-level spell slot on Merisiel and Kira for 8",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_target_set_unsupported")
+        self.assertEqual(result["character_updates"], [])
+
+    def test_declared_healing_target_requires_exact_identity(self):
+        result = parse_pc_phase_action(
+            "Cure Wounds using one 1st-level spell slot on Merisiel's ally for 8",
+            SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+        )
+        self.assertFalse(result["handled"])
+        self.assertEqual(result["fallback_reason"], "heal_target_unresolved")
+        self.assertEqual(result["character_updates"], [])
+
+    def test_upcast_healing_word_spends_the_declared_slot_level(self):
+        caster_state = deepcopy(FAKE_CASTING_STATE)
+        caster_state["spellcasting"]["spellSlots"]["level2"]["current"] = 1
+        with mock.patch(
+            "utils.combat_pc_action_parser.get_character_state",
+            side_effect=lambda name: deepcopy(
+                caster_state if name == "Acheron" else FAKE_HEAL_TARGET_STATE
+            ),
+        ):
+            result = parse_pc_phase_action(
+                "Healing Word using a 2nd-level spell slot on Merisiel for 8",
+                SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
+            )
+        self.assertTrue(result["handled"])
+        self.assertEqual(result["character_updates"][1]["ops"][0]["level"], "level2")
 
     def test_heal_no_spell_keyword_no_slot_spend(self):
         result = parse_pc_phase_action(
@@ -244,7 +449,7 @@ class TestHealing(unittest.TestCase):
 
     def test_heal_unclear_amount_falls_back(self):
         result = parse_pc_phase_action(
-            "Cure Wounds on Merisiel",
+            "Cure Wounds using one 1st-level spell slot on Merisiel",
             SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
         )
         self.assertFalse(result["handled"])
@@ -264,7 +469,7 @@ class TestHealing(unittest.TestCase):
             side_effect=lambda name: deepcopy(FAKE_DEAD_TARGET_STATE) if name == "Dead Merisiel" else deepcopy(FAKE_CASTING_STATE),
         ):
             result = parse_pc_phase_action(
-                "Cure Wounds on Dead Merisiel for 8",
+                "Cure Wounds using one 1st-level spell slot on Dead Merisiel for 8",
                 {"creatures": [{"name": "Dead Merisiel", "type": "npc", "status": "unknown", "currentHitPoints": 0, "maxHitPoints": 20, "armorClass": 10}]},
                 SAMPLE_PARTY,
                 "Acheron",
@@ -285,7 +490,7 @@ class TestHealing(unittest.TestCase):
             }) if name == "Acheron" else deepcopy(FAKE_HEAL_TARGET_STATE),
         ):
             result = parse_pc_phase_action(
-                "Cure Wounds on Merisiel for 8",
+                "Cure Wounds using one 1st-level spell slot on Merisiel for 8",
                 SAMPLE_ENCOUNTER, SAMPLE_PARTY, "Acheron"
             )
         self.assertFalse(result["handled"])
@@ -344,6 +549,20 @@ class TestFallback(unittest.TestCase):
 class TestApplyParseResultFailures(unittest.TestCase):
     """Test that apply failures do not claim success."""
 
+    @staticmethod
+    def _character_updater_dependency(return_value):
+        """Inject only the updater called by the real apply orchestration."""
+        module = types.ModuleType("updates.update_character_info")
+        module.update_character_info = mock.Mock(return_value=return_value)
+        return module, module.update_character_info
+
+    @staticmethod
+    def _encounter_updater_dependency(return_value):
+        """Inject only the encounter persistence function called by orchestration."""
+        module = types.ModuleType("updates.update_encounter")
+        module.update_encounter = mock.Mock(return_value=return_value)
+        return module, module.update_encounter
+
     def test_character_update_failure_returns_false(self):
         result = {
             "handled": True,
@@ -365,13 +584,18 @@ class TestApplyParseResultFailures(unittest.TestCase):
         manager.find_target.return_value = {"name": "Merisiel"}
         manager.record_pc_phase_event = mock.Mock()
 
-        with mock.patch("updates.update_character_info.update_character_info", return_value=False) as mock_update_character, mock.patch(
-            "updates.update_encounter.update_encounter"
-        ) as mock_update_encounter:
+        updater_module, mock_update_character = self._character_updater_dependency(False)
+        encounter_module, mock_update_encounter = self._encounter_updater_dependency(True)
+        with mock.patch.dict(sys.modules, {
+            "updates.update_character_info": updater_module,
+            "updates.update_encounter": encounter_module,
+        }):
             ok = apply_pc_phase_parse_result(result, manager, SAMPLE_ENCOUNTER, "ENC-1", "Acheron")
 
         self.assertFalse(ok)
-        mock_update_character.assert_called_once()
+        mock_update_character.assert_called_once_with(
+            "Merisiel", "Healed for 8 HP", ops=[{"op": "hp_delta", "delta": 8}]
+        )
         mock_update_encounter.assert_not_called()
         manager.record_pc_phase_event.assert_not_called()
 
@@ -390,9 +614,12 @@ class TestApplyParseResultFailures(unittest.TestCase):
         manager.find_target.return_value = {"name": "Goblin"}
         manager.record_pc_phase_event = mock.Mock()
 
-        with mock.patch("updates.update_encounter.update_encounter", return_value=False) as mock_update_encounter, mock.patch(
-            "updates.update_character_info.update_character_info"
-        ) as mock_update_character:
+        updater_module, mock_update_character = self._character_updater_dependency(True)
+        encounter_module, mock_update_encounter = self._encounter_updater_dependency(False)
+        with mock.patch.dict(sys.modules, {
+            "updates.update_character_info": updater_module,
+            "updates.update_encounter": encounter_module,
+        }):
             ok = apply_pc_phase_parse_result(result, manager, SAMPLE_ENCOUNTER, "ENC-1", "Acheron")
 
         self.assertFalse(ok)
@@ -401,14 +628,35 @@ class TestApplyParseResultFailures(unittest.TestCase):
         manager.record_pc_phase_event.assert_not_called()
 
 
-class TestFeatureFlagConfig(unittest.TestCase):
-    """Test that the feature flag exists in model_config."""
+class TestGuardedHarness(unittest.TestCase):
+    def test_private_root_reads_are_denied_and_tripwires_untouched(self):
+        for filename in ("config.py", "party_tracker.json"):
+            private_path = REPO_ROOT / filename
+            for operation in (
+                lambda path=private_path: builtins.open(path, "r"),
+                lambda path=private_path: io.open(path, "r"),
+                lambda path=private_path: os.open(path, os.O_RDONLY),
+            ):
+                with self.assertRaises(_PrivateRootReadDenied):
+                    operation()
 
-    def test_flag_present(self):
+        self.assertEqual(
+            PRIVATE_READ_DENIALS,
+            [
+                "builtins.open", "io.open", "os.open",
+                "builtins.open", "io.open", "os.open",
+            ],
+        )
+        PROCESS_TRIPWIRES.assert_untouched(self)
+
+
+class TestFeatureFlagConfig(unittest.TestCase):
+    """Test that the canary feature flag is enabled in model_config."""
+
+    def test_flag_present_and_enabled_for_canary(self):
         import model_config
         self.assertTrue(hasattr(model_config, "COMBAT_PC_PHASE_NL_FAST_PATH"))
-        # Default should be False (conservative)
-        self.assertFalse(model_config.COMBAT_PC_PHASE_NL_FAST_PATH)
+        self.assertTrue(model_config.COMBAT_PC_PHASE_NL_FAST_PATH)
 
 
 if __name__ == "__main__":

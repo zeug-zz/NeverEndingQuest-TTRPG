@@ -66,16 +66,11 @@ sys.path.insert(
 )
 
 from jsonschema import validate, ValidationError
-import config
 from utils.module_path_manager import ModulePathManager
 from utils.monster_reference_closure import normalize_monster_name
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
+from utils.ai_client_factory import handle_provider_error
+from utils.llm_router import llm
 
 # Set script name for logging
 set_script_name("monster_builder")
@@ -251,28 +246,22 @@ Schema: {json.dumps(schema)}"""
     ]
 
     try:
-        client = create_chat_client()
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "monster_builder",
-                        config.MONSTER_BUILDER_MODEL,
-                        temperature_override=0.7,
-                    ),
+                response = llm.call(
+                    task="monster_builder",
                     messages=prompt,
+                    json_output=False,
                 )
                 break
             except Exception as e:
                 error_result = handle_provider_error(e, "generate_monster")
                 if error_result["should_fallback"] and attempt < max_retries - 1:
-                    client = create_chat_client(use_fallback=True)
                     continue
                 raise
 
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = response.strip()
         if not adaptation_safe_output:
             print(f"{YELLOW}AI Response:{RESET}\n{ai_response}")
 

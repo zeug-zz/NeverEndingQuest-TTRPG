@@ -72,54 +72,54 @@ class TestCombatValidationRoutingSourceContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         model_config_path = os.path.join(REPO_ROOT, "model_config.py")
-        combat_manager_path = os.path.join(
+        validation_path = os.path.join(
             REPO_ROOT,
             "core",
-            "managers",
-            "combat_manager.py",
+            "combat",
+            "validation.py",
         )
 
         with open(model_config_path, "r", encoding="utf-8") as file_handle:
             cls.model_config_source = file_handle.read()
 
-        with open(combat_manager_path, "r", encoding="utf-8") as file_handle:
-            cls.combat_manager_source = file_handle.read()
+        with open(validation_path, "r", encoding="utf-8") as file_handle:
+            cls.validation_source = file_handle.read()
 
     def test_model_config_exposes_validation_threshold_constant(self):
         self.assertIn("VALIDATION_COMPRESSION_MIN_CHARS", self.model_config_source)
 
     def test_combat_manager_uses_threshold_routing_helper(self):
         self.assertTrue(
-            "get_validation_compression_decision" in self.combat_manager_source,
+            "compression_decision(" in self.validation_source,
             msg=(
-                "Step 3.2 contract: combat_manager should use "
+                "Step 3.2 contract: the combat validation stage should use "
                 "get_validation_compression_decision for threshold routing."
             ),
         )
 
     def test_combat_manager_records_payload_size_telemetry(self):
         self.assertTrue(
-            "validation_payload_chars" in self.combat_manager_source,
+            "validation_payload_chars" in self.validation_source,
             msg=(
-                "Step 3.2 contract: combat_manager should emit "
+                "Step 3.2 contract: the combat validation stage should emit "
                 "validation_payload_chars in routing telemetry."
             ),
         )
 
     def test_combat_manager_records_compression_reason_code(self):
         self.assertTrue(
-            "compression_reason" in self.combat_manager_source,
+            "compression_reason" in self.validation_source,
             msg=(
-                "Step 3.2 contract: combat_manager should emit "
+                "Step 3.2 contract: the combat validation stage should emit "
                 "compression_reason in routing telemetry."
             ),
         )
 
     def test_combat_manager_emits_routing_telemetry_payload(self):
         self.assertTrue(
-            "validation_routing_telemetry" in self.combat_manager_source,
+            "validation_routing_telemetry" in self.validation_source,
             msg=(
-                "Step 3.2 contract: combat_manager should create a "
+                "Step 3.2 contract: the combat validation stage should create a "
                 "validation_routing_telemetry payload."
             ),
         )
@@ -127,31 +127,31 @@ class TestCombatValidationRoutingSourceContract(unittest.TestCase):
     def test_compression_decision_has_fail_open_fallback(self):
         self.assertIn(
             "decision_helper_error_default_uncompressed",
-            self.combat_manager_source,
+            self.validation_source,
         )
         self.assertIn(
             "use_validation_compression = False",
-            self.combat_manager_source,
+            self.validation_source,
         )
 
     def test_compression_apply_failure_falls_back_to_uncompressed_context(self):
         self.assertIn(
             "compression_apply_error_fallback_uncompressed",
-            self.combat_manager_source,
+            self.validation_source,
         )
         self.assertIn(
             "falling back to uncompressed context",
-            self.combat_manager_source,
+            self.validation_source,
         )
 
     def test_telemetry_helper_failure_uses_fallback_payload(self):
         self.assertIn(
             "telemetry_builder_error_fallback",
-            self.combat_manager_source,
+            self.validation_source,
         )
         self.assertIn(
             "using fallback telemetry payload",
-            self.combat_manager_source,
+            self.validation_source,
         )
 
 

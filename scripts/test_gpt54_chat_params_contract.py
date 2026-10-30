@@ -6,9 +6,14 @@
 GPT-5.6 Luna chat-params prompt/runtime parity contract (generic GPT-5 family).
 """
 
+import ast
 import os
 import sys
 import unittest
+
+from scripts.core_chat_test_safety import arm_process_tripwires
+
+_PROCESS_TRIPWIRES = arm_process_tripwires()
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,10 +29,20 @@ def _read(relative_path: str) -> str:
 
 
 class TestGPT54ChatParamsContract(unittest.TestCase):
+    def setUp(self):
+        self._actual_provider = ai_client_factory._get_actual_provider
+        ai_client_factory._get_actual_provider = lambda use_fallback=False: ("openai", False)
+
+    def tearDown(self):
+        ai_client_factory._get_actual_provider = self._actual_provider
+
     @classmethod
     def setUpClass(cls):
         cls.main_source = _read("main.py")
-        cls.combat_source = _read("core/managers/combat_manager.py")
+        cls.combat_source = _read("core/combat/combat_manager.py")
+        cls.combat_bootstrap_source = _read("core/combat/bootstrap.py")
+        cls.combat_turn_source = _read("core/combat/turn.py")
+        cls.combat_validation_source = _read("core/combat/validation.py")
         cls.narrator_prompt = _read("prompts/system_prompt.txt")
         cls.narrator_prompt_compressed = _read("prompts/system_prompt_compressed.txt")
         cls.combat_sim_prompt = _read("prompts/combat/combat_sim_prompt_multipc.txt")
@@ -62,14 +77,14 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
         self.assertNotIn("temperature", params)
         self.assertNotIn("top_p", params)
 
-    def test_non_gpt5_params_preserve_temperature(self):
+    def test_non_gpt5_params_use_task_temperature_policy(self):
         params = ai_client_factory.get_chat_completion_params(
             "dm_main",
             "gpt-4.1-2025-04-14",
             temperature_override=0.42,
         )
 
-        self.assertEqual(params["temperature"], 0.42)
+        self.assertEqual(params["temperature"], 0.7)
         self.assertNotIn("reasoning_effort", params)
         self.assertNotIn("verbosity", params)
 
@@ -83,40 +98,60 @@ class TestGPT54ChatParamsContract(unittest.TestCase):
         self.assertEqual(params["reasoning_effort"], "high")
         self.assertEqual(params["verbosity"], "low")
 
-    def test_main_narrator_callsites_use_shared_helper_and_timeout(self):
-        # fork-final-upstream-sweep routes the four main.py narrator request
-        # sites through the fork recovery helper, so every request site is
-        # either a remaining raw create call or a helper-mediated call.
-        raw_calls = self.main_source.count("client.chat.completions.create(")
-        helper_calls = self.main_source.count(
-            "= request_chat_completion_with_recovery("
-        )
-        self.assertEqual(
-            raw_calls,
-            self.main_source.count("**get_chat_completion_params("),
-        )
-        self.assertGreaterEqual(helper_calls, 4)
-        self.assertEqual(
-            raw_calls + helper_calls,
-            self.main_source.count("timeout=NARRATOR_API_TIMEOUT_SECONDS"),
-        )
-        self.assertEqual(
-            helper_calls,
-            self.main_source.count("request_params=get_chat_completion_params("),
-        )
-        self.assertIn("handle_provider_error(", self.main_source)
-        self.assertIn("create_chat_client(use_fallback=True)", self.main_source)
+    def test_main_narrator_callsites_use_router_and_facade_owned_timeout(self):
+        from scripts.test_core_chat_inventory_contract import _functions, _calls, _call_name
 
-    def test_combat_callsites_use_shared_helper_and_timeout(self):
+        narrator = _functions("main.py")["get_ai_response"]
+        router_calls = [call for call in _calls(narrator) if _call_name(call) == "llm.call"]
+        self.assertEqual(len(router_calls), 1)
+        self.assertFalse(any(_call_name(call) == "request_chat_completion_with_recovery" for call in _calls(narrator)))
+        self.assertFalse(any(_call_name(call) == "create_chat_client" for call in _calls(narrator)))
+        keywords = {keyword.arg for keyword in router_calls[0].keywords}
+        self.assertTrue({"task", "messages", "json_output", "empty_retry_limit", "model_tier"}.issubset(keywords))
+        self.assertNotIn("timeout", keywords)
+
+    def test_combat_callsites_use_router_and_leave_timeout_ownership_to_factory(self):
+        from scripts.test_core_chat_inventory_contract import _functions, _calls, _call_name
+
+        expected = {
+            ("core/combat/bootstrap.py", "_startup_provider_call"): ("combat_main", 1),
+            ("core/combat/bootstrap.py", "_run_initial_scene_generation"): ("combat_main", 1),
+            ("core/combat/turn.py", "run_combat_provider_retry_stage"): ("combat_main", 3),
+            ("core/combat/validation.py", "validate_combat_response"): ("combat_validation", 1),
+            ("core/combat/combat_manager.py", "summarize_dialogue"): ("combat_summary", 1),
+            ("core/combat/combat_manager.py", "generate_combat_round_summary"): ("compression", 1),
+            ("core/combat/initiative_tracker_ai.py", "generate_live_initiative_tracker"): ("combat_main", 1),
+        }
+        for (path, name), (task, count) in expected.items():
+            routed = [
+                call for call in _calls(_functions(path)[name])
+                if _call_name(call) in {"llm.call", "dependencies.llm_call"}
+            ]
+            with self.subTest(owner=path + "::" + name):
+                self.assertEqual(len(routed), count)
+                for call in routed:
+                    task_node = next(
+                        (item.value for item in call.keywords if item.arg == "task"),
+                        call.args[0] if call.args else None,
+                    )
+                    self.assertEqual(ast.literal_eval(task_node), task)
+                    keywords = {item.arg: item.value for item in call.keywords}
+                    self.assertIs(ast.literal_eval(keywords["json_output"]), False)
+                    self.assertNotIn("timeout", keywords)
+                    self.assertNotIn("model", keywords)
+                self.assertFalse(any(
+                    _call_name(call).endswith("chat.completions.create")
+                    or _call_name(call) in {"OpenAI", "create_chat_client"}
+                    for call in _calls(_functions(path)[name])
+                ))
+
         self.assertEqual(
-            self.combat_source.count("client.chat.completions.create("),
-            self.combat_source.count("**get_chat_completion_params("),
+            sum(_call_name(call) == "_startup_provider_call"
+                for call in _calls(_functions("core/combat/bootstrap.py")["_run_resume_narrative"])),
+            2,
         )
-        self.assertGreaterEqual(
-            self.combat_source.count("timeout=COMBAT_API_TIMEOUT_SECONDS"),
-            3,
-        )
-        self.assertIn("retry_tier=\"high\"", self.combat_source)
+        self.assertIn('temperature=0.3', self.combat_validation_source)
+        self.assertIn('retry_tier="high"', self.combat_turn_source)
 
     def test_narrator_prompt_pairs_agree_on_movement_and_roll_contracts(self):
         self.assertIn(

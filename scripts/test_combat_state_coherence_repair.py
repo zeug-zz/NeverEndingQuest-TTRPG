@@ -11,23 +11,140 @@ Usage:
 """
 
 import json
+import ast
+import builtins
+import io
 import os
 import sys
+import tempfile
+import types
 import unittest
+from pathlib import Path
+from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.managers import combat_manager
-from core.managers.multi_pc_combat import (
-    CombatStateManager,
-    Combatant,
-    CombatantType,
-    MultiPCCombatManager,
-    PCStatus,
-)
-from updates.update_character_info import _apply_character_ops_deterministic
+from scripts.core_chat_test_safety import TripwireFailure, arm_process_tripwires
+
+PROCESS_TRIPWIRES = arm_process_tripwires()
+PRIVATE_READ_DENIALS = []
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class _PrivateRootReadDenied(BaseException):
+    pass
+
+
+def _is_private_root_read(path):
+    try:
+        candidate = Path(os.fsdecode(path))
+        if not candidate.is_absolute():
+            candidate = REPO_ROOT / candidate
+        return candidate.parent.resolve() == REPO_ROOT and candidate.name in {"config.py", "party_tracker.json"}
+    except (TypeError, ValueError, OSError):
+        return False
+
+
+def _arm_private_root_read_guard():
+    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
+
+    def check(path, operation):
+        if _is_private_root_read(path):
+            PRIVATE_READ_DENIALS.append(operation)
+            raise _PrivateRootReadDenied("private root read denied: " + operation)
+
+    def guarded_open(path, mode="r", *args, **kwargs):
+        check(path, "builtins.open")
+        return real_open(path, mode, *args, **kwargs)
+
+    def guarded_io_open(path, mode="r", *args, **kwargs):
+        check(path, "io.open")
+        return real_io_open(path, mode, *args, **kwargs)
+
+    def guarded_os_open(path, flags, *args, **kwargs):
+        check(path, "os.open")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    patchers = [patch("builtins.open", guarded_open), patch("io.open", guarded_io_open), patch("os.open", guarded_os_open)]
+    for patcher in patchers:
+        patcher.start()
+    return patchers
+
+
+PRIVATE_READ_PATCHES = _arm_private_root_read_guard()
+_IMPORT_FIXTURE = None
+_IMPORT_CWD = None
+_ORIGINAL_CWD = None
+_FACTORY_MOCK = None
+_INERT_COMPLETIONS = None
+
+
+def setUpModule():
+    """Import real combat owners under fatal guards and the known inert client seam."""
+    global _IMPORT_FIXTURE, _IMPORT_CWD, _ORIGINAL_CWD, _FACTORY_MOCK, _INERT_COMPLETIONS
+    global combat_manager, CombatStateManager, Combatant, CombatantType, MultiPCCombatManager, PCStatus
+    global _apply_character_ops_deterministic
+    import importlib
+    import shutil
+
+    import model_config
+    from utils import ai_client_factory
+    fixture = types.ModuleType("config")
+    for name in dir(model_config):
+        if name.isupper() and not name.startswith("_"):
+            setattr(fixture, name, getattr(model_config, name))
+    fixture.OPENAI_API_KEY = "DUMMY_OPENAI_KEY_FOR_STATE_COHERENCE_TEST"
+    fixture.OPENROUTER_API_KEY = "DUMMY_OPENROUTER_KEY_FOR_STATE_COHERENCE_TEST"
+    _INERT_COMPLETIONS = types.SimpleNamespace(create=Mock(side_effect=lambda *a, **k: (_ for _ in ()).throw(
+        TripwireFailure("unexpected state-coherence provider request")
+    )))
+    inert_client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=_INERT_COMPLETIONS))
+    _IMPORT_FIXTURE = ExitStack()
+    _IMPORT_FIXTURE.enter_context(patch.dict(sys.modules, {"config": fixture}))
+    factory_patcher = patch.object(ai_client_factory, "create_chat_client", return_value=inert_client)
+    _FACTORY_MOCK = factory_patcher.start()
+    _IMPORT_FIXTURE.callback(factory_patcher.stop)
+    tmp_root = REPO_ROOT / "tmp"
+    tmp_root.mkdir(exist_ok=True)
+    _ORIGINAL_CWD = Path.cwd()
+    _IMPORT_CWD = Path(tempfile.mkdtemp(prefix="state-coherence-import-", dir=tmp_root))
+    try:
+        os.chdir(_IMPORT_CWD)
+        import updates.update_character_info as character_update_module
+        from core.managers import combat_manager as combat_owner
+        from core.managers.multi_pc_combat import (
+            CombatStateManager as state_manager,
+            Combatant as combatant,
+            CombatantType as combatant_type,
+            MultiPCCombatManager as multi_pc_manager,
+            PCStatus as pc_status,
+        )
+    except BaseException:
+        os.chdir(_ORIGINAL_CWD)
+        _IMPORT_FIXTURE.close()
+        shutil.rmtree(_IMPORT_CWD, ignore_errors=True)
+        raise
+    finally:
+        os.chdir(_ORIGINAL_CWD)
+    combat_manager = combat_owner
+    CombatStateManager = state_manager
+    Combatant = combatant
+    CombatantType = combatant_type
+    MultiPCCombatManager = multi_pc_manager
+    PCStatus = pc_status
+    _apply_character_ops_deterministic = character_update_module._apply_character_ops_deterministic
+
+
+def tearDownModule():
+    import shutil
+    if _IMPORT_FIXTURE is not None:
+        _IMPORT_FIXTURE.close()
+    for patcher in reversed(PRIVATE_READ_PATCHES):
+        patcher.stop()
+    if _IMPORT_CWD is not None:
+        shutil.rmtree(_IMPORT_CWD, ignore_errors=True)
 
 
 class TestCombatStateCoherenceRepair(unittest.TestCase):
@@ -45,8 +162,11 @@ class TestCombatStateCoherenceRepair(unittest.TestCase):
             "active_character": "athelon",
         }
 
+        loaded_paths = []
+
         def fake_safe_json_load(path):
             path = str(path)
+            loaded_paths.append(path)
             if path.endswith("characters/xorn.json"):
                 return {"name": "Xorn", "hitPoints": 10, "maxHitPoints": 10, "armorClass": 16}
             if path.endswith("characters/athelon.json"):
@@ -60,6 +180,14 @@ class TestCombatStateCoherenceRepair(unittest.TestCase):
 
         self.assertEqual(set(state_mgr.pc_states.keys()), {"Xorn", "Athelon", "Lidda Underbough"})
         self.assertEqual(state_mgr.current_pc_name, "Athelon")
+        self.assertEqual(
+            loaded_paths,
+            [
+                "characters/xorn.json",
+                "characters/athelon.json",
+                "characters/lidda_underbough.json",
+            ],
+        )
 
     def test_update_pc_hp_preserves_existing_death_save_counts(self):
         state_mgr = CombatStateManager()
@@ -237,6 +365,29 @@ class TestCombatStateCoherenceRepair(unittest.TestCase):
             schema["properties"]["deathSaves"]["required"],
             ["successes", "failures"],
         )
+
+
+class TestImportSafetyProof(unittest.TestCase):
+    def test_private_reads_are_denied_and_inert_import_client_is_never_used(self):
+        for protected in ("config.py", "party_tracker.json"):
+            target = REPO_ROOT / protected
+            for operation, attempt in (
+                ("builtins.open", lambda: builtins.open(target, "r", encoding="utf-8")),
+                ("io.open", lambda: io.open(target, "r", encoding="utf-8")),
+                ("os.open", lambda: os.open(target, os.O_RDONLY)),
+            ):
+                with self.subTest(path=protected, operation=operation), self.assertRaises(_PrivateRootReadDenied):
+                    attempt()
+        self.assertEqual(PRIVATE_READ_DENIALS, ["builtins.open", "io.open", "os.open"] * 2)
+        self.assertGreater(_FACTORY_MOCK.call_count, 0)
+        self.assertEqual(_INERT_COMPLETIONS.create.call_count, 0)
+        PROCESS_TRIPWIRES.assert_untouched(self)
+        for name in ("openai.OpenAI", "socket.socket", "urlopen"):
+            guard = PROCESS_TRIPWIRES.calls[name]
+            with self.subTest(guard=name), self.assertRaises(TripwireFailure):
+                guard()
+            guard.reset_mock()
+        PROCESS_TRIPWIRES.assert_untouched(self)
 
 
 if __name__ == "__main__":

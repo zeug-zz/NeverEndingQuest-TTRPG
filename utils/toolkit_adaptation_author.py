@@ -9,9 +9,9 @@ Copyright (c) 2024 MoonlightByte
 Licensed under Fair Source License 1.0
 
 Provider runner and fail-closed response parser for the adaptation dossier
-handoff. This module calls only the repository chat-client factory, keeps the
-author prompt on disk as the single prompt contract, and never writes files,
-module state, registry state, or campaign state.
+handoff. This module routes production chat through the shared LLM facade,
+keeps the author prompt on disk as the single prompt contract, and never writes
+files, module state, registry state, or campaign state.
 
 This software is free for non-commercial and educational use.
 Commercial competing use is prohibited for 2 years from release.
@@ -32,7 +32,8 @@ try:
 except Exception:  # pragma: no cover - defensive import for provider-free use
     DM_MAIN_MODEL = "gpt-4.1-2025-04-14"
 
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+from utils.ai_client_factory import get_chat_completion_params
+from utils.llm_router import GameLLMTerminalError, llm
 from utils.toolkit_adaptation_dossier import (
     ADAPTATION_DOSSIER_STATUS_FAILED,
     ADAPTATION_DOSSIER_STATUS_READY,
@@ -907,6 +908,8 @@ def _get_field(value: Any, key: str, default: Any = None) -> Any:
 
 def _extract_response_parts(response: Any) -> Tuple[Optional[str], bool, Dict[str, str]]:
     """Extract content/refusal/model metadata without retaining provider data."""
+    if isinstance(response, str):
+        return (response if response.strip() else None), False, {}
     choices = _get_field(response, "choices")
     response_metadata: Dict[str, str] = {}
     response_model = _get_field(response, "model")
@@ -932,27 +935,6 @@ def _extract_response_parts(response: Any) -> Tuple[Optional[str], bool, Dict[st
     if not isinstance(content, str) or not content.strip():
         return None, False, response_metadata
     return content, False, response_metadata
-
-
-def _infer_provider(
-    attempt_metadata: Mapping[str, Any],
-    params: Mapping[str, Any],
-    model: str,
-    client_injected: bool,
-) -> str:
-    configured = attempt_metadata.get("provider")
-    if isinstance(configured, str) and configured.strip():
-        return _ascii_text(configured.strip().lower(), 120)
-    if params.get("use_openrouter") is True:
-        return "openrouter"
-    lowered_model = model.lower()
-    if lowered_model.startswith(("moonshotai/", "anthropic/", "google/")):
-        return "openrouter"
-    if lowered_model.startswith(("gpt-", "openai/")):
-        return "openai"
-    if client_injected:
-        return "injected"
-    return "openai"
 
 
 def _safe_params(params: Mapping[str, Any]) -> Dict[str, Any]:
@@ -1131,21 +1113,24 @@ def run_llm_adaptation_author(
     source_context: Mapping[str, Any],
     attempt_metadata: Optional[Mapping[str, Any]] = None,
     *,
-    client: Optional[Any] = None,
+    client: Optional[Callable[..., Any]] = None,
     model: Optional[str] = None,
     parameter_resolver: Optional[Callable[..., Mapping[str, Any]]] = None,
     timeout_seconds: Optional[float] = ADAPTATION_AUTHOR_DEFAULT_TIMEOUT_SECONDS,
     world_context: Any = None,
 ) -> Dict[str, Any]:
-    """Run the adaptation author with injectable client/model/parameters.
+    """Run the adaptation author through the facade with provider-free seams.
 
     ``source_context`` is already bounded context supplied by the caller; this
     runner does not perform source extraction or profile inference. The model
     returns a strict dossier string which is passed to the real dossier parser.
-    The request uses the strict GPT-family structured-output contract built
-    from the repository dossier schema (with the narrowly documented provider
-    fallback); the Python dossier parser remains the final authority. Provider
-    failures never invoke a semantic retry and no result writes files.
+    ``client``, when supplied, is a facade-shaped callable retained for
+    provider-free tests; production uses ``llm.call``. ``model`` remains an
+    accepted metadata/API argument, but the task profile owns model selection.
+    The request uses the strict structured-output contract built from the
+    repository dossier schema; the Python dossier parser remains the final
+    authority. Provider failures never invoke a semantic retry and no result
+    writes files.
     """
     if not isinstance(source_context, Mapping):
         metadata, metadata_diagnostics = _prepare_attempt_metadata(attempt_metadata)
@@ -1197,8 +1182,7 @@ def run_llm_adaptation_author(
             reason_code=REASON_CODE_AUTHOR_PROMPT_FAILED,
         )
 
-    requested_model = model if model is not None else DM_MAIN_MODEL
-    if not isinstance(requested_model, str) or not requested_model.strip():
+    if model is not None and (not isinstance(model, str) or not model.strip()):
         return _invalid_parse_result(
             [
                 _diagnostic(
@@ -1214,24 +1198,60 @@ def run_llm_adaptation_author(
             safe_class=REASON_CATEGORY_PARAMETER_RESOLUTION,
             reason_code=REASON_CODE_INVALID_PARAMS,
         )
-    requested_model = requested_model.strip()
-    provider_hint = _infer_provider(metadata, {}, requested_model, client is not None)
+    try:
+        profile = llm.resolve_profile(ADAPTATION_AUTHOR_TASK_ID)
+        resolved_model = profile.get("model")
+        profile_provider = profile.get("provider_name")
+        if not isinstance(resolved_model, str) or not resolved_model.strip():
+            raise ValueError("task profile has no model")
+        resolved_model = resolved_model.strip()
+        profile_provider = str(profile_provider or "openai")
+        provider = "injected" if client is not None else profile_provider
+    except Exception:
+        base = _base_run_metadata(metadata, "openai", DM_MAIN_MODEL)
+        base.update(
+            {
+                "status": RUNNER_STATUS_PARAM_RESOLUTION_FAILED,
+                "outcome": OUTCOME_PARAMETER_RESOLUTION_FAILURE,
+                "ok": False,
+                "failure_class": FAILURE_CLASS_PARAMETER_RESOLUTION,
+                "safe_class": REASON_CATEGORY_PARAMETER_RESOLUTION,
+                "reason_code": REASON_CODE_PARAM_RESOLUTION_FAILED,
+                "terminal": True,
+                "params_used": {},
+                "diagnostics": [_diagnostic(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, "task profile resolution failed")],
+                "dossier": None,
+                "dossier_status": None,
+                "dossier_validation": None,
+                "response_metadata": {},
+                "error": "param_resolution_failed",
+                "retryable": False,
+                "revision_eligible": False,
+            }
+        )
+        return base
+
     resolver = parameter_resolver or get_chat_completion_params
 
     try:
-        params = resolver(ADAPTATION_AUTHOR_TASK_ID, requested_model)
-        if not isinstance(params, Mapping):
+        resolved_params = resolver(ADAPTATION_AUTHOR_TASK_ID, resolved_model)
+        if not isinstance(resolved_params, Mapping):
             raise TypeError("parameter resolver must return an object")
-        params = dict(params)
-        if not params.get("model") or not isinstance(params.get("model"), str):
+        resolved_params = dict(resolved_params)
+        if not resolved_params.get("model") or not isinstance(resolved_params.get("model"), str):
             raise ValueError("resolved parameters must include a model")
-        invalid_keys = _RESERVED_REQUEST_KEYS.intersection(params.keys())
+        if resolved_params["model"].strip() != resolved_model:
+            raise ValueError("parameter resolver model must match the task profile")
+        invalid_keys = _RESERVED_REQUEST_KEYS.intersection(resolved_params.keys())
         if invalid_keys:
             raise ValueError("parameter resolver returned reserved request keys")
-        if any(not isinstance(key, str) for key in params):
+        if any(not isinstance(key, str) for key in resolved_params):
             raise ValueError("parameter resolver returned a non-string key")
+        # The resolver remains a provider-free metadata/error seam. The facade
+        # owns transport parameters and does not receive these resolved kwargs.
+        params = resolved_params
     except Exception:
-        base = _base_run_metadata(metadata, provider_hint, requested_model)
+        base = _base_run_metadata(metadata, provider, resolved_model)
         base.update(
             {
                 "status": RUNNER_STATUS_PARAM_RESOLUTION_FAILED,
@@ -1259,8 +1279,6 @@ def run_llm_adaptation_author(
         )
         return base
 
-    resolved_model = str(params["model"])
-    provider = _infer_provider(metadata, params, resolved_model, client is not None)
     if timeout_seconds is not None:
         if (
             isinstance(timeout_seconds, bool)
@@ -1297,7 +1315,7 @@ def run_llm_adaptation_author(
             return base
 
     try:
-        response_format = build_adaptation_author_response_format(provider)
+        response_format = build_adaptation_author_response_format(profile_provider)
     except Exception:
         base = _base_run_metadata(metadata, provider, resolved_model)
         base.update(
@@ -1327,14 +1345,26 @@ def run_llm_adaptation_author(
         )
         return base
 
-    if client is None:
-        try:
-            client = create_chat_client()
-        except Exception as exc:
+    provider_refusal = False
+    response_metadata: Dict[str, str] = {}
+    try:
+        # TABLETOP MODE: Production author chat is routed through the shared facade.
+        facade_call = client if client is not None else llm.call
+        if not callable(facade_call):
+            raise TypeError("injected facade call must be callable")
+        response = facade_call(
+            task=ADAPTATION_AUTHOR_TASK_ID,
+            messages=messages,
+            json_output=False,
+            response_format=response_format,
+        )
+        raw_content, provider_refusal, response_metadata = _extract_response_parts(response)
+    except GameLLMTerminalError as exc:
+        if exc.terminal_kind in {"refusal", "content_filter"}:
+            raw_content, provider_refusal, response_metadata = None, True, {}
+        else:
             failure_class, retryable = _classify_provider_exception(exc)
-            reason_class, reason_code = _reason_for_failure_class(
-                failure_class, client_init=True
-            )
+            reason_class, reason_code = _reason_for_failure_class(failure_class)
             base = _base_run_metadata(metadata, provider, resolved_model)
             base.update(
                 {
@@ -1348,12 +1378,7 @@ def run_llm_adaptation_author(
                     "retryable": retryable,
                     "terminal": failure_class == FAILURE_CLASS_DEPENDENCY,
                     "params_used": _safe_params(params),
-                    "diagnostics": [
-                        _diagnostic(
-                            DIAGNOSTIC_CODE_PROVIDER_FAILED,
-                            f"provider client initialization failed ({failure_class})",
-                        )
-                    ],
+                    "diagnostics": [_diagnostic(DIAGNOSTIC_CODE_PROVIDER_FAILED, f"provider call failed ({failure_class})")],
                     "dossier": None,
                     "dossier_status": None,
                     "dossier_validation": None,
@@ -1363,15 +1388,6 @@ def run_llm_adaptation_author(
                 }
             )
             return base
-
-    request_kwargs: Dict[str, Any] = dict(params)
-    request_kwargs["messages"] = messages
-    request_kwargs["response_format"] = response_format
-    if timeout_seconds is not None:
-        request_kwargs["timeout"] = timeout_seconds
-
-    try:
-        response = client.chat.completions.create(**request_kwargs)
     except Exception as exc:
         failure_class, retryable = _classify_provider_exception(exc)
         reason_class, reason_code = _reason_for_failure_class(failure_class)
@@ -1404,7 +1420,6 @@ def run_llm_adaptation_author(
         )
         return base
 
-    raw_content, provider_refusal, response_metadata = _extract_response_parts(response)
     if provider_refusal:
         base = _base_run_metadata(metadata, provider, resolved_model)
         base.update(

@@ -22,7 +22,8 @@ from dataclasses import dataclass
 
 # Import local modules
 from utils.token_estimator import TokenEstimator
-from utils.ai_client_factory import create_chat_client, get_model_config, handle_provider_error
+from utils.llm_router import llm
+from utils.ai_client_factory import handle_provider_error
 import config
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 
@@ -48,9 +49,6 @@ class LocationSummarizer:
         self.ai_model = ai_model or config.DM_SUMMARIZATION_MODEL
         self.token_estimator = TokenEstimator()
         self.summarization_history = []
-        
-        # Initialize factory client
-        self.client = create_chat_client()
         
         # No artificial compression parameters - purely agentic AI generation
         
@@ -527,30 +525,27 @@ CRITICAL: Your narrative must include all location names from the journey progre
 Your output should read like a published game codex, narrative recap, or campaign journal entry written by a bard who was intimate with the party's secrets. Never reference this prompt or the data format -- just write the immersive chronicle that shows both the party's journey through every listed location AND the evolution of their bonds."""
 
                 # Make API call to OpenAI - purely agentic, no artificial limits
-                model_config = get_model_config("location_summarizer", self.ai_model)
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        response = self.client.chat.completions.create(
-                            model=model_config["model"],
-                            **model_config.get("extra_body", {}),
+                        response = llm.call(
+                            task="location_summarizer",
                             messages=[
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt}
                             ],
-                            temperature=0.8,
-                            max_tokens=650
+                            json_output=False,
+                            max_tokens=650,
                         )
                         break
                     except Exception as e:
                         error_result = handle_provider_error(e, "location_summarizer")
                         if error_result["should_fallback"] and attempt < max_retries - 1:
-                            self.client = create_chat_client(use_fallback=True)
                             continue
                         raise
                 
                 # Extract the generated chronicle
-                chronicle = response.choices[0].message.content.strip()
+                chronicle = response.strip()
                 
                 # Add a note about AI generation
                 return f"{chronicle}\n\n[AI-Generated Chronicle Summary]"
@@ -677,5 +672,3 @@ Your output should read like a published game codex, narrative recap, or campaig
             json.dump(report, f, indent=2, ensure_ascii=False)
         
         return output_file
-
-

@@ -25,7 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from jsonschema import Draft7Validator
 
 from model_config import DM_MINI_MODEL
-from utils.ai_client_factory import create_chat_client, get_model_config
+from utils.ai_client_factory import get_model_config
+from utils.llm_router import llm
 from utils.enhanced_logger import info, warning
 from utils.spell_slot_utils import normalize_character_spell_slots
 
@@ -596,7 +597,6 @@ def build_readiness_repair_proposal(character_data: Dict[str, Any], missing_path
 
     try:
         model_config = get_model_config("dm_mini", DM_MINI_MODEL)
-        client = create_chat_client()
 
         char_name = character_data.get("name", "Unknown Character")
         char_class = character_data.get("class", "Adventurer")
@@ -616,8 +616,8 @@ def build_readiness_repair_proposal(character_data: Dict[str, Any], missing_path
             ],
         }
 
-        response = client.chat.completions.create(
-            model=model_config["model"],
+        content = llm.call(
+            task="dm_mini",
             messages=[
                 {
                     "role": "system",
@@ -628,10 +628,8 @@ def build_readiness_repair_proposal(character_data: Dict[str, Any], missing_path
                     "content": json.dumps(prompt, indent=2),
                 },
             ],
-            temperature=0.4,
-            **model_config.get("extra_body", {}),
+            json_output=False,
         )
-        content = response.choices[0].message.content if response and response.choices else ""
         parsed = _extract_json_object(str(content or ""))
         if not parsed:
             return fallback

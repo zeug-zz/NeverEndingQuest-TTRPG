@@ -16,13 +16,8 @@ from dataclasses import dataclass, field
 import jsonschema
 import random
 from utils.module_path_manager import ModulePathManager
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
-from model_config import DM_MAIN_MODEL
+from utils.ai_client_factory import handle_provider_error
+from utils.llm_router import llm
 from utils.spatial_contract import build_location_aliases, build_tactical_grid
 from utils.toolkit_adaptation_output_safety import emit_adaptation_telemetry
 
@@ -468,17 +463,11 @@ Context:
         if adaptation_context:
             prompt += f"\n\n{adaptation_context}\n"
 
-        client = create_chat_client()
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "location_generator",
-                        DM_MAIN_MODEL,
-                        temperature_override=0.7,
-                    ),
+                response = llm.call(
+                    task="location_generator",
                     messages=[
                         {
                             "role": "system",
@@ -486,17 +475,16 @@ Context:
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
+                    json_output=False,
                 )
                 break
             except Exception as e:
                 error_result = handle_provider_error(e, "generate_location_field")
                 if error_result["should_fallback"] and attempt < max_retries - 1:
-                    client = create_chat_client(use_fallback=True)
                     continue
                 raise
 
-        content = response.choices[0].message.content.strip()
+        content = response.strip()
 
         # Try to parse as JSON if it looks like JSON
         if content.startswith(("[", "{")):
@@ -624,17 +612,11 @@ Check the location schema carefully for all required fields.
         if adaptation_context and "=== LLM ADAPTATION CONTEXT ===" not in context_header:
             batch_prompt += f"\n\n{adaptation_context}\n"
 
-        client = create_chat_client()
-
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "location_generator_batch",
-                        DM_MAIN_MODEL,
-                        temperature_override=0.8,
-                    ),
+                response = llm.call(
+                    task="location_generator_batch",
                     messages=[
                         {
                             "role": "system",
@@ -642,18 +624,17 @@ Check the location schema carefully for all required fields.
                         },
                         {"role": "user", "content": batch_prompt},
                     ],
+                    json_output=False,
                     response_format={"type": "json_object"},
-                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                 )
                 break
             except Exception as e:
                 error_result = handle_provider_error(e, "generate_location_batch")
                 if error_result["should_fallback"] and attempt < max_retries - 1:
-                    client = create_chat_client(use_fallback=True)
                     continue
                 raise
 
-        return json.loads(response.choices[0].message.content)
+        return json.loads(response)
 
     def generate_locations(
         self,

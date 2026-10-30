@@ -61,20 +61,34 @@ _HIT_AS_MISS_PATTERNS = [
     )
 ]
 
-_EXPLICIT_STATE_MUTATION_PATTERNS = [
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"HP\s*-?\d+\s*->\s*-?\d+",
-        r"takes\s+\d+",
-        r"deals\s+\d+[^.]{0,80}to",
-        r"heals?\s+\d+",
-        r"condition",
-        r"now dead",
-        r"now unconscious",
-        r"expended\s+\d+\s+(?:arrow|bolt)",
-        r"remove\s+\d+\s+(?:arrow|bolt)",
-    )
-]
+_MUTATION_CLAUSE_PATTERNS = (
+    re.compile(r"\b(?:takes?|suffers?)\s+\d+\b[^.;!?\n]{0,80}\b(?:damage|hp)\b", re.IGNORECASE),
+    re.compile(r"\b(?:deals?|heals?)\s+\d+\b[^.;!?\n]{0,80}\b(?:to|for)\b", re.IGNORECASE),
+    re.compile(r"\bhp\s*-?\d+\s*->\s*-?\d+", re.IGNORECASE),
+    re.compile(r"\b(?:condition|conditions|poisoned|prone|restrained|unconscious|dead)\b", re.IGNORECASE),
+    re.compile(r"\b(?:expends?|uses?|spends?|loses?|restores?)\b[^.;!?\n]{0,80}\b(?:slot|spell|arrow|bolt|ammunition|resource|charge|use)\b", re.IGNORECASE),
+    re.compile(r"\b(?:remove|removes)\s+\d+\s+(?:arrow|bolt)\b", re.IGNORECASE),
+)
+_TARGET_LEFT_MUTATION = re.compile(
+    r"^(?P<name>.+?)\s+(?:takes?|suffers?|loses?|expends?|uses?|spends?|restores?)\b",
+    re.IGNORECASE,
+)
+_TARGET_RIGHT_MUTATION = re.compile(
+    r"\b(?:damage|healing|condition|conditions|resource|slot|spell|ammunition|arrow|bolt|hp|hit points?)\b"
+    r"[^.;!?\n]{0,48}\b(?:to|for|on|from)\s+(?P<name>[^,;.!?\n]+)",
+    re.IGNORECASE,
+)
+_RECIPIENT_HEAL = re.compile(
+    r"\bheals?\s+\d+\b[^.;!?\n]{0,48}\b(?:to|for)\s+(?P<name>[^,;.!?\n]+)",
+    re.IGNORECASE,
+)
+_SUBJECT_INJURY_TAIL = re.compile(r"\s+(?:was|is|gets?|suffers?)\s+(?:hit|struck|wounded|injured)\b", re.IGNORECASE)
+_HP_STATE_SUBJECT = re.compile(
+    r"^(?P<name>[^,;.!?\n]+?)\s+(?:has\s+)?(?:hp\s+)?(?:is\s+)?(?:now\s+)?"
+    r"(?:at\s+)?-?\d+\s*(?:hp|hit points?)\b",
+    re.IGNORECASE,
+)
+_HP_ARROW_SUBJECT = re.compile(r"^(?P<name>[^,;.!?\n]+?)\s+hp\s*-?\d+\s*->\s*-?\d+", re.IGNORECASE)
 
 
 def _normalize_name(value: Any) -> str:
@@ -266,17 +280,116 @@ def _collect_non_enemy_names(encounter_data: Dict[str, Any]) -> List[str]:
     return names
 
 
-def _changes_text_targets_non_enemy(changes_text: str, non_enemy_names: Sequence[str]) -> Optional[str]:
-    """Return the first non-enemy target that appears with explicit state mutation text."""
-    lowered_changes = changes_text.lower()
+def _canonical_name_in_text(text: str, names: Sequence[str]) -> List[str]:
+    """Return canonical encounter identities mentioned as whole names."""
+    lowered = _normalize_name(text)
+    found = []
+    for name in names:
+        normalized = _normalize_name(name)
+        if not normalized:
+            continue
+        if re.search(r"(?<![a-z0-9])" + re.escape(normalized) + r"(?![a-z0-9])", lowered):
+            found.append(name)
+    return found
+
+
+def _canonical_subject_name(text: str, names: Sequence[str]) -> List[str]:
+    """Match a complete canonical subject, optionally in possessive form."""
+    normalized_text = _normalize_name(text.strip())
+    return [
+        name for name in names
+        if normalized_text in (_normalize_name(name), _normalize_name(name) + " s")
+    ]
+
+
+def _mutation_clause_target(clause: str, non_enemy_names: Sequence[str], all_names: Sequence[str]) -> Optional[str]:
+    """Identify only an explicit canonical recipient in a bounded clause."""
+    mutation = any(pattern.search(clause) for pattern in _MUTATION_CLAUSE_PATTERNS)
+    if not mutation:
+        return None
+
+    target_names: List[str] = []
+    left = _TARGET_LEFT_MUTATION.match(clause.strip())
+    if left:
+        target_names.extend(_canonical_name_in_text(left.group("name"), non_enemy_names))
+    right = _TARGET_RIGHT_MUTATION.search(clause)
+    if right:
+        target_names.extend(_canonical_name_in_text(right.group("name"), non_enemy_names))
+    heal_recipient = _RECIPIENT_HEAL.search(clause)
+    if heal_recipient:
+        target_names.extend(_canonical_name_in_text(heal_recipient.group("name"), non_enemy_names))
+    hp_subject = _HP_STATE_SUBJECT.match(clause.strip())
+    if hp_subject:
+        target_names.extend(_canonical_subject_name(hp_subject.group("name"), non_enemy_names))
+    hp_arrow_subject = _HP_ARROW_SUBJECT.match(clause.strip())
+    if hp_arrow_subject:
+        target_names.extend(_canonical_subject_name(hp_arrow_subject.group("name"), non_enemy_names))
+
+    unique_targets = list(dict.fromkeys(target_names))
+    if len(unique_targets) == 1:
+        return unique_targets[0]
+
+    # A one-name mutation clause such as "Acheron HP 20->12" is attributable;
+    # a clause containing both victim and attacker without an explicit relation is not.
+    mentioned = _canonical_name_in_text(clause, all_names)
+    mentioned_non_enemy = [name for name in mentioned if _normalize_name(name) in {
+        _normalize_name(candidate) for candidate in non_enemy_names
+    }]
+    if len(mentioned) == 1 and len(mentioned_non_enemy) == 1:
+        return mentioned_non_enemy[0]
+    return None
+
+
+def _immediate_hp_continuation_target(
+    clause: str, non_enemy_names: Sequence[str], all_names: Sequence[str]
+) -> Optional[str]:
+    """Bind only an immediate HP-value continuation to an explicit prior subject/recipient."""
+    normalized_clause = _normalize_name(clause.strip().rstrip(":"))
+    exact_names = [name for name in all_names if _normalize_name(name) == normalized_clause]
+    if len(exact_names) == 1 and _normalize_name(exact_names[0]) in {
+        _normalize_name(name) for name in non_enemy_names
+    }:
+        return exact_names[0]
+
+    subject_targets = []
     for name in non_enemy_names:
         normalized = _normalize_name(name)
         if not normalized:
             continue
-        if normalized not in lowered_changes:
+        match = re.match(r"^" + re.escape(normalized) + r"(?![a-z0-9])", normalized_clause)
+        if match and _SUBJECT_INJURY_TAIL.match(normalized_clause[match.end():]):
+            subject_targets.append(name)
+    if len(subject_targets) == 1 and len(_canonical_name_in_text(clause, non_enemy_names)) == 1:
+        return subject_targets[0]
+
+    hit_clause = re.search(
+        r"\b(?:hits?|strikes?|wounds?|injures?)\s+(?P<targets>[^.;!?]+)",
+        normalized_clause,
+    )
+    if not hit_clause:
+        return None
+    injury_targets = _canonical_name_in_text(hit_clause.group("targets"), non_enemy_names)
+    unique_targets = list(dict.fromkeys(injury_targets))
+    return unique_targets[0] if len(unique_targets) == 1 else None
+
+
+def _changes_text_targets_non_enemy(changes_text: str, non_enemy_names: Sequence[str], all_names: Optional[Sequence[str]] = None) -> Optional[str]:
+    """Return a non-enemy recipient only when a local clause proves its mutation."""
+    canonical_names = list(all_names or non_enemy_names)
+    clauses = re.split(r"[.;!?\n]+", changes_text)
+    previous_hp_target: Optional[str] = None
+    for clause in clauses:
+        stripped = clause.strip()
+        if not stripped:
             continue
-        if any(pattern.search(changes_text) for pattern in _EXPLICIT_STATE_MUTATION_PATTERNS):
-            return name
+        target = _mutation_clause_target(stripped, non_enemy_names, canonical_names)
+        if target:
+            return target
+        # A value-only HP continuation can inherit only from the immediately
+        # preceding clause that explicitly described a non-enemy HP mutation.
+        if previous_hp_target and re.fullmatch(r"\s*(?:hp\s*)?-?\d+\s*->\s*-?\d+\s*", stripped, re.IGNORECASE):
+            return previous_hp_target
+        previous_hp_target = _immediate_hp_continuation_target(stripped, non_enemy_names, canonical_names)
     return None
 
 
@@ -293,6 +406,11 @@ def validate_update_encounter_enemy_boundary_precheck(
         return True, ""
 
     non_enemy_lookup = {_normalize_name(name): name for name in non_enemy_names}
+    all_names = [
+        str(creature.get("name", "")).strip()
+        for creature in encounter_data.get("creatures", [])
+        if isinstance(creature, dict) and str(creature.get("name", "")).strip()
+    ]
     actions = response_json.get("actions", [])
     if not isinstance(actions, list):
         return True, ""
@@ -310,7 +428,7 @@ def validate_update_encounter_enemy_boundary_precheck(
 
         changes_text = params.get("changes")
         if isinstance(changes_text, str) and changes_text.strip():
-            offending_name = _changes_text_targets_non_enemy(changes_text, non_enemy_names)
+            offending_name = _changes_text_targets_non_enemy(changes_text, non_enemy_names, all_names)
             if offending_name:
                 return False, (
                     "Combat enemy-routing precheck failed: updateEncounter prose mirror targeted "

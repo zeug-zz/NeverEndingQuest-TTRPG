@@ -16,7 +16,12 @@ import os
 import sys
 import types
 import ast
+import builtins
+import io
+import inspect
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +29,117 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 
+# Install fatal SDK/network/outside-write guards before importing project owners.
+from scripts.core_chat_test_safety import TripwireFailure, arm_process_tripwires
+
+PROCESS_TRIPWIRES = arm_process_tripwires()
+
+
+class _PrivateRootReadDenied(BaseException):
+    """Fatal sentinel for attempts to read private root fixtures/configuration."""
+
+
+def _is_private_root_read(path):
+    try:
+        candidate = Path(os.fsdecode(path))
+        if not candidate.is_absolute():
+            candidate = Path(PROJECT_ROOT) / candidate
+        return candidate.parent.resolve() == Path(PROJECT_ROOT).resolve() and candidate.name in {
+            "config.py",
+            "party_tracker.json",
+        }
+    except (TypeError, ValueError, OSError):
+        return False
+
+
+def _arm_private_root_read_guard():
+    """Deny root config/party reads while allowing explicitly supplied fixtures."""
+    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
+    denied = []
+
+    def check(path, operation):
+        if _is_private_root_read(path):
+            denied.append(operation)
+            raise _PrivateRootReadDenied("private root read denied: " + operation)
+
+    def guarded_open(path, mode="r", *args, **kwargs):
+        check(path, "builtins.open")
+        return real_open(path, mode, *args, **kwargs)
+
+    def guarded_io_open(path, mode="r", *args, **kwargs):
+        check(path, "io.open")
+        return real_io_open(path, mode, *args, **kwargs)
+
+    def guarded_os_open(path, flags, *args, **kwargs):
+        check(path, "os.open")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    patches = [
+        patch("builtins.open", guarded_open),
+        patch("io.open", guarded_io_open),
+        patch("os.open", guarded_os_open),
+    ]
+    for patcher in patches:
+        patcher.start()
+    return patches, denied
+
+
+PRIVATE_READ_PATCHES, PRIVATE_READ_DENIALS = _arm_private_root_read_guard()
+
+
 from core.managers.multi_pc_combat import Combatant, CombatantType, TurnQueueManager
+
+
+def _load_combat_runtime_sources():
+    """Load all extracted combat-manager stages for source-contract checks."""
+    source_paths = (
+        "core/combat/combat_manager.py",
+        "core/combat/prompts.py",
+        "core/combat/turn.py",
+        "core/combat/persistence.py",
+        "core/combat/commands.py",
+        "core/combat/decisions.py",
+    )
+    parts = []
+    for path in source_paths:
+        with open(os.path.join(PROJECT_ROOT, path), "r", encoding="utf-8") as handle:
+            parts.append(handle.read())
+    return "\n".join(parts)
+
+
+def _function_node(source, function_name):
+    tree = ast.parse(source)
+    return next(
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
+    )
+
+
+def _call_nodes(node, function_name):
+    return [
+        call for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and ((isinstance(call.func, ast.Name) and call.func.id == function_name)
+             or (isinstance(call.func, ast.Attribute) and call.func.attr == function_name))
+    ]
+
+
+def _action_type_branch(node, action_name):
+    for candidate in ast.walk(node):
+        if not isinstance(candidate, ast.If) or not isinstance(candidate.test, ast.Compare):
+            continue
+        test = candidate.test
+        if (
+            isinstance(test.left, ast.Name)
+            and test.left.id == "action_type"
+            and test.ops
+            and isinstance(test.ops[0], ast.Eq)
+            and test.comparators
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == action_name
+        ):
+            return candidate
+    raise AssertionError(f"Missing action branch for {action_name}")
 
 
 def _load_main_helper_namespace():
@@ -52,55 +167,80 @@ def _load_main_helper_namespace():
     return namespace
 
 
-def _import_integrity_validator():
-    """Import validate_combatant_integrity with lightweight dependency stubs."""
-    openai_mod = types.ModuleType("openai")
+def _load_integrity_validator():
+    """Execute the actual validator and its complete pure helper closure via AST."""
+    source_path = os.path.join(PROJECT_ROOT, "core", "combat", "combat_manager.py")
+    with open(source_path, "r", encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=source_path)
 
-    class OpenAI:
-        def __init__(self, *args, **kwargs):
-            self.chat = types.SimpleNamespace(
-                completions=types.SimpleNamespace(create=lambda *a, **k: None)
-            )
+    required_names = {
+        "_normalize_combatant_name",
+        "_name_matches_authoritative_roster",
+        "_collect_authoritative_combat_roster",
+        "validate_combatant_integrity",
+    }
+    selected_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in required_names
+    ]
+    selected_names = {node.name for node in selected_nodes}
+    if selected_names != required_names:
+        raise AssertionError("Integrity validator source closure is incomplete")
 
-    openai_mod.OpenAI = OpenAI
-    sys.modules["openai"] = openai_mod
+    namespace = {
+        "json": __import__("json"),
+        # The validator's logger is only reached on its fail-open exception path;
+        # make unexpected logger reachability loud without substituting behavior.
+        "error": lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unexpected integrity-validator error logging")
+        ),
+    }
+    helper_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(helper_module, filename=source_path, mode="exec"), namespace)
+    validator = namespace["validate_combatant_integrity"]
+    expected_parameters = (
+        "response_json_str", "encounter_data", "multi_pc_manager", "party_tracker_data"
+    )
+    if tuple(inspect.signature(validator).parameters) != expected_parameters:
+        raise AssertionError("Integrity validator public signature changed")
+    return validator
 
-    update_character_info_mod = types.ModuleType("updates.update_character_info")
-    update_character_info_mod.update_character_info = lambda *a, **k: None
-    update_character_info_mod.normalize_character_name = lambda name: name
-    sys.modules["updates.update_character_info"] = update_character_info_mod
-    sys.modules["updates.update_encounter"] = types.ModuleType("updates.update_encounter")
-    sys.modules["updates.update_party_tracker"] = types.ModuleType("updates.update_party_tracker")
 
-    core_ai_pkg = types.ModuleType("core.ai")
-    sys.modules["core.ai"] = core_ai_pkg
-    import core
-    core.ai = core_ai_pkg
+def _deny_root_fixture_read(path):
+    """Exercise the private-read guard without reading a protected file."""
+    with unittest.TestCase().assertRaises(_PrivateRootReadDenied):
+        builtins.open(os.path.join(PROJECT_ROOT, path), "r", encoding="utf-8")
 
-    sys.modules["core.ai.cumulative_summary"] = types.ModuleType("core.ai.cumulative_summary")
 
-    combat_compressor_mod = types.ModuleType("core.ai.combat_compressor")
+class TestC5HarnessSafety(unittest.TestCase):
+    def test_actual_integrity_loader_uses_no_private_root_or_external_capability(self):
+        _deny_root_fixture_read("config.py")
+        _deny_root_fixture_read("party_tracker.json")
 
-    class CombatUserMessageCompressor:
-        def __init__(self, *args, **kwargs):
-            pass
+        validator = _load_integrity_validator()
+        self.assertEqual(
+            tuple(inspect.signature(validator).parameters),
+            ("response_json_str", "encounter_data", "multi_pc_manager", "party_tracker_data"),
+        )
+        self.assertEqual(PRIVATE_READ_DENIALS[-2:], ["builtins.open", "builtins.open"])
+        PROCESS_TRIPWIRES.assert_untouched(self)
+        for name in ("openai.OpenAI", "socket.socket", "urlopen"):
+            guard = PROCESS_TRIPWIRES.calls[name]
+            with self.subTest(guard=name), self.assertRaises(TripwireFailure):
+                guard()
+            guard.reset_mock()
 
-        def process_combat_conversation(self, history):
-            return history
-
-    combat_compressor_mod.CombatUserMessageCompressor = CombatUserMessageCompressor
-    sys.modules["core.ai.combat_compressor"] = combat_compressor_mod
-
-    inventory_mod = types.ModuleType("core.ai.inventory_context_integration")
-    inventory_mod.enhance_player_input_with_inventory = lambda *a, **k: a[0] if a else ""
-    sys.modules["core.ai.inventory_context_integration"] = inventory_mod
-
-    if "core.managers.combat_manager" in sys.modules:
-        del sys.modules["core.managers.combat_manager"]
-
-    from core.managers.combat_manager import validate_combatant_integrity
-
-    return validate_combatant_integrity
+        outside_path = os.path.join(PROJECT_ROOT, "scripts", "c5-tripwire-must-not-write")
+        for operation in (
+            lambda: builtins.open(outside_path, "w", encoding="utf-8"),
+            lambda: io.open(outside_path, "w", encoding="utf-8"),
+            lambda: os.open(outside_path, os.O_CREAT | os.O_WRONLY),
+            lambda: os.mkdir(outside_path),
+        ):
+            with self.assertRaises(TripwireFailure):
+                operation()
+        self.assertFalse(Path(outside_path).exists())
+        PROCESS_TRIPWIRES.assert_untouched(self)
 
 
 class TestC4Hardening(unittest.TestCase):
@@ -108,7 +248,7 @@ class TestC4Hardening(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.validate_integrity = staticmethod(_import_integrity_validator())
+        cls.validate_integrity = staticmethod(_load_integrity_validator())
 
     def test_enemy_phase_actor_filter(self):
         manager = TurnQueueManager()
@@ -184,11 +324,13 @@ class TestC4Hardening(unittest.TestCase):
         encounter_data = {
             "creatures": [
                 {"name": "Goblin A", "type": "enemy"},
-                {"name": "Acheron", "type": "player"},
             ]
         }
 
-        result = self.validate_integrity(response, encounter_data, multi_pc_manager=None, party_tracker_data={})
+        party_fixture = {"partyMembers": ["Acheron", "Merisiel"]}
+        result = self.validate_integrity(
+            response, encounter_data, multi_pc_manager=None, party_tracker_data=party_fixture
+        )
         self.assertIsInstance(result, str)
         self.assertIn("INTEGRITY ERROR", result)
         self.assertIn("Phantom Knight", result)
@@ -251,9 +393,7 @@ class TestDmGroupOpeningPhaseTransitionContract(unittest.TestCase):
 
     def _load_combat_manager_source(self):
         """Load raw source of combat_manager.py for contract tests."""
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def test_init_dmgroup_sets_opening_marker(self):
         """/init path must set openingEnemyBatchPending when dmGroup wins initiative."""
@@ -268,63 +408,44 @@ class TestDmGroupOpeningPhaseTransitionContract(unittest.TestCase):
         )
 
     def test_roundstart_dmgroup_sets_opening_marker(self):
-        """Round-start path must set openingEnemyBatchPending when roundStartsWith=dmGroup."""
-        source = self._load_combat_manager_source()
-        # Find the round start block that applies dmGroup phase
-        self.assertIn('round_starts_with = encounter_data.get("roundStartsWith", "pcGroup")', source)
-        self.assertIn('if round_starts_with == "dmGroup":', source)
-        self.assertIn('apply_opening_batch_marker(encounter_data, "dmGroup")', source)
-        # Verify the PHASE_MARKER debug log for dmGroup via round-start path
-        self.assertIn(
-            'PHASE_MARKER: Set openingEnemyBatchPending=True via round-start dmGroup path',
-            source
-        )
+        """Opening DM batches retain the round and stage a PC-phase handoff."""
+        source = Path(os.path.join(PROJECT_ROOT, "core/combat/turn.py")).read_text(encoding="utf-8")
+        stage = _function_node(source, "stage_combat_turn_snapshot")
+        stage_text = "\n".join(source.splitlines()[stage.lineno - 1:stage.end_lineno])
+        self.assertIn('encounter_data.get("roundStartsWith", "pcGroup")', stage_text)
+        self.assertIn('round_starts_with != "dmGroup"', stage_text)
+        self.assertIn('final_round = current_round', stage_text)
+        self.assertIn('final_phase = "PC_PHASE"', stage_text)
+        self.assertIn('final_opening_pending = False', stage_text)
 
     def test_opening_batch_clears_marker_and_returns_pc_phase(self):
         """Opening batch completion must clear marker and transition to PC_PHASE."""
-        source = self._load_combat_manager_source()
-        # Find the opening batch completion block
-        self.assertIn('if encounter_data.get("openingEnemyBatchPending", False):', source)
-        # Verify marker is cleared
-        self.assertIn('encounter_data["openingEnemyBatchPending"] = False', source)
-        # Verify PC phase is made ready
-        self.assertIn('multi_pc_manager.pc_phase_complete = False', source)
-        # Verify the PHASE_MARKER debug log for clearing
-        self.assertIn(
-            'PHASE_MARKER: Cleared openingEnemyBatchPending after opening enemy batch resolution',
-            source
-        )
-        # Verify STATE_CHANGE log for PC phase transition
-        self.assertIn(
-            'STATE_CHANGE: Opening batch complete -> PC_PHASE',
-            source
-        )
+        source = Path(os.path.join(PROJECT_ROOT, "core/combat/turn.py")).read_text(encoding="utf-8")
+        stage = _function_node(source, "complete_opening_enemy_batch")
+        stage_text = "\n".join(source.splitlines()[stage.lineno - 1:stage.end_lineno])
+        self.assertIn('encounter_data.get("openingEnemyBatchPending", False)', stage_text)
+        self.assertIn('encounter_data["openingEnemyBatchPending"] = False', stage_text)
+        self.assertIn('multi_pc_manager.pc_phase_complete = False', stage_text)
+        self.assertIn('PHASE_MARKER: Cleared openingEnemyBatchPending after opening enemy batch resolution', stage_text)
+        self.assertIn('STATE_CHANGE: Opening batch complete -> PC_PHASE', stage_text)
+        self.assertEqual(len(_call_nodes(stage, "save_json")), 1)
 
     def test_opening_batch_completion_block_is_non_looping_contract(self):
         """Opening batch completion block must not re-enable marker in the same path (non-loop)."""
-        source = self._load_combat_manager_source()
-        # Find the opening batch completion block boundaries
-        marker_check_pos = source.find('if encounter_data.get("openingEnemyBatchPending", False):')
-        self.assertGreater(marker_check_pos, 0, "Opening batch check must exist")
-
-        # Find the next significant block after the opening batch completion
-        # (either next round handling or save/exit)
-        save_after_clear = source.find(
-            'save_json_file(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)',
-            marker_check_pos
-        )
-        self.assertGreater(save_after_clear, marker_check_pos, "Save must occur after marker clear")
-
-        # Verify that within the completion block, there is no re-setting of the marker
-        completion_block = source[marker_check_pos:save_after_clear]
-
-        # Count occurrences of marker being set to True in this block
-        # Should be exactly one clear (False), zero sets (True)
-        false_count = completion_block.count('"openingEnemyBatchPending"] = False')
-        true_count = completion_block.count('"openingEnemyBatchPending"] = True')
-
-        self.assertEqual(false_count, 1, "Marker must be cleared exactly once in completion block")
-        self.assertEqual(true_count, 0, "Marker must NOT be set to True in completion block (non-loop)")
+        source = Path(os.path.join(PROJECT_ROOT, "core/combat/turn.py")).read_text(encoding="utf-8")
+        stage = _function_node(source, "complete_opening_enemy_batch")
+        assignments = [node for node in ast.walk(stage) if isinstance(node, ast.Assign)]
+        marker_assignments = [
+            node for node in assignments
+            if isinstance(node.targets[0], ast.Subscript)
+            and isinstance(node.targets[0].slice, ast.Constant)
+            and node.targets[0].slice.value == "openingEnemyBatchPending"
+        ]
+        self.assertEqual(len(marker_assignments), 1, "Marker must be cleared exactly once in completion helper")
+        self.assertIsInstance(marker_assignments[0].value, ast.Constant)
+        self.assertIs(marker_assignments[0].value.value, False)
+        self.assertFalse(_call_nodes(stage, "apply_opening_batch_marker"), "Completion cannot re-enable opening marker")
+        self.assertEqual(len(_call_nodes(stage, "save_json")), 1, "Encounter must persist after completion")
 
     def test_pcgroup_clears_marker_does_not_set(self):
         """pcGroup winner must clear opening marker without setting it."""
@@ -339,39 +460,197 @@ class TestDmGroupOpeningPhaseTransitionContract(unittest.TestCase):
             source
         )
 
+        from core.combat.multi_pc.sync import apply_opening_batch_marker
+        from core.combat.turn import handle_group_initiative_gate
+
+        encounter = {
+            "initiativeRolls": {"dmGroup": 10},
+            "openingEnemyBatchPending": True,
+        }
+        result = handle_group_initiative_gate(
+            "/init 11",
+            encounter,
+            None,
+            {},
+            apply_opening_batch_marker=apply_opening_batch_marker,
+            sync_available=True,
+        )
+        self.assertEqual(result["winner"], "pcGroup")
+        self.assertFalse(result["marker_enabled"])
+        self.assertFalse(result["needs_enemy_injection"])
+        self.assertFalse(encounter["openingEnemyBatchPending"])
+
 
 class TestCombatManagerEncounterSyncContracts(unittest.TestCase):
     """Regression tests for encounter ops forwarding and fast-lane persistence."""
 
     def _load_combat_manager_source(self):
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def test_update_encounter_branch_reads_ops_parameter(self):
-        source = self._load_combat_manager_source()
-        self.assertIn('ops = parameters.get("ops")', source)
+        source = Path(os.path.join(PROJECT_ROOT, "core/combat/persistence.py")).read_text(encoding="utf-8")
+        stage = _function_node(source, "process_combat_action_batch")
+        update_branch = _action_type_branch(stage, "updateencounter")
+        self.assertTrue(any(
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "ops"
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "get"
+            and len(node.value.args) >= 1
+            and isinstance(node.value.args[0], ast.Constant) and node.value.args[0].value == "ops"
+            for node in ast.walk(update_branch)
+        ))
 
     def test_update_encounter_branch_forwards_ops(self):
-        source = self._load_combat_manager_source()
-        self.assertIn('update_encounter.update_encounter(', source)
-        self.assertIn('ops=ops', source)
+        owner_source = Path(os.path.join(PROJECT_ROOT, "core/combat/combat_manager.py")).read_text(encoding="utf-8")
+        owner = _function_node(owner_source, "_run_combat_simulation_internal")
+        dependencies = [
+            call for call in ast.walk(owner)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "CombatActionDependencies"
+        ]
+        update_binding = next(keyword.value for call in dependencies for keyword in call.keywords if keyword.arg == "update_encounter")
+        self.assertIsInstance(update_binding, ast.Name)
+        self.assertEqual(update_binding.id, "_stage_encounter_action")
+        update_adapter = _function_node(owner_source, "_stage_encounter_action")
+        delegated_update = _call_nodes(update_adapter, "stage_encounter_update")
+        self.assertEqual(len(delegated_update), 1)
+        self.assertTrue(
+            any(
+                keyword.arg == "ops"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "ops"
+                for keyword in delegated_update[0].keywords
+            ),
+            "The extracted adapter must preserve the action's ops payload",
+        )
+
+        from core.combat.persistence import CombatActionDependencies, process_combat_action_batch
+
+        ops = [{"op": "hp_delta", "target": "Goblin", "delta": -2}]
+        forwarded = []
+        encounter = {
+            "creatures": [
+                {"name": "Goblin", "type": "enemy", "status": "alive", "currentHitPoints": 6}
+            ]
+        }
+
+        def update_encounter(encounter_id, changes, ops=None):
+            forwarded.append((encounter_id, changes, ops))
+            return encounter
+
+        dependencies = CombatActionDependencies(
+            queue_character_update=lambda *_args, **_kwargs: None,
+            update_encounter=update_encounter,
+            normalize_encounter_status=lambda value: value,
+            sync_non_pc_queue_state=lambda *_args: False,
+            log_info=lambda *_args, **_kwargs: None,
+            log_debug=lambda *_args, **_kwargs: None,
+            log_error=lambda *_args, **_kwargs: None,
+            log_warning=lambda *_args, **_kwargs: None,
+            calculate_xp=lambda: ("", 0),
+            save_json=lambda *_args, **_kwargs: None,
+            active_character_update_available=False,
+            emit_combat_event=lambda *_args, **_kwargs: None,
+            get_current_actor=lambda _manager: None,
+            advance_turn=lambda _manager: None,
+            get_pc_state=lambda _manager, _name: None,
+            pc_acted_status=object(),
+            npc_combatant_type=object(),
+            pc_combatant_type=object(),
+            check_all_monsters_defeated=lambda _encounter: False,
+        )
+        with patch("core.combat.persistence.trace_enabled", return_value=False):
+            process_combat_action_batch(
+                [{
+                    "action": "updateEncounter",
+                    "parameters": {
+                        "encounterId": "fixture-encounter",
+                        "changes": "Goblin takes damage",
+                        "ops": ops,
+                    },
+                }],
+                encounter,
+                {},
+                encounter_id="fixture-encounter",
+                conversation_history=[],
+                conversation_history_file="fixture-history.json",
+                multi_pc_manager=None,
+                party_tracker_data={},
+                is_combat_ending=False,
+                dependencies=dependencies,
+            )
+        self.assertEqual(len(forwarded), 1)
+        self.assertEqual(forwarded[0][:2], ("fixture-encounter", "Goblin takes damage"))
+        self.assertIs(forwarded[0][2], ops)
+        self.assertTrue(any(
+            keyword.arg == "ops" and isinstance(keyword.value, ast.Name) and keyword.value.id == "ops"
+            for keyword in delegated_update[0].keywords
+        ))
+
+        stage_source = Path(os.path.join(PROJECT_ROOT, "core/combat/persistence.py")).read_text(encoding="utf-8")
+        stage = _function_node(stage_source, "process_combat_action_batch")
+        update_branch = _action_type_branch(stage, "updateencounter")
+        staged_calls = _call_nodes(update_branch, "update_encounter")
+        self.assertEqual(len(staged_calls), 1)
+        self.assertTrue(any(
+            keyword.arg == "ops" and isinstance(keyword.value, ast.Name) and keyword.value.id == "ops"
+            for keyword in staged_calls[0].keywords
+        ))
 
     def test_fast_lane_log_path_persists_encounter_state(self):
         source = self._load_combat_manager_source()
         self.assertIn('STATE_PERSIST: Fast-lane encounter state persisted', source)
-        self.assertIn('safe_write_json(f"modules/encounters/encounter_{encounter_id}.json", encounter_data)', source)
+        self.assertIn('io.persist_encounter(encounter_id, encounter_data)', source)
 
     def test_fast_path_spoken_narration_contract(self):
         source = self._load_combat_manager_source()
         self.assertIn('mechanical_feedback, spoken_narration, log_msg, skip_llm = multi_pc_manager.handle_combat_command', source)
         self.assertIn('if spoken_narration:', source)
-        self.assertIn('print(spoken_narration)', source)
+        self.assertIn('io.emit(spoken_narration)', source)
 
     def test_update_encounter_branch_resyncs_non_pc_queue_state(self):
-        source = self._load_combat_manager_source()
-        self.assertIn('multi_pc_manager.sync_non_pc_queue_state(encounter_data)', source)
-        self.assertIn('STATE_SYNC: Refreshed non-PC turn queue state from authoritative encounter data', source)
+        stage_source = Path(os.path.join(PROJECT_ROOT, "core/combat/persistence.py")).read_text(encoding="utf-8")
+        stage = _function_node(stage_source, "process_combat_action_batch")
+        update_branch = _action_type_branch(stage, "updateencounter")
+        sync_calls = _call_nodes(update_branch, "sync_non_pc_queue_state")
+        self.assertEqual(len(sync_calls), 1)
+        self.assertIn('STATE_SYNC: Refreshed non-PC turn queue state from authoritative encounter data', stage_source)
+        sync_guard = next(
+            node for node in ast.walk(update_branch)
+            if isinstance(node, ast.If) and any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "sync_non_pc_queue_state"
+                for call in ast.walk(node.test)
+            )
+        )
+        self.assertTrue(any(
+            isinstance(node, ast.Name) and node.id == "multi_pc_manager"
+            for node in ast.walk(sync_guard.test)
+        ))
+        updated_guard = next(
+            node for node in ast.walk(update_branch)
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "updated_encounter_data"
+        )
+        self.assertIn(sync_guard, list(ast.walk(updated_guard)))
+
+        owner_source = Path(os.path.join(PROJECT_ROOT, "core/combat/combat_manager.py")).read_text(encoding="utf-8")
+        owner = _function_node(owner_source, "_run_combat_simulation_internal")
+        sync_bindings = [
+            keyword.value for call in ast.walk(owner)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "CombatActionDependencies"
+            for keyword in call.keywords if keyword.arg == "sync_non_pc_queue_state"
+        ]
+        self.assertEqual(len(sync_bindings), 1)
+        self.assertIsInstance(sync_bindings[0], ast.Lambda)
+        self.assertEqual(len(_call_nodes(sync_bindings[0], "sync_non_pc_queue_state")), 1)
+
+        queue_source = Path(os.path.join(PROJECT_ROOT, "core/combat/multi_pc/turn_queue.py")).read_text(encoding="utf-8")
+        queue_tree = ast.parse(queue_source)
+        self.assertTrue(any(
+            isinstance(node, ast.FunctionDef) and node.name == "_is_valid_enemy_phase_actor"
+            for node in ast.walk(queue_tree)
+        ), "Authoritative living/non-PC queue filter remains owned by turn queue")
 
 
 class TestCombatFastPathConfigContract(unittest.TestCase):
@@ -397,32 +676,67 @@ class TestCombatNaturalLanguageParserContract(unittest.TestCase):
             return f.read()
 
     def _load_combat_manager_source(self):
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def test_nl_parser_flag_present_and_documented(self):
         source = self._load_model_config_source()
-        self.assertIn("COMBAT_PC_PHASE_NL_FAST_PATH = False", source)
-        self.assertIn("natural-language action parser", source)
+        self.assertIn("COMBAT_PC_PHASE_NL_FAST_PATH = True", source)
+        self.assertIn("Canary enabled; rollback by setting False", source)
 
     def test_nl_parser_import_hook_present(self):
         source = self._load_combat_manager_source()
+        self.assertIn("from core.combat.decisions import", source)
         self.assertIn("from utils.combat_pc_action_parser import", source)
         self.assertIn("parse_pc_phase_action", source)
-        self.assertIn("and COMBAT_PC_PHASE_NL_FAST_PATH", source)
+        self.assertIn("enabled=COMBAT_PC_PHASE_NL_FAST_PATH", source)
         self.assertIn('multi_pc_manager.combat_phase == "PC_PHASE"', source)
+        self.assertIn("pc_action_decision_eligible(", source)
+        self.assertIn("PCActionDecisionStatus.DECLINED", source)
+        self.assertIn("PCActionDecisionStatus.UNAVAILABLE", source)
 
     def test_nl_parser_apply_order_source_contract(self):
         source = self._load_combat_manager_source()
-        parser_start = source.find("parse_result = parse_pc_phase_action(")
-        parser_end = source.find("# Enhance player input with inventory context for combat", parser_start)
-        self.assertGreater(parser_start, 0)
-        self.assertGreater(parser_end, parser_start)
-        parser_block = source[parser_start:parser_end]
-        self.assertLess(parser_block.find("if apply_pc_phase_parse_result("), parser_block.find("if p_mech:"))
-        self.assertLess(parser_block.find("if p_mech:"), parser_block.find("if p_log:"))
-        self.assertLess(parser_block.find("if p_log:"), parser_block.find("continue"))
+        turn_source = Path(PROJECT_ROOT, "core/combat/turn.py").read_text(encoding="utf-8")
+        owner_source = Path(PROJECT_ROOT, "core/combat/combat_manager.py").read_text(encoding="utf-8")
+        decision_source = Path(PROJECT_ROOT, "core/combat/decisions.py").read_text(encoding="utf-8")
+        seam_call = turn_source.find("pc_action_decision = run_pc_action_decision(")
+        context_stage = turn_source.find("context_result = dependencies.assemble_context(")
+        owner_stage = owner_source.find("normal_turn = prepare_combat_normal_turn(")
+        provider_stage = owner_source.find("run_combat_provider_retry_stage(")
+        parse_call = decision_source.find("parse_result = parse_action(")
+        apply_call = decision_source.find("if not apply_result(")
+        handled_return = decision_source.find(
+            "PCActionDecisionStatus.HANDLED, actor_name, parse_result"
+        )
+        handled_gate = turn_source.find(
+            "if pc_action_decision.status is PCActionDecisionStatus.HANDLED:"
+        )
+        feedback = turn_source.find("if mechanical_feedback:", handled_gate)
+        history_log = turn_source.find("if log_message:", feedback)
+        handled_continue = turn_source.find('CombatNormalTurnResult("continue"', history_log)
+        self.assertGreater(seam_call, 0, "decision seam call must remain in the normal-turn owner")
+        self.assertGreater(context_stage, 0, "context stage anchor must remain in the normal-turn owner")
+        self.assertGreater(owner_stage, 0, "legacy loop must enter the typed normal-turn owner")
+        self.assertGreater(provider_stage, 0, "normal-turn stage must still precede provider retry")
+        self.assertGreater(parse_call, 0, "parser invocation must remain in decision owner")
+        self.assertGreater(apply_call, 0, "apply invocation must remain in decision owner")
+        self.assertGreater(handled_return, 0, "handled result must be emitted only after apply")
+        self.assertGreater(handled_gate, 0, "owner must branch on the typed handled result")
+        self.assertGreater(feedback, 0, "mechanical feedback emission must remain under handled")
+        self.assertGreater(history_log, 0, "history insertion must remain under handled")
+        self.assertGreater(handled_continue, 0, "handled parser path must retain its continue")
+        self.assertLess(seam_call, context_stage)
+        self.assertLess(owner_stage, provider_stage)
+        self.assertLess(parse_call, apply_call)
+        self.assertLess(apply_call, handled_return)
+        self.assertLess(seam_call, handled_gate)
+        self.assertLess(handled_gate, feedback)
+        self.assertLess(feedback, history_log)
+        self.assertLess(history_log, handled_continue)
+        self.assertIn('outcome="hit",', decision_source)
+        self.assertIn('outcome="miss",', decision_source)
+        self.assertIn('outcome="false_positive",', decision_source)
+        self.assertIn('outcome="unavailable",', decision_source)
 
 
 class TestCombatSingleActiveSessionContracts(unittest.TestCase):
@@ -434,9 +748,7 @@ class TestCombatSingleActiveSessionContracts(unittest.TestCase):
             return f.read()
 
     def _load_combat_manager_source(self):
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def test_action_handler_declares_tabletop_ownership_helpers(self):
         source = self._load_action_handler_source()
@@ -456,7 +768,8 @@ class TestCombatSingleActiveSessionContracts(unittest.TestCase):
         source = self._load_combat_manager_source()
         self.assertIn("def run_combat_simulation(encounter_id, party_tracker_data, location_info):", source)
         self.assertIn("_enter_combat_session(effective_encounter_id)", source)
-        self.assertIn("_run_combat_simulation_internal(effective_encounter_id, party_tracker_data, location_info)", source)
+        self.assertIn("_run_combat_simulation_internal(", source)
+        self.assertIn("session=session,", source)
         self.assertIn("_exit_combat_session(effective_encounter_id)", source)
 
     def test_combat_manager_prefers_durable_owner_on_mismatch(self):
@@ -470,13 +783,11 @@ class TestEncounterRosterBackfillContract(unittest.TestCase):
 
     def _load_combat_manager_source(self):
         """Load raw source of combat_manager.py for contract tests."""
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def _load_combat_state_sync_source(self):
         """Load raw source of combat_state_sync.py for backfill contract tests."""
-        css_path = os.path.join(PROJECT_ROOT, "core/managers/combat_state_sync.py")
+        css_path = os.path.join(PROJECT_ROOT, "core/combat/multi_pc/sync.py")
         with open(css_path, "r", encoding="utf-8") as f:
             return f.read()
 
@@ -737,13 +1048,11 @@ class TestCompatibilityAndSinglePlayerContract(unittest.TestCase):
 
     def _load_combat_manager_source(self):
         """Load raw source of combat_manager.py for contract tests."""
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
 
     def _load_combat_state_sync_source(self):
         """Load raw source of combat_state_sync.py for contract tests."""
-        css_path = os.path.join(PROJECT_ROOT, "core/managers/combat_state_sync.py")
+        css_path = os.path.join(PROJECT_ROOT, "core/combat/multi_pc/sync.py")
         with open(css_path, "r", encoding="utf-8") as f:
             return f.read()
 
@@ -847,39 +1156,52 @@ class TestCompatibilityAndSinglePlayerContract(unittest.TestCase):
 
     def test_roundstart_pcgroup_no_forced_enemy_phase(self):
         """Round start with pcGroup must NOT force enemy phase."""
-        cm_source = self._load_combat_manager_source()
+        from core.combat.turn import RoundTransitionDependencies, stage_combat_turn_snapshot
 
-        # Verify round start logic differentiates pcGroup vs dmGroup
-        self.assertIn(
-            'if round_starts_with == "dmGroup":',
-            cm_source,
-            "Must check round_starts_with value to determine phase"
+        encounter = {
+            "combat_round": 4,
+            "roundStartsWith": "pcGroup",
+            "openingEnemyBatchPending": False,
+            "combat_phase": "ENEMY_PHASE",
+        }
+        logs = []
+        dependencies = RoundTransitionDependencies(
+            apply_opening_batch_marker=lambda _data, _side: self.fail(
+                "Staged round transitions must not mutate through the runtime marker helper"
+            ),
+            sync_available=True,
+            save_json=lambda *_args: self.fail("Staging must not persist encounter state"),
+            compress_old_rounds=lambda history, *_args, **_kwargs: history,
+            log_debug=lambda message, **kwargs: logs.append((message, kwargs)),
+            log_info=lambda *_args, **_kwargs: None,
+            log_warning=lambda *_args, **_kwargs: None,
+            bind_history=lambda _history: None,
+        )
+        result = stage_combat_turn_snapshot(
+            encounter,
+            [{"role": "user", "content": "Enemies turn."}],
+            phase_before="ENEMY_PHASE",
+            phase_after="ENEMY_PHASE",
+            enemy_batch_completed=True,
+            opening_batch_pending_before=False,
+            authoritative_round_before=4,
+            round_starts_with_before="pcGroup",
+            dependencies=dependencies,
         )
 
-        # Verify pcGroup path sets pc_phase_complete = False (PC_PHASE ready)
-        self.assertIn(
-            'multi_pc_manager.pc_phase_complete = False',
-            cm_source,
-            "pcGroup round start must set pc_phase_complete = False (PC_PHASE)"
-        )
-
-        # Verify dmGroup path is explicitly different
-        dmgroup_block_start = cm_source.find('if round_starts_with == "dmGroup":')
-        pcgroup_block_start = cm_source.find('else:', dmgroup_block_start)
-        roundstart_block = cm_source[dmgroup_block_start:pcgroup_block_start]
-
-        # dmGroup path should set pc_phase_complete = True (ENEMY_PHASE)
-        self.assertIn(
-            "multi_pc_manager.pc_phase_complete = True",
-            roundstart_block,
-            "dmGroup round start must set pc_phase_complete = True (ENEMY_PHASE)"
-        )
-
-        # Verify STATE_CHANGE logging distinguishes the paths
-        self.assertIn(
-            "STATE_CHANGE: Applied roundStartsWith=pcGroup -> PC_PHASE start",
-            cm_source,
-            "Must log pcGroup round start as PC_PHASE"
+        self.assertEqual(result.encounter_data["combat_round"], 5)
+        self.assertEqual(result.encounter_data["combat_phase"], "PC_PHASE")
+        self.assertFalse(result.encounter_data["openingEnemyBatchPending"])
+        self.assertEqual(encounter["combat_round"], 4, "Staging must not mutate the durable source snapshot")
+        self.assertEqual(
+            [
+                message for message, _kwargs in logs
+                if message.startswith(("PHASE_MARKER:", "STATE_CHANGE:"))
+            ],
+            [
+                "PHASE_MARKER: Cleared openingEnemyBatchPending via round-start pcGroup path",
+                "STATE_CHANGE: Applied roundStartsWith=pcGroup -> PC_PHASE start",
+            ],
         )
 
 
@@ -888,13 +1210,15 @@ class TestFastLaneInitiationContract(unittest.TestCase):
 
     def _load_combat_manager_source(self):
         """Load raw source of combat_manager.py for contract tests."""
-        cm_path = os.path.join(PROJECT_ROOT, "core/managers/combat_manager.py")
-        with open(cm_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return _load_combat_runtime_sources()
+
+    def _load_bootstrap_source(self):
+        with open(os.path.join(PROJECT_ROOT, "core/combat/bootstrap.py"), "r", encoding="utf-8") as handle:
+            return handle.read()
 
     def test_fast_lane_guard_contract_exists(self):
         """Fast-lane must guard on multi_pc_manager and awaitingPcGroupRoll."""
-        source = self._load_combat_manager_source()
+        source = self._load_bootstrap_source()
         # Must contain the guard condition
         self.assertIn("multi_pc_manager is not None", source)
         self.assertIn('encounter_data.get("awaitingPcGroupRoll", False) is True', source)
@@ -904,29 +1228,32 @@ class TestFastLaneInitiationContract(unittest.TestCase):
 
     def test_immediate_initiative_prompt_exists(self):
         """Fast-lane must print immediate initiative prompt without LLM call."""
-        source = self._load_combat_manager_source()
-        expected_msg = (
-            "Dungeon Master: [SYSTEM] Combat initiated. Initiative pending. "
-            "Enter /init <1-20> to begin combat."
-        )
-        self.assertIn(expected_msg, source)
+        source = self._load_bootstrap_source()
+        self.assertIn("Combat initiated. Initiative pending. ", source)
+        self.assertIn('"Enter /init <1-20> to begin combat."', source)
         # TABLETOP MODE: Ensure initiative helper auto-prefill marker is preserved
         self.assertIn("[prefill:/init ]", source)
         # Must flush stdout immediately after print
-        self.assertIn('import sys', source)
-        self.assertIn('sys.stdout.flush()', source)
+        self.assertIn("dependencies.flush()", source)
+        self.assertIn("flush=sys.stdout.flush", self._load_combat_manager_source())
 
     def test_initial_scene_llm_in_non_fast_lane_path(self):
         """Initial scene AI call must be in non-fast-lane (else) branch."""
-        source = self._load_combat_manager_source()
-        # The AI call should NOT appear in fast-lane block (before else)
-        # Instead it should be in the else branch
-        # Find the fast-lane block boundary
-        fast_lane_start = source.find("if is_fast_lane:")
-        else_start = source.find("else:", fast_lane_start)
-        # Verify AI call comes after else (in non-fast-lane path)
-        ai_call_pos = source.find('debug("AI_CALL: Getting initial scene description..."')
-        self.assertGreater(ai_call_pos, else_start, "AI_CALL must be in else branch, not fast-lane")
+        source = self._load_bootstrap_source()
+        startup = _function_node(source, "run_startup_narrative")
+        fast_lane = next(
+            node for node in ast.walk(startup)
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "is_fast_lane"
+        )
+        initial_call = _call_nodes(startup, "_run_initial_scene_generation")[0]
+        self.assertFalse(any(node is initial_call for node in ast.walk(fast_lane)))
+        call_statement_index = next(
+            index for index, statement in enumerate(startup.body)
+            if any(node is initial_call for node in ast.walk(statement))
+        )
+        self.assertLess(startup.body.index(fast_lane), call_statement_index)
+        self.assertTrue(any(isinstance(node, ast.Return) for node in fast_lane.body))
+        self.assertIn('dependencies.debug("AI_CALL: Getting initial scene description..."', source)
 
     def test_existing_init_gate_preserved(self):
         """Existing /init validation gate must remain present."""
@@ -962,23 +1289,20 @@ class TestFastLaneInitiationContract(unittest.TestCase):
             source
         )
         self.assertIn("what does {active_pc_name} do?", source)
-        self.assertIn("active_pc_name = (", source)
+        self.assertIn("active_pc_name = multi_pc_manager.current_pc_name", source)
 
     def test_fast_lane_skips_initial_scene_bootstrap_contract(self):
         """Fast-lane must skip initial scene bootstrap and defer narration until phase starts."""
-        source = self._load_combat_manager_source()
-        # Guard must exist to skip bootstrap in fast-lane
-        self.assertIn("if not is_fast_lane:", source)
-        guard_pos = source.find("if not is_fast_lane:")
-        self.assertGreater(guard_pos, 0, "Missing non-fast-lane bootstrap guard")
-
-        # Initial prompt bootstrap must live under this guard
-        initial_prompt_pos = source.find('initial_prompt = f"""Dungeon Master Note:', guard_pos)
-        self.assertGreater(
-            initial_prompt_pos,
-            guard_pos,
-            "Initial prompt bootstrap must be inside if not is_fast_lane guard"
+        source = self._load_bootstrap_source()
+        startup = _function_node(source, "run_startup_narrative")
+        self.assertIn("if is_fast_lane:", source)
+        self.assertIn('initial_prompt = f"""Dungeon Master Note:', source)
+        self.assertTrue(_call_nodes(startup, "_run_initial_scene_generation"))
+        fast_lane = next(
+            node for node in ast.walk(startup)
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "is_fast_lane"
         )
+        self.assertTrue(any(isinstance(node, ast.Return) for node in fast_lane.body))
 
         # Fast-lane path should explicitly log deferred narration contract
         self.assertIn(
@@ -988,28 +1312,19 @@ class TestFastLaneInitiationContract(unittest.TestCase):
 
     def test_initiative_order_usage_stays_in_non_fast_lane_contract(self):
         """initiative_order assignment and usage must stay in non-fast-lane paths."""
-        source = self._load_combat_manager_source()
-        # Find the fast-lane block start
-        fast_lane_start = source.find("if is_fast_lane:")
-        self.assertGreater(fast_lane_start, 0, "if is_fast_lane block must exist")
-
-        # Find the else branch that follows if is_fast_lane
-        else_after_fast_lane = source.find("else:", fast_lane_start)
-        self.assertGreater(else_after_fast_lane, fast_lane_start, "else branch after if is_fast_lane must exist")
-
-        # Find where initiative_order is assigned
-        assignment_pos = source.find("initiative_order = get_initiative_order(encounter_data)")
-        self.assertGreater(assignment_pos, else_after_fast_lane, 
-            "initiative_order assignment must be in the else branch after if is_fast_lane")
-
-        # Find the if not is_fast_lane bootstrap guard
-        bootstrap_guard = source.find("if not is_fast_lane:")
-        self.assertGreater(bootstrap_guard, 0, "if not is_fast_lane guard must exist")
-
-        # Find where initiative_order is used in initial prompt
-        usage_pos = source.find("Initiative Order: {initiative_order}")
-        self.assertGreater(usage_pos, bootstrap_guard, 
-            "initiative_order usage must be inside if not is_fast_lane bootstrap block")
+        source = self._load_bootstrap_source()
+        startup = _function_node(source, "run_startup_narrative")
+        prompt = _function_node(source, "_build_initial_scene_prompt")
+        generation = _function_node(source, "_run_initial_scene_generation")
+        fast_lane = next(
+            node for node in ast.walk(startup)
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "is_fast_lane"
+        )
+        self.assertTrue(any(isinstance(node, ast.Return) for node in fast_lane.body))
+        self.assertTrue(_call_nodes(startup, "_run_initial_scene_generation"))
+        self.assertIn("initiative_order = dependencies.get_initiative_order(inputs.encounter_data)", ast.get_source_segment(source, prompt))
+        self.assertIn("Initiative Order: {initiative_order}", ast.get_source_segment(source, prompt))
+        self.assertTrue(_call_nodes(generation, "_build_initial_scene_prompt"))
 
 
 class TestCombatReplayAuthorityContracts(unittest.TestCase):
@@ -1021,22 +1336,22 @@ class TestCombatReplayAuthorityContracts(unittest.TestCase):
             return f.read()
 
     def test_phase_authority_cleanup_source_contract(self):
-        source = self._read_source("core/managers/multi_pc_combat.py")
+        source = self._read_source("core/combat/multi_pc/manager.py")
         self.assertIn('CURRENT_PHASE: {current_phase}', source)
         self.assertIn('if not self._turns.pc_phase_complete:', source)
         self.assertIn('elif not self._turns.pc_phase_complete and name == self._state.current_pc_name:', source)
         self.assertNotIn('PROCESS ALL OF THESE IN ONE RESPONSE', source)
 
     def test_deterministic_command_markers_source_contract(self):
-        source = self._read_source("core/managers/multi_pc_combat.py")
+        source = self._read_source("core/combat/multi_pc/manager.py")
         self.assertIn('[ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit!', source)
         self.assertIn('[ALREADY_APPLIED] Dungeon Master: Damage applied (', source)
         self.assertIn('Result HP:', source)
         self.assertIn('[ALREADY_APPLIED] [System:', source)
 
     def test_pc_phase_ledger_source_contract(self):
-        source = self._read_source("core/managers/multi_pc_combat.py")
-        combat_manager_source = self._read_source("core/managers/combat_manager.py")
+        source = self._read_source("core/combat/multi_pc/manager.py")
+        combat_manager_source = self._read_source("core/combat/combat_manager.py")
         self.assertIn("pc_phase_event_ledger", source)
         self.assertIn("record_pc_phase_event", source)
         self.assertIn("clear_pc_phase_event_ledger", source)
@@ -1059,13 +1374,16 @@ class TestCombatReplayAuthorityContracts(unittest.TestCase):
         self.assertIn('already applied or marked [ALREADY_APPLIED]', validation_compressed)
 
     def test_combat_prompt_closure_source_contracts(self):
-        combat_manager_source = self._read_source("core/managers/combat_manager.py")
+        combat_manager_source = self._read_source("core/combat/combat_manager.py")
+        decision_source = self._read_source("core/combat/decisions.py")
         sim_multipc_compressed = self._read_source("prompts/combat/combat_sim_prompt_multipc_compressed.txt")
         sim_compressed = self._read_source("prompts/combat/combat_sim_prompt_compressed.txt")
         validation_compressed = self._read_source("prompts/combat/combat_validation_prompt_compressed.txt")
 
         self.assertIn("COMBAT_PC_PHASE_NL_FAST_PATH", combat_manager_source)
-        self.assertIn("and COMBAT_PC_PHASE_NL_FAST_PATH", combat_manager_source)
+        self.assertIn("enabled=COMBAT_PC_PHASE_NL_FAST_PATH", combat_manager_source)
+        self.assertIn("and enabled", decision_source)
+        self.assertIn('multi_pc_manager.combat_phase == "PC_PHASE"', decision_source)
         self.assertNotIn("continue processing remaining NPCs/monsters", sim_multipc_compressed)
         self.assertNotIn("continue processing ALL remaining NPCs/monsters in initiative", sim_compressed)
         self.assertNotIn("EXACTLY ONE updateEncounter per response consolidating ALL enemy changes", validation_compressed)

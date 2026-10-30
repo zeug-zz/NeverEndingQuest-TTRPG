@@ -6,23 +6,54 @@
 """
 LLM Usage Tracker - Provider-agnostic usage aggregation with session/week rollups
 Tracks tokens and costs with USD->NZD conversion.
-Cost strategy: provider-reported first, blended fallback when unavailable.
+Router receipts own chat cost provenance; the blended estimator remains for legacy callers.
 """
 
 import json
-from datetime import datetime, timedelta
-from collections import deque
+import math
 import threading
-from pathlib import Path
 import traceback
+from collections import deque
+from collections.abc import Mapping
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
+
+
+def _receipt_cost_accounting(context: Any) -> Optional[Tuple[str, float]]:
+    """Return validated router-receipt cost facts, if this is a receipt event."""
+    if not isinstance(context, Mapping):
+        return None
+    if not context.get("call_id") or not context.get("attempt_id"):
+        return None
+
+    provenance = context.get("cost_provenance")
+    if provenance not in {"actual", "estimated", "unpriced"}:
+        return None
+
+    value = context.get("cost_usd")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        cost_usd = None
+    else:
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            number = float("nan")
+        cost_usd = number if math.isfinite(number) and number >= 0 else None
+
+    if provenance == "unpriced":
+        return "unpriced", 0.0
+    if context.get("cost_complete") is not True or cost_usd is None:
+        return "unpriced", 0.0
+    return provenance, cost_usd
 
 
 class LLMUsageTracker:
     """
     Provider-agnostic usage tracker with session/week rollups and cost estimation.
     Works with OpenAI-compatible usage responses from any provider.
-    Cost source: provider-reported when available, fallback estimate when missing.
+    Router receipts carry authoritative cost provenance; legacy callers retain
+    the provider-reported-first blended fallback behavior.
     """
 
     def __init__(self, telemetry_log="telemetry_log.jsonl"):
@@ -36,6 +67,9 @@ class LLMUsageTracker:
         self.session_requests = 0
         self.session_cost_usd = 0.0
         self.session_cost_nzd = 0.0
+        self.session_cost_actual_usd = 0.0
+        self.session_cost_estimated_usd = 0.0
+        self.session_unpriced_calls = 0
         
         # Session cost source tracking (for accurate source determination)
         self.session_provider_reported_count = 0
@@ -66,6 +100,9 @@ class LLMUsageTracker:
 
         # Lock for thread safety
         self._lock = threading.Lock()
+        # Router callbacks may be composed by owners; one SDK attempt is still
+        # one tracker event even if the same receipt reaches this boundary twice.
+        self._seen_receipt_attempts = set()
 
         # Load config
         self._load_config()
@@ -162,6 +199,13 @@ class LLMUsageTracker:
                     self.usd_to_nzd_rate = 1.0
                     self.usd_to_nzd_source = "fallback_no_url_non_nzd"
                 return
+
+            # urllib3 DEBUG request lines contain the request path.  The
+            # ExchangeRate-API v6 path carries its credential, so install the
+            # provider transport logging policy before making this request.
+            from utils.provider_log_safety import configure_provider_log_safety
+
+            configure_provider_log_safety()
             
             # Import requests here (fail-open if not available)
             try:
@@ -343,6 +387,19 @@ class LLMUsageTracker:
         Works with OpenAI-compatible usage responses from any provider.
         """
         try:
+            receipt_accounting = _receipt_cost_accounting(context)
+            receipt_identity = None
+            if receipt_accounting is not None and isinstance(context, Mapping):
+                call_id = context.get("call_id")
+                attempt_id = context.get("attempt_id")
+                if (
+                    isinstance(call_id, str)
+                    and call_id
+                    and isinstance(attempt_id, str)
+                    and attempt_id
+                ):
+                    receipt_identity = (call_id, attempt_id)
+
             # Extract usage data from response
             usage = None
             provider_cost: float = -1.0
@@ -362,11 +419,13 @@ class LLMUsageTracker:
                     if cost_val is not None and isinstance(cost_val, (int, float)):
                         provider_cost = float(cost_val)
 
-            if usage is None:
+            if usage is None and receipt_accounting is None:
                 return
 
             # Extract token counts
-            if hasattr(usage, 'prompt_tokens'):
+            if usage is None:
+                prompt_tokens = completion_tokens = total_tokens = 0
+            elif hasattr(usage, 'prompt_tokens'):
                 prompt_tokens = getattr(usage, 'prompt_tokens', 0)
                 completion_tokens = getattr(usage, 'completion_tokens', 0)
                 total_tokens = getattr(usage, 'total_tokens', 0)
@@ -376,9 +435,22 @@ class LLMUsageTracker:
                 total_tokens = usage.get('total_tokens', 0)
 
             # Calculate cost
-            cost_usd, cost_source, is_estimate = self._calculate_cost(total_tokens, provider_cost)
+            if receipt_accounting is None:
+                cost_usd, cost_source, is_estimate = self._calculate_cost(total_tokens, provider_cost)
+            else:
+                receipt_provenance, receipt_cost = receipt_accounting
+                if receipt_provenance == "actual":
+                    cost_usd, cost_source, is_estimate = receipt_cost, "provider_reported", False
+                elif receipt_provenance == "estimated":
+                    cost_usd, cost_source, is_estimate = receipt_cost, "estimated", True
+                else:
+                    cost_usd, cost_source, is_estimate = 0.0, "unpriced", True
 
             with self._lock:
+                if receipt_identity is not None:
+                    if receipt_identity in self._seen_receipt_attempts:
+                        return
+                    self._seen_receipt_attempts.add(receipt_identity)
                 now = datetime.now()
 
                 # Update session totals
@@ -392,10 +464,14 @@ class LLMUsageTracker:
                 # Track cost source for session-level source determination
                 if cost_source == "provider_reported":
                     self.session_provider_reported_count += 1
+                    self.session_cost_actual_usd += cost_usd
                 elif cost_source == "estimated":
                     self.session_estimated_count += 1
+                    self.session_cost_estimated_usd += cost_usd
                 else:
                     self.session_unavailable_count += 1
+                    if cost_source == "unpriced":
+                        self.session_unpriced_calls += 1
 
                 # Track spike - individual call
                 if total_tokens > self.max_single_call_tokens:
@@ -592,15 +668,34 @@ class LLMUsageTracker:
                     'session_prompt_tokens': self.session_prompt_tokens,
                     'session_completion_tokens': self.session_completion_tokens,
                     'session_requests': self.session_requests,
-                    'session_cost_usd': round(self.session_cost_usd, 4),
+                    'session_cost_usd': round(self.session_cost_usd, 12),
                     'session_cost_nzd': round(self.session_cost_nzd, 4),
+                    'session_cost_actual_usd': round(self.session_cost_actual_usd, 12),
+                    'session_cost_estimated_usd': round(self.session_cost_estimated_usd, 12),
+                    'session_unpriced_calls': self.session_unpriced_calls,
+                    'session_cost_complete': self.session_unavailable_count == 0,
                     'session_cost_source': session_cost_source,
                     'session_cost_estimate': session_cost_estimate,
 
                     # Week rollups with cost (new)
                     'week_tokens': week_tokens,
-                    'week_cost_usd': round(week_cost_usd, 4),
+                    'week_cost_usd': round(week_cost_usd, 12),
                     'week_cost_nzd': round(week_cost_nzd, 4),
+                    'week_cost_actual_usd': round(sum(
+                        event[2] for event in self.week_window_events
+                        if event[3] == "provider_reported"
+                    ), 12),
+                    'week_cost_estimated_usd': round(sum(
+                        event[2] for event in self.week_window_events
+                        if event[3] == "estimated"
+                    ), 12),
+                    'week_unpriced_calls': sum(
+                        1 for event in self.week_window_events if event[3] == "unpriced"
+                    ),
+                    'week_cost_complete': not any(
+                        event[3] in ("unpriced", "unavailable")
+                        for event in self.week_window_events
+                    ),
                     'week_cost_source': week_cost_source,
 
                     # Cost metadata (new)
@@ -646,9 +741,17 @@ class LLMUsageTracker:
                 'session_tokens': 0,
                 'session_cost_usd': 0.0,
                 'session_cost_nzd': 0.0,
+                'session_cost_actual_usd': 0.0,
+                'session_cost_estimated_usd': 0.0,
+                'session_unpriced_calls': 0,
+                'session_cost_complete': False,
                 'week_tokens': 0,
                 'week_cost_usd': 0.0,
                 'week_cost_nzd': 0.0,
+                'week_cost_actual_usd': 0.0,
+                'week_cost_estimated_usd': 0.0,
+                'week_unpriced_calls': 0,
+                'week_cost_complete': False,
                 'usd_to_nzd_rate': 1.65,
                 'usd_to_nzd_source': 'fallback',
                 'exchange_configured_currency': 'NZD',
@@ -699,9 +802,17 @@ def get_usage_stats():
             'session_tokens': 0,
             'session_cost_usd': 0.0,
             'session_cost_nzd': 0.0,
+            'session_cost_actual_usd': 0.0,
+            'session_cost_estimated_usd': 0.0,
+            'session_unpriced_calls': 0,
+            'session_cost_complete': False,
             'week_tokens': 0,
             'week_cost_usd': 0.0,
             'week_cost_nzd': 0.0,
+            'week_cost_actual_usd': 0.0,
+            'week_cost_estimated_usd': 0.0,
+            'week_unpriced_calls': 0,
+            'week_cost_complete': False,
             'usd_to_nzd_rate': 1.65,
             'usd_to_nzd_source': 'fallback',
             'exchange_configured_currency': 'NZD',
@@ -747,6 +858,7 @@ def track_image_cost(cost_usd: float, size: str = "1024x1024", quality: str = "a
             # Track cost source for session-level source determination
             if cost_source == "estimated":
                 tracker.session_estimated_count += 1
+                tracker.session_cost_estimated_usd += actual_cost
             else:
                 tracker.session_unavailable_count += 1
             

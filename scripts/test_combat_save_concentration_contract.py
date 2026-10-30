@@ -13,6 +13,7 @@ Step 1.1 contract tests for combat-save-concentration-contract.
 
 import os
 import sys
+import tempfile
 import unittest
 
 
@@ -30,32 +31,100 @@ REQUEST_ROLL_TYPES = {
 CONCENTRATION_FORMULA = "max(10, floor(damage / 2))"
 
 
+def _resolve_change_root(change_slug, repo_root=REPO_ROOT):
+    live_root = os.path.join(repo_root, "openspec", "changes", change_slug)
+    if os.path.isdir(live_root):
+        return live_root
+
+    archive_root = os.path.join(repo_root, "openspec", "changes", "archive")
+    matches = sorted(
+        os.path.join(archive_root, name)
+        for name in os.listdir(archive_root)
+        if name.endswith(f"-{change_slug}")
+        and os.path.isdir(os.path.join(archive_root, name))
+    ) if os.path.isdir(archive_root) else []
+    if len(matches) > 1:
+        raise AssertionError(f"Ambiguous archived OpenSpec change {change_slug}: {matches}")
+    if not matches:
+        raise FileNotFoundError(f"OpenSpec change not found (live or archive): {change_slug}")
+    return matches[0]
+
+
+def _resolve_main_or_archive_spec(
+    spec_slug,
+    change_slug,
+    change_root=None,
+    repo_root=REPO_ROOT,
+    prefer_archive_delta=False,
+):
+    resolved_root = change_root or _resolve_change_root(change_slug, repo_root)
+    archive_spec = os.path.join(resolved_root, "specs", spec_slug, "spec.md")
+    if prefer_archive_delta and os.path.isfile(archive_spec):
+        return archive_spec
+
+    main_spec = os.path.join(repo_root, "openspec", "specs", spec_slug, "spec.md")
+    if os.path.isfile(main_spec):
+        return main_spec
+
+    if os.path.isfile(archive_spec):
+        return archive_spec
+    raise FileNotFoundError(f"OpenSpec capability not found in main or unique change path: {spec_slug}")
+
+
+class TestOpenSpecArtifactResolution(unittest.TestCase):
+    def test_canonical_spec_precedes_archived_delta(self):
+        with tempfile.TemporaryDirectory(
+            prefix="combat_save_spec_resolution_",
+            dir=os.path.join(REPO_ROOT, "tmp"),
+        ) as repo_root:
+            main_spec = os.path.join(repo_root, "openspec", "specs", "capability", "spec.md")
+            delta_spec = os.path.join(repo_root, "archive", "specs", "capability", "spec.md")
+            os.makedirs(os.path.dirname(main_spec), exist_ok=True)
+            os.makedirs(os.path.dirname(delta_spec), exist_ok=True)
+            with open(main_spec, "w", encoding="utf-8") as handle:
+                handle.write("canonical")
+            with open(delta_spec, "w", encoding="utf-8") as handle:
+                handle.write("delta")
+
+            self.assertEqual(
+                _resolve_main_or_archive_spec(
+                    "capability", "change", os.path.join(repo_root, "archive"), repo_root
+                ),
+                main_spec,
+            )
+
+    def test_ambiguous_archive_roots_fail_closed(self):
+        with tempfile.TemporaryDirectory(
+            prefix="combat_save_archive_resolution_",
+            dir=os.path.join(REPO_ROOT, "tmp"),
+        ) as repo_root:
+            archive_root = os.path.join(repo_root, "openspec", "changes", "archive")
+            os.makedirs(os.path.join(archive_root, "2026-01-first-combat-save-change"))
+            os.makedirs(os.path.join(archive_root, "2026-02-second-combat-save-change"))
+            with self.assertRaisesRegex(AssertionError, "Ambiguous archived OpenSpec change"):
+                _resolve_change_root("combat-save-change", repo_root)
+
+
 class TestCombatSaveConcentrationOpenSpecContracts(unittest.TestCase):
     """Lock OpenSpec artifacts for combat requestRoll and concentration contracts."""
 
     @classmethod
     def setUpClass(cls):
-        change_root = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
-            "combat-save-concentration-contract",
-        )
+        change_root = _resolve_change_root("combat-save-concentration-contract")
         cls.paths = {
             "proposal": os.path.join(change_root, "proposal.md"),
             "design": os.path.join(change_root, "design.md"),
             "tasks": os.path.join(change_root, "tasks.md"),
-            "request_roll_spec": os.path.join(
-                change_root,
-                "specs",
+            "request_roll_spec": _resolve_main_or_archive_spec(
                 "tt-combat-request-roll-routing",
-                "spec.md",
-            ),
-            "concentration_spec": os.path.join(
+                "combat-save-concentration-contract",
                 change_root,
-                "specs",
+                prefer_archive_delta=True,
+            ),
+            "concentration_spec": _resolve_main_or_archive_spec(
                 "tt-combat-concentration-request-dc",
-                "spec.md",
+                "combat-save-concentration-contract",
+                change_root,
             ),
         }
         cls.content = {}
@@ -100,7 +169,7 @@ class TestCombatSaveConcentrationRuntimeSourceContracts(unittest.TestCase):
     def setUpClass(cls):
         cls.paths = {
             "action_handler": os.path.join(REPO_ROOT, "core", "ai", "action_handler.py"),
-            "combat_manager": os.path.join(REPO_ROOT, "core", "managers", "combat_manager.py"),
+            "combat_manager": os.path.join(REPO_ROOT, "core", "combat", "combat_manager.py"),
         }
         cls.content = {}
         for key, path in cls.paths.items():
@@ -189,23 +258,16 @@ class TestCombatConcentrationSpecificContracts(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        change_root = os.path.join(
-            REPO_ROOT,
-            "openspec",
-            "changes",
-            "combat-save-concentration-contract",
-        )
-        cls.concentration_spec_path = os.path.join(
-            change_root,
-            "specs",
+        change_root = _resolve_change_root("combat-save-concentration-contract")
+        cls.concentration_spec_path = _resolve_main_or_archive_spec(
             "tt-combat-concentration-request-dc",
-            "spec.md",
-        )
-        cls.request_roll_spec_path = os.path.join(
+            "combat-save-concentration-contract",
             change_root,
-            "specs",
+        )
+        cls.request_roll_spec_path = _resolve_main_or_archive_spec(
             "tt-combat-request-roll-routing",
-            "spec.md",
+            "combat-save-concentration-contract",
+            change_root,
         )
         cls.design_path = os.path.join(change_root, "design.md")
 

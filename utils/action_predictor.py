@@ -39,12 +39,7 @@
 # ============================================================================
 
 import json
-from openai import OpenAI
-from config import OPENAI_API_KEY, ACTION_PREDICTION_MODEL
-from utils.ai_client_factory import get_chat_completion_params
-
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+from utils.llm_router import llm
 
 # Action prediction system prompt (condensed from full system analysis)
 ACTION_PREDICTION_PROMPT = """You are an action prediction agent for the world's most popular 5th edition roleplaying game AI system. Analyze user input to determine if it requires JSON actions in the AI response.
@@ -150,14 +145,9 @@ def predict_actions_required(user_input):
     """
     try:
         # Call action prediction model
-        # Route params through the factory shim so GPT-5-family models omit
-        # legacy sampling controls (direct OpenAI rejects temperature).
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "action_prediction",
-                ACTION_PREDICTION_MODEL,
-                temperature_override=0.1,  # Low temperature for consistent predictions
-            ),
+        prediction_text = llm.call(
+            task="action_prediction",
+            json_output=False,
             messages=[
                 {"role": "system", "content": ACTION_PREDICTION_PROMPT},
                 {"role": "user", "content": f"Analyze this user input: '{user_input}'"}
@@ -165,7 +155,7 @@ def predict_actions_required(user_input):
         )
         
         # Parse the prediction response
-        prediction_text = response.choices[0].message.content.strip()
+        prediction_text = prediction_text.strip()
         
         # Try to parse as JSON
         try:

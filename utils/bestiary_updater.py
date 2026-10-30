@@ -12,26 +12,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-# OpenAI imports
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-    print("Warning: OpenAI library not available")
+from utils.llm_router import llm
 
 # Import safe file operations
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.encoding_utils import safe_json_load, safe_json_dump, sanitize_text
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from model_config import DM_MINI_MODEL
-
-# Import API key
-try:
-    from config import OPENAI_API_KEY
-except ImportError:
-    OPENAI_API_KEY = None
-    print("Warning: Could not import OPENAI_API_KEY from config.py")
 
 # Set up logging
 set_script_name("bestiary_updater")
@@ -41,12 +27,7 @@ class BestiaryUpdater:
     
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the bestiary updater"""
-        self.api_key = api_key or OPENAI_API_KEY
-        if self.api_key and OPENAI_AVAILABLE:
-            self.client = OpenAI(api_key=self.api_key)
-        else:
-            self.client = None
-            error("OpenAI client not available - check API key and library installation")
+        self.api_key = api_key
         
         # Rate limiting settings (being conservative)
         self.requests_per_minute = 30
@@ -170,10 +151,6 @@ class BestiaryUpdater:
         Returns:
             Dictionary with monster data or None if failed
         """
-        if not self.client:
-            error("OpenAI client not available")
-            return None
-        
         # Rate limiting
         current_time = time.time()
         time_since_last = current_time - self.last_request_time
@@ -211,13 +188,13 @@ image-generation-ready description that would fit this adventure."""
             try:
                 info(f"Generating description for: {monster_name} (attempt {attempt + 1}/{max_retries})")
                 
-                response = self.client.chat.completions.create(
-                    model=DM_MINI_MODEL,
+                response_text = llm.call(
+                    task="dm_mini",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    temperature=0.7,
+                    json_output=False,
                     response_format={"type": "json_object"}
                 )
                 
@@ -225,8 +202,6 @@ image-generation-ready description that would fit this adventure."""
                 self.last_request_time = time.time()
                 
                 # Parse response
-                response_text = response.choices[0].message.content
-                
                 # Try to parse JSON
                 try:
                     result = json.loads(response_text)

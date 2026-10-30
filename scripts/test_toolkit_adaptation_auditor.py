@@ -12,7 +12,6 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,6 +43,8 @@ from utils.toolkit_adaptation_auditor import (
     run_llm_adaptation_auditor,
 )
 from utils.toolkit_adaptation_failure_packet import build_adaptation_failure_packet
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +71,7 @@ def _attempt_metadata() -> Dict[str, Any]:
         "rights_review_status": "not_required",
         "model_metadata": {
             "provider": "openai",
-            "model": "gpt-5.6-luna",
+            "model": DM_MAIN_MODEL,
             "parameter_profile": "toolkit_adaptation_semantic_auditor",
         },
         "source_context_artifact_path": "tmp/adaptation_attempts/adapt-001-auditor/source_context.json",
@@ -209,28 +210,24 @@ def _raw(response: Dict[str, Any]) -> str:
 
 
 def _provider_response(content: Optional[str] = None, *, refusal: Optional[str] = None) -> Any:
-    message = SimpleNamespace(content=content, refusal=refusal)
-    choice = SimpleNamespace(message=message, finish_reason="stop")
-    return SimpleNamespace(choices=[choice], model="gpt-5.6-luna", id="auditor-response-1")
+    if refusal:
+        return GameLLMTerminalError("refusal")
+    return content
 
 
-class FakeCompletions:
+class FakeClient:
     def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
         self.response = response
         self.error = error
         self.calls = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
-
-
-class FakeClient:
-    def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
-        self.completions = FakeCompletions(response=response, error=error)
-        self.chat = SimpleNamespace(completions=self.completions)
 
 
 class TestAuditorContract(unittest.TestCase):
@@ -471,31 +468,33 @@ class TestAuditorRunner(unittest.TestCase):
         result = run_llm_adaptation_auditor(
             self.packet,
             client=client,
-            model="gpt-4.1-test",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: {"model": model, "temperature": 0.2},
         )
         self.assertEqual(result["status"], AUDITOR_STATUS_SUCCESS)
         self.assertEqual(result["decision"], AUDITOR_DECISION_REVISE)
         self.assertTrue(result["ok"])
-        self.assertEqual(len(client.completions.calls), 1)
-        self.assertEqual(client.completions.calls[0]["response_format"], {"type": "json_object"})
-        self.assertEqual(client.completions.calls[0]["model"], "gpt-4.1-test")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0]["response_format"], {"type": "json_object"})
+        self.assertNotIn("model", client.calls[0])
         self.assertNotIn("raw_response_text", result)
 
-    def test_runner_uses_gpt5_compatibility_parameters(self) -> None:
+    def test_runner_keeps_facade_owned_model_parameters(self) -> None:
         response = _base_response(self.packet, AUDITOR_DECISION_REFUSE)
         client = FakeClient(response=_provider_response(_raw(response)))
         result = run_llm_adaptation_auditor(
             self.packet,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertEqual(result["status"], AUDITOR_STATUS_REFUSED)
-        request = client.completions.calls[0]
-        self.assertIn("reasoning_effort", request)
-        self.assertIn("verbosity", request)
+        request = client.calls[0]
+        self.assertNotIn("reasoning_effort", request)
+        self.assertNotIn("verbosity", request)
         self.assertNotIn("temperature", request)
         self.assertNotIn("top_p", request)
+        self.assertIn("reasoning_effort", result["params_used"])
+        self.assertIn("verbosity", result["params_used"])
 
     def test_runner_provider_and_parameter_failures_are_failed_outcomes(self) -> None:
         provider_result = run_llm_adaptation_auditor(
@@ -536,7 +535,7 @@ class TestAuditorRunner(unittest.TestCase):
         )
         self.assertEqual(result["status"], AUDITOR_STATUS_REFUSED)
         self.assertEqual(result["decision"], AUDITOR_DECISION_REFUSE)
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
         self.assertIn(DIAGNOSTIC_CODE_AUDITOR_NOT_AUTHORIZED, {item["code"] for item in result["diagnostics"]})
 
     def test_runner_rejects_invalid_model_response_as_failed(self) -> None:

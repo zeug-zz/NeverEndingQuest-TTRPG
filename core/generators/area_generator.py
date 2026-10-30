@@ -40,13 +40,8 @@ import json
 import random
 from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
-from model_config import DM_MAIN_MODEL
+from utils.ai_client_factory import handle_provider_error
+from utils.llm_router import llm
 from utils.module_path_manager import ModulePathManager
 from utils.spatial_contract import (
     build_location_aliases,
@@ -183,16 +178,11 @@ No explanations, just the JSON array of thematic location names."""
             if _adaptation_context:
                 prompt += f"\n\n{_adaptation_context}\n"
 
-            client = create_chat_client()
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "generate_thematic_names",
-                            DM_MAIN_MODEL,
-                            temperature_override=0.8,
-                        ),
+                    response = llm.call(
+                        task="generate_thematic_names",
                         messages=[
                             {
                                 "role": "system",
@@ -200,17 +190,16 @@ No explanations, just the JSON array of thematic location names."""
                             },
                             {"role": "user", "content": prompt},
                         ],
-                        **({"timeout": area_context["llm_timeout_seconds"]} if area_context.get("llm_timeout_seconds") is not None else {}),
+                        json_output=False,
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, "generate_thematic_names")
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        client = create_chat_client(use_fallback=True)
                         continue
                     raise
 
-            response_text = response.choices[0].message.content.strip()
+            response_text = response.strip()
 
             # Parse JSON response
             import json
@@ -529,7 +518,6 @@ class AreaGenerator:
     def __init__(self, llm_timeout_seconds=None):
         self.llm_timeout_seconds = llm_timeout_seconds if isinstance(llm_timeout_seconds, (int, float)) and 0 < llm_timeout_seconds <= 600 else None
         self.map_gen = MapLayoutGenerator()
-        self.client = create_chat_client()  # Use factory client
 
     @staticmethod
     def _adaptation_log(active: bool, code: str, message: Any = None, count: Any = None) -> None:
@@ -576,12 +564,8 @@ class AreaGenerator:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = self.client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "generate_area_name",
-                            DM_MAIN_MODEL,
-                            temperature_override=0.8,
-                        ),
+                    response = llm.call(
+                        task="generate_area_name",
                         messages=[
                             {
                                 "role": "system",
@@ -589,18 +573,17 @@ class AreaGenerator:
                             },
                             {"role": "user", "content": prompt},
                         ],
+                        json_output=False,
                         response_format={"type": "json_object"},
-                        **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, "generate_area_name")
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        self.client = create_chat_client(use_fallback=True)
                         continue
                     raise
 
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(response)
             refined_name = result.get("refinedName", initial_name)
             description = result.get(
                 "description", f"A mysterious area known as {initial_name}."
@@ -788,12 +771,8 @@ Return ONLY the area description text, no additional formatting or labels."""
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = self.client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "generate_area_description",
-                            DM_MAIN_MODEL,
-                            temperature_override=0.8,  # Higher temperature for more creative variety
-                        ),
+                    response = llm.call(
+                        task="generate_area_description",
                         messages=[
                             {
                                 "role": "system",
@@ -801,17 +780,16 @@ Return ONLY the area description text, no additional formatting or labels."""
                             },
                             {"role": "user", "content": prompt},
                         ],
-                        **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
+                        json_output=False,
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, "generate_area_description")
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        self.client = create_chat_client(use_fallback=True)
                         continue
                     raise
 
-            description = response.choices[0].message.content.strip()
+            description = response.strip()
 
             # Ensure we have a description
             if description and len(description) > 10:

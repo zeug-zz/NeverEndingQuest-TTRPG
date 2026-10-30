@@ -1,6 +1,6 @@
 ---
 name: neq-capture-arena
-description: Run scripted captures of live combat and narration behavior against the sandboxed Capture_Arena module - socket-driven driver primary, playwright-cli as the documented browser alternative - then preserve trace evidence under tmp/.
+description: Run orchestrator-owned isolated Capture_Arena gameplay gates, review scenario/state evidence, and preserve per-run traces under tmp/. Use for required live rollout verification; socket driver primary, browser alternative documented.
 license: MIT
 compatibility: opencode
 metadata:
@@ -48,6 +48,206 @@ metrics, matrix runs) lives in `plans/capture-arena.md`.
 
 ## Preconditions
 
+### Orchestrator ownership and authorization
+
+The primary orchestrator prepares, starts, drives, reviews, preserves, and tears
+down each required live capture after the relevant focused tests pass. Builders
+implement tooling and focused fixes; they do not own the final live gate verdict.
+Sandbox fixture/runtime writes performed by the documented commands are part of
+verification, not product source implementation.
+
+Before execution, read the owning OpenSpec coverage and the rollout matrix in
+`plans/combat-openrouter-alignment.md`. Declare the scenario, party size, seed,
+step/request bounds, and expected assertions. A goal-owned capture requires an
+active, authorized goal. A separate guideline/planning request does not resume a
+paused goal or authorize a live run.
+
+### Implemented G3 coverage and required tooling prerequisites
+
+The bounded named-capture tooling is implemented and provider-free tested in
+`combat-manager-decomposition` tasks 4.3 and 4.4. The named IDs accepted by the
+current seeder/driver are `combat-smoke`, `combat-smoke-allied-inactive`,
+`initiative-pc`, `initiative-dm-tie`, `death-save`, `surrender-exit`, and
+`resume-replay`; `surrender-exit` requires the `surrender` or `explicit-exit`
+branch, and `resume-replay` requires the `complete` or `replay` phase. These are
+implemented CLI values, not planning-only identifiers. Run 1-PC and 4-PC rows;
+the wrong-actor death-save subcheck applies only to the declared 4-PC row.
+
+Named G3 runs are separate from the unchanged bare-latency scripts. Omitting
+`--scenario` preserves the legacy latency script and historical G1 destinations;
+do not alter its inputs or treat it as named G3 coverage. Named captures use the
+existing sandbox and driver only. Do not add a parallel runner, alter product
+mechanics, or substitute fake evidence for the primary-owned live gate.
+
+| Named scenario | Required observations |
+|---|---|
+| `combat-smoke` | 1-PC/4-PC scripted turns, complete unique roster, active-PC identity, deterministic HP delta, living non-PC enemy batch, and round/phase progression |
+| `combat-smoke-allied-inactive` | Bounded allied-NPC/inactive-enemy variant, with non-party allies and inactive enemies excluded from the required active batch |
+| `initiative-pc` | Invalid initiative input holds the gate; known PC-group win enters PC_PHASE without an opening enemy batch |
+| `initiative-dm-tie` | Known tie chooses DM group; opening marker and eligible non-PC batch are observed, marker clears, and PC_PHASE resumes |
+| `death-save` | Python-owned pending save, invalid roll rejected, wrong actor rejected in 4-PC only, legal roll updates only that PC and restores legal turn flow |
+| `surrender-exit` | Separate accepted-surrender and explicit-exit branch runs; active encounter clears, narration resumes, no extra damage/rewards, and server survives |
+| `resume-replay` | Preserve a completed mechanical turn, restart only the owned SAM ESandbox server without preparing/reseeding, replay the same encounter and chain, and verify no duplicate mechanics/rewards |
+
+Focused dynamic prompt byte-parity tests remain separate from live output/state
+checks; differing LLM prose is not compared for literal equality.
+
+### Evidence bundle and verdict
+
+Reserve a unique, not-yet-existing run ID under
+`tmp/router-rollout/g3/<run-id>/` before any command. Do not create the run
+directory: `capture_drive.py` validates that it does not exist and creates it
+when a named run starts. Keep each server stdout file separate from that bundle
+under project-relative `tmp/`; pass its path as `--server-log`, which validates
+and copies it into the bundle as `server.log`. Never overwrite an earlier run or
+historical G1 artifacts. Preserve before teardown:
+
+- Manifest: gate/scenario and scenario version or hash, party roster/size, seed
+  identity, executed commands, source HEAD plus relevant dirty-worktree digest,
+  configured profile/model/provider, resolved response models when available,
+  timestamps, declared bounds, and observed step/request/timeout counts.
+- Verbatim driver transcript, owned-server stdout log, runtime JSONL trace, and
+  provider-free report. Keep synthetic/fake evidence labelled and separate.
+- Read-only before/after sandbox snapshots of relevant party, encounter, character,
+  history and save/receipt state, plus assertion records with expected/observed
+  values and concrete evidence references. Do not include credential/config values.
+- Driver-generated automated evidence status is only `READY_FOR_PRIMARY_REVIEW`
+  or blocked/failed. The primary inspects the bundle and records `PASS`, `FAIL`,
+  or `BLOCKED` with explanation, every required check, and missing evidence in
+  the owning OpenSpec tasks and goal plan. Readiness is not a verdict and must
+  never auto-mark the live gate complete.
+
+For G9/G10, include request versus resolved model, actual provider/fallback,
+reported versus estimated/unpriced costs and completeness, and the required
+rollback or session/week accounting observations. Unknown data stays unknown.
+
+Driver exit 0 means transport/script completion, not gate acceptance. The legacy
+driver tolerates timeout warnings, and the report can exit 0 with degraded data.
+Required step timeouts/caps, failed assertions, missing scenarios, or degraded
+required evidence prevent PASS. A failed observed assertion is FAIL; unavailable
+transport/tools or missing prerequisite coverage is BLOCKED. A sparse combat trace
+on a narrator-only turn may be explicitly non-applicable when that gate's required
+evidence is instead supplied by transcript/state/response metadata; it cannot
+replace required combat latency rows. Do not silently waive a requirement.
+Expected restart disconnects must be declared before execution; they are lifecycle
+steps, not retrospective excuses for a required gameplay timeout.
+
+An attributable failure goes back to a focused builder fix, then primary rerun of
+affected scenarios. Required unavailable tools/services are concrete blockers;
+stop rather than substituting mocks or builder claims for live evidence.
+
+### G4 fixed four-key matrix (offline evaluation)
+
+The existing driver/seeder accept `--gate g3` (the unchanged default) and
+`--gate g4`; G4 is fixed to `narrator-dialogue-travel` and `combat-smoke`, each
+for P1 and P4. G3 and its historical raw 18-key evaluator/default latency path
+remain separate and unchanged. The offline evaluator is read-only:
+
+```text
+.venv/bin/python scripts/capture_evidence.py --gate g4 \
+  --run-dir tmp/router-rollout/g4/<narrator-p1> \
+  --run-dir tmp/router-rollout/g4/<narrator-p4> \
+  --run-dir tmp/router-rollout/g4/<combat-p1> \
+  --run-dir tmp/router-rollout/g4/<combat-p4>
+```
+
+Each directory must already contain one unique run bundle. The evaluator
+revalidates retained artifact bytes/hashes, source/profile identity, fixed seed,
+persisted roster/active PC/location, per-step snapshots and actual trace receipt
+byte spans. A manifest declaration or saved PASS/check projection cannot replace
+missing or contradictory transcript, state, trace, or receipt data. Unknown cost
+may remain explicitly unpriced in G4; an unsupported actual/estimated cost claim,
+missing/duplicate/extra key, wrong gate, unexpected fallback, echo-only Mira
+reply, timeout, or cap blocks review. A failed observed assertion is FAIL;
+unavailable or missing required evidence is BLOCKED. Only
+`READY_FOR_PRIMARY_REVIEW` is emitted for complete live-candidate bundles; it is
+not a primary PASS. Synthetic bundles are always blocked as non-live evidence.
+
+G4 bounds are fixed: narrator P1 6 inputs/8 controls, P4 6/9; combat P1 5/7,
+P4 22/35; all have a 300-second turn cap and at most three separately counted
+health reads. Combat identity comes from the static seeded fixture (P1 Acheron
+and Goblin; P4 Acheron/Merisiel/Kira/Vitreol and Goblin Alpha/Beta), never from
+random spawns. Narrator startup's persisted CA01 opening is observed before any
+scripted input. Its five adjacent turns are CA02 -> CA03 -> CA03 dialogue ->
+CA02 -> CA01; P4 uses Acheron, Acheron, Merisiel, Merisiel, Merisiel, switching
+at the Mira turn. The return path is verified from each persisted post-turn
+location, not inferred from input wording. Mira's response must be backend
+output distinct from the user-input echo.
+
+Owner key rotation remains outstanding before any live capture. Retain the
+recorded key-exposure history; do not inspect credentials, run prepare/restore,
+reserve or use a live server, or clean up old evidence as part of offline G4
+evaluation.
+
+### G7 capture (primary-owned)
+
+G7 tooling is fixed to `turn-commit` and supports paths `normal` and
+`enemy_batch`, parties 1 and 4, the approved commit boundaries, and completed
+turn/replay rows. The matrix requires interrupt/recover pairs at every applicable
+boundary and complete/replay pairs for both paths and party shapes. P1 does not
+include `after_character_write:2`.
+
+The primary may run one pair with:
+
+```text
+tmp/router-rollout/g7/run_g7_row.sh <party 1|4> <normal|enemy_batch> \
+  <boundary|none> <unique-run-id-prefix>
+```
+
+For a boundary, the helper prepares once, starts the owned server on port 8360,
+sets `NEQ_COMBAT_FAULT_POINT` only for the interrupt phase, verifies the bounded
+`COMBAT_TURN_FAULT_INJECTED:<boundary>` expected lifecycle-stop marker, stops
+only its owned listener, then restarts and recovers without reseeding. Use
+`none` for the completed-turn/replay pair; replay also retains the same sandbox
+without preparation. Both server starts use the repository venv and
+`NEQ_OPEN_BROWSER=0`. The helper refuses an occupied/unowned port-8360 listener
+and never inspects or touches port 8357.
+
+Keep each unique row bundle under `tmp/router-rollout/g7/<run-id>/`. Builders
+must not execute the helper or start a server. After collecting the entire
+matrix, the primary may run the read-only evaluator:
+
+```text
+.venv/bin/python scripts/capture_evidence.py --gate g7 \
+  --run-dir tmp/router-rollout/g7/<row-1> --run-dir tmp/router-rollout/g7/<row-2>
+```
+
+Repeat `--run-dir` for every required row. Missing matrix keys are reported
+exactly; synthetic evidence cannot become review-ready. Automated
+`READY_FOR_PRIMARY_REVIEW` is not a live verdict and tooling never emits G7
+`PASS`.
+
+### G9 OpenRouter Auto capture (primary-owned)
+
+G9 live execution is forbidden until the owning G7 report records `Current
+status: PASS`. The primary runs one fixed row at a time only after G7 PASS; builders
+must not execute this helper or start a G9 server:
+
+```text
+tmp/router-rollout/g9/run_g9_row.sh <row-key> <run-id-prefix>
+```
+
+The row key is one of `narrator-auto:p1`, `narrator-auto:p4`, `combat-auto:p1`,
+`combat-auto:p4`, `transport-failure:p1`, `transport-failure:p4`,
+`preferred-openai-rollback:p1`, or `preferred-openai-rollback:p4`. The helper
+prepares one isolated `tmp/combat_capture/` copy, uses the repository venv,
+`NEQ_OPEN_BROWSER=0`, and port 8360 only. It proves listener ownership through
+`lsof` parent PID and sandbox-cwd checks, refuses any pre-existing/unowned 8360
+listener, keeps server stdout in separate per-start logs, and never touches 8357.
+
+For rollback rows the helper starts the prepared OpenRouter server, stops only
+that owned listener, changes the sandbox to direct OpenAI without reseeding, and
+restarts exactly once before the capture. It preserves both server logs and a
+post-stop lifecycle record in the row bundle. Transport-failure rows use only
+the sandbox-scoped one-shot injection. The offline evaluator reads the eight
+finished bundles with `scripts/capture_evidence.py --gate g9 --run-dir ...`;
+it emits readiness only, never G9 PASS. Missing or synthetic receipts, unknown
+costs presented as zero, incomplete state/transcript/log evidence, and degraded
+captures remain blocked. The primary inspects every bundle and records the live
+verdict in the owning OpenSpec change.
+
+### Runtime prerequisites
+
 1. Sandbox prepared:
    `.venv/bin/python scripts/seed_combat_capture.py --prepare --party 4`
    (or `--party 1`). `--prepare` rebuilds `tmp/combat_capture/`, patches
@@ -70,106 +270,92 @@ metrics, matrix runs) lives in `plans/capture-arena.md`.
 
 ## Primary Execution Contract (socket-driven driver)
 
-The driver never starts, stops, or prepares the sandbox. It only talks to an
-already-running server on 8360. One run drives one party size.
+The seeder prepares a sandbox; the driver never prepares, starts, stops, or
+restores it. Every live action is primary/orchestrator-owned and requires the
+separate authorization described above. One named run is one party size and one
+matrix key. Reserve a different new run ID for every matrix row.
 
-1. **Preflight and port hygiene (8360 only)**
-   - Check the sandbox port: `lsof -t -nP -iTCP:8360 -sTCP:LISTEN`.
-   - If a listener exists, confirm it belongs to a previous `tmp/combat_capture`
-     run before stopping it (`kill -TERM <pid>`, then `kill -KILL <pid>` only if
-     needed). If ownership cannot be confirmed, stop and report.
-   - NEVER run this check against 8357 and never stop a 8357 process.
-   - Confirm `tmp/combat_capture/` exists; otherwise prepare it first.
+1. **Preflight and sandbox preparation (port 8360 only)**
+   - Check `lsof -t -nP -iTCP:8360 -sTCP:LISTEN`; stop only a positively owned
+     prior sandbox server. If ownership is uncertain, stop and report BLOCKED.
+     Never inspect/stop port 8357.
+   - Confirm the intended run ID under `tmp/router-rollout/g3/` does not exist.
+     Do not mkdir the run directory; the named driver creates it after strict
+     path validation. Keep server stdout in a separate project-relative tmp file.
+   - Named 1-PC example:
+     `.venv/bin/python scripts/seed_combat_capture.py --prepare --party 1 --scenario combat-smoke`
+   - Named 4-PC example:
+     `.venv/bin/python scripts/seed_combat_capture.py --prepare --party 4 --scenario combat-smoke`
+   - For `surrender-exit`, pass `--branch surrender` or `--branch explicit-exit`
+     to both prepare and drive. For `resume-replay`, prepare only
+     `--phase complete`; never prepare `--phase replay`. Other named scenarios
+     take their exact documented ID, with party 1 or 4.
 
-2. **Prepare the sandbox**
-   - `.venv/bin/python scripts/seed_combat_capture.py --prepare --party 4`
-     (use `--party 1` for the 1-PC run; re-run `--prepare` when switching
-     party size so the seeded roster matches the scenario).
+2. **Start the owned server and drive one named run**
+   - Start from `tmp/combat_capture` with the repository venv using
+     `NEQ_OPEN_BROWSER=0 <venv-python> -c 'import run_web; run_web.main()'`;
+     this capture-only entry uses the existing `main()` function to skip the
+     optional `__main__` version-check/network and interactive preamble without
+     changing normal CLI behavior. Use the same command for every restart.
+     Capture stdout/stderr to a unique separate file under `tmp/` (for example
+     `tmp/router-rollout/g3/server-<run-id>.log`). Wait for the server to listen
+     on 8360 before driving. Do not use a bundle path as the live stdout
+     destination; `--server-log` copies this separate existing owned file into
+     the bundle.
+   - 1-PC named example:
+     `.venv/bin/python scripts/capture_drive.py --party 1 --scenario combat-smoke --run-dir tmp/router-rollout/g3/<run-id> --state-root tmp/combat_capture --server-log tmp/router-rollout/g3/server-<run-id>.log --url http://localhost:8360`
+   - 4-PC named example:
+     `.venv/bin/python scripts/capture_drive.py --party 4 --scenario combat-smoke --run-dir tmp/router-rollout/g3/<run-id> --state-root tmp/combat_capture --server-log tmp/router-rollout/g3/server-<run-id>.log --url http://localhost:8360`
+   - For every named driver invocation, use the matching party/scenario and
+     branch/phase values. For a resume pair, use the exact same explicit
+     `--chain-id <chain-id>` on complete and replay, and a new `--run-dir` for
+     each phase. Metadata flags `--declared-provider`, `--declared-profile`,
+     and `--declared-model` are non-secret operator declarations only; they do
+     not establish actual provider/model use. Actual runtime identity remains
+     unknown unless response metadata observes it.
+   - `--url` defaults to `http://localhost:8360` and is restricted to localhost,
+     `127.0.0.1`, or `[::1]` at port 8360. The driver uses the real socket/REST
+     contract. It waits for first output and then a processing-aware quiet
+     window; a zero exit code alone is not a pass. Required timeouts, caps,
+     missing artifacts, or failed assertions prevent readiness.
 
-3. **Start the sandbox server**
-   - Run with the working directory set to `tmp/combat_capture`:
-     `NEQ_OPEN_BROWSER=0 <main venv python> run_web.py`
-   - This is a long-lived process: start it in the background and keep its
-     stdout log at a project-relative path under `tmp/` when a log file is
-     needed.
-   - `NEQ_OPEN_BROWSER=0` keeps the server from opening the user's real
-     browser. Wait until the server reports it is listening on 8360 before
-     driving the capture.
+3. **Resume-replay lifecycle**
+   - Complete phase: prepare once with
+     `.venv/bin/python scripts/seed_combat_capture.py --prepare --party <1|4> --scenario resume-replay --phase complete`,
+     then run the driver with that scenario/phase and a declared chain ID/new
+     run ID. Preserve its completed turn and artifacts.
+   - Stop only the positively identified owned 8360 sandbox server. Restart the
+     SAME `tmp/combat_capture` sandbox without `--prepare`, `--restore`, or any
+     reseed. Keep the same `--chain-id`, choose a different new run ID, and
+     drive `--scenario resume-replay --phase replay` to observe the retained
+     encounter after restart.
+   - If the replay trace span is empty, it is not permission to reuse old trace
+     rows or waive the replay checks. In the replay record, explicitly account
+     for trace-enabled status, a freshly captured retained-span boundary,
+     quiet readiness, health, before/after state, and history. The replay may
+     label trace-derived observations N/A only where they are genuinely
+     inapplicable; the evidence helper still requires the trace gate enabled,
+     a newly copied zero-byte span with unchanged prefix, quiet readiness,
+     healthy roster, and valid before/after state/history snapshots. No blanket
+     degraded-evidence waiver or old-row reuse is allowed.
 
-4. **Drive the 4-PC capture**
-   - `.venv/bin/python scripts/capture_drive.py --party 4 --trace-dst tmp/combat_baseline_mp.jsonl`
-   - Defaults: `--url http://localhost:8360`, `--transcript
-     tmp/capture_transcript_4.log`, `--trace-src
-     tmp/combat_capture/debug/combat_turn_trace.jsonl`, `--start-timeout 180`,
-     `--turn-timeout 150`, `--turn-quiet-seconds 1.5`.
-   - The scripted scenario is fixed inside the driver:
-     - Round 1: Acheron `/att Goblin Alpha 20 training blade`, then `/dmg 2`;
-       Merisiel the same pair; Kira free text
-       `Kira darts in and slashes at the nearest goblin`; Vitreol free text
-       `Vitreol levels her crossbow at Goblin Beta and fires`; then `/end`.
-     - Rounds 2-3: same shape with slightly adjusted free-text flavor, sending
-       `/end` only when the prior output indicates the enemy phase is pending.
-       The driver stops early when the transcript indicates combat has ended.
-   - The driver switches the active PC with
-     `POST /api/party/set_active` before each turn that needs a different PC.
-     Per-turn completion is output-first and processing-aware: it waits for the
-     turn's first new `game_output` (capped by `--turn-timeout`), then keeps
-     waiting while `is_processing` is True or new `game_output` /
-     `status_update` events keep arriving, and completes once the stream has
-     been quiet for `--turn-quiet-seconds` while `is_processing` is False. It
-     does NOT require a `status_update` true -> false edge, because
-     deterministic fast-path replies (for example
-     `[ALREADY_APPLIED] Hit!`) emit output with no true edge at all. A timeout
-     is recorded only when no new `game_output` arrives within the cap. If the
-     first outputs ask for an initiative entry (`/init`), it sends `/init 15`
-     automatically and logs the fallback.
-   - Turn timeouts and cap-reached turns are logged as warnings inside the
-     transcript; they do not invalidate the run. The driver exits 0 when the
-     scenario completed and non-zero only on connect/start failure.
-
-5. **Preserve the trace and report**
-   - `--trace-dst` copies the sandbox trace
-     (`tmp/combat_capture/debug/combat_turn_trace.jsonl`) to the caller path
-     BEFORE `--restore` deletes the sandbox, and prints source/destination
-     record counts. Omit it only when a run is explicitly evidence-free.
-     - 4-PC run: `tmp/combat_baseline_mp.jsonl`.
-     - 1-PC run: `tmp/combat_baseline_one_pc.jsonl`.
-   - Run the provider-free report:
-     `.venv/bin/python scripts/combat_latency_report.py --trace <copied trace>`
-     The report exits 0 with a `degraded` report for partial input and exits 2
-     when the trace cannot be read.
-   - Record actual counts in the capture report: total records, malformed
-     count, stage rows, provider sites (calls/latency/tokens as observed),
-     compression rows, file-operation rows, NL fast-path hits/misses, and
-     decision rows. Do not extrapolate; do not fabricate missing sections.
-   - Keep every evidence artifact under `tmp/`; never write capture output to
-     `reports/`.
-
-6. **Teardown**
-   - Stop ONLY the 8360 listener:
-     `lsof -t -nP -iTCP:8360 -sTCP:LISTEN`, then `kill -TERM <pid>` (use
-     `kill -KILL <pid>` only if needed). If the sandbox server must be
-     restarted at any point, use the same `NEQ_OPEN_BROWSER=0` start command.
-   - Remove the sandbox:
-     `.venv/bin/python scripts/seed_combat_capture.py --restore`
-   - Re-check `lsof -t -nP -iTCP:8360 -sTCP:LISTEN`; it must print nothing.
-   - Confirm the copied traces remain under `tmp/` and the installed tree is
-     unchanged (`git status --short` shows no capture writes).
-
-7. **Drive the 1-PC capture**
-   - `--party 1` is independent of the multi-PC run and exercises the
-     minimum-party tabletop path (ADR-0032):
-     `.venv/bin/python scripts/seed_combat_capture.py --prepare --party 1`
-     -> start the server as in step 3 -> drive the capture:
-     `.venv/bin/python scripts/capture_drive.py --party 1 --trace-dst tmp/combat_baseline_one_pc.jsonl`
-     (default transcript `tmp/capture_transcript_1.log`) -> preserve and
-     report as in step 5 -> tear down as in step 6.
-   - The scripted scenario is fixed inside the driver: Acheron
-     `/att Goblin 20 training blade`, `/dmg 2`, one free-text turn
-     (`Acheron presses the goblin back toward the pit wall`), then `/end`.
-     The 1-PC seed names its single enemy `Goblin`
-     (`scripts/combat_latency_fixtures.ONE_PC_ENEMY_NAME`), so the driver
-     attacks that seeded name rather than the 4-PC `Goblin Alpha`.
+4. **Offline evaluation, primary review, and teardown**
+   - The offline matrix evaluator reads existing run bundles only; it does not
+     execute captures. Supply each selected bundle by repeating `--run-dir`,
+     e.g. `.venv/bin/python scripts/capture_evidence.py --run-dir tmp/router-rollout/g3/<run-id-1> --run-dir tmp/router-rollout/g3/<run-id-2>`.
+     The expected matrix contains 18 keys: 5 scenarios x 2 party sizes, 2
+     surrender/exit branches x 2 party sizes, and 2 resume phases x 2 party
+     sizes. Add a row only once and keep branch/phase keys distinct.
+   - Automated status `READY_FOR_PRIMARY_REVIEW` only indicates a complete,
+     structurally valid set of candidate live bundles. It is not PASS. The
+     primary inspects each bundle and records PASS/FAIL/BLOCKED after inspection
+     in the OpenSpec change and goal; do not automatically mark the task done.
+   - Confirm trace/report, manifest, snapshots, checks, transcript, and copied
+     server log are present in each bundle before teardown. Stop only the owned
+     8360 process, then run `.venv/bin/python scripts/seed_combat_capture.py --restore`
+     after all required evidence is safely preserved. Verify no listener remains
+     on 8360 and the installed tree was untouched. Keep raw artifacts under
+     `tmp/`; durable owning reports may summarize results and reference bundles.
 
 ## Extension Points
 
@@ -194,16 +380,20 @@ sandbox isolation, 8360-only port rules, and evidence handling.
 - **Router/model bake-off runs:** run identical scripted inputs against a
   different sandbox stack by editing only the sandbox model config after a
   fresh `--prepare`, then compare two `combat_latency_report.py` outputs. Keep
-  the inputs identical so differences reflect the stack, not the script.
+   the inputs identical so differences reflect the stack, not the script.
+  These are optional future comparisons. The current rollout reuses accepted
+  candidate selection and completed G1 evidence; G5's new same-current-model
+  before/after reference is a hot-path gate, not a repeated candidate bake-off.
 - **Adjusting scripted inputs:** the scenario steps in the Execution Contract
   are the checklist. Keep the deterministic commands exact for comparability,
   and keep free-text turns in-arena and non-lethal.
 - **Expected trace evidence:** combat captures should show `stage` timing rows,
   `provider` rows for the combat sites that ran, and `decision` rows for the
-  deterministic fast path. Narration, travel, and skill-check captures may
-  produce sparse combat rows; treat those reports as degraded evidence and lean
-  on the driver transcript and the sandbox stdout log until the trace schema
-  grows matching event types.
+  deterministic fast path. Narration, travel, skill-check, and observation-only
+  replay captures may produce sparse combat rows; use only the explicitly
+  declared applicability rules for their required checks. A degraded report,
+  missing required evidence, or an empty span outside the validated replay case
+  is not waived by a transcript or server log.
 
 ## Guardrails
 
@@ -216,7 +406,8 @@ sandbox isolation, 8360-only port rules, and evidence handling.
 - Do not commit, amend, push, or otherwise modify git history as part of a
   capture.
 - Keep all output ASCII-only (Windows cp1252 safety).
-- Keep reports and evidence under `tmp/`; never write to `reports/`.
+- Keep raw reports/evidence under `tmp/`; durable owning OpenSpec reports may
+  contain concise primary summaries and references, not raw capture artifacts.
 - Do not fabricate results. Blocked or failed captures must be reported as
   blocked/failed with the failure screenshot path (browser alternative) or the
   driver transcript (socket path).

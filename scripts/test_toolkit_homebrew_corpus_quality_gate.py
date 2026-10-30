@@ -108,7 +108,7 @@ class TestNormalizationAndReviewContractCoverage(unittest.TestCase):
         self.temp_dir.cleanup()
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_tracked_fixtures_produce_reviewable_packet_shape(self, mock_client_factory, mock_model_config) -> None:
         fixtures = list_tracked_corpus_fixtures().get("fixtures") or []
         mock_model_config.return_value = {
@@ -133,7 +133,7 @@ class TestNormalizationAndReviewContractCoverage(unittest.TestCase):
                 "grounded_facts": ["Source text is readable"],
                 "builder_narrative": "Builder seed narrative.",
             }
-            mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+            mock_client_factory.return_value = json.dumps(payload)
 
             result = normalize_homebrew_upload(
                 source_path=source_path,

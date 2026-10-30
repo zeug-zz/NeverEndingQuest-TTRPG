@@ -22,6 +22,7 @@ from datetime import datetime
 
 # Import the combat compression engine from same directory
 from core.ai.combat_compression_engine import CombatCompressor
+from core.combat.turn_commit import conversation_history_for_prompt
 from utils.combat_latency_trace import trace_compression_event
 
 class CombatUserMessageCompressor:
@@ -257,7 +258,10 @@ class CombatUserMessageCompressor:
         start_time = datetime.now()
         
         # Create a deep copy to avoid modifying original
-        messages_to_send = copy.deepcopy(conversation_history)
+        # TABLETOP MODE: Keep private durable metadata out of AI-ready history.
+        messages_to_send = conversation_history_for_prompt(
+            copy.deepcopy(conversation_history)
+        )
         
         # Strip combat setup messages first if applicable
         messages_to_send = self.strip_combat_setup_messages(messages_to_send)

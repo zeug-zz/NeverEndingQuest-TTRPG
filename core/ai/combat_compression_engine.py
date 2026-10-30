@@ -15,11 +15,11 @@ from typing import Dict, Optional
 from pathlib import Path
 import sys
 import os
-import time
 
 from model_config import NARRATIVE_COMPRESSION_MODEL
-from utils.ai_client_factory import create_chat_client, get_chat_model_name
-from utils.combat_latency_trace import trace_provider_call
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
+from core.combat.turn_commit import conversation_history_for_prompt
 
 # Import usage tracking
 try:
@@ -105,8 +105,6 @@ class CombatCompressor:
     
     def __init__(self, api_key: str = None, enable_caching: bool = True):
         """Initialize compressor."""
-        # Use factory to create client (supports OpenAI and OpenRouter)
-        self.client = create_chat_client()
         self.model = NARRATIVE_COMPRESSION_MODEL
         self.enable_caching = enable_caching
         self.cache_file = Path("modules/conversation_history/combat_compression_cache.json")
@@ -152,27 +150,23 @@ class CombatCompressor:
         try:
             # Call AI for compression
             print(f"[DEBUG] Calling AI compression with model: {self.model}")
-            # TABLETOP MODE: combat latency trace (Phase 0)
-            _trace_start = time.perf_counter()
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": COMBAT_COMPRESSION_PROMPT},
-                    {"role": "user", "content": content}
-                ],
-                temperature=0.3
+            # TABLETOP MODE: route combat compression through the shared facade.
+            messages = [
+                {"role": "system", "content": COMBAT_COMPRESSION_PROMPT},
+                {"role": "user", "content": content}
+            ]
+            observer = make_legacy_receipt_observer(
+                legacy_context={"purpose": "combat_turn_processing"},
+                trace_site="combat_compression",
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
-            # TABLETOP MODE: combat latency trace (Phase 0)
-            trace_provider_call("combat_compression", _trace_start, response)
-            
-            # Track usage
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass  # Silently ignore tracking errors
-            
-            compressed = response.choices[0].message.content.strip()
+            response_text = llm.call(
+                task="compression",
+                messages=messages,
+                json_output=False,
+                observer=observer,
+            )
+            compressed = response_text.strip()
             
             # Strip code fences if present
             if compressed.startswith("```"):
@@ -249,7 +243,8 @@ def compress_combat_history(conversation_history: list) -> list:
             # Keep as-is
             compressed_history.append(message)
     
-    return compressed_history
+    # TABLETOP MODE: This projection is for AI consumption, not durable history.
+    return conversation_history_for_prompt(compressed_history)
 
 if __name__ == "__main__":
     from datetime import datetime

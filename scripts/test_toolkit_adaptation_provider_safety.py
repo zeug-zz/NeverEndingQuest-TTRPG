@@ -24,22 +24,18 @@ from web.extensions.toolkit_adaptation_runtime import adaptation_convergence_cal
 SOURCE_HASH = "a" * 64
 
 
-class _FakeCompletions:
+class _FakeClient:
     def __init__(self, outcome: Any) -> None:
         self.outcome = outcome
         self.calls = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> str:
         self.calls.append(kwargs)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
-        return self.outcome
-
-
-class _FakeClient:
-    def __init__(self, outcome: Any) -> None:
-        self.completions = _FakeCompletions(outcome)
-        self.chat = type("Chat", (), {"completions": self.completions})()
+        if isinstance(self.outcome, str):
+            return self.outcome
+        return json.dumps(self.outcome, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
 class AdaptationProviderSafetyTest(unittest.TestCase):
@@ -115,7 +111,7 @@ class AdaptationProviderSafetyTest(unittest.TestCase):
             return adaptation_convergence_callback(
             provider_context,
             client=_FakeClient(outcome),
-            parameter_resolver=lambda *_: {"model": "test-model"},
+            parameter_resolver=lambda task, model: {"model": model},
             )
         return callback
 
@@ -181,10 +177,10 @@ class AdaptationProviderSafetyTest(unittest.TestCase):
         result = adaptation_convergence_callback(
             {**self._context(), "request": {"operation": "bounded_repair"}},
             client=captured,
-            parameter_resolver=lambda *_: {"model": "test-model"},
+            parameter_resolver=lambda task, model: {"model": model},
         )
         self.assertEqual(result["status"], "success")
-        call = captured.completions.calls[0]
+        call = captured.calls[0]
         self.assertEqual(call["response_format"], {"type": "json_object"})
         prompt = call["messages"][0]["content"]
         self.assertIn('"status":"success","proposal":{"operation":"resolve_destination_alias"}', prompt)
@@ -207,7 +203,7 @@ class AdaptationProviderSafetyTest(unittest.TestCase):
                 result = adaptation_convergence_callback(
                     {**self._context(), "request": {"operation": "bounded_repair"}},
                     client=_FakeClient(payload),
-                    parameter_resolver=lambda *_: {"model": "test-model"},
+                    parameter_resolver=lambda task, model: {"model": model},
                 )
                 self.assertEqual(result["provider_failure_class"], "malformed")
                 self.assertIn(diagnostic, result["diagnostics"])
@@ -222,7 +218,7 @@ class AdaptationProviderSafetyTest(unittest.TestCase):
             return adaptation_convergence_callback(
                 provider_context,
                 client_factory=missing_client,
-                parameter_resolver=lambda *_: {"model": "test-model"},
+                parameter_resolver=lambda task, model: {"model": model},
             )
         before = self._snapshot()
         result = self._run(callback)

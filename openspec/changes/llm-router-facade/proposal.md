@@ -6,28 +6,44 @@ Production chat traffic is spread across roughly 107 call sites in 57 files. Mod
 selection lives in scattered constants, the factory's Kimi-era `thinking` shapes are
 inconsistent (`extra_body` regression documented in the router plan), no cache-aware
 usage accounting exists, and there is no repeatable way to score candidate models before
-trusting them. The fork runs direct OpenAI (`LLM_PROVIDER = "openai"`) and must stay
-behavior-neutral for testers while the router foundation lands.
+trusting them. The fork runs direct OpenAI (`LLM_PROVIDER = "openai"`); the owner has
+approved `gpt-6-luna` as the preferred OpenAI model and `openrouter/auto` as the
+configurable narrator, combat, and Titan target.
 
 This change lands the router plan's Phase 0 (config and factory prep) and Phase 1 (thin
 facade plus bake-off harness) as one reviewable, non-live slice. Consumer migration stays
 in later changes (router Phase 2).
 
+Owner decisions recorded 2026-10-13: `gpt-5.4-nano` is deprecated and MUST NOT be
+introduced; the live bake-off is accepted as successfully completed by owner
+attestation. No benchmark measurements or provider execution are claimed by this
+planning update. Implementation verification remains required.
+
 ## What Changes
 
 MUST:
 
-- Add tiered `MODEL_PROFILES` v4, `DEFAULT_PROFILE`, and `ACTIVE_PROFILE` to
-  `model_config.py`, replacing model-specific selection with model-agnostic profiles.
+- Add tiered `MODEL_PROFILES`, `DEFAULT_PROFILE`, and `ACTIVE_PROFILE` to
+  `model_config.py`, with `production-auto`, `titan-auto`, and `openai/fallback`.
+  Both Auto profile tiers select `openrouter/auto`; both fallback tiers select
+  configurable `OPENAI_FALLBACK_MODEL = "gpt-6-luna"`. `TASK_OVERRIDES` keeps
+  narrator, combat, and Titan independently configurable without call-site edits.
+- Refresh active direct-OpenAI chat model assignments in `model_config.py` to
+  `gpt-6-luna` as the explicitly approved model change. Preserve task policy,
+  prompt bytes, and legacy helper contracts apart from that model refresh and
+  the client timeout bound.
 - Rename `THINKING_ENABLED_TASKS` to `COMPLEX_TASKS` (same task list) and retain
   `THINKING_ENABLED_TASKS` as a backward-compatible alias during the transition.
 - Mark `OPENROUTER_STRATEGY`, `OPENROUTER_FULL_MODEL`, `OPENROUTER_MINI_MODEL`, and
   `OPENROUTER_CHAT_MODEL`-as-model-ID as deprecated, without removing them.
 - Normalize `extra_body` to the nested SDK-compatible shape in every `get_model_config()`
   path so no code path can emit a top-level `thinking` keyword.
-- Add `finalize_chat_params()` to `utils/ai_client_factory.py` as the single assembler for
-  chat kwargs: profile params, GPT-5 temperature policy, and `retry_tier` reasoning
-  escalation.
+- Add task-aware `finalize_chat_params(model, params=None, temperature=None,
+  is_openrouter=False, retry_tier=None, *, task_id)` as the single assembler for
+  chat kwargs: portable profile params, direct-OpenAI reasoning-family policy
+  for GPT-5 compatibility and `gpt-6-luna`, and retry reasoning escalation.
+- Resolve unknown OpenRouter profiles to the concrete Auto default, never to a
+  profile label as a model ID; direct OpenAI always uses its fallback profile.
 - Add `API_TIMEOUT_SECONDS` / `API_CONNECT_TIMEOUT_SECONDS` and apply
   `httpx.Timeout(...)` to both chat client constructors, giving every future call site one
   client-level timeout bound.
@@ -36,6 +52,8 @@ MUST:
   fail-closed `llm.decide()` stub.
 - Add a provider-free test suite `scripts/test_llm_router.py` and a bake-off harness
   `scripts/benchmark_model_profiles.py` whose default path makes zero provider calls.
+- Track the actual response model and provider-reported cost for Auto calls;
+  missing pricing is explicitly unpriced rather than fabricated from Auto rates.
 
 MUST NOT:
 
@@ -71,14 +89,14 @@ SHOULD:
 
 - `llm-router-facade-api`: Defines the facade consumer contract (`call()`, gated
   `decide()`), provider error classification and fallback outcomes, cache-aware
-  thread-safe session statistics, and the provider-free bake-off gate. Justification: gate
+  thread-safe actual-model/cost statistics, and the provider-free harness. Justification: gate
   G2 and every later migrated call site depend on this single behavioral contract.
-- `llm-model-profile-routing`: Defines the v4 profile data model, safe unknown-profile
+- `llm-model-profile-routing`: Defines the Auto profile data model, safe unknown-profile
   degradation, global and per-task selection, model-agnostic complexity classification, and
   per-tier provider preferences. Justification: model swaps must be config-only, which is
   only true if the profile schema and resolution rules are normative.
 - `llm-factory-param-finalization`: Defines factory-side param finalization (normalized
-  `extra_body`, GPT-5 temperature policy, `retry_tier` escalation parity) and client-level
+  `extra_body`, task-aware reasoning-family policy, `retry_tier` escalation parity) and client-level
   timeout ownership. Justification: the facade delegates provider quirks to the factory, so
   the factory boundary needs its own requirements to stay testable and behavior-neutral.
 
@@ -96,7 +114,8 @@ capability is justified because the objective defines no additional contract sur
 - Affected code: `model_config.py`, `utils/ai_client_factory.py`, `utils/llm_router.py`
   (new), `scripts/test_llm_router.py` (new), `scripts/benchmark_model_profiles.py` (new).
 - Compatibility impact (1-PC party and multi-PC party, ADR-0032): no runtime consumer is
-  edited or migrated, so both party shapes keep today's direct-OpenAI behavior. The
+  edited or migrated; both party shapes retain the direct-OpenAI transport with
+  the approved `gpt-6-luna` model refresh. The
   regression floor for this change is the provider-free suite plus the existing
   factory-contract suites; gameplay smoke is unchanged because no runtime path changes.
 - Provider outage/quota behavior: quota or billing errors hard-stop with `GameLLMError`
@@ -107,6 +126,8 @@ capability is justified because the objective defines no additional contract sur
 - Rollback: config-only. Revert `ACTIVE_PROFILE`/profiles to the previous constants,
   leave `LLM_PROVIDER = "openai"`, and stop importing `utils/llm_router.py`; no runtime
   code path depends on the facade in this change.
-- Conditional on bake-off gate (G2): `production-2026-09` narrator and combat tiers must
-  match or beat the current `gpt-5.6-luna` baseline on JSON-validity rate at lower cost
-  before any later call-site migration is authorized.
+- G2 has two parts: live candidate acceptance is owner-attested PASS (2026-10-13);
+  factory/router contract, approved-model, and provider-free harness checks are
+  still pending. Do not rerun the accepted bake-off as a prerequisite. Activation
+  still requires live 1-PC and multi-PC smoke, actual-model cost measurement,
+  and rollback verification in `llm-router-openrouter-activation`.

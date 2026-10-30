@@ -361,7 +361,8 @@ class TestExpectedRuntimeTouchpoints(unittest.TestCase):
     def test_expected_runtime_files_exist(self):
         expected_files = [
             os.path.join(REPO_ROOT, "main.py"),
-            os.path.join(REPO_ROOT, "core", "managers", "combat_manager.py"),
+            os.path.join(REPO_ROOT, "core", "combat", "combat_manager.py"),
+            os.path.join(REPO_ROOT, "core", "combat", "turn.py"),
             os.path.join(REPO_ROOT, "core", "ai", "action_handler.py"),
             os.path.join(REPO_ROOT, "prompts", "system_prompt_compressed.txt"),
             os.path.join(REPO_ROOT, "prompts", "validation", "validation_prompt_compressed.txt"),
@@ -372,7 +373,7 @@ class TestExpectedRuntimeTouchpoints(unittest.TestCase):
     def test_runtime_touchpoints_already_contain_save_or_check_context(self):
         touchpoint_keywords = {
             "main.py": ["saving throw", "skill check", "skill checks"],
-            "combat_manager.py": ["saving throw", "saving throws"],
+            "turn.py": ["saving throw", "saving throws"],
             "action_handler.py": ["action", "updateCharacterInfo"],
             "system_prompt_compressed.txt": ["saving throw", "skill check", "skill checks", "save/check", "death save", "con save"],
             "validation_prompt_compressed.txt": ["saving throw", "validity", "save/check"],
@@ -380,8 +381,8 @@ class TestExpectedRuntimeTouchpoints(unittest.TestCase):
         for relative_name, keywords in touchpoint_keywords.items():
             if relative_name == "main.py":
                 file_path = os.path.join(REPO_ROOT, relative_name)
-            elif relative_name == "combat_manager.py":
-                file_path = os.path.join(REPO_ROOT, "core", "managers", relative_name)
+            elif relative_name == "turn.py":
+                file_path = os.path.join(REPO_ROOT, "core", "combat", relative_name)
             elif relative_name == "action_handler.py":
                 file_path = os.path.join(REPO_ROOT, "core", "ai", relative_name)
             elif relative_name == "system_prompt_compressed.txt":

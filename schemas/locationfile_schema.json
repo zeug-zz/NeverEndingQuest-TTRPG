@@ -54,6 +54,25 @@
                 }
               }
             },
+            "tacticalFeatures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "featureId": { "type": "string", "minLength": 1 },
+                  "name": { "type": "string" },
+                  "kind": { "const": "cover" },
+                  "coverType": { "type": "string", "enum": ["half", "three_quarters"] },
+                  "usableBy": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                  }
+                },
+                "required": ["featureId", "name", "kind", "coverType", "usableBy"],
+                "additionalProperties": false
+              }
+            },
             "connectivity": {
               "type": "array",
               "items": { "type": "string" }

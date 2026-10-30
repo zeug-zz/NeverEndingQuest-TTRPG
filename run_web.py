@@ -117,7 +117,10 @@ def main():
     
     # Run the web interface with restart capability
     # TABLETOP MODE: One-shot browser open per launcher session to prevent duplicate tabs on restart
-    should_open_browser = True
+    # Honor an explicit headless launch request; otherwise retain the normal
+    # first-run browser launch. Restarts continue to suppress duplicate tabs.
+    open_browser_flag = os.environ.get("NEQ_OPEN_BROWSER", "1").strip().lower()
+    should_open_browser = open_browser_flag not in ("0", "false", "no", "off")
     while True:
         try:
             # Prepare environment for child process

@@ -26,11 +26,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils.ai_client_factory import (
-    create_chat_client,
     get_chat_completion_params,
 )
 from utils.enhanced_logger import warning
 from utils.file_operations import safe_read_json, safe_write_json
+from utils.llm_router import llm
 
 # ---------------------------------------------------------------------------
 # Stable constants
@@ -371,6 +371,8 @@ def _extract_response_text(response: Any) -> str:
     fail-closed validation (Step 2.4) is responsible for rejecting
     empty or invalid content.
     """
+    if isinstance(response, str):
+        return response
     try:
         choices = getattr(response, "choices", None)
         if not choices:
@@ -5038,12 +5040,14 @@ def run_llm_final_editor(
 ) -> Dict[str, Any]:
     """Final-editor runner that consumes a final reconciliation brief.
 
-    Creates a chat client using ``create_chat_client()`` and resolves
-    flat Chat Completions kwargs using ``get_chat_completion_params(...)``
-    for the ``toolkit_final_reconciliation`` task id. Sends the
-    system+user message pair built from the brief and returns a
-    structured result with the raw response text, model metadata, and
-    a status string.
+    Resolves task metadata using ``get_chat_completion_params(...)`` and
+    sends the system+user message pair through ``llm.call`` using the
+    ``toolkit_final_reconciliation`` task id. The facade owns provider
+    construction, transport parameters, and timeout. The resolver output
+    remains available in ``params_used`` and retains its terminal error
+    classification, but is not forwarded as caller-owned request kwargs.
+    Returns a structured result with the raw response text, model metadata,
+    and a status string.
 
     When ``mock_provider_output`` is provided (not ``None``), the
     runner short-circuits the live provider path:
@@ -5051,8 +5055,7 @@ def run_llm_final_editor(
     - The brief is still validated as a dict.
     - Messages are still built so prompt/brief plumbing can be
       inspected in tests.
-    - ``create_chat_client()`` and
-      ``client.chat.completions.create(...)`` are NOT called.
+    - ``llm.call(...)`` is NOT called.
     - ``get_chat_completion_params(...)`` is NOT called.
     - The injected ``mock_provider_output`` string is run through the
       same fail-closed JSON parser and diagnostics helper used on
@@ -5077,8 +5080,8 @@ def run_llm_final_editor(
         temperature_override: Optional temperature override passed to
             ``get_chat_completion_params(...)``. Ignored when
             ``mock_provider_output`` is provided.
-        timeout_seconds: OpenAI client timeout in seconds. Defaults to
-            120 to match the existing toolkit LLM callers. Ignored
+        timeout_seconds: Retained for existing callers. The shared facade
+            owns the transport timeout; this value is not forwarded. Ignored
             when ``mock_provider_output`` is provided.
         mock_provider_output: Optional injected raw response text.
             When not ``None``, the runner returns a result driven by
@@ -5202,13 +5205,12 @@ def run_llm_final_editor(
             "error": f"param_resolution_failed: {exc}",
         }
 
-    # Call provider
+    # TABLETOP MODE: production final-editor chat uses the shared facade.
     try:
-        client = create_chat_client()
-        response = client.chat.completions.create(
+        response = llm.call(
+            task=FINAL_RECONCILIATION_TASK_ID,
             messages=messages,
-            timeout=timeout_seconds,
-            **params,
+            json_output=False,
         )
     except Exception as exc:
         warning(

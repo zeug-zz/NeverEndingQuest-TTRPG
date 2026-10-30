@@ -48,7 +48,7 @@ class TestCampaignManagerModuleScanQuarantine(unittest.TestCase):
         original_flag = CampaignManager._module_scan_attempted
         CampaignManager._module_scan_attempted = False
         try:
-            with patch("core.managers.campaign_manager.OpenAI"), \
+            with patch("core.managers.campaign_manager.llm.call", side_effect=AssertionError("unexpected call")), \
                  patch.object(CampaignManager, "_scan_for_new_modules") as mock_scan:
                 CampaignManager()
                 CampaignManager()

@@ -33,8 +33,8 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
-from openai import OpenAI
 import config
+from utils.llm_router import llm
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.module_path_manager import ModulePathManager
 import jsonschema
@@ -48,7 +48,6 @@ class StorageProcessor:
     
     def __init__(self):
         """Initialize storage processor"""
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         self.model = config.DM_MAIN_MODEL  # Use full model, not mini
         self.schema_file = "schemas/storage_action_schema.json"
         # Get current module from party tracker for consistent path resolution
@@ -281,14 +280,14 @@ For "What's in our storage here?":
                 messages = self._create_processing_prompt(description, context)
                 
                 # Call AI model
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = llm.call(
+                    task="storage_processor",
                     messages=messages,
-                    temperature=0.1  # Low temperature for consistency
+                    json_output=False,
                 )
                 
                 # Parse AI response
-                ai_response = response.choices[0].message.content.strip()
+                ai_response = response.strip()
                 
                 # Try to parse JSON from response
                 try:
