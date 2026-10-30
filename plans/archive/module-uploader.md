@@ -14,7 +14,7 @@
 - Roadmap role: final pre-v2 module-import slice for interactive reviewed import
 - V2 import reference: `plans/version-2/module-import.md`
 - World-narrative reference: `plans/version-2/world-narrative.md`
-- Titan reference: `plans/version-2/titan-integration.md`
+- Titan reference: `plans/v2-titan-game-engine.md` (supersedes the retired Titan drafts)
 - Current implementation checkpoint:
 - Phase 0 complete: normalized packet/workspace/job-state contract is established in the upload path.
 - Phase 1 complete: preflight routes readable but ambiguous uploads into normalization rather than failing too early.
@@ -59,7 +59,7 @@ After this plan completes:
 
 1. `plans/version-2/module-import.md` should build on these contracts for bulk and canonical import operations,
 2. `plans/version-2/world-narrative.md` should later build a separate source-anonymous narrative web from copyrighted literature under `user_uploads/text/`,
-3. `plans/version-2/titan-integration.md` should later consume that interpreted narrative web and continuity-qualified module signals as proposal-only world pressure input.
+3. `plans/v2-titan-game-engine.md` should later consume that interpreted narrative web and continuity-qualified module signals through validated world-engine proposals.
 
 Short version:
 
@@ -297,7 +297,7 @@ The uploader can prepare for that future by establishing:
 
 But it must remain a source-preserving module-import lane for approved adventure inputs, not the source-anonymous literary ingestion lane.
 
-### Relationship To `plans/version-2/titan-integration.md`
+### Relationship To `plans/v2-titan-game-engine.md`
 
 Titan should consume interpreted narrative structures later, not own upload/import.
 
@@ -1338,4 +1338,4 @@ It is also the correct handoff point into v2:
 1. this uploader completes the interactive reviewed import lane,
 2. `plans/version-2/module-import.md` scales that lane into bulk canonical import,
 3. `plans/version-2/world-narrative.md` later builds the source-anonymous narrative web from literary ingestion under `user_uploads/text/`,
-4. `plans/version-2/titan-integration.md` later consumes those interpreted narrative structures as proposal-only world pressure.
+4. `plans/v2-titan-game-engine.md` later consumes those interpreted narrative structures through its staged proposal/approval/publication contracts.

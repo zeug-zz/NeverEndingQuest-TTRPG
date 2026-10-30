@@ -122,7 +122,7 @@ Rotation procedure:
 | Date       | Finding                    | Severity | Rationale                                                                            |
 | ---------- | -------------------------- | -------- | ------------------------------------------------------------------------------------ |
 | 2026-05-25 | allow_unsafe_werkzeug=True | MEDIUM   | Required for Flask-SocketIO; local-only app. Review during v2 client hardening.      |
-| 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Required for local network access. Tracked in `plans/version-2/client_network.md`. |
+| 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Historical LAN configuration; current default is loopback. Future network exposure is tracked in `plans/v2-server-client-network.md`. |
 | 2026-05-25 | python-engineio CORS       | LOW      | Flask-SocketIO default; review with v2 CORS hardening.                               |
 | 2026-11-03 | tornado 6.5.10 (CVE-2026-115927/116577/116578) | MEDIUM | `mitmproxy` (12.3.0 and 12.3.1, latest) caps `tornado<=6.5.10`; fix is 6.6. Used only by the local LM Studio forwarder toolkit path. Resolve when mitmproxy lifts the cap. CI gate accepts via `pip-audit --ignore-vuln`. Earlier msgpack and tornado 6.5.5 findings were resolved by upgrading mitmproxy to 12.3.x (lock regenerated 2026-11-03). |
 
@@ -138,7 +138,6 @@ Threat assessments: `plans/security/risk_assessment-YYYYMMDD.md` (gitignored)
 
 ## Related Documentation
 
-- `plans/version-2/client_network.md` — v2 client hardening plan (CORS, TLS, network segmentation)
-- `plans/version-2/client-web.md` — v2 web client security review
+- `plans/v2-server-client-network.md` — OpenTunnel-first v2 player security, React client, and network deployment plan
 - `.github/workflows/security-audit.yml` — CI security pipeline
 - `docs/security/` — Security tooling documentation (gitignored)

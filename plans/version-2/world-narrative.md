@@ -1,15 +1,27 @@
 # World Narrative Plan v0.4
 
+> TITAN planning owner: [V2 TITAN Game Engine](../v2-titan-game-engine.md).
+> Its seed-fragment instantiation, five-head world authorship, scheduling and
+> proposal/publication contracts supersede this draft's Titan/EGO/Ratio assumptions.
+> Independent seed/schema/retrieval references remain useful; neither EGO nor Ratio
+> is a TITAN prerequisite. Baseline and seed-population claims require verification.
+
+> Narrator scope boundary: [V2 Narrator](../v2-narrator.md) owns Narrator Hindsight,
+> context/Archivist, conditional agendas and campaign-runtime portability planning.
+> This wider seed/world-model/builder draft remains speculative, not a prerequisite
+> for that build. Its "current codebase" hooks below require verification; reconcile
+> shared event/agenda ownership through OpenSpec before either track changes it.
+
 Status: Planning in progress
 Date: 2026-06-28
 Owner: Narrative systems + memory integration
-Track reference: `plans/version-2/v2-narrative-track.md`
+Track reference: `plans/v2-narrative-overview.md`
 
 Related plans:
 
 - `plans/version-2/module-import.md` = scaled canonical module-import lane
-- `plans/version-2/memory.md` = retrieval/storage contracts
-- `plans/version-2/titan-integration.md` = later interpreted-state consumer
+- `plans/v2-memory-draft.md` = provisional shared retrieval/storage reference
+- `plans/v2-titan-game-engine.md` = consolidated TITAN world-engine planning owner
 
 ## Seed DB
 

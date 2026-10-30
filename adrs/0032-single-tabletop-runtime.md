@@ -66,7 +66,7 @@ As of 2026-09-21, each entry is a `len(party_members) > 1` gate to retire:
 - `adrs/0004-multiplayer-activation-and-unification-roadmap.md`
 - `adrs/0018-identity-first-role-lifecycle-continuity.md`
 - `adrs/0031-independent-development-fork.md`
-- `AGENTS.md` (Plugin Architecture & SP/MP Unification Roadmap)
+- `docs/architecture/plugin-runtime-roadmap.md` (pointer; this ADR is authoritative)
 - `config.py` (`MULTIPLAYER_MODE = True`, "even with 1 character")
 - `core/managers/multi_pc_combat.py` (`is_enabled()`, `create_combat_manager()`)
 - `web/web_interface.py` (one-PC tabletop recovery path)

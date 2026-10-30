@@ -9,6 +9,12 @@ This directory hosts repository documentation that is useful for development but
   - `ARCHITECTURE_PHILOSOPHY.md`
   - `MODULE_QUALITY_CHECKLIST.md`
 
+- `docs/architecture/`
+  - `plugin-runtime-roadmap.md` (pointer to the authoritative ADRs)
+
+- `docs/history/`
+  - `agents-changelog.md` (frozen history moved from `AGENTS.md`)
+
 - `docs/operations/`
   - `archiving.md`
 
@@ -22,5 +28,5 @@ This directory hosts repository documentation that is useful for development but
 ## Notes
 
 - `adrs/` stays at repo root by design (canonical ADR location).
-- `memory-bank/` remains at repo root as deprecated legacy context unless explicitly migrated.
+- Project memory is Hindsight; `memory-bank/` is retired Cline-era legacy and is not authoritative.
 - `Local_Docs/` is ignored and remains local-only.

@@ -1,10 +1,137 @@
 {
-  "validation_date": "2026-04-25T12:35:32.324322",
-  "issues": [],
-  "context_summary": {
-    "areas": 4,
-    "npcs": 11,
-    "locations": 0,
-    "plot_points": 4
+  "module": "The_Garden_of_Demons",
+  "timestamp": "2026-10-24T13:24:16.752364",
+  "summary": {
+    "total_files": 38,
+    "total_passed": 40,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "SOT004_BU.json (areas/)",
+        "GV001.json (areas/)",
+        "TTW003.json (areas/)",
+        "BO002_BU.json (areas/)",
+        "GV001_BU.json (areas/)",
+        "SOT004.json (areas/)",
+        "TTW003_BU.json (areas/)",
+        "BO002.json (areas/)"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "rot_husk_wolves.json",
+        "thorned_husk_stalkers.json",
+        "spectral_wayfarers.json",
+        "blightfen_mirelings.json",
+        "wailing_spectres.json",
+        "blightfen_gloomhounds.json",
+        "corrupted_dryads.json",
+        "rotblight_rats.json",
+        "sorrowroot_wisps.json",
+        "venomthorn_chimera.json"
+      ],
+      "passed": 10,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_BO002.json",
+        "map_SOT004.json",
+        "map_TTW003.json",
+        "map_GV001.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/BO002.json",
+        "areas/GV001.json",
+        "areas/SOT004.json",
+        "areas/TTW003.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "BO002.json <-> map_BO002.json",
+        "GV001.json <-> map_GV001.json",
+        "SOT004.json <-> map_SOT004.json",
+        "TTW003.json <-> map_TTW003.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "BO002.json <-> map_BO002.json",
+        "GV001.json <-> map_GV001.json",
+        "SOT004.json <-> map_SOT004.json",
+        "TTW003.json <-> map_TTW003.json"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
   }
 }

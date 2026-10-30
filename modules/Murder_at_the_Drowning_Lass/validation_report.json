@@ -1,20 +1,167 @@
 {
-  "validation_date": "2026-04-25T11:09:48.039731",
-  "issues": [
-    "NPC 'Maela Kett' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Rovan Blackjaw' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Old Ellyn' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Bram of the Stones, wandering hermit' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Lysa Quickfingers, rebellious lieutenant' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Red Maw enforcers' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Lysa Quickfingers' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Echo Wraiths' is referenced in ['module:plotStages'] but not placed in any location",
-    "NPC 'Ardwen, ghostly map-bearer from legend' is referenced in ['module:plotStages'] but not placed in any location"
-  ],
-  "context_summary": {
-    "areas": 8,
-    "npcs": 23,
-    "locations": 0,
-    "plot_points": 4
+  "module": "Murder_at_the_Drowning_Lass",
+  "timestamp": "2026-10-24T13:24:16.719793",
+  "summary": {
+    "total_files": 68,
+    "total_passed": 70,
+    "total_failed": 0
+  },
+  "results": {
+    "area": {
+      "files": [
+        "EDC001_BU.json (areas/)",
+        "THB001_BU.json (areas/)",
+        "HG001.json (areas/)",
+        "THB001.json (areas/)",
+        "WM001.json (areas/)",
+        "RME001_BU.json (areas/)",
+        "RME001.json (areas/)",
+        "OKR001_BU.json (areas/)",
+        "HG001_BU.json (areas/)",
+        "OKR001.json (areas/)",
+        "BV001_BU.json (areas/)",
+        "SR001_BU.json (areas/)",
+        "EDC001.json (areas/)",
+        "SR001.json (areas/)",
+        "BV001.json (areas/)",
+        "WM001_BU.json (areas/)"
+      ],
+      "passed": 16,
+      "failed": 0,
+      "errors": []
+    },
+    "reference_integrity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "monster": {
+      "files": [
+        "chasm_bat_swarm.json",
+        "echo_wraith.json",
+        "red_maw_mercenary.json",
+        "red_maw_lookout.json",
+        "will_o_wisp.json",
+        "shadowed_chasm_spider.json",
+        "red_maw_enforcer.json",
+        "highwayman_lookouts.json",
+        "hungry_wolves.json",
+        "sorrowful_deep_lurker.json",
+        "duskmire_wolfpack.json",
+        "giant_weasel.json",
+        "swarm_of_animated_quills.json",
+        "crawling_shadows.json",
+        "specter_of_the_forgotten.json",
+        "abyssal_choker.json"
+      ],
+      "passed": 16,
+      "failed": 0,
+      "errors": []
+    },
+    "map": {
+      "files": [
+        "map_OKR001.json",
+        "map_SR001.json",
+        "map_BV001.json",
+        "map_EDC001.json",
+        "map_WM001.json",
+        "map_THB001.json",
+        "map_HG001.json",
+        "map_RME001.json"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "plot": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "party": {
+      "files": [
+        "party_tracker.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "module_context": {
+      "files": [
+        "module_context.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "runtime_room_reachability": {
+      "files": [
+        "areas/BV001.json",
+        "areas/EDC001.json",
+        "areas/HG001.json",
+        "areas/OKR001.json",
+        "areas/RME001.json",
+        "areas/SR001.json",
+        "areas/THB001.json",
+        "areas/WM001.json"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "map_area_parity": {
+      "files": [
+        "BV001.json <-> map_BV001.json",
+        "EDC001.json <-> map_EDC001.json",
+        "HG001.json <-> map_HG001.json",
+        "OKR001.json <-> map_OKR001.json",
+        "RME001.json <-> map_RME001.json",
+        "SR001.json <-> map_SR001.json",
+        "THB001.json <-> map_THB001.json",
+        "WM001.json <-> map_WM001.json"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract": {
+      "files": [
+        "BV001.json <-> map_BV001.json",
+        "EDC001.json <-> map_EDC001.json",
+        "HG001.json <-> map_HG001.json",
+        "OKR001.json <-> map_OKR001.json",
+        "RME001.json <-> map_RME001.json",
+        "SR001.json <-> map_SR001.json",
+        "THB001.json <-> map_THB001.json",
+        "WM001.json <-> map_WM001.json"
+      ],
+      "passed": 8,
+      "failed": 0,
+      "errors": []
+    },
+    "spatial_contract_warning": {
+      "files": [],
+      "passed": 0,
+      "failed": 0,
+      "errors": []
+    },
+    "plot_progression": {
+      "files": [
+        "module_plot.json"
+      ],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    },
+    "connectivity": {
+      "files": [],
+      "passed": 1,
+      "failed": 0,
+      "errors": []
+    }
   }
 }

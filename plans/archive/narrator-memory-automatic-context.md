@@ -1,5 +1,10 @@
 # Narrator Memory Automatic Context Injection (Phase 3)
 
+> Archived as superseded planning on 2026-10-27. Current implementation planning:
+> [V2 Narrator](../v2-narrator.md). Automatic retrieval and layered context are now
+> core build scope; the low-priority deferral and fixed token assumption below are
+> retired. The original draft is preserved, not marked implemented or accepted.
+
 **Status:** DRAFT / Deferred
 **Priority:** Low (awaiting Phase 1+2 gameplay validation)
 **Effort:** TBD

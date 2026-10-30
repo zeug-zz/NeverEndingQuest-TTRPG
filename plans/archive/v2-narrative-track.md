@@ -1,12 +1,30 @@
 # V2 Narrative Track (Cohesion Spine)
 
+> ARCHIVED 2026-10-28: superseded by [V2 Narrative Overview](../v2-narrative-overview.md).
+> Retained as provenance for ADR and archived-plan links; not a current requirement.
+
+> TITAN planning owner: [V2 TITAN Game Engine](../v2-titan-game-engine.md).
+> It supersedes this spine's Titan phase map, EGO coupling and retune sequencing.
+> TITAN is five competing heads with random session leadership, independent of
+> EGO/Ratio. Its staged policy approval replaces any blanket requirement below
+> for human approval of every mature runtime intervention. The independent
+> Narrator, companion and import tracks retain their own scope and authority.
+
+> Current Narrator planning owner: [V2 Narrator](../v2-narrator.md). The broader
+> v2/Titan architecture remains rough planning, not an approved prerequisite chain.
+> The Narrator build reserves NPC/Titan access but does not implement their workers.
+> Earlier "locked" sequencing below does not override OpenSpec/ADR authority or
+> require seed-world/Titan work before Narrator continuity and campaign portability.
+
 Status: Working architecture track (in progress)
 Date: 2026-03-09
 Owner: NEQ v2 narrative architecture
 
 ## Purpose
 
-Provide one execution spine across v2 planning docs so continuity, world narrative, memory, EGO, and Titan work advance in a single ordered track with shared vocabulary.
+Provide shared vocabulary and historical coordination across v2 planning docs.
+This is no longer a single execution spine: Narrator and TITAN each have their
+own consolidated master plan, and EGO/companion work remains independently scoped.
 
 This document is planning-level only. It intentionally does not replace implementation specs.
 
@@ -76,9 +94,10 @@ Phase 2B: Companion Relationship Memory Lift (PLANNED)
   - Any richer parser/crystallizer adoption MUST flow into the common memory architecture, not create another parallel long-lived subsystem.
   - Operator-facing diagnosis/rebuild tooling for companion state MUST align with the same v2 memory truth model.
 
-Phase 3: EGO and Titan Runtime Bridge (PLANNED)
-- Scope: consume continuity and interpreted world signals in Titan/EGO cycles.
-- Outcome target: proposal-only world pressure updates with fail-open runtime behavior.
+Phase 3: TITAN Game Engine (SUPERSEDED HERE)
+- Scope and dependency order: `plans/v2-titan-game-engine.md` P0-P6.
+- EGO is not its runtime bridge, controller or prerequisite.
+- Staged delivery includes proposal-only verification before policy-gated effects.
 
 Phase 4: Builder and Module Feedback Loop (PLANNED)
 - Scope: module builder consumes approved pressure and writes provenance-safe continuity seeds.
@@ -96,30 +115,30 @@ Phase 5: Governance and Observability Hardening (PLANNED)
   - Owns: high-volume import pipeline and any-order readiness policy.
 - `plans/version-2/world-narrative.md`
   - Owns: interpreted world model architecture, seed DB consumption, retrieval contracts, campaign world model lifecycle.
-- `plans/version-2/memory.md`
-  - Owns: retrieval/storage contracts, companion relationship-memory migration after live Phase 2A, and memory-layer integration with continuity quality signals.
-- `plans/version-2/narrative-sovereignty-post-gametest.md`
-  - Owns: post-gametest continuation of reconcile-first runtime architecture after G1-G4, including event-ledger and prompt-reset sequencing before OpenRouter migration.
+- `plans/v2-memory-draft.md` (provisional shared memory reference)
+  - Owns: broader storage/retrieval and companion relationship-memory migration; overlapping Narrator implementation is consolidated in `plans/v2-narrator.md`.
+- `plans/v2-narrator.md`
+  - Owns: Narrator Hindsight, committed continuity, layered context/Archivist, agendas, campaign/perspective/timeline contracts and live UX gates. Supersedes the archived sovereignty continuation and automatic-context stub.
 - `plans/version-2/CNS build/EGO.md`
-  - Owns: bounded adaptive control architecture and write-surface policy.
-- `plans/version-2/titan-integration.md`
-  - Owns: umbrella runtime integration design for Titan cycle architecture.
-- `plans/version-2/titan-retune-execution-order.md`
-  - Owns: implementation sequencing, dependency ordering, and retune gates.
+  - Owns: independent rough adaptive-control proposals, not TITAN orchestration.
+- `plans/v2-titan-game-engine.md`
+  - Owns: five-head agentic world-engine planning, seed disclosure, alignment
+    feedback, personification, interventions, weather/mood, delivery and live gates.
+  - Supersedes the three Titan-only drafts in `plans/archive/titans/`.
 - `plans/version-2/encounterEscalationProfile.md`
   - Owns: deterministic combat encounter scaling policy for over/under-level world roaming, including cap-safe elite composition and staged reinforcement behavior.
 
 ## Dependency Chain
 
-1. Continuity substrate (already done) ->
-2. seed DB populated (`data/world_narrative_seed.db`) ->
-3. world-narrative + memory interpreted contracts ->
-4. companion relationship memory lift (DB-backed relationship retrieval + companion-state unification) ->
-5. post-gametest narrative-sovereignty continuation (event ledger + prompt reset) ->
-6. OpenRouter router re-architecture ->
-7. EGO/Titan runtime bridge ->
-8. module-builder continuity pressure integration ->
-9. governance hardening.
+The former single chain is superseded for Narrator work. Follow
+`plans/v2-narrator.md` P0-P6 after an explicitly coordinated integrated runtime/router
+baseline. Its event, perspective and retrieval contracts become inputs to later
+NPC/Titan work; do not require the seed DB, companion rewrite or EGO bridge first.
+
+TITAN follows its master plan's P0-P6 dependencies and consumes Narrator contracts.
+Companion unification, independent EGO, builder and broader governance work remain
+separate draft tracks. None may reopen or reorder the ongoing OpenRouter migration
+by implication. Seed integration status must be audited rather than assumed.
 
 ## Companion NPC Memory Integration Notes
 
@@ -153,11 +172,14 @@ This narrative track is considered cohesive when:
 1. All listed plans reference this spine and use shared terms.
 2. No plan contradicts strict/warn continuity behavior.
 3. No plan allows interpreted layers to bypass Python mechanical truth.
-4. Titan/EGO phases explicitly consume continuity outputs as quality inputs.
+4. TITAN consumes continuity outputs under its own master plan; independent EGO
+   work is not a prerequisite.
 5. Builder integration remains proposal/apply and provenance-safe.
 6. Seed DB consumption path is deterministic at bootstrap.
 7. Companion NPC relationship continuity is owned by the shared memory architecture rather than a permanently separate legacy subsystem.
 
 ## Working Note
 
-OpenSpec implementation sequencing is intentionally deferred for now, per current architecture-in-progress workflow. This file is the planning alignment anchor until execution sequencing resumes.
+OpenSpec implementation authorisation remains explicit. Use the Narrator and
+TITAN master plans for their respective sequencing; this spine supplies shared
+context rather than overriding either plan.
