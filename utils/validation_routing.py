@@ -11,7 +11,7 @@ Licensed under Fair Source License 1.0
 Helpers for deterministic validation routing decisions.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from utils.deterministic_mechanics_precheck import has_explicit_bookkeeping_correction_claim
 from utils.inventory_possession_authority import is_possession_query_turn
@@ -36,6 +36,33 @@ LOW_RISK_SKIP_ACTIONS = {
     "saveGame",
     "listSaves",
 }
+
+# Combat owns a deliberately separate allowlist so changes to the narrator's
+# general low-risk policy cannot silently broaden combat validation skipping.
+COMBAT_VALIDATION_SKIP_ACTIONS: FrozenSet[str] = frozenset({
+    "updateTime",
+    "saveGame",
+    "listSaves",
+})
+
+# Reserved for a separately authorized Jev decision primitive. These values
+# are declared for contract tests only and must not be used as runtime reasons.
+JEV_RESERVED_REASON_NAMES = (
+    "jev_residual_ok",
+    "jev_unavailable_fallback",
+    "jev_low_confidence",
+)
+_RESERVED_JEV_REASONS = frozenset(JEV_RESERVED_REASON_NAMES)
+
+
+def combat_validation_skip_actions() -> FrozenSet[str]:
+    """Return the fixed, combat-specific deterministic-safe action allowlist."""
+    return COMBAT_VALIDATION_SKIP_ACTIONS
+
+
+def is_reserved_jev_validation_reason(reason: str) -> bool:
+    """Identify reserved Jev reason names without making them routable."""
+    return str(reason or "") in _RESERVED_JEV_REASONS
 
 
 TRAVEL_DOMAIN = "travel_state_sync"

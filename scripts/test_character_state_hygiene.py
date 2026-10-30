@@ -85,7 +85,7 @@ class TestCharacterStateHygieneSourceContracts(unittest.TestCase):
         self.assertIn("normalize_life_state_fields", content)
 
     def test_combat_manager_normalizes_prompt_character_state(self):
-        with open(os.path.join(REPO_ROOT, "core", "managers", "combat_manager.py"), "r", encoding="utf-8") as handle:
+        with open(os.path.join(REPO_ROOT, "core", "combat", "combat_manager.py"), "r", encoding="utf-8") as handle:
             content = handle.read()
 
         self.assertIn("char_data = normalize_life_state_fields(dict(char_data))", content)

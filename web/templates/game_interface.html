@@ -4797,9 +4797,16 @@
 
         #debug-tab .cost-values {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 4px;
             min-width: 0;
+        }
+
+        #debug-tab .cost-provenance {
+            flex-basis: 100%;
+            white-space: normal;
+            color: #888;
         }
 
         #debug-tab .cost-divider,
@@ -5122,6 +5129,7 @@
                                 <span class="cost-currency">$</span><span id="session-cost-usd">0.00</span>
                                 <span class="cost-paren">(</span><span id="session-cost-nzd">0.00</span><span class="cost-text" id="session-currency-label">NZD</span><span class="cost-paren">)</span>
                                 <span class="cost-indicator" id="session-cost-indicator"></span>
+                                <span class="cost-provenance">Actual USD $<span id="session-cost-actual-usd">--</span> | Estimated USD $<span id="session-cost-estimated-usd">--</span> | Unpriced <span id="session-unpriced-calls">--</span> | Coverage <span id="session-cost-complete">--</span></span>
                             </span>
                         </div>
                         <div class="cost-separator">|</div>
@@ -5133,6 +5141,7 @@
                                 <span class="cost-currency">$</span><span id="week-cost-usd">0.00</span>
                                 <span class="cost-paren">(</span><span id="week-cost-nzd">0.00</span><span class="cost-text" id="week-currency-label">NZD</span><span class="cost-paren">)</span>
                                 <span class="cost-indicator" id="week-cost-indicator"></span>
+                                <span class="cost-provenance">Actual USD $<span id="week-cost-actual-usd">--</span> | Estimated USD $<span id="week-cost-estimated-usd">--</span> | Unpriced <span id="week-unpriced-calls">--</span> | Coverage <span id="week-cost-complete">--</span></span>
                             </span>
                         </div>
                     </div>
@@ -6758,6 +6767,27 @@
                 const n = toNum(val, 0);
                 try { return n.toFixed(2); } catch (e) { return String(Number(n).toFixed(2)); }
             }
+            // New provenance fields use placeholders when an older payload omits them.
+            function fmtOptionalCost(val) {
+                if (val === undefined || val === null || typeof val === 'boolean') return '--';
+                const n = Number(val);
+                if (!Number.isFinite(n) || n < 0) return '--';
+                try {
+                    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+                } catch (e) {
+                    return fmtCost(n);
+                }
+            }
+            function fmtOptionalCount(val) {
+                if (val === undefined || val === null || typeof val === 'boolean') return '--';
+                const n = Number(val);
+                return Number.isFinite(n) && n >= 0 ? fmtInt(n) : '--';
+            }
+            function fmtCompleteness(val) {
+                if (val === true) return 'Complete';
+                if (val === false) return 'Incomplete';
+                return '--';
+            }
 
             // Legacy fields (preserved)
             const tpmEl = document.getElementById('tpm-value');
@@ -6773,6 +6803,15 @@
 
             const sessionUsdEl = document.getElementById('session-cost-usd');
             if (sessionUsdEl) sessionUsdEl.textContent = fmtCost(data.session_cost_usd);
+
+            const sessionActualUsdEl = document.getElementById('session-cost-actual-usd');
+            if (sessionActualUsdEl) sessionActualUsdEl.textContent = fmtOptionalCost(data.session_cost_actual_usd);
+            const sessionEstimatedUsdEl = document.getElementById('session-cost-estimated-usd');
+            if (sessionEstimatedUsdEl) sessionEstimatedUsdEl.textContent = fmtOptionalCost(data.session_cost_estimated_usd);
+            const sessionUnpricedEl = document.getElementById('session-unpriced-calls');
+            if (sessionUnpricedEl) sessionUnpricedEl.textContent = fmtOptionalCount(data.session_unpriced_calls);
+            const sessionCompleteEl = document.getElementById('session-cost-complete');
+            if (sessionCompleteEl) sessionCompleteEl.textContent = fmtCompleteness(data.session_cost_complete);
 
             const sessionNzdEl = document.getElementById('session-cost-nzd');
             if (sessionNzdEl) sessionNzdEl.textContent = fmtCost(data.session_cost_nzd);
@@ -6790,6 +6829,15 @@
 
             const weekUsdEl = document.getElementById('week-cost-usd');
             if (weekUsdEl) weekUsdEl.textContent = fmtCost(data.week_cost_usd);
+
+            const weekActualUsdEl = document.getElementById('week-cost-actual-usd');
+            if (weekActualUsdEl) weekActualUsdEl.textContent = fmtOptionalCost(data.week_cost_actual_usd);
+            const weekEstimatedUsdEl = document.getElementById('week-cost-estimated-usd');
+            if (weekEstimatedUsdEl) weekEstimatedUsdEl.textContent = fmtOptionalCost(data.week_cost_estimated_usd);
+            const weekUnpricedEl = document.getElementById('week-unpriced-calls');
+            if (weekUnpricedEl) weekUnpricedEl.textContent = fmtOptionalCount(data.week_unpriced_calls);
+            const weekCompleteEl = document.getElementById('week-cost-complete');
+            if (weekCompleteEl) weekCompleteEl.textContent = fmtCompleteness(data.week_cost_complete);
 
             const weekNzdEl = document.getElementById('week-cost-nzd');
             if (weekNzdEl) weekNzdEl.textContent = fmtCost(data.week_cost_nzd);

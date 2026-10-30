@@ -18,8 +18,8 @@ from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_path_manager import ModulePathManager
 from updates.update_character_info import normalize_character_name
-from openai import OpenAI
-import config
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Import OpenAI usage tracking (safe - won't break if fails)
 try:
@@ -32,9 +32,6 @@ except:
 # Set up logging
 from utils.enhanced_logger import set_script_name
 set_script_name(os.path.basename(__file__))
-
-# Initialize OpenAI client
-client = OpenAI(api_key=config.OPENAI_API_KEY)
 
 EFFECTS_TRACKER_FILE = "modules/effects_tracker.json"
 
@@ -196,24 +193,21 @@ Set affects_max to true for effects like Aid that modify both current and maximu
 """
 
     try:
-        response = client.chat.completions.create(
-            model=config.DM_EFFECTS_MODEL if hasattr(config, 'DM_EFFECTS_MODEL') else config.DM_MAIN_MODEL,
-            temperature=0.3,  # Lower temperature for more consistent JSON
+        # TABLETOP MODE: provider transport and model selection are router-owned.
+        observer = make_legacy_receipt_observer(
+            track_usage=USAGE_TRACKING_AVAILABLE,
+        )
+        response_text = llm.call(
+            task="updates",
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Analyze this update: {change_description}"}
-            ]
+            ],
+            json_output=False,
+            observer=observer,
         )
-        
-        # Track usage if available
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-        
         # Clean response and parse JSON
-        response_text = response.choices[0].message.content.strip()
+        response_text = response_text.strip()
         if response_text.startswith("```json"):
             response_text = response_text[7:]
         if response_text.endswith("```"):

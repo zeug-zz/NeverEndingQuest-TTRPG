@@ -1,21 +1,22 @@
+# SPDX-FileCopyrightText: 2024 MoonlightByte
+# SPDX-License-Identifier: Fair-Source-1.0
+# License: See LICENSE file in the repository root
+
 """
 Transition Validator - AI-powered validation of location transition requests
 
 This module uses a specialized AI agent to evaluate whether travel requests
 are appropriate given exploration status, encounters, and plot progression.
 """
-
 import json
 import os
 from typing import Dict, List, Any, Optional
 from model_config import TRANSITION_VALIDATOR_MODEL, TRANSITION_VALIDATOR_TEMPERATURE
 from utils.enhanced_logger import debug, info, warning, error
 from utils.file_operations import safe_read_json
-from utils.ai_client_factory import create_chat_client, get_chat_model_name, handle_provider_error
-
-
-# Initialize AI client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
+from utils.ai_client_factory import get_chat_model_name
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 
 def load_transition_validation_prompt() -> str:
@@ -148,56 +149,30 @@ at an intermediate location due to unexplored encounters. Respond with JSON only
         debug("Sending request to transition validator AI", category="transition_validation")
         model_name = get_chat_model_name()
         actual_model_used = model_name
-
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                temperature=TRANSITION_VALIDATOR_TEMPERATURE,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ]
-            )
-        except Exception as api_error:
-            error_result = handle_provider_error(api_error, context="Transition validation")
-            if error_result["should_fallback"]:
-                warning(f"Falling back to OpenAI: {api_error}", category="ai_provider")
-                fallback_client = create_chat_client(use_fallback=True)
-                response = fallback_client.chat.completions.create(
-                    model=TRANSITION_VALIDATOR_MODEL,
-                    temperature=TRANSITION_VALIDATOR_TEMPERATURE,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ]
-                )
-                actual_model_used = TRANSITION_VALIDATOR_MODEL
-            else:
-                raise
-
-        # Log API call
-        try:
-            from utils.api_logger import log_api_call
-            log_api_call(
-                "transition_agent",
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                response,
-                metadata={
-                    "temperature": TRANSITION_VALIDATOR_TEMPERATURE,
-                    "configured_model": TRANSITION_VALIDATOR_MODEL,
-                    "actual_model_used": actual_model_used,
-                    "current_location_id": current_location_id,
-                    "target_location_id": target_location_id
-                }
-            )
-        except Exception as e:
-            debug(f"Failed to log transition agent API call: {e}", category="transition_validation")
-
-        # Parse response
-        response_text = response.choices[0].message.content.strip()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+        observer = make_legacy_receipt_observer(
+            endpoint_name="transition_agent",
+            messages=messages,
+            legacy_context={
+                "temperature": TRANSITION_VALIDATOR_TEMPERATURE,
+                "configured_model": TRANSITION_VALIDATOR_MODEL,
+                "actual_model_used": actual_model_used,
+                "current_location_id": current_location_id,
+                "target_location_id": target_location_id,
+            },
+            track_usage=False,
+        )
+        # TABLETOP MODE: The caller parses this JSON object; provider fallback stays router-owned.
+        response_text = llm.call(
+            task="dm_main",
+            messages=messages,
+            json_output=False,
+            json_contract=True,
+            observer=observer,
+        ).strip()
         debug(f"Transition validator response: {response_text[:200]}...", category="transition_validation")
 
         # Parse JSON response

@@ -19,6 +19,7 @@ Targeted tests for:
 import os
 import sys
 import unittest
+import ast
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -116,9 +117,58 @@ class TestTransitionFailureHistoryHygieneContracts(unittest.TestCase):
         self.assertLess(error_index, arrival_index)
 
     def test_transition_errors_surface_nested_response_data_message(self):
-        self.assertIn(
-            'response_data.get("error_message") or result.get("error_message", "Unknown error in action processing")',
-            self.main_source,
+        tree = ast.parse(self.main_source)
+        error_assignments = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "error_msg" for target in node.targets)
+            and isinstance(node.value, ast.BoolOp)
+            and isinstance(node.value.op, ast.Or)
+            and len(node.value.values) == 2
+            and "response_data" in ast.unparse(node.value)
+        ]
+        def is_required_expression(node):
+            left, right = node.values
+            return (
+                isinstance(left, ast.Call)
+                and isinstance(left.func, ast.Attribute)
+                and isinstance(left.func.value, ast.Name)
+                and left.func.value.id == "response_data"
+                and left.func.attr == "get"
+                and [ast.literal_eval(arg) for arg in left.args] == ["error_message"]
+                and isinstance(right, ast.Call)
+                and isinstance(right.func, ast.Attribute)
+                and isinstance(right.func.value, ast.Name)
+                and right.func.value.id == "result"
+                and right.func.attr == "get"
+                and [ast.literal_eval(arg) for arg in right.args] == [
+                    "error_message", "Unknown error in action processing"
+                ]
+            )
+
+        expression = next((node.value for node in error_assignments if is_required_expression(node.value)), None)
+        self.assertIsNotNone(expression, "nested response_data error must retain priority and result fallback")
+        self.assertEqual(
+            eval(compile(ast.Expression(expression), "<transition-error-priority>", "eval"), {
+                "response_data": {"error_message": "nested"},
+                "result": {"error_message": "outer"},
+            }),
+            "nested",
+        )
+        self.assertEqual(
+            eval(compile(ast.Expression(expression), "<transition-error-fallback>", "eval"), {
+                "response_data": {},
+                "result": {"error_message": "outer"},
+            }),
+            "outer",
+        )
+        self.assertEqual(
+            eval(compile(ast.Expression(expression), "<transition-error-default>", "eval"), {
+                "response_data": {},
+                "result": {},
+            }),
+            "Unknown error in action processing",
         )
 
 

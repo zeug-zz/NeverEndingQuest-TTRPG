@@ -20,55 +20,13 @@ from utils.toolkit_homebrew_upload_contract import (
 
 
 # ---------------------------------------------------------------------------
-#  Shared fake infrastructure
+#  Shared facade fake infrastructure
 # ---------------------------------------------------------------------------
-class _FakeChoice:
-    def __init__(self, content):
-        self.message = type("Msg", (), {"content": content})()
-
-
-class _FakeResponse:
-    def __init__(self, content):
-        self.choices = [_FakeChoice(content)]
-
-
-class _FakeCompletions:
-    def __init__(self, content):
-        self._content = content
-
-    def create(self, **kwargs):
-        return _FakeResponse(self._content)
-
-
-class _FakeChat:
-    def __init__(self, content):
-        self.completions = _FakeCompletions(content)
-
-
-class _FakeClient:
-    def __init__(self, content):
-        self.chat = _FakeChat(content)
-
-
-# Captured .create(**kwargs) calls for sequenced fake clients
-_CAPTURED = []
-
-
 def _single_shot_fake(payload):
-    """Factory returning a fake client that produces one response or raises."""
-    class _ShotCompletions:
-        def create(self, **kwargs):
-            _CAPTURED.append(kwargs)
-            if isinstance(payload, Exception):
-                raise payload
-            content = json.dumps(payload) if isinstance(payload, dict) else str(payload)
-            return _FakeResponse(content)
-
-    class _ShotClient:
-        def __init__(self):
-            self.chat = type("Chat", (), {"completions": _ShotCompletions()})()
-
-    return _ShotClient()
+    """Return one facade content string or one raised failure."""
+    if isinstance(payload, Exception):
+        return payload
+    return json.dumps(payload) if isinstance(payload, dict) else str(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +123,10 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
     # --- Legacy tests (preserved) ---
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_successful_normalization_persists_artifacts(self, mock_client_factory, mock_model_config):
         payload = _full_legacy_payload()
-        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_client_factory.return_value = json.dumps(payload)
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -200,9 +158,9 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertGreater(len(packet.get("assumptions", [])), 0)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_malformed_model_output_fails_closed(self, mock_client_factory, mock_model_config):
-        mock_client_factory.return_value = _FakeClient("This is not JSON")
+        mock_client_factory.return_value = "This is not JSON"
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -230,22 +188,9 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertIn("source_graph", report)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_provider_failure_keeps_source_graph_status(self, mock_client_factory, mock_model_config):
-        class _BoomClient:
-            class _BoomChat:
-                class _BoomCompletions:
-                    @staticmethod
-                    def create(**kwargs):
-                        raise RuntimeError("provider boom")
-
-                def __init__(self):
-                    self.completions = self._BoomCompletions()
-
-            def __init__(self):
-                self.chat = self._BoomChat()
-
-        mock_client_factory.return_value = _BoomClient()
+        mock_client_factory.side_effect = RuntimeError("provider boom")
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -271,7 +216,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertIn("source_graph", report)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     @patch("utils.toolkit_homebrew_normalizer.persist_builder_narrative_artifact")
     def test_persistence_failure_rewrites_report_as_failed(
         self,
@@ -285,7 +230,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "locations": [{"name": "Ruined Gate"}],
         }
         mock_narrative_persist.return_value = False
-        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_client_factory.return_value = json.dumps(payload)
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -340,14 +285,14 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         })
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_blueprint_ready_narrative_matches_source_locked_lock(
         self, mock_client_factory, mock_model_config,
     ):
         """When blueprint artifacts are ready, persisted builder_narrative
         must contain the source-locked SOURCE-FAITHFUL BUILD LOCK."""
         payload = _full_legacy_payload()
-        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_client_factory.return_value = json.dumps(payload)
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -382,14 +327,14 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertEqual(narrative_source, "blueprint", "Narrative source must be 'blueprint'")
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_blueprint_narrative_not_overwritten_by_legacy(
         self, mock_client_factory, mock_model_config,
     ):
         """When blueprint is ready, the persisted builder_narrative must not
         be overwritten with legacy narrative content."""
         payload = _full_legacy_payload()
-        mock_client_factory.return_value = _FakeClient(json.dumps(payload))
+        mock_client_factory.return_value = json.dumps(payload)
         mock_model_config.return_value = {
             "model": "fake-model",
             "temperature": 0.3,
@@ -439,7 +384,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         )
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_multipass_success_calls_section_identity_topology_and_synthesizes_packet(
         self, mock_client_factory, mock_model_config
     ):
@@ -448,8 +393,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.2,
             "extra_body": {},
         }
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(_tiny_identity_payload()),
@@ -488,7 +431,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertFalse(mp.get("degraded"))
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_section_cache_hit_skips_section_provider_call(
         self, mock_client_factory, mock_model_config
     ):
@@ -499,8 +442,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         }
         # Pre-populate cache by running the normalizer once with all 4 providers,
         # then run again with only 3 providers and verify section call was skipped.
-        global _CAPTURED
-        _CAPTURED = []
 
         # First run: create all section artifacts
         mock_client_factory.side_effect = [
@@ -544,7 +485,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertEqual(mp.get("cached_sections"), 1)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_section_cache_source_hash_mismatch_reextracts(
         self, mock_client_factory, mock_model_config
     ):
@@ -554,8 +495,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "extra_body": {},
         }
         # First run: populate cache with correct source_hash
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(_tiny_identity_payload()),
@@ -579,7 +518,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         sec_dir.mkdir(parents=True, exist_ok=True)
         (sec_dir / f"{sec_id}.json").write_text(json.dumps(cached), encoding="utf-8")
 
-        _CAPTURED = []
         mock_client_factory.reset_mock()
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
@@ -600,7 +538,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertEqual(mock_client_factory.call_count, 4)
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_malformed_section_payload_records_degraded_not_success(
         self, mock_client_factory, mock_model_config
     ):
@@ -609,8 +547,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.2,
             "extra_body": {},
         }
-        global _CAPTURED
-        _CAPTURED = []
         # Section provider returns valid JSON but missing extracted_atoms
         bad_section = {"wrong": "shape", "no_extracted_atoms": True}
         mock_client_factory.side_effect = [
@@ -643,7 +579,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertIn("invalid_section_extraction_shape", cached.get("error", ""))
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_identity_provider_failure_degrades_but_normalization_succeeds(
         self, mock_client_factory, mock_model_config
     ):
@@ -652,8 +588,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.2,
             "extra_body": {},
         }
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(RuntimeError("identity boom")),
@@ -677,7 +611,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertTrue(mp.get("identity_degraded"))
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_topology_provider_failure_degrades_but_normalization_succeeds(
         self, mock_client_factory, mock_model_config
     ):
@@ -686,8 +620,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.2,
             "extra_body": {},
         }
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(_tiny_identity_payload()),
@@ -712,7 +644,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
 
     @patch("utils.toolkit_homebrew_normalizer.ENABLE_ACCURATE_INGEST_MULTI_PASS", False)
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_multipass_disabled_uses_legacy_only(
         self, mock_client_factory, mock_model_config
     ):
@@ -721,7 +653,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.3,
             "extra_body": {},
         }
-        mock_client_factory.return_value = _FakeClient(json.dumps(_full_legacy_payload()))
+        mock_client_factory.return_value = json.dumps(_full_legacy_payload())
 
         result = normalize_homebrew_upload(
             source_path=self.source_path,
@@ -748,7 +680,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertFalse(identity_path.exists())
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     @patch("utils.toolkit_homebrew_normalizer.persist_identity_resolution_artifact")
     def test_multipass_artifact_persistence_failure_marks_degraded(
         self, mock_identity_persist, mock_client_factory, mock_model_config
@@ -759,8 +691,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "extra_body": {},
         }
         mock_identity_persist.return_value = False
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(_tiny_identity_payload()),
@@ -785,7 +715,7 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
         self.assertTrue(mp.get("degraded"))
 
     @patch("utils.toolkit_homebrew_normalizer.get_model_config")
-    @patch("utils.toolkit_homebrew_normalizer.create_chat_client")
+    @patch("utils.toolkit_homebrew_normalizer.llm.call")
     def test_synthesized_packet_path_used_when_legacy_payload_omits_arrays(
         self, mock_client_factory, mock_model_config
     ):
@@ -794,8 +724,6 @@ class TestToolkitHomebrewNormalizer(unittest.TestCase):
             "temperature": 0.2,
             "extra_body": {},
         }
-        global _CAPTURED
-        _CAPTURED = []
         mock_client_factory.side_effect = [
             _single_shot_fake(_tiny_section_payload()),
             _single_shot_fake(_tiny_identity_payload()),

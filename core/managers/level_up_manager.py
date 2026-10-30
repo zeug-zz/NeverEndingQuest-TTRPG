@@ -53,14 +53,15 @@ import json
 import os
 import re
 import sys
-from openai import OpenAI
-from config import OPENAI_API_KEY, LEVEL_UP_MODEL, DM_VALIDATION_MODEL
+from config import LEVEL_UP_MODEL, DM_VALIDATION_MODEL
 from utils.file_operations import safe_read_json
 from utils.enhanced_logger import debug, info, warning, error
 from updates.update_character_info import update_character_info, normalize_character_name
 from utils.encoding_utils import safe_json_dump
 from utils.module_path_manager import ModulePathManager
 from utils.xp_progression_utils import get_next_level_threshold
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Token tracking import
 try:
@@ -68,9 +69,6 @@ try:
     USAGE_TRACKING_AVAILABLE = True
 except ImportError:
     USAGE_TRACKING_AVAILABLE = False
-
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Class-based Level Up Manager ---
 
@@ -225,22 +223,17 @@ class LevelUpSession:
 
     def _get_ai_response(self):
         try:
-            response = client.chat.completions.create(
-                model=LEVEL_UP_MODEL,
-                messages=self.conversation,
-                temperature=0.7
+            observer = make_legacy_receipt_observer(
+                legacy_context={"endpoint": "level_up", "purpose": "level_up_processing", "character": self.character_name},
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
-            
-            # Track token usage with context for telemetry
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    from utils.openai_usage_tracker import get_global_tracker
-                    tracker = get_global_tracker()
-                    tracker.track(response, context={'endpoint': 'level_up', 'purpose': 'level_up_processing', 'character': character_name})
-                except:
-                    pass
-            
-            return response.choices[0].message.content
+            response = llm.call(
+                task="level_up",
+                messages=self.conversation,
+                json_output=False,
+                observer=observer,
+            )
+            return response
         except Exception as e:
             error(f"[ERROR] Getting AI response: {e}", category="level_up")
             return "I'm having trouble processing that. Could you clarify your choice?"
@@ -255,22 +248,17 @@ class LevelUpSession:
         ]
         # Use a separate call to the validation model
         try:
-            response = client.chat.completions.create(
-                model=DM_VALIDATION_MODEL,
-                messages=validation_messages,
-                temperature=0.2
+            observer = make_legacy_receipt_observer(
+                legacy_context={"endpoint": "level_up", "purpose": "level_up_processing", "character": self.character_name},
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
-            
-            # Track token usage with context for telemetry
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    from utils.openai_usage_tracker import get_global_tracker
-                    tracker = get_global_tracker()
-                    tracker.track(response, context={'endpoint': 'level_up', 'purpose': 'level_up_processing', 'character': character_name})
-                except:
-                    pass
-            
-            validation_response = response.choices[0].message.content
+            response = llm.call(
+                task="dm_validation",
+                messages=validation_messages,
+                json_output=False,
+                observer=observer,
+            )
+            validation_response = response
             if validation_response and "VALID" in validation_response.upper():
                 return True, validation_response
             else:

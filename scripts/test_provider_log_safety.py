@@ -4,6 +4,8 @@ import io
 import logging
 import copy
 import pickle
+import sys
+import types
 import unittest
 from unittest.mock import Mock, patch
 
@@ -49,6 +51,72 @@ class ProviderLogSafetyTests(unittest.TestCase):
     def test_debug_payload_is_suppressed_by_transport_level(self):
         self.logger.debug("prompt SENTINEL_PROMPT", extra={"messages": "SENTINEL_SOURCE"})
         self.assertEqual(self.stream.getvalue(), "")
+
+    def test_urllib3_request_path_debug_is_suppressed(self):
+        """urllib3 DEBUG request lines include paths that may carry credentials."""
+        logger = logging.getLogger("urllib3.connectionpool.provider_path_safety_test")
+        state = (
+            logger.level,
+            list(logger.handlers),
+            list(logger.filters),
+            logger.propagate,
+        )
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger.handlers = [handler]
+        logger.filters = []
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        try:
+            configure_provider_log_safety()
+            logger.debug(
+                'https://rates.example "GET /v6/DUMMY_RATE_KEY_123/latest/USD HTTP/1.1" 200 12'
+            )
+            self.assertEqual(stream.getvalue(), "")
+            self.assertGreaterEqual(logger.getEffectiveLevel(), logging.WARNING)
+        finally:
+            logger.handlers = state[1]
+            logger.filters = state[2]
+            logger.setLevel(state[0])
+            logger.propagate = state[3]
+
+    def test_exchange_rate_fetch_installs_safety_without_changing_http_request(self):
+        from utils.llm_usage_tracker import LLMUsageTracker
+
+        config = types.ModuleType("config")
+        config.EXCHANGE_RATE_API_URL = (
+            "https://v6.exchangerate-api.com/v6/DUMMY_TEST_RATE_KEY/latest/USD"
+        )
+        config.EXCHANGE_RATE_TARGET_CURRENCY = "NZD"
+        config.EXCHANGE_RATE_TIMEOUT_SECONDS = 2.5
+        config.ENABLE_LIVE_EXCHANGE_RATE = True
+        response = Mock(status_code=200)
+        response.json.return_value = {"conversion_rates": {"NZD": 1.5}}
+        events = []
+
+        def install_safety():
+            events.append("safety")
+
+        def get(url, *, timeout):
+            events.append(("request", url, timeout))
+            return response
+
+        tracker = LLMUsageTracker.__new__(LLMUsageTracker)
+        tracker.usd_to_nzd_rate = 1.65
+        with patch.dict(sys.modules, {"config": config}), patch(
+            "utils.provider_log_safety.configure_provider_log_safety",
+            side_effect=install_safety,
+        ), patch("requests.get", side_effect=get) as request_get:
+            tracker._resolve_exchange_rate()
+
+        self.assertEqual(events[0], "safety")
+        self.assertEqual(
+            events[1], ("request", config.EXCHANGE_RATE_API_URL, 2.5)
+        )
+        request_get.assert_called_once_with(
+            config.EXCHANGE_RATE_API_URL, timeout=2.5
+        )
+        self.assertEqual(tracker.usd_to_nzd_rate, 1.5)
 
     def test_late_provider_child_debug_payloads_are_suppressed(self):
         """Child loggers created after setup inherit the provider warning gate."""
@@ -444,6 +512,7 @@ class ProviderLogSafetyTests(unittest.TestCase):
 
         def construct(**kwargs):
             events.append(("client", kwargs))
+            kwargs["http_client"].close()
             return fake_client
 
         with patch.object(
@@ -458,7 +527,9 @@ class ProviderLogSafetyTests(unittest.TestCase):
         self.assertIs(client, fake_client)
         self.assertEqual(events[0], "safety")
         self.assertEqual(events[1][0], "client")
-        self.assertEqual(set(events[1][1]), {"api_key"})
+        self.assertEqual(
+            set(events[1][1]), {"api_key", "timeout", "http_client"}
+        )
         self.assertEqual(events[2], "safety")
         self.assertEqual(request_payload, payload_before)
         self.assertEqual(
@@ -475,6 +546,7 @@ class ProviderLogSafetyTests(unittest.TestCase):
 
         def construct(**kwargs):
             events.append(("client", kwargs))
+            kwargs["http_client"].close()
             return fake_client
 
         with patch.object(
@@ -491,7 +563,7 @@ class ProviderLogSafetyTests(unittest.TestCase):
         self.assertEqual(events[1][0], "client")
         self.assertEqual(
             set(events[1][1]),
-            {"api_key", "base_url", "default_headers"},
+            {"api_key", "base_url", "timeout", "http_client", "default_headers"},
         )
         self.assertEqual(
             set(events[1][1]["default_headers"]),
@@ -508,6 +580,7 @@ class ProviderLogSafetyTests(unittest.TestCase):
 
         def construct(**kwargs):
             events.append(("client", kwargs))
+            kwargs["http_client"].close()
             return fake_client
 
         with patch.object(
@@ -522,7 +595,9 @@ class ProviderLogSafetyTests(unittest.TestCase):
         self.assertIs(client, fake_client)
         self.assertEqual(events[0], "safety")
         self.assertEqual(events[1][0], "client")
-        self.assertEqual(set(events[1][1]), {"api_key"})
+        self.assertEqual(
+            set(events[1][1]), {"api_key", "timeout", "http_client"}
+        )
         self.assertEqual(events[2], "safety")
 
     def test_adaptation_scope_contains_late_provider_and_application_handlers(self):

@@ -190,17 +190,71 @@ class TestCombatEncounterRoutingBoundaryPrecheck(unittest.TestCase):
         self.assertTrue(valid)
         self.assertEqual(reason, "")
 
+    def test_enemy_damage_and_attack_recipient_mentions_do_not_cross_attribute(self):
+        for changes in (
+            "Goblin takes 7 damage, HP 18->11. Blairen hits Goblin. Goblin misses Acheron.",
+            "Goblin takes 7 damage, HP 18->11. Goblin's scimitar attack against Acheron misses.",
+        ):
+            with self.subTest(changes=changes):
+                response = {"actions": [{"action": "updateEncounter", "parameters": {"changes": changes}}]}
+                self.assertEqual(validate_update_encounter_enemy_boundary_precheck(response, self.encounter_data), (True, ""))
+
+    def test_non_enemy_mutations_are_rejected_only_with_local_canonical_recipient(self):
+        cases = (
+            ("Athelon takes 6 piercing damage. HP 11->5.", "Athelon"),
+            ("Piercing damage of 6 is dealt to Athelon (HP 11->5).", "Athelon"),
+            ("Athelon gains the poisoned condition.", "Athelon"),
+            ("Athelon expends one spell slot.", "Athelon"),
+            ("Cultist takes 2 damage. Athelon HP 14->12.", "Athelon"),
+            ("Athelon was hit. HP 11->5.", "Athelon"),
+            ("Athelon. HP 11->5.", "Athelon"),
+            ("Cultist heals 3 HP for Athelon.", "Athelon"),
+            ("Cultist removes 1 arrow from Blarg.", "Blarg"),
+        )
+        for changes, expected_name in cases:
+            with self.subTest(changes=changes):
+                response = {"actions": [{"action": "updateEncounter", "parameters": {"changes": changes}}]}
+                valid, reason = validate_update_encounter_enemy_boundary_precheck(response, self.encounter_data)
+                self.assertFalse(valid)
+                self.assertIn(expected_name, reason)
+
+    def test_healer_or_miss_actor_is_not_assumed_to_be_the_mutation_recipient(self):
+        for changes in (
+            "Athelon heals 3 HP for Cultist.",
+            "Athelon misses Cultist. HP 14->12.",
+            "Cultist misses Athelon. HP 14->12.",
+            "Cultist hits Athelon and Blarg. HP 14->12.",
+        ):
+            with self.subTest(changes=changes):
+                response = {"actions": [{"action": "updateEncounter", "parameters": {"changes": changes}}]}
+                self.assertEqual(validate_update_encounter_enemy_boundary_precheck(response, self.encounter_data), (True, ""))
+
+    def test_ambiguous_prose_defers_but_structured_non_enemy_targets_stay_strict(self):
+        prose = {"actions": [{"action": "updateEncounter", "parameters": {
+            "changes": "The Goblin strikes; Athelon is named in the exchange and the HP changes."}}]}
+        self.assertEqual(validate_update_encounter_enemy_boundary_precheck(prose, self.encounter_data), (True, ""))
+        structured = {"actions": [{"action": "updateEncounter", "parameters": {
+            "changes": "Goblin takes 2 damage.",
+            "ops": [{"op": "hp_delta", "creature": "Athelon", "delta": -1}],
+        }}]}
+        valid, reason = validate_update_encounter_enemy_boundary_precheck(structured, self.encounter_data)
+        self.assertFalse(valid)
+        self.assertIn("Athelon", reason)
+
 
 class TestCombatNarrationConsistencyContracts(unittest.TestCase):
     def test_combat_manager_wires_prechecks(self):
-        combat_manager_path = os.path.join(PROJECT_ROOT, "core", "managers", "combat_manager.py")
+        combat_manager_path = os.path.join(PROJECT_ROOT, "core", "combat", "combat_manager.py")
+        validation_path = os.path.join(PROJECT_ROOT, "core", "combat", "validation.py")
         with open(combat_manager_path, "r", encoding="utf-8") as handle:
-            source = handle.read()
+            manager_source = handle.read()
+        with open(validation_path, "r", encoding="utf-8") as handle:
+            validation_source = handle.read()
 
-        self.assertIn("validate_combat_narration_consistency_precheck", source)
-        self.assertIn("validate_update_encounter_enemy_boundary_precheck", source)
-        self.assertIn("Narration-consistency precheck rejected response", source)
-        self.assertIn("Enemy-routing precheck rejected response", source)
+        self.assertIn("narration_precheck=validate_combat_narration_consistency_precheck", manager_source)
+        self.assertIn("enemy_boundary_precheck=validate_update_encounter_enemy_boundary_precheck", manager_source)
+        self.assertIn("Narration-consistency precheck rejected response", validation_source)
+        self.assertIn("Enemy-routing precheck rejected response", validation_source)
 
     def test_validation_prompts_lock_contradiction_rules(self):
         compressed_path = os.path.join(

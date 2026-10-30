@@ -455,6 +455,10 @@
     "character_id": {
       "type": "string"
     },
+    "last_combat_applied_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "_tabletop_role_history": {
       "type": "array",
       "items": {

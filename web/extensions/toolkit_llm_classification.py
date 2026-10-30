@@ -35,14 +35,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from model_config import DM_VALIDATION_MODEL, ENABLE_LLM_CLASSIFICATION
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
+from utils.ai_client_factory import handle_provider_error
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.enhanced_logger import debug, error, info, warning
+from utils.llm_router import llm
 from utils.module_semantic_authority import enrich_module_semantic_authority
 
 
@@ -206,21 +202,15 @@ def _call_llm_with_fallback(
     error_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
-        client = create_chat_client()
-        config = get_model_config("dm_validation", DM_VALIDATION_MODEL)
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "dm_validation",
-                DM_VALIDATION_MODEL,
-                temperature_override=config.get("temperature", 0.2),
-            ),
+        content = llm.call(
+            task="dm_validation",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            json_output=False,
             response_format={"type": response_format},
         )
-        content = response.choices[0].message.content
         if content:
             return json.loads(content)
         return None

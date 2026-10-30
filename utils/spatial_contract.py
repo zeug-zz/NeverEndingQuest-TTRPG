@@ -659,13 +659,8 @@ def _resolve_semantic_spatial_plan_with_llm(
 
     provider_stage = "toolkit_spatial.semantic_plan"
     try:
-        from model_config import DM_VALIDATION_MODEL
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-            get_model_config,
-            handle_provider_error,
-        )
+        from utils.ai_client_factory import handle_provider_error
+        from utils.llm_router import llm
     except Exception as exc:
         return _build_spatial_provider_failure(
             fallback_plan,
@@ -676,14 +671,8 @@ def _resolve_semantic_spatial_plan_with_llm(
     prompt_text = _build_structured_spatial_prompt(room_records)
 
     try:
-        client = create_chat_client()
-        model_config = get_model_config("dm_validation", DM_VALIDATION_MODEL)
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "dm_validation",
-                DM_VALIDATION_MODEL,
-                temperature_override=model_config.get("temperature", 0.2),
-            ),
+        content = llm.call(
+            task="dm_validation",
             messages=[
                 {
                     "role": "system",
@@ -691,6 +680,8 @@ def _resolve_semantic_spatial_plan_with_llm(
                 },
                 {"role": "user", "content": prompt_text},
             ],
+            json_output=False,
+            json_contract=True,
             response_format={"type": "json_object"},
         )
     except Exception as exc:
@@ -702,9 +693,6 @@ def _resolve_semantic_spatial_plan_with_llm(
             retryable=error_result.get("should_fallback", False),
         )
 
-    content = (
-        response.choices[0].message.content if response and response.choices else ""
-    )
     parsed = parse_structured_spatial_response(content or "", room_order)
 
     # Keep deterministic connectivity/directions guardrails from normalized fallback plan.

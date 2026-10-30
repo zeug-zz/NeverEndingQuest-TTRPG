@@ -53,7 +53,7 @@ class TestSupernaturalProjectionContracts(unittest.TestCase):
         self.assertIn("SUPERNATURAL:", content)
 
     def test_combat_context_projects_supernatural_summary(self):
-        content = self._read("core/managers/combat_manager.py")
+        content = self._read("core/combat/combat_manager.py")
         self.assertIn("get_supernatural_state_summary", content)
         self.assertIn("SUPERNATURAL:", content)
         self.assertIn("supernaturalStates", content)

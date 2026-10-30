@@ -71,8 +71,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from openai import OpenAI
 import config
+from utils.llm_router import llm
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, game_event, set_script_name
@@ -89,7 +89,6 @@ class CampaignManager:
         """Initialize campaign manager"""
         self.campaign_file = "modules/campaign.json"
         self.summaries_dir = "modules/campaign_summaries"
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         
         # Ensure directories exist
         os.makedirs(self.summaries_dir, exist_ok=True)
@@ -538,16 +537,16 @@ CONVERSATION CONTEXT:
 Focus on story outcomes, character development, and decisions that will matter in future adventures."""
         
         try:
-            response = self.client.chat.completions.create(
-                model=config.DM_SUMMARIZATION_MODEL,
+            # TABLETOP MODE: Both summaries requests carry fixed G10 source labels.
+            summary_text = llm.call(
+                task="summaries",
+                g10_source_id="core/managers/campaign_manager.py:CampaignManager._generate_module_summary.summary",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.6
+                json_output=False,
             )
-            
-            summary_text = response.choices[0].message.content
             
             # Have AI also extract exportable data
             export_prompt = f"""From this module summary, extract key data to export to the campaign:
@@ -564,16 +563,18 @@ Focus on story outcomes, character development, and decisions that will matter i
             Format as JSON with keys: relationships, artifacts, hubs, worldState, unlockedModules"""
             
             try:
-                export_response = self.client.chat.completions.create(
-                    model=config.DM_SUMMARY_MODEL,
+                # G6: export previously referenced a nonexistent DM_SUMMARY_MODEL; now routed via the summaries task.
+                export_response = llm.call(
+                    task="summaries",
+                    g10_source_id="core/managers/campaign_manager.py:CampaignManager._generate_module_summary.export_data",
                     messages=[
                         {"role": "system", "content": "Extract campaign-relevant data from module completion summary. Be concise and factual."},
                         {"role": "user", "content": export_prompt}
                     ],
-                    temperature=0.3
+                    json_output=False,
                 )
                 
-                exported_data = json.loads(export_response.choices[0].message.content)
+                exported_data = json.loads(export_response)
             except:
                 exported_data = self._process_module_summary_for_export(summary_text, party_tracker_data)
             

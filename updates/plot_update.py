@@ -16,18 +16,14 @@ except:
     USAGE_TRACKING_AVAILABLE = False
     def track_response(r): pass
 
-# Import model configuration from config.py
-from config import PLOT_UPDATE_MODEL
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_write_json, safe_read_json
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params  # OPENROUTER: Multi-provider support
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Set script name for logging
 set_script_name("plot_update")
-
-# Initialize AI client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 # Constants
 TEMPERATURE = 0.7
@@ -46,7 +42,7 @@ _PLOT_STATUS_ALIASES = {
     "resolved": "completed",
 }
 
-# ANSI escape codes - REMOVED per CLAUDE.md guidelines
+# ANSI escape codes - REMOVED per AGENTS.md ASCII rule
 # All color codes have been removed to prevent Windows console encoding errors
 
 def load_schema():
@@ -203,27 +199,17 @@ Examples:
             {"role": "user", "content": f"Current plot info: {json.dumps(plot_info_data)}\n\nPlot point to update: {plot_point_id_param}\nNew status: {normalized_status_param}\nPlot impact: {plot_impact_param}"}
         ]
 
-        # GPT-5 family (gpt-5.6-luna) requires reasoning_effort/verbosity and omits
-        # legacy temperature/top_p. Route through the shared helper so the direct
-        # OpenAI GPT-5 branch is valid while non-GPT-5 temperature and the
-        # OpenRouter thinking extra_body behavior are preserved.
-        response = client.chat.completions.create(
-            messages=prompt_messages,
-            **get_chat_completion_params(
-                "plot_update",
-                PLOT_UPDATE_MODEL,
-                temperature_override=TEMPERATURE,
-            ),
+        # TABLETOP MODE: provider transport and model selection are router-owned.
+        observer = make_legacy_receipt_observer(
+            track_usage=USAGE_TRACKING_AVAILABLE,
         )
-        
-        # Track usage if available
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-
-        ai_response_content = response.choices[0].message.content.strip() # Renamed variable
+        ai_response_content = llm.call(
+            task="plot_update",
+            messages=prompt_messages,
+            json_output=False,
+            observer=observer,
+        )
+        ai_response_content = ai_response_content.strip() # Renamed variable
 
         try:
             if ai_response_content.startswith("```json"):

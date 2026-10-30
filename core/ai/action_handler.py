@@ -88,6 +88,8 @@ from utils.scene_entity_contract import (
     apply_helpless_scene_entity_resolution,
     evaluate_scene_entity_encounter_resolution,
 )
+from utils.llm_router import GameLLMTerminalError, llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Import token tracking
 try:
@@ -112,7 +114,7 @@ except ImportError:
 
 # Import multi-PC combat manager (plugin-style - only used if MULTIPLAYER_MODE enabled)
 try:
-    from core.managers.multi_pc_combat import (
+    from core.combat.multi_pc.manager import (
         create_combat_manager,
         get_combat_manager,
         is_multi_pc_combat_enabled,
@@ -1119,6 +1121,8 @@ def get_module_starting_location(module_name: str) -> tuple:
 
         return starting_location
 
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         error(
             f"FAILURE: Could not get starting location for {module_name}: {e}",
@@ -1130,23 +1134,6 @@ def get_module_starting_location(module_name: str) -> tuple:
 def _ai_analyze_starting_location(module_data: dict) -> tuple:
     """Use AI to analyze module data and determine the best starting location"""
     try:
-        # Use factory for multi-provider support
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-            get_chat_model_name,
-            handle_provider_error,
-        )
-
-        client = create_chat_client()
-
-        # Get provider-aware model
-        model_name = get_chat_model_name()
-        debug(
-            f"Using AI model for starting location: {model_name}",
-            category="ai_provider",
-        )
-
         system_prompt = """You are an expert 5th edition adventure module analyst. Analyze the provided module data to determine the most logical starting location for player characters entering this adventure module.
 
 ANALYSIS CRITERIA:
@@ -1175,48 +1162,31 @@ MODULE DATA:
 
 Determine the most logical starting location based on adventure flow, area types, NPCs, and narrative logic."""
 
-        try:
-            response = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                **get_chat_completion_params(
-                    "dm_validation",
-                    model_name,
-                    temperature_override=0.1,
-                ),
-            )
-        except Exception as api_error:
-            # Check if we should fallback to OpenAI
-            error_result = handle_provider_error(
-                api_error, context="Starting location analysis"
-            )
-            if error_result["should_fallback"]:
-                warning(f"Falling back to OpenAI: {api_error}", category="ai_provider")
-                fallback_client = create_chat_client(use_fallback=True)
-                response = fallback_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    **get_chat_completion_params(
-                        "dm_validation",
-                        config.DM_MINI_MODEL,
-                        temperature_override=0.1,
-                    ),
-                )
-            else:
-                raise
-
-        # Track token usage
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-
-        ai_response = response.choices[0].message.content.strip()
+        observer_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        observer = make_legacy_receipt_observer(
+            messages=observer_messages,
+            legacy_context={
+                "function": "_ai_analyze_starting_location",
+                "purpose": "starting_location_analysis",
+            },
+            trace_site="starting_location_analysis",
+            track_usage=USAGE_TRACKING_AVAILABLE,
+        )
+        # TABLETOP MODE: Starting-location analysis parses this response as a JSON object.
+        ai_response = llm.call(
+            task="dm_validation",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            json_output=False,
+            json_contract=True,
+            temperature=0.1,
+            observer=observer,
+        ).strip()
         debug(
             f"AI_CALL: Starting location analysis response: {ai_response}",
             category="ai_operations",
@@ -1275,6 +1245,8 @@ Determine the most logical starting location based on adventure flow, area types
         print("WARNING: AI analysis failed, falling back to first available location")
         return _get_fallback_starting_location(module_data)
 
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         print(f"ERROR: AI starting location analysis failed: {e}")
         return _get_fallback_starting_location(module_data)
@@ -1863,7 +1835,7 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                 # via final_character_updates (SP) and persist_combat_changes (MP)
                 if multi_pc_manager and MULTI_PC_COMBAT_AVAILABLE:
                     try:
-                        from core.managers.multi_pc_combat import cleanup_combat_manager
+                        from core.combat.multi_pc.manager import cleanup_combat_manager
 
                         cleanup_combat_manager()
                         debug(
@@ -2329,23 +2301,6 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                 category="location_transitions",
             )
             try:
-                # Use factory for multi-provider support
-                from utils.ai_client_factory import (
-                    create_chat_client,
-                    get_chat_completion_params,
-                    get_chat_model_name,
-                    handle_provider_error,
-                )
-
-                client = create_chat_client()
-
-                # Get provider-aware model
-                model_name = get_chat_model_name()
-                debug(
-                    f"Using AI model for transition: {model_name}",
-                    category="ai_provider",
-                )
-
                 # Build prompt for transition narration
                 transition_messages = [
                     {
@@ -2354,41 +2309,19 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                     },
                     {"role": "user", "content": transition_prompt},
                 ]
-
-                try:
-                    transition_response = client.chat.completions.create(
-                        messages=transition_messages,
-                        **get_chat_completion_params(
-                            "dm_main",
-                            model_name,
-                            temperature_override=0.7,
-                        ),
-                    )
-                except Exception as api_error:
-                    # Check if we should fallback to OpenAI
-                    error_result = handle_provider_error(
-                        api_error, context="Transition narration"
-                    )
-                    if error_result["should_fallback"]:
-                        warning(
-                            f"Falling back to OpenAI: {api_error}",
-                            category="ai_provider",
-                        )
-                        fallback_client = create_chat_client(use_fallback=True)
-                        transition_response = fallback_client.chat.completions.create(
-                            messages=transition_messages,
-                            **get_chat_completion_params(
-                                "dm_main",
-                                config.DM_MAIN_MODEL,
-                                temperature_override=0.7,
-                            ),
-                        )
-                    else:
-                        raise
-
-                transition_narration = transition_response.choices[
-                    0
-                ].message.content.strip()
+                transition_observer = make_legacy_receipt_observer(
+                    messages=transition_messages,
+                    trace_site="transition_narration",
+                    track_usage=USAGE_TRACKING_AVAILABLE,
+                )
+                transition_response = llm.call(
+                    task="dm_main",
+                    messages=transition_messages,
+                    json_output=False,
+                    temperature=0.7,
+                    observer=transition_observer,
+                )
+                transition_narration = transition_response.strip()
                 info(
                     "SUCCESS: Transition narration generated",
                     category="location_transitions",
@@ -2404,6 +2337,8 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                     category="location_transitions",
                 )
 
+            except GameLLMTerminalError:
+                raise
             except Exception as e:
                 error(
                     f"FAILURE: Failed to generate transition narration",
@@ -4322,6 +4257,8 @@ def move_background_npc(
                 print("ERROR: Failed to execute NPC movement decision")
                 return False
 
+        except GameLLMTerminalError:
+            raise
         except Exception as e:
             print(f"ERROR: Exception in move_background_npc: {str(e)}")
             import traceback
@@ -4617,20 +4554,6 @@ def get_ai_npc_movement_decision(
 ):
     """Use AI to determine what to do with the NPC based on context"""
     try:
-        # Use factory for multi-provider support
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-            get_chat_model_name,
-            handle_provider_error,
-        )
-
-        client = create_chat_client()
-
-        # Get provider-aware model
-        model_name = get_chat_model_name()
-        debug(f"Using AI model for NPC movement: {model_name}", category="ai_provider")
-
         # Get available locations for potential moves
         available_locations = []
         for location in area_data.get("locations", []):
@@ -4749,48 +4672,28 @@ Based on this narrative context, determine the most appropriate action for this 
 
 Remember: This is a background NPC management action, not party NPC management."""
 
-        try:
-            response = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                **get_chat_completion_params(
-                    "updates",
-                    model_name,
-                    temperature_override=0.7,
-                ),
-            )
-        except Exception as api_error:
-            # Check if we should fallback to OpenAI
-            error_result = handle_provider_error(
-                api_error, context="NPC movement decision"
-            )
-            if error_result["should_fallback"]:
-                warning(f"Falling back to OpenAI: {api_error}", category="ai_provider")
-                fallback_client = create_chat_client(use_fallback=True)
-                response = fallback_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    **get_chat_completion_params(
-                        "updates",
-                        config.NPC_INFO_UPDATE_MODEL,
-                        temperature_override=0.7,
-                    ),
-                )
-            else:
-                raise
-
-        # Track token usage
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-
-        ai_response = response.choices[0].message.content.strip()
+        observer = make_legacy_receipt_observer(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            legacy_context={
+                "function": "get_ai_npc_movement_decision",
+                "purpose": "npc_movement_decision",
+            },
+            trace_site="npc_movement_decision",
+            track_usage=USAGE_TRACKING_AVAILABLE,
+        )
+        ai_response = llm.call(
+            task="updates",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            json_output=False,
+            temperature=0.7,
+            observer=observer,
+        ).strip()
         debug(
             f"AI_CALL: Movement decision response: {ai_response}",
             category="ai_operations",
@@ -4808,6 +4711,8 @@ Remember: This is a background NPC management action, not party NPC management."
             )
             return None
 
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         error(f"AI_CALL: AI decision failed: {str(e)}", category="ai_operations")
         return None

@@ -5,6 +5,7 @@
 
 """Provider-free tests for task 3.2 adaptation builder prompt context."""
 
+import copy
 import json
 import sys
 import tempfile
@@ -32,21 +33,28 @@ from web.extensions.toolkit_homebrew_packet_builder import build_llm_adaptation_
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOSSIER_PATH = REPO_ROOT / "scripts" / "fixtures" / "toolkit_adaptation_dossier_valid.json"
+SCRATCH_DIR = REPO_ROOT / "tmp" / "router-rollout" / "g6"
 
 
-class FakeMessage:
-    def __init__(self, content: str):
-        self.content = content
+class RecordingLLMCall:
+    """Record facade kwargs and return queued response-content strings."""
+
+    def __init__(self, *responses: str):
+        self.calls = []
+        self.responses = list(responses)
+
+    def __call__(self, **kwargs):
+        self.calls.append(copy.deepcopy(kwargs))
+        return self.responses.pop(0)
 
 
-class FakeChoice:
-    def __init__(self, content: str):
-        self.message = FakeMessage(content)
-
-
-class FakeResponse:
-    def __init__(self, content: str):
-        self.choices = [FakeChoice(content)]
+def _mock_llm_call(module_name: str, response: str):
+    fake_call = RecordingLLMCall(response)
+    patch_call = patch(
+        f"core.generators.{module_name}.llm.call",
+        side_effect=fake_call,
+    )
+    return fake_call, patch_call
 
 
 def _handoff():
@@ -113,27 +121,23 @@ class TestAdaptationContextContract(unittest.TestCase):
 class TestAdaptationPromptPropagation(unittest.TestCase):
     def test_module_generator_field_prompt_receives_adaptation_context(self):
         context = build_adaptation_prompt_context(_handoff(), "module")
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = FakeResponse("Lantern Market")
-        with patch(
-            "core.generators.module_generator.create_chat_client",
-            return_value=fake_client,
-        ), patch(
-            "core.generators.module_generator.get_chat_completion_params",
-            return_value={},
-        ):
+        fake_call, p_call = _mock_llm_call("module_generator", "Lantern Market")
+        with p_call:
             ModuleGenerator().generate_field(
                 "moduleName",
                 {"type": "string"},
                 {"_llm_adaptation_prompt_context": context},
             )
-        prompt = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        request = fake_call.calls[0]
+        self.assertEqual(request["task"], "module_generator")
+        prompt = request["messages"][1]["content"]
         self.assertIn(ADAPTATION_CONTEXT_MARKER, prompt)
         self.assertIn("Warm market fantasy", prompt)
 
     def test_module_builder_passes_explicit_context_to_module_overview(self):
         handoff = _handoff()
-        with tempfile.TemporaryDirectory(dir=str(REPO_ROOT / "tmp"), prefix="task_3_2_builder_") as tmpdir:
+        SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(SCRATCH_DIR), prefix="task_3_2_builder_") as tmpdir:
             builder = ModuleBuilder(
                 BuilderConfig(
                     module_name="Lantern_Market",
@@ -174,13 +178,10 @@ class TestAdaptationPromptPropagation(unittest.TestCase):
         locations_context = build_adaptation_prompt_context(handoff, "locations")
         plot_context = build_adaptation_prompt_context(handoff, "plot")
 
-        fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = FakeResponse(
-            json.dumps(["Market Gate"])
+        fake_area_call, p_area_call = _mock_llm_call(
+            "area_generator", json.dumps(["Market Gate"])
         )
-        with patch("core.generators.area_generator.create_chat_client", return_value=fake_client), patch(
-            "core.generators.area_generator.get_chat_completion_params", return_value={}
-        ):
+        with p_area_call:
             MapLayoutGenerator().generate_thematic_names(
                 [{"id": "A01", "type": "gate", "connections": []}],
                 {
@@ -191,21 +192,16 @@ class TestAdaptationPromptPropagation(unittest.TestCase):
                     "_llm_adaptation_prompt_context": areas_context,
                 },
             )
-        area_prompt = fake_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        area_request = fake_area_call.calls[0]
+        self.assertEqual(area_request["task"], "generate_thematic_names")
+        area_prompt = area_request["messages"][1]["content"]
         self.assertIn(ADAPTATION_CONTEXT_MARKER, area_prompt)
         self.assertIn("Lanternwright Stall", area_prompt)
 
-        fake_location_client = MagicMock()
-        fake_location_client.chat.completions.create.return_value = FakeResponse(
-            json.dumps({"locations": []})
+        fake_location_call, p_location_call = _mock_llm_call(
+            "location_generator", json.dumps({"locations": []})
         )
-        with patch(
-            "core.generators.location_generator.create_chat_client",
-            return_value=fake_location_client,
-        ), patch(
-            "core.generators.location_generator.get_chat_completion_params",
-            return_value={},
-        ):
+        with p_location_call:
             LocationGenerator().generate_location_batch(
                 {"areaName": "Lantern Market", "areaType": "town"},
                 {},
@@ -215,26 +211,25 @@ class TestAdaptationPromptPropagation(unittest.TestCase):
                 },
                 [{"id": "A01", "name": "Market Gate"}],
             )
-        location_prompt = fake_location_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        location_request = fake_location_call.calls[0]
+        self.assertEqual(location_request["task"], "location_generator_batch")
+        location_prompt = location_request["messages"][1]["content"]
         self.assertIn(ADAPTATION_CONTEXT_MARKER, location_prompt)
         self.assertIn("Wayfinder Lantern", location_prompt)
         self.assertIn("The Sealed Lantern", location_prompt)
 
-        fake_plot_client = MagicMock()
-        fake_plot_client.chat.completions.create.return_value = FakeResponse("Market Plot")
-        with patch(
-            "core.generators.plot_generator.create_chat_client",
-            return_value=fake_plot_client,
-        ), patch(
-            "core.generators.plot_generator.get_chat_completion_params",
-            return_value={},
-        ):
+        fake_plot_call, p_plot_call = _mock_llm_call(
+            "plot_generator", "Market Plot"
+        )
+        with p_plot_call:
             PlotGenerator().generate_field(
                 "plotTitle",
                 {"type": "string"},
                 {"_llm_adaptation_prompt_context": plot_context},
             )
-        plot_prompt = fake_plot_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        plot_request = fake_plot_call.calls[0]
+        self.assertEqual(plot_request["task"], "plot_generator")
+        plot_prompt = plot_request["messages"][1]["content"]
         self.assertIn(ADAPTATION_CONTEXT_MARKER, plot_prompt)
         self.assertIn("Find the missing shipment", plot_prompt)
 

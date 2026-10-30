@@ -8,9 +8,12 @@ AI Client Factory - Multi-Provider AI Client Management
 Provides unified interface for OpenAI, OpenRouter, and future providers
 """
 
+import math
 from typing import Optional, Dict, Any
-from openai import OpenAI
+import httpx
+from openai import APITimeoutError, OpenAI
 from utils.enhanced_logger import debug, info, warning, error
+from utils.llm_transport_deadline import create_deadline_http_client
 from utils.provider_log_safety import configure_provider_log_safety
 from utils.provider_response_recovery import EmptyProviderResponseError
 
@@ -20,7 +23,8 @@ _fallback_status = {
     'primary_provider': None,
     'fallback_provider': None,
     'last_error': None,
-    'fallback_count': 0
+    'fallback_count': 0,
+    'notification_emitted': False,
 }
 
 # TABLETOP MODE: GPT-5 chat parameter shim defaults.
@@ -28,8 +32,15 @@ GPT5_INCLUDE_LEGACY_TEMPERATURE = False
 
 
 def _is_gpt5_model(model_name: Optional[str]) -> bool:
-    """Return True when the resolved model is a GPT-5 family model."""
-    return bool(model_name) and str(model_name).lower().startswith("gpt-5")
+    """Return True for supported direct-OpenAI reasoning model families.
+
+    Keep the preferred GPT-6 model explicit rather than treating every future
+    ``gpt-6`` identifier as compatible with the GPT-5 parameter contract.
+    """
+    if not model_name:
+        return False
+    normalized_model = str(model_name).lower()
+    return normalized_model.startswith("gpt-5") or normalized_model == "gpt-6-luna"
 
 
 def _resolve_gpt5_chat_profile(
@@ -68,6 +79,84 @@ def _resolve_gpt5_chat_profile(
     return {
         "reasoning_effort": reasoning_effort,
         "verbosity": verbosity,
+    }
+
+
+class TaskSamplingPolicyError(ValueError):
+    """Raised when a facade task has no valid sampling policy."""
+
+
+def get_task_sampling_policy(task_id: str) -> Dict[str, Dict[str, Any]]:
+    """Return a detached, validated family-sampling policy for a task."""
+    try:
+        from model_config import TASK_POLICY_SAMPLING
+    except ImportError as exc:
+        raise TaskSamplingPolicyError(
+            "TASK_POLICY_SAMPLING is unavailable for task %r" % task_id
+        ) from exc
+
+    task_key = str(task_id or "")
+    if not isinstance(TASK_POLICY_SAMPLING, dict):
+        raise TaskSamplingPolicyError("TASK_POLICY_SAMPLING must be a mapping")
+    policy = TASK_POLICY_SAMPLING.get(task_key)
+    if not isinstance(policy, dict):
+        raise TaskSamplingPolicyError(
+            "Missing TASK_POLICY_SAMPLING policy for task %r" % task_key
+        )
+
+    reasoning = policy.get("reasoning")
+    non_reasoning = policy.get("non_reasoning")
+    if not isinstance(reasoning, dict) or reasoning.get("family") != "reasoning":
+        raise TaskSamplingPolicyError(
+            "TASK_POLICY_SAMPLING[%r] must define a reasoning-family entry" % task_key
+        )
+    if "temperature" in reasoning or "top_p" in reasoning:
+        raise TaskSamplingPolicyError(
+            "TASK_POLICY_SAMPLING[%r] reasoning entry must omit temperature and top_p"
+            % task_key
+        )
+    if (
+        not isinstance(non_reasoning, dict)
+        or non_reasoning.get("family") != "non_reasoning"
+    ):
+        raise TaskSamplingPolicyError(
+            "TASK_POLICY_SAMPLING[%r] must define a non-reasoning-family entry"
+            % task_key
+        )
+
+    temperature = non_reasoning.get("temperature")
+    try:
+        temperature_is_finite = math.isfinite(float(temperature))
+    except (OverflowError, TypeError, ValueError):
+        temperature_is_finite = False
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not temperature_is_finite
+    ):
+        raise TaskSamplingPolicyError(
+            "TASK_POLICY_SAMPLING[%r] non-reasoning entry requires numeric temperature"
+            % task_key
+        )
+    top_p = non_reasoning.get("top_p")
+    if "top_p" in non_reasoning:
+        try:
+            top_p_is_finite = math.isfinite(float(top_p))
+        except (OverflowError, TypeError, ValueError):
+            top_p_is_finite = False
+        if (
+            isinstance(top_p, bool)
+            or not isinstance(top_p, (int, float))
+            or not top_p_is_finite
+        ):
+            raise TaskSamplingPolicyError(
+                "TASK_POLICY_SAMPLING[%r] top_p must be numeric when configured"
+                % task_key
+            )
+
+    return {
+        "reasoning": dict(reasoning),
+        "non_reasoning": dict(non_reasoning),
     }
 
 
@@ -144,6 +233,8 @@ def create_chat_client(use_fallback: bool = False) -> OpenAI:
     try:
         import config
         from model_config import (
+            API_CONNECT_TIMEOUT_SECONDS,
+            API_TIMEOUT_SECONDS,
             OPENROUTER_BASE_URL,
             OPENROUTER_HTTP_REFERER,
             OPENROUTER_APP_TITLE,
@@ -152,28 +243,59 @@ def create_chat_client(use_fallback: bool = False) -> OpenAI:
         error(f"Failed to import config: {e}")
         raise
     
+    # Build one factory-owned wall-clock deadline across connect, headers, and
+    # body reads; the HTTPX per-operation timeout alone can be extended by
+    # keep-alive response chunks. Callers must not add parallel per-call bounds.
+    client_timeout = httpx.Timeout(
+        API_TIMEOUT_SECONDS,
+        connect=API_CONNECT_TIMEOUT_SECONDS,
+    )
+    http_client = create_deadline_http_client(
+        timeout=client_timeout,
+        deadline_seconds=API_TIMEOUT_SECONDS,
+    )
+
     # Create client with appropriate configuration
     if is_openrouter:
         api_key = getattr(config, 'OPENROUTER_API_KEY', '')
         debug("Creating OpenRouter client for chat", category="ai_provider")
-        client = OpenAI(
-            api_key=api_key,
-            base_url=OPENROUTER_BASE_URL,
-            default_headers={
-                "HTTP-Referer": OPENROUTER_HTTP_REFERER,
-                "X-Title": OPENROUTER_APP_TITLE
-            }
-        )
-        
-        # Track primary provider selection
-        _fallback_status['primary_provider'] = 'openrouter'
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=OPENROUTER_BASE_URL,
+                timeout=client_timeout,
+                http_client=http_client,
+                default_headers={
+                    "HTTP-Referer": OPENROUTER_HTTP_REFERER,
+                    "X-Title": OPENROUTER_APP_TITLE
+                }
+            )
+        except BaseException:
+            http_client.close()
+            raise
+
+        # Track primary provider selection.  A forced fallback may occur after
+        # a recorded OpenRouter failure; preserve that origin for the existing
+        # once-per-session notification path.
+        if not (use_fallback and _fallback_status.get('primary_provider')):
+            _fallback_status['primary_provider'] = 'openrouter'
         _fallback_status['fallback_provider'] = 'openai'
         
     else:
         api_key = getattr(config, 'OPENAI_API_KEY', '')
         debug("Creating OpenAI client for chat", category="ai_provider")
-        client = OpenAI(api_key=api_key)
-        _fallback_status['primary_provider'] = 'openai'
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                timeout=client_timeout,
+                http_client=http_client,
+            )
+        except BaseException:
+            http_client.close()
+            raise
+        if not (use_fallback and _fallback_status.get('primary_provider')):
+            _fallback_status['primary_provider'] = 'openai'
+        _fallback_status['fallback_provider'] = 'openai'
 
     # SDK transport child loggers may be created during construction. Reapply
     # the policy at this boundary without allowing logging setup to affect the
@@ -265,6 +387,10 @@ def handle_provider_error(error: Exception, context: str = "") -> Dict[str, Any]
     should_fallback = (
         any(err in error_str for err in retryable_errors)
         or isinstance(error, EmptyProviderResponseError)
+        # The OpenAI SDK normalizes httpx timeouts to APITimeoutError with the
+        # message "Request timed out."; classify that exact transient type
+        # without broadening APIConnectionError or other SDK failures.
+        or isinstance(error, APITimeoutError)
     )
     
     result = {
@@ -277,6 +403,7 @@ def handle_provider_error(error: Exception, context: str = "") -> Dict[str, Any]
     
     if should_fallback and not _fallback_status['has_triggered']:
         _fallback_status['has_triggered'] = True
+        _fallback_status['notification_emitted'] = False
         _fallback_status['last_error'] = str(error)
         _fallback_status['fallback_count'] += 1
         
@@ -306,7 +433,8 @@ def reset_fallback_status():
         'primary_provider': None,
         'fallback_provider': None,
         'last_error': None,
-        'fallback_count': 0
+        'fallback_count': 0,
+        'notification_emitted': False,
     }
     debug("Fallback status reset", category="ai_provider")
 
@@ -320,8 +448,12 @@ def get_fallback_notification() -> Optional[str]:
     """
     global _fallback_status
     
-    if (_fallback_status['has_triggered'] and 
-        _fallback_status['primary_provider'] != _fallback_status['fallback_provider']):
+    if (
+        _fallback_status['has_triggered']
+        and not _fallback_status['notification_emitted']
+        and _fallback_status['primary_provider'] != _fallback_status['fallback_provider']
+    ):
+        _fallback_status['notification_emitted'] = True
         return (
             f"[System] AI provider switched from {_fallback_status['primary_provider']} "
             f"to {_fallback_status['fallback_provider']} due to service issue. "
@@ -329,6 +461,122 @@ def get_fallback_notification() -> Optional[str]:
         )
     
     return None
+
+
+def finalize_chat_params(
+    model: str,
+    params: Optional[Dict[str, Any]] = None,
+    temperature: Optional[float] = None,
+    is_openrouter: bool = False,
+    retry_tier: Optional[str] = None,
+    *,
+    task_id: str,
+) -> Dict[str, Any]:
+    """Assemble provider-safe chat completion kwargs.
+
+    ``task_id`` and ``retry_tier`` are factory context only.  They select the
+    direct-OpenAI reasoning policy, but are never forwarded to the SDK.  The
+    profile parameter envelope is normalized here so callers can pass either
+    the legacy nested ``extra_body`` shape or portable profile fields without
+    leaking vendor-only fields to direct OpenAI.
+    """
+    reasoning_model = _is_gpt5_model(model)
+    task_policy = None if reasoning_model else get_task_sampling_policy(task_id)
+    selected_sampling = (
+        task_policy["non_reasoning"]
+        if task_policy is not None
+        else None
+    )
+    source = dict(params or {})
+    source.pop("model", None)
+    source.pop("use_openrouter", None)
+    source.pop("fallback_strategy", None)
+    source.pop("task_id", None)
+    source.pop("retry_tier", None)
+
+    # ``max_tokens`` is the portable facade spelling.  Reasoning-family
+    # OpenAI models require the newer completion-token field; OpenRouter and
+    # legacy models retain the original spelling.  Do this once at the factory
+    # boundary so callers cannot emit both fields or duplicate model kwargs.
+    requested_max_tokens = source.pop("max_tokens", None)
+    if requested_max_tokens is not None and "max_completion_tokens" not in source:
+        source["max_completion_tokens" if _is_gpt5_model(model) else "max_tokens"] = requested_max_tokens
+
+    supplied_extra_body = source.pop("extra_body", None)
+    if isinstance(supplied_extra_body, dict):
+        if set(supplied_extra_body) == {"extra_body"} and isinstance(
+            supplied_extra_body.get("extra_body"), dict
+        ):
+            supplied_extra_body = supplied_extra_body["extra_body"]
+    else:
+        supplied_extra_body = {}
+
+    # Portable extensions are carried by one SDK-compatible extra_body envelope.
+    extra_body = dict(supplied_extra_body)
+    for extension_key in (
+        "provider",
+        "reasoning",
+        "reasoning_effort",
+        "verbosity",
+        "thinking",
+        "plugins",
+    ):
+        extension_value = source.pop(extension_key, None)
+        if extension_value is None:
+            continue
+        if extension_key == "plugins" and isinstance(extra_body.get("plugins"), list):
+            existing_plugins = extra_body["plugins"]
+            incoming_plugins = extension_value if isinstance(extension_value, list) else [extension_value]
+            extra_body["plugins"] = existing_plugins + incoming_plugins
+        elif (
+            extension_key in {"provider", "reasoning"}
+            and isinstance(extra_body.get(extension_key), dict)
+            and isinstance(extension_value, dict)
+        ):
+            merged_extension = dict(extra_body[extension_key])
+            merged_extension.update(extension_value)
+            extra_body[extension_key] = merged_extension
+        else:
+            extra_body[extension_key] = extension_value
+
+    if is_openrouter:
+        source.pop("temperature", None)
+        source.pop("top_p", None)
+        result: Dict[str, Any] = {"model": model}
+        result.update(source)
+        if not reasoning_model:
+            assert selected_sampling is not None
+            result["temperature"] = selected_sampling["temperature"]
+            if "top_p" in selected_sampling:
+                result["top_p"] = selected_sampling["top_p"]
+        if extra_body:
+            result["extra_body"] = extra_body
+        return result
+
+    # TABLETOP MODE: Direct OpenAI must not receive OpenRouter routing lists or
+    # provider/plugin/transform/thinking extensions.
+    source.pop("models", None)
+    source.pop("transforms", None)
+    result = {"model": model}
+    if _is_gpt5_model(model):
+        source.pop("temperature", None)
+        source.pop("top_p", None)
+        result.update(source)
+        result.update(_resolve_gpt5_chat_profile(task_id, retry_tier=retry_tier))
+        # GPT-5-family APIs omit legacy sampling controls by default.  Ignore
+        # any profile values rather than allowing them to override the policy.
+        if GPT5_INCLUDE_LEGACY_TEMPERATURE and temperature is not None:
+            result["temperature"] = temperature
+        return result
+
+    source.pop("temperature", None)
+    source.pop("top_p", None)
+    result.update(source)
+    assert selected_sampling is not None
+    result["temperature"] = selected_sampling["temperature"]
+    if "top_p" in selected_sampling:
+        result["top_p"] = selected_sampling["top_p"]
+    return result
 
 
 def get_provider_status() -> Dict[str, Any]:
@@ -458,6 +706,7 @@ def get_model_config(task_id: str, original_openai_model: Optional[str] = None) 
             **config.get("extra_body", {})
         )
     """
+    # TABLETOP MODE: Legacy profile selection uses the canonical task-tier list.
     try:
         from model_config import (
             LLM_PROVIDER,
@@ -465,7 +714,7 @@ def get_model_config(task_id: str, original_openai_model: Optional[str] = None) 
             OPENROUTER_CHAT_MODEL,
             OPENROUTER_FULL_MODEL,
             OPENROUTER_MINI_MODEL,
-            THINKING_ENABLED_TASKS,
+            COMPLEX_TASKS,
             TASK_OVERRIDES,
             TASK_TEMPERATURES,
         )
@@ -515,7 +764,7 @@ def get_model_config(task_id: str, original_openai_model: Optional[str] = None) 
     # TIER 1: Kimi with thinking toggle (primary strategy)
     if OPENROUTER_STRATEGY == "kimi_thinking":
         # Determine if this is a complex task (thinking enabled) or simple task (thinking disabled)
-        is_complex = task_id in THINKING_ENABLED_TASKS
+        is_complex = task_id in COMPLEX_TASKS
         thinking_mode = "enabled" if is_complex else "disabled"
         
         # Set temperature based on thinking mode
@@ -528,14 +777,14 @@ def get_model_config(task_id: str, original_openai_model: Optional[str] = None) 
         return {
             "model": OPENROUTER_CHAT_MODEL,
             "temperature": temperature,
-            "extra_body": {"thinking": {"type": thinking_mode}},
+            "extra_body": {"extra_body": {"thinking": {"type": thinking_mode}}},
             "use_openrouter": True,
             "fallback_strategy": "dual_model",
         }
     
     # TIER 2: Dual model strategy
     elif OPENROUTER_STRATEGY == "dual_model":
-        is_complex = task_id in THINKING_ENABLED_TASKS
+        is_complex = task_id in COMPLEX_TASKS
         model = OPENROUTER_FULL_MODEL if is_complex else OPENROUTER_MINI_MODEL
         temperature = TASK_TEMPERATURES.get(task_id, 0.7)
         
@@ -568,91 +817,17 @@ def get_chat_completion_params(
     """Return flat Chat Completions kwargs for the resolved model family."""
     model_config = get_model_config(task_id, original_openai_model)
     model = model_config.get("model", original_openai_model or "gpt-4.1-2025-04-14")
-    params: Dict[str, Any] = {"model": model}
-
-    if model_config.get("use_openrouter"):
-        temperature = temperature_override
-        if temperature is None:
-            temperature = model_config.get("temperature")
-        if temperature is not None:
-            params["temperature"] = temperature
-        extra_body = model_config.get("extra_body") or {}
-        params.update(extra_body)
-        return params
-
-    if _is_gpt5_model(model):
-        params.update(_resolve_gpt5_chat_profile(task_id, retry_tier=retry_tier))
-        if GPT5_INCLUDE_LEGACY_TEMPERATURE:
-            temperature = temperature_override
-            if temperature is None:
-                temperature = model_config.get("temperature")
-            if temperature is not None:
-                params["temperature"] = temperature
-        return params
-
     temperature = temperature_override
     if temperature is None:
         temperature = model_config.get("temperature")
-    if temperature is not None:
-        params["temperature"] = temperature
-
-    extra_body = model_config.get("extra_body") or {}
-    params.update(extra_body)
-    return params
-
-
-def is_thinking_enabled(task_id: str) -> bool:
-    """
-    Check if thinking mode is enabled for a task.
-    
-    Args:
-        task_id: Task identifier
-        
-    Returns:
-        True if thinking is enabled, False otherwise
-    """
-    try:
-        from model_config import THINKING_ENABLED_TASKS, LLM_PROVIDER, OPENROUTER_STRATEGY
-        
-        if LLM_PROVIDER != "openrouter" or OPENROUTER_STRATEGY != "kimi_thinking":
-            return False
-        
-        return task_id in THINKING_ENABLED_TASKS
-    except ImportError:
-        return False
-
-
-def get_task_complexity(task_id: str) -> str:
-    """
-    Get the complexity level of a task (full or mini).
-    
-    Args:
-        task_id: Task identifier
-        
-    Returns:
-        "full" for complex tasks, "mini" for simple tasks
-    """
-    try:
-        from model_config import THINKING_ENABLED_TASKS
-        return "full" if task_id in THINKING_ENABLED_TASKS else "mini"
-    except ImportError:
-        return "full"
-
-
-# Convenience function for simple model selection
-def get_model_for_task(task_id: str, original_openai_model: Optional[str] = None) -> str:
-    """
-    Simple function to get just the model name.
-    
-    Args:
-        task_id: Task identifier
-        original_openai_model: Original OpenAI model constant
-        
-    Returns:
-        Model ID string
-    """
-    config = get_model_config(task_id, original_openai_model)
-    return config["model"]
+    return finalize_chat_params(
+        model,
+        params=model_config,
+        temperature=temperature,
+        is_openrouter=bool(model_config.get("use_openrouter")),
+        retry_tier=retry_tier,
+        task_id=task_id,
+    )
 
 
 # ============================================================================

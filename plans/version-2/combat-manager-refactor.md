@@ -1,8 +1,8 @@
 # Combat Manager Refactor Plan (v2) - Latency First, Multi-PC Primary
 
-Status: DRAFT - owner review in progress (interleave approved 2026-09-21; no implementation work until the amended plan is approved)
+Status: APPROVED BUILD OUTLINE - remaining required changes are authorized for artifact creation and verified implementation by the 2026-10-13 eight-change handoff
 Priority: High (combat responsiveness is a product requirement, not a nice-to-have)
-Date: 2026-09-21
+Date: 2026-09-21; coordination updated 2026-10-13
 Owner: Combat systems + tabletop mode
 Supersedes: 2026-02-26 revision of this file (its scope is completed or obsolete; see section 3)
 Related: `adrs/0031-independent-development-fork.md`, `adrs/0032-single-tabletop-runtime.md`, `plans/archive/upstream-merge-0826.md`,
@@ -28,9 +28,9 @@ Execute a full structural refactor of the combat runtime so that:
    decomposition phase. Phase markers, death-save gates, initiative gates, roster
    integrity, and enemy-batch semantics are preserved exactly.
 
-### 1.1 Latency targets (provisional - ratify after Phase 0 baseline)
+### 1.1 Latency targets (ratified in completed Phase 0 baseline)
 
-| Metric | Provisional target |
+| Metric | Ratified target |
 |---|---|
 | PC action turnaround (p50), LLM path | <= 8 s |
 | PC action turnaround (p50), deterministic fast path | < 1 s |
@@ -40,8 +40,12 @@ Execute a full structural refactor of the combat runtime so that:
 | File writes per combat turn | <= 3 |
 | Per-round latency (4 PCs + enemy batch) | improve >= 30% vs baseline |
 
-Targets are provisional because no trustworthy baseline exists yet. Phase 0 measures
-first; the owner ratifies or adjusts targets before Phase 2 proceeds.
+The completed baseline at
+`openspec/changes/archive/2026-09-22-combat-latency-baseline/design.md` records G1
+satisfied and these targets retained. Its captures used `gpt-5.6-luna`; preserve
+that identity. The approved `gpt-6-luna` model refresh requires a current-model
+pre-optimization reference inside `combat-latency-hot-path` for comparable
+before/after measurements, not another baseline change or candidate bake-off.
 
 ---
 
@@ -106,19 +110,27 @@ needed because this section records the delta. The old revision remains in git h
 
 `plans/version-2/openrouter_llm_router_architecture.md` changes how every combat
 provider call is made: its Phase 2 Tier 1 migrates the 9 `combat_manager.py` call sites
-to `llm.call()`, one task id per call site. The two plans share a file, so their order is
-fixed by owner decision (2026-09-21) as follows. The execution mapping onto OpenSpec
-changes and gates is tracked in `plans/combat-openrouter-alignment.md`.
+to `llm.call()`, one task id per call site (re-inventory the historical site count
+during authoring). The completed baseline is reused. Owner decisions on
+2026-10-13 select configurable `openrouter/auto` for narrator/combat/Titan,
+`gpt-6-luna` for direct OpenAI, and accept live candidate bake-off completion.
+The remaining eight-change order and gates are tracked in
+`plans/combat-openrouter-alignment.md`.
 
 | Step | Work | Change owner |
 |---|---|---|
-| 1 | Combat Phase 0 latency baseline and turn trace | this plan |
-| 2 | Router Phase 0 (config/factory) + Phase 1 (facade, bake-off) | router plan |
-| 3 | Combat Phase 1 decomposition into `core/combat/` | this plan |
-| 4 | Router Phase 2 Tier 1 migration: combat trio, `main.py`, `action_handler.py` | router plan |
-| 5 | Combat Phase 2 latency hot path | this plan |
-| 6 | Router Phase 2 remaining tiers + Phase 3 cleanup | router plan |
-| 7 | Combat Phase 3 hardening (may overlap step 6) | this plan |
+| Completed | Combat Phase 0 latency baseline and turn trace (G1) | this plan |
+| 1 | Router config/factory/facade; live candidate acceptance already PASS | router plan |
+| 2 | Combat decomposition into `core/combat/` | this plan |
+| 3 | Core router migration: combat stages, `main.py`, `action_handler.py` | router plan |
+| 4 | Combat latency hot path with current-model reference | this plan |
+| 5 | Remaining production chat migration, including action predictor | router plan |
+| 6 | Combat single commit and turn receipts | this plan |
+| 7 | OpenRouter activation and isolated live integration/rollback | router plan |
+| 8 | `llm-router-cleanup` | router plan |
+
+`combat-typed-resolver-expansion` remains optional follow-on work and does not
+block this sequence. Image/audio cutover, new Titan runtime, and Jev are separate.
 
 Three consequences are folded into the phases below:
 
@@ -129,9 +141,9 @@ Three consequences are folded into the phases below:
 2. **Decomposition precedes migration.** The router migrates named stage calls instead of
    editing inside a 2,492-line function, which is the cheapest risk reduction for the
    router's highest-traffic Tier 1 target.
-3. **The baseline is captured before the model swap.** Phase 0 measures the current
-   OpenAI stack; a baseline taken after the router/model change would confound model and
-   structure.
+3. **Model and structure measurements stay distinct.** Archived G1 remains the
+   historical baseline; Phase 2 captures a `gpt-6-luna` pre-optimization reference
+   before comparing structural improvements on equivalent fixtures.
 
 **Decision-primitive (Jev) position.** The router's `llm.decide()` primitive is gated:
 the Phase 0 eval failed its promotion gate (0.677/0.704 agreement, 23-29% false-negative
@@ -250,7 +262,7 @@ tests may stay on the shim paths until their ownership moves.
 - ~10 importers total means shims fully absorb the move with zero runtime risk.
 - Alternative considered: `core/managers/combat/` keeps the manager namespace but nests
   managers inside managers and leaves combat split across sibling files. Rejected as the
-  weaker fit (see open decision D1).
+  weaker fit (D1 confirmed 2026-09-21).
 
 ---
 
@@ -286,13 +298,30 @@ Exit criteria:
 
 Behavior-preserving. No prompt changes. No rules changes.
 
+Narrow approved exception: the dynamic validation context and strictly necessary
+explanatory validation instructions may distinguish committed Python state from
+uncommitted candidate changes/operations. Candidate-derived `touchedChanges` and
+candidate `ALREADY_APPLIED` assertions are never proof or authoritative truth-pack
+state; independently established genuine prior applied events remain trusted.
+Static prompt assets, unrelated dynamic prompt/context bytes, frozen baseline
+goldens/history, and extraction parity outside this named correction remain
+unchanged. This exception changes no schema, public return, mechanics, ordering,
+retry, provider, or fail-open policy and does not implement G7. The eight-change
+rollout gates remain unchanged; the decomposition OpenSpec owns exact task/test
+acceptance.
+
 Deliverables:
 
 1. `core/combat/` package created with the layout in section 5; shims in place.
-2. `_run_combat_simulation_internal` split into 9 stage functions: input/phase gate ->
-   fast-lane commands -> PC-action decision seam -> head-context/prompt assembly ->
-   provider call and retry ladder -> validation -> action apply and commit -> phase/turn
-   transitions -> narration and output.
+2. `_run_combat_simulation_internal` exposes 9 named responsibility stages: input/phase
+   gate, fast-lane commands, PC-action decision seam, head-context/prompt assembly,
+   provider call and retry ladder, validation, action apply/commit, phase/turn transitions,
+   and narration/output. This logical handoff list does not prescribe physical call order.
+   Phase 1 preserves the validated legacy sequence: round metadata/phase preparation and
+   save/compress; narration print/flush; immediate encounter actions and queued character
+   updates; post-batch phase/turn-queue bookkeeping; consolidated character updates.
+   Stage owners may have pre/post substeps at those existing call points; narration/output
+   remains at the legacy publication point, not a forced final stage.
 3. `CombatSession` owns encounter, manager, history, active PC, and phase; mutable
    globals and literal `conversation_history[N]` rewrites are removed (payload is built
    from state instead of mutated into history).
@@ -312,6 +341,12 @@ Deliverables:
    not a PC action) from `unavailable` (no decision available); both fall through to the
    LLM path today while remaining distinct in telemetry. Provider-call budget assertions
    are upper bounds (`<=`), never exact equality.
+7. G3 capture prerequisites: extend the existing sandbox seeder, driver and
+   fixture/report helpers with bounded named initiative, death-save, exit and
+   completed-turn resume-replay cases plus expected/observed evidence checks.
+   These are test-tooling tasks in the same decomposition change, not a new
+   runtime feature or generalized capture framework. Preserve default latency
+   scripts and leave the final live verdict to the primary orchestrator.
 
 Exit criteria:
 
@@ -321,6 +356,10 @@ Exit criteria:
 - Prompt text byte-identical (diff-verified).
 - 1-PC party and multi-PC party smoke pass; phase markers, death saves, initiative gate, roster integrity,
   enemy batch, surrender/exit, and resume replay all verified.
+- Primary-owned G3 Capture_Arena matrix PASS for both party shapes, using the
+  runbook and `plans/combat-openrouter-alignment.md` coverage/evidence contract.
+  Named cases and tooling tests precede live execution; driver exit 0, missing
+  scenarios or degraded required evidence do not complete the gate.
 - Line counts: `combat_manager.py` shim < 100 lines; no single function > 600 lines.
 - Decision-seam status contract asserted in tests (`declined` vs `unavailable`), with
   provider-call budgets written as upper bounds.
@@ -379,6 +418,10 @@ Exit criteria:
 - Provider calls per uncontested PC action reduced to the ratified target
   (provisional: <= 1 on the fast path, <= 2 on the LLM path).
 - Validation skip rate and NL fast-path hit rate reported with telemetry.
+- The primary captures equivalent current-model/provider/seed scripts before
+  optimization and after changes under distinct G5 run directories. Preserve
+  quiet-window versus work-only timing and per-action/batch call/write evidence;
+  keep archived G1 identity unchanged and do not rerun the accepted bake-off.
 - All combat suites still green.
 
 ### Phase 3 - Structural hardening (`combat-turn-commit-and-receipts`, optional `combat-typed-resolver-expansion`)
@@ -388,8 +431,10 @@ Behavior-reviewed (not byte-identical) hardening that locks in latency wins.
 Deliverables:
 
 1. Single commit path: stage events, write character files, then write the encounter
-   last; persist turn receipts and applied IDs; make resume idempotent on replay
-   (formalizes the existing resume replay guards).
+   last; perform post-commit phase work and publish success only after the commit;
+   persist turn receipts and applied IDs; make resume idempotent on replay (formalizes
+   the existing resume replay guards). This is a reviewed ordering change owned by G7,
+   not Phase 1/G3 decomposition.
 2. Consolidate code-owned round advancement: existing round-start markers
    (`roundStartsWith`, opening-batch flags) become the single authority; the LLM
    narrates outcomes only.
@@ -404,12 +449,27 @@ Exit criteria:
 - Crash/restart mid-turn converges with no duplicate mechanics (idempotence verified).
 - Round advancement cannot be driven by prose.
 - All suites green; 1-PC party and multi-PC party smoke pass.
+- Primary-owned G7 restart captures include completed-turn replay and controlled
+  interruptions at the character-first/encounter-last commit, post-commit phase-work,
+  and success-publication boundaries, with state retained across restart (no reseeding),
+  receipt/applied-ID snapshots and no duplicate mechanical/reward effects. G7 owning
+  artifacts MUST define the intended sequence and failure/replay observations before
+  implementation. Follow the shared rollout matrix and record every required verdict.
 
 ---
 
 ## 7) Multi-PC compliance gate
 
 Every phase closes against this gate. A phase fails if any item regresses.
+
+Live evidence is executed and judged by the primary after focused tests using
+the Capture_Arena skill. Use only a real `tmp/combat_capture/` copy on port 8360,
+the repository venv and `NEQ_OPEN_BROWSER=0`; preserve labelled per-gate/run
+transcript/trace/report/state/assertion bundles before teardown. Record
+PASS/FAIL/BLOCKED with expected/observed checks in OpenSpec and the goal plan;
+missing required coverage cannot pass. Builders may repair the rig or runtime,
+but their summaries do not substitute for primary-owned capture evidence.
+Guideline updates do not resume a paused rollout.
 
 Correctness invariants:
 
@@ -509,8 +569,10 @@ combat changes 1 and 2; the router's Phase 2 Tier 1 combat migration executes be
 combat changes 2 and 3; the router's remaining migration executes alongside combat
 changes 4-5.
 
-Build order decision (D4, decided 2026-09-21): author all five combat OpenSpec artifacts
-first, then execute in the sequence above with planner verification between phases.
+Build order decision (D4): baseline-first authoring reached G1. The 2026-10-13
+handoff now authors required missing artifacts before each owning implementation
+and executes the eight-change sequence through router cleanup. Optional resolver
+artifacts are not a prerequisite; completed baseline work is not reopened.
 
 Future Jev changes (`jev-decisions-primitive`, `jev-action-predictor-promotion`,
 `jev-combat-validator-residual`) are owned by the router plan's Workstream C and remain
@@ -522,10 +584,10 @@ gated; they plug into the seams created here and are not part of this plan's bui
 
 | ID | Decision | Status |
 |---|---|---|
-| D1 | Package location | Recommended: `core/combat/` with `core/combat/multi_pc/` and shims at the old `core/managers/` paths. Alternative: `core/managers/combat/`. Pending owner confirmation. |
-| D2 | Latency targets | Accepted (2026-09-21): provisional targets in section 1.1, ratified after the Phase 0 baseline. |
+| D1 | Package location | Confirmed (2026-09-21): `core/combat/` with `core/combat/multi_pc/` and old-path shims. |
+| D2 | Latency targets | Ratified in archived G1 baseline; retained in section 1.1. Preserve model-labelled evidence and capture current-model reference within hot-path work. |
 | D3 | Scope confirmations | Amended (2026-09-21): NL fast-path canary confirmed in Phase 2; per-call timeout completion delegated to the router's client-level timeout (section 3.1). |
-| D4 | Build order | Decided (2026-09-21): author all five combat artifacts first, then execute in the interleaved order of section 3.1 with planner verification between phases. |
+| D4 | Build order | Updated (2026-10-13): baseline complete; author missing required changes before their implementation and verify the eight-change sequence in section 3.1 through `llm-router-cleanup`. Optional resolver is outside the required goal. |
 | D5 | Subagent execution | `openspec-builder-heavy` is manual-invocation-only; otherwise use the standard OpenSpec build loop with planner verification per task. |
 | D6 | Decision-seam placement | Decided (2026-09-21): fold contract-level seams into the owning phases (Phase 0 trace events, Phase 1 `decisions.py`, Phase 2 `decide_validation_routing()`); no separate pre-Jev change. |
 

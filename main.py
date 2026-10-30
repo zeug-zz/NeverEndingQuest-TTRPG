@@ -93,6 +93,7 @@ from utils.encoding_utils import (
 )
 from utils.session_cleanup import cleanup_history_files, remove_stale_resume_recaps
 from utils.combat_summary_history import build_historical_combat_summary_message
+from utils.combat_latency_trace import trace_combat_exit_complete
 
 # Import token tracking
 try:
@@ -139,6 +140,8 @@ from utils.character_creator import (
 from utils import pc_manager
 from utils.save_roll_contract import calculate_concentration_dc
 from model_config import NARRATOR_API_TIMEOUT_SECONDS
+from utils.llm_router import GameLLMTerminalError, llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Import new manager modules
 from core.managers import location_manager
@@ -200,16 +203,15 @@ from config import (
     DM_VALIDATION_MODEL,
 )
 
+# TABLETOP MODE: Main does not use the factory's model-display helper.
 # Initialize AI client using factory (supports OpenAI and OpenRouter)
 from utils.ai_client_factory import (
     create_chat_client,
     reset_fallback_status,
-    get_chat_model_name,
     get_chat_completion_params,
     handle_provider_error,
 )
 
-reset_fallback_status()  # Reset fallback tracking at module load
 client = create_chat_client()
 
 # LocationGraph will be initialized inside main() after modules are integrated
@@ -429,49 +431,27 @@ def generate_arrival_narration(
     ]
 
     try:
-        response = client.chat.completions.create(
+        observer = make_legacy_receipt_observer(
+            endpoint_name="narration_generator",
             messages=narration_request_messages,
-            timeout=NARRATOR_API_TIMEOUT_SECONDS,
-            **get_chat_completion_params(
-                "dm_main",
-                DM_MAIN_MODEL,  # Use the main model for high-quality narration
-                temperature_override=TEMPERATURE,
-            ),
+            track_usage=USAGE_TRACKING_AVAILABLE,
+            api_log_before_tracker=True,
+            legacy_context={
+                "endpoint": "narration_generator",
+                "purpose": "generate_narrative_summary",
+                "temperature": TEMPERATURE,
+                "context": "module_transition_arrival",
+            },
+        )
+        arrival_text = llm.call(
+            task="dm_main",
+            messages=narration_request_messages,
+            json_output=False,
+            temperature=TEMPERATURE,
+            observer=observer,
         )
 
-        # Log API call to master log
-        try:
-            from utils.api_logger import log_api_call
-
-            log_api_call(
-                "narration_generator",
-                narration_request_messages,
-                response,
-                metadata={
-                    "temperature": TEMPERATURE,
-                    "context": "module_transition_arrival",
-                },
-            )
-        except Exception as e:
-            print(f"[API_LOG] Warning: Failed to log narration call: {e}")
-
-        # Track token usage with context for telemetry
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                from utils.openai_usage_tracker import get_global_tracker
-
-                tracker = get_global_tracker()
-                tracker.track(
-                    response,
-                    context={
-                        "endpoint": "narration_generator",
-                        "purpose": "generate_narrative_summary",
-                    },
-                )
-            except:
-                pass
-
-        arrival_text = response.choices[0].message.content.strip()
+        arrival_text = arrival_text.strip()
 
         # Sometimes the AI will still wrap its response in a JSON object. We need to handle that.
         try:
@@ -486,6 +466,8 @@ def generate_arrival_narration(
             category="narrative_generation",
         )
         return sanitize_text(arrival_text)
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         error(
             f"FAILURE: Failed to generate arrival narration",
@@ -536,7 +518,8 @@ Now, provide the rewritten, seamless narration.
 """
 
     try:
-        response = client.chat.completions.create(
+        observer = make_legacy_receipt_observer(
+            endpoint_name="narrative_stitcher",
             messages=[
                 {
                     "role": "system",
@@ -544,58 +527,37 @@ Now, provide the rewritten, seamless narration.
                 },
                 {"role": "user", "content": stitching_prompt},
             ],
-            timeout=NARRATOR_API_TIMEOUT_SECONDS,
-            **get_chat_completion_params(
-                "dm_main",
-                DM_MAIN_MODEL,  # Use the main model for high-quality writing
-                temperature_override=TEMPERATURE,
-            ),
+            track_usage=USAGE_TRACKING_AVAILABLE,
+            api_log_before_tracker=True,
+            legacy_context={
+                "endpoint": "narrative_stitching",
+                "purpose": "stitch_location_descriptions",
+                "temperature": TEMPERATURE,
+                "context": "module_transition_stitch",
+            },
+        )
+        seamless_narration = llm.call(
+            task="dm_main",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a master storyteller and editor, skilled at weaving separate narrative fragments into a single, seamless, and immersive piece of prose.",
+                },
+                {"role": "user", "content": stitching_prompt},
+            ],
+            json_output=False,
+            temperature=TEMPERATURE,
+            observer=observer,
         )
 
-        # Log API call to master log
-        try:
-            from utils.api_logger import log_api_call
-
-            log_api_call(
-                "narrative_stitcher",
-                [
-                    {
-                        "role": "system",
-                        "content": "You are a master storyteller and editor, skilled at weaving separate narrative fragments into a single, seamless, and immersive piece of prose.",
-                    },
-                    {"role": "user", "content": stitching_prompt},
-                ],
-                response,
-                metadata={
-                    "temperature": TEMPERATURE,
-                    "context": "module_transition_stitch",
-                },
-            )
-        except Exception as e:
-            print(f"[API_LOG] Warning: Failed to log stitcher call: {e}")
-
-        # Track token usage with context for telemetry
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                from utils.openai_usage_tracker import get_global_tracker
-
-                tracker = get_global_tracker()
-                tracker.track(
-                    response,
-                    context={
-                        "endpoint": "narrative_stitching",
-                        "purpose": "stitch_location_descriptions",
-                    },
-                )
-            except:
-                pass
-
-        seamless_narration = response.choices[0].message.content.strip()
+        seamless_narration = seamless_narration.strip()
         debug(
             "SUCCESS: Seamless narration generated successfully.",
             category="narrative_generation",
         )
         return sanitize_text(seamless_narration)
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         error(
             f"FAILURE: Failed to generate seamless transition narration",
@@ -2935,49 +2897,45 @@ def validate_ai_response(
 
     max_validation_retries = 3
     for attempt in range(max_validation_retries):
-        validation_result = client.chat.completions.create(
+        validation_resolved_model = None
+        legacy_observer = make_legacy_receipt_observer(
+            endpoint_name="validation",
             messages=validation_messages_to_send,
-            timeout=NARRATOR_API_TIMEOUT_SECONDS,
-            **get_chat_completion_params(
-                "dm_validation",
-                DM_VALIDATION_MODEL,  # Use imported model name
-                temperature_override=0.1,  # Low temperature for consistent validation
-            ),
+            legacy_context={
+                "endpoint": "validation",
+                "purpose": "validate_dm_response",
+                "attempt": attempt + 1,
+                "max_retries": max_validation_retries,
+            },
+            trace_site="main_validation",
+            track_usage=USAGE_TRACKING_AVAILABLE,
+            api_log_before_tracker=True,
         )
 
-        # Log API call to master log
+        def validation_receipt_observer(receipt, raw_response):
+            nonlocal validation_resolved_model
+            validation_resolved_model = getattr(receipt, "resolved_model", None)
+            legacy_observer(receipt, raw_response)
+
         try:
-            from utils.api_logger import log_api_call
-
-            log_api_call(
-                "validation",
-                validation_messages_to_send,
-                validation_result,
-                metadata={
-                    "attempt": attempt + 1,
-                    "max_retries": max_validation_retries,
-                },
+            # TABLETOP MODE: Validation owns JSON parsing; request JSON mode only for Auto.
+            raw_validation_response = llm.call(
+                task="dm_validation",
+                messages=validation_messages_to_send,
+                json_output=False,
+                json_contract=True,
+                temperature=0.1,
+                observer=validation_receipt_observer,
             )
-        except Exception as e:
-            print(f"[API_LOG] Warning: Failed to log validation call: {e}")
-
-        # Track token usage with context for telemetry
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                from utils.openai_usage_tracker import get_global_tracker
-
-                tracker = get_global_tracker()
-                tracker.track(
-                    validation_result,
-                    context={
-                        "endpoint": "validation",
-                        "purpose": "validate_dm_response",
-                    },
-                )
-            except:
-                pass
-
-        validation_response = validation_result.choices[0].message.content.strip()
+            # TABLETOP MODE: Empty/non-text validator content follows the
+            # existing bounded invalid-JSON retry and fail-open path.
+            validation_response = (
+                raw_validation_response.strip()
+                if isinstance(raw_validation_response, str)
+                else ""
+            )
+        except GameLLMTerminalError:
+            raise
 
         try:
             validation_json = parse_json_safely(validation_response)
@@ -3006,7 +2964,7 @@ def validate_ai_response(
                         "raw_response": validation_response,
                     },
                     "attempt": attempt + 1,
-                    "model_used": DM_VALIDATION_MODEL,
+                    "model_used": validation_resolved_model or "unknown",
                 }
 
                 # Append to validation pairs log
@@ -3618,10 +3576,6 @@ def generate_module_summary(
         # If we have substantial conversation, generate AI summary from actual gameplay
         if len(meaningful_messages) >= 3:
             try:
-                # Generate summary using AI client factory (OpenAI/OpenRouter)
-                summary_client = create_chat_client()
-                summary_model = get_chat_model_name()
-
                 # Prepare conversation for summarization
                 conversation_text = ""
                 for (
@@ -3649,83 +3603,39 @@ ACTUAL GAMEPLAY CONVERSATION:
 
 Write a compelling chronicle of these actual events:"""
 
+                summary_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are an expert at creating beautiful adventure chronicles from 5th edition gameplay, focusing only on events that actually occurred.",
+                    },
+                    {"role": "user", "content": summary_prompt},
+                ]
+
                 try:
-                    response = summary_client.chat.completions.create(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are an expert at creating beautiful adventure chronicles from 5th edition gameplay, focusing only on events that actually occurred.",
-                            },
-                            {"role": "user", "content": summary_prompt},
-                        ],
-                        timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                        **get_chat_completion_params(
-                            "summaries",
-                            summary_model,
-                            temperature_override=0.7,
-                        ),
+                    # TABLETOP MODE: G10 provenance is a fixed capture-only source label.
+                    observer = make_legacy_receipt_observer(
+                        endpoint_name="module_summary",
+                        messages=summary_messages,
+                        legacy_context={
+                            "endpoint": "module_summary",
+                            "purpose": "generate_module_summary",
+                            "module": module_name,
+                            "temperature": 0.7,
+                        },
+                        g10_source_id="main.py:generate_module_summary",
+                        track_usage=USAGE_TRACKING_AVAILABLE,
+                        api_log_before_tracker=True,
                     )
-                except Exception as api_error:
-                    error_result = handle_provider_error(
-                        api_error, context="Module summary generation"
+                    response_text = llm.call(
+                        task="summaries",
+                        messages=summary_messages,
+                        json_output=False,
+                        temperature=0.7,
+                        observer=observer,
                     )
-                    if error_result["should_fallback"]:
-                        fallback_client = create_chat_client(use_fallback=True)
-                        response = fallback_client.chat.completions.create(
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": "You are an expert at creating beautiful adventure chronicles from 5th edition gameplay, focusing only on events that actually occurred.",
-                                },
-                                {"role": "user", "content": summary_prompt},
-                            ],
-                            timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                            **get_chat_completion_params(
-                                "summaries",
-                                DM_SUMMARIZATION_MODEL,
-                                temperature_override=0.7,
-                            ),
-                        )
-                    else:
-                        raise
-
-                # Log API call to master log
-                try:
-                    from utils.api_logger import log_api_call
-
-                    log_api_call(
-                        "module_summary",
-                        [
-                            {
-                                "role": "system",
-                                "content": "You are an expert at creating beautiful adventure chronicles from 5th edition gameplay, focusing only on events that actually occurred.",
-                            },
-                            {"role": "user", "content": summary_prompt},
-                        ],
-                        response,
-                        metadata={"temperature": 0.7, "module": module_name},
-                    )
-                except Exception as e:
-                    print(f"[API_LOG] Warning: Failed to log summary call: {e}")
-
-                # Track token usage with context for telemetry
-                if USAGE_TRACKING_AVAILABLE:
-                    try:
-                        from utils.openai_usage_tracker import get_global_tracker
-
-                        tracker = get_global_tracker()
-                        tracker.track(
-                            response,
-                            context={
-                                "endpoint": "module_summary",
-                                "purpose": "generate_module_summary",
-                                "module": module_name,
-                            },
-                        )
-                    except:
-                        pass
-
-                ai_summary = response.choices[0].message.content.strip()
+                except GameLLMTerminalError:
+                    raise
+                ai_summary = response_text.strip()
                 formatted_summary = f"=== MODULE SUMMARY ===\n\n{module_name}:\n------------------------------\n{ai_summary}"
                 debug(
                     f"SUCCESS: Generated AI summary from actual conversation for {module_name}",
@@ -3733,6 +3643,8 @@ Write a compelling chronicle of these actual events:"""
                 )
                 return formatted_summary
 
+            except GameLLMTerminalError:
+                raise
             except Exception as e:
                 warning(
                     f"FAILURE: Error generating AI summary from conversation, using fallback",
@@ -3744,6 +3656,8 @@ Write a compelling chronicle of these actual events:"""
             category="summary_building",
         )
 
+    except GameLLMTerminalError:
+        raise
     except Exception as e:
         error(
             f"FAILURE: Error processing conversation for summary, using fallback",
@@ -4600,12 +4514,14 @@ def process_ai_response(
                 # Process the AI's post-combat response by calling this function again (recursively).
                 # This ensures the post-combat narration is handled just like any other turn,
                 # maintaining consistency in how we process AI responses.
-                return process_ai_response(
+                post_combat_result = process_ai_response(
                     ai_response_after_combat,
                     party_tracker_data,
                     location_data,
                     post_combat_history,
                 )
+                trace_combat_exit_complete()
+                return post_combat_result
             # --- END SIGNAL-BASED SUB-SYSTEM CONTROL ---
 
             # C1.3: Handle explicit error status from action processing (e.g., encounter init failure)
@@ -5082,16 +4998,9 @@ def get_ai_response(
     )
     from config import USE_GPT5_MODELS, GPT5_MINI_MODEL, GPT5_FULL_MODEL
 
-    # Import provider factory for multi-provider support
-    from utils.ai_client_factory import (
-        get_chat_model_name,
-        handle_provider_error,
-        get_fallback_notification,
-        create_chat_client,
-    )
-
-    # Fork-native provider response recovery (bounded empty-completion retry)
-    from utils.provider_response_recovery import request_chat_completion_with_recovery
+    from utils.ai_client_factory import get_fallback_notification
+    from utils.llm_router import GameLLMTerminalError, llm
+    from utils.llm_runtime import make_legacy_receipt_observer
 
     # Load current scene state for payload hygiene and routing decisions.
     party_tracker_data = load_json_file("party_tracker.json") or {}
@@ -5156,7 +5065,7 @@ def get_ai_response(
 
     # Track model selection decision for quality control
     print(
-        f"DEBUG: Logging model selection - model={selected_model}, retry={validation_retry_count}"
+        f"DEBUG: Logging legacy model hint={selected_model}, retry={validation_retry_count}"
     )
     try:
         os.makedirs("debug/quality_control", exist_ok=True)
@@ -5166,7 +5075,7 @@ def get_ai_response(
             "prediction": prediction
             if validation_retry_count == 0 and not has_module_creation_prompt
             else None,
-            "selected_model": selected_model,
+            "legacy_selected_model_hint": selected_model,
             "routing_reason": prediction.get(
                 "reason", "Validation retry or module creation"
             )
@@ -5323,163 +5232,93 @@ def get_ai_response(
         f"DEBUG: [MAIN CONVERSATION] Exported conversation messages to main_conversation_messages_to_api.json"
     )
 
-    # Generate response with selected model
-    # Get provider-aware model name (supports OpenRouter and OpenAI)
-    provider_model = get_chat_model_name()
-    debug(
-        f"Using AI model: {provider_model} (selected_model: {selected_model})",
-        category="ai_provider",
-    )
-
+    # Preserve the GPT-family parameter behavior while leaving model selection
+    # to the router profiles; do not forward the legacy model-name override.
     if USE_GPT5_MODELS:
-        # GPT-5: Always use mini, no temperature/max_tokens
         selected_model = GPT5_MINI_MODEL
-
-        # Handle retry logic for GPT-5 - switch to full model after failures
         if validation_retry_count >= 4:
             selected_model = GPT5_FULL_MODEL
             print(
                 f"DEBUG: GPT-5 - Switching to full model after {validation_retry_count} retries"
             )
 
-        print(f"DEBUG: [MAIN.PY] Using GPT-5 model: {selected_model}")
+        print(f"DEBUG: [MAIN.PY] Legacy GPT-5 model hint: {selected_model}")
 
-        try:
-            response = request_chat_completion_with_recovery(
-                client,
-                messages=messages_to_send,  # Use potentially compressed messages
-                timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                request_params=get_chat_completion_params("dm_main", selected_model),
-                context="DM response generation (GPT-5)",
-            )
-        except Exception as api_error:
-            # Check if we should fallback to OpenAI
-            error_result = handle_provider_error(
-                api_error, context="DM response generation (GPT-5)"
-            )
-
-            if error_result["should_fallback"]:
-                warning(
-                    f"Falling back to OpenAI due to error: {api_error}",
-                    category="ai_provider",
-                )
-                fallback_client = create_chat_client(use_fallback=True)
-
-                # Retry with fallback client using OpenAI model
-                response = request_chat_completion_with_recovery(
-                    fallback_client,
-                    messages=messages_to_send,
-                    timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                    request_params=get_chat_completion_params("dm_main", GPT5_MINI_MODEL),
-                    context="DM response generation fallback (GPT-5)",
-                )
-
-                # Check for fallback notification
-                fallback_msg = get_fallback_notification()
-                if fallback_msg:
-                    messages_to_send.append({"role": "system", "content": fallback_msg})
-            else:
-                raise
-
-        # Log API call to master log
-        try:
-            from utils.api_logger import log_api_call
-
-            log_api_call(
-                "main_dm",
-                messages_to_send,
-                response,
-                metadata={"retry_count": validation_retry_count, "branch": "gpt5"},
-            )
-        except Exception as e:
-            print(f"[API_LOG] Warning: Failed to log main DM call: {e}")
-
-        # Track token usage
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
+        legacy_context = {
+            "endpoint": "main_dm",
+            "purpose": "primary_game_response",
+            "retry_count": validation_retry_count,
+            "branch": "gpt5",
+        }
+        call_options = {}
     else:
-        # GPT-4.1 or OpenRouter: Use existing logic with temperature
-        # Use provider-aware model if different from selected_model
-        actual_model = (
-            provider_model if provider_model != selected_model else selected_model
+        legacy_context = {
+            "endpoint": "main_dm",
+            "purpose": "primary_game_response",
+            "retry_count": validation_retry_count,
+            "branch": "gpt4.1",
+            "temperature": TEMPERATURE,
+        }
+        call_options = {"temperature": TEMPERATURE}
+
+    observed_receipts = []
+    legacy_observer = make_legacy_receipt_observer(
+        endpoint_name="main_dm",
+        messages=messages_to_send,
+        legacy_context=legacy_context,
+        trace_site="main_dm",
+        track_usage=USAGE_TRACKING_AVAILABLE,
+        api_log_before_tracker=USE_GPT5_MODELS,
+    )
+
+    def observe_main_attempt(receipt, raw_response):
+        if getattr(receipt, "kind", None) == "response":
+            observed_receipts.append(
+                {
+                    "requested_model": getattr(receipt, "requested_model", None),
+                    "resolved_model": getattr(receipt, "resolved_model", None),
+                    "cost_usd": getattr(receipt, "cost_usd", None),
+                    "cost_provenance": getattr(receipt, "cost_provenance", None),
+                    "cost_complete": getattr(receipt, "cost_complete", None),
+                }
+            )
+        legacy_observer(receipt, raw_response)
+
+    # This approved tier hint replaces the competing legacy raw-model override.
+    # Predictor/retry/module-creation choices are retained as simple/complex;
+    # profiles and direct TASK_OVERRIDES remain the authoritative model policy.
+    model_tier = (
+        "simple"
+        if ENABLE_INTELLIGENT_ROUTING
+        and validation_retry_count == 0
+        and not has_module_creation_prompt
+        and not prediction["requires_actions"]
+        else "complex"
+    )
+    try:
+        # TABLETOP MODE: The main DM action envelope is parsed by the downstream handler.
+        content = llm.call(
+            task="dm_main",
+            messages=messages_to_send,
+            json_output=False,
+            json_contract=True,
+            empty_retry_limit=2,
+            model_tier=model_tier,
+            observer=observe_main_attempt,
+            **call_options,
         )
-        print(f"DEBUG: [MAIN.PY] Using model: {actual_model}")
+    except GameLLMTerminalError:
+        raise
 
-        try:
-            response = request_chat_completion_with_recovery(
-                client,
-                messages=messages_to_send,  # Use potentially compressed messages
-                timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                request_params=get_chat_completion_params("dm_main", actual_model, temperature_override=TEMPERATURE),
-                context="DM response generation (GPT-4.1/OpenRouter)",
-            )
-        except Exception as api_error:
-            # Check if we should fallback to OpenAI
-            error_result = handle_provider_error(
-                api_error, context="DM response generation (GPT-4.1/OpenRouter)"
-            )
-
-            if error_result["should_fallback"]:
-                warning(
-                    f"Falling back to OpenAI due to error: {api_error}",
-                    category="ai_provider",
-                )
-                fallback_client = create_chat_client(use_fallback=True)
-
-                # Retry with fallback client using OpenAI model
-                response = request_chat_completion_with_recovery(
-                    fallback_client,
-                    messages=messages_to_send,
-                    timeout=NARRATOR_API_TIMEOUT_SECONDS,
-                    # Use original selected_model for fallback
-                    request_params=get_chat_completion_params("dm_main", selected_model, temperature_override=TEMPERATURE),
-                    context="DM response generation fallback (GPT-4.1/OpenRouter)",
-                )
-
-                # Check for fallback notification
-                fallback_msg = get_fallback_notification()
-                if fallback_msg:
-                    messages_to_send.append({"role": "system", "content": fallback_msg})
-            else:
-                raise
-
-        # Log API call to master log
-        try:
-            from utils.api_logger import log_api_call
-
-            log_api_call(
-                "main_dm",
-                messages_to_send,
-                response,
-                metadata={
-                    "temperature": TEMPERATURE,
-                    "retry_count": validation_retry_count,
-                    "branch": "gpt4.1",
-                },
-            )
-        except Exception as e:
-            print(f"[API_LOG] Warning: Failed to log main DM call: {e}")
-
-        # Track token usage with context for telemetry
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                from utils.openai_usage_tracker import get_global_tracker
-
-                tracker = get_global_tracker()
-                tracker.track(
-                    response,
-                    context={
-                        "endpoint": "main_dm",
-                        "purpose": "primary_game_response",
-                        "model": actual_model,
-                    },
-                )
-            except:
-                pass
-    content = response.choices[0].message.content.strip()
+    if USE_GPT5_MODELS:
+        fallback_msg = get_fallback_notification()
+        if fallback_msg:
+            messages_to_send.append({"role": "system", "content": fallback_msg})
+    else:
+        fallback_msg = get_fallback_notification()
+        if fallback_msg:
+            messages_to_send.append({"role": "system", "content": fallback_msg})
+    content = content.strip()
 
     # Extract actual actions from the response for accuracy tracking (only on initial attempt)
     if validation_retry_count == 0:
@@ -5493,7 +5332,20 @@ def get_ai_response(
             model_result_record = {
                 "timestamp": datetime.now().isoformat(),
                 "user_input": user_input[:200],
-                "selected_model": selected_model,
+                "legacy_selected_model_hint": selected_model,
+                "requested_model": (
+                    observed_receipts[-1]["requested_model"] or "unknown"
+                    if observed_receipts
+                    else "unknown"
+                ),
+                "resolved_model": (
+                    observed_receipts[-1]["resolved_model"] or "unknown"
+                    if observed_receipts
+                    else "unknown"
+                ),
+                "cost_usd": observed_receipts[-1]["cost_usd"] if observed_receipts else None,
+                "cost_provenance": observed_receipts[-1]["cost_provenance"] if observed_receipts else "unpriced",
+                "cost_complete": observed_receipts[-1]["cost_complete"] if observed_receipts else False,
                 "prediction": prediction,
                 "actual_actions": actual_actions,
                 "prediction_correct": bool(actual_actions)
@@ -5872,6 +5724,20 @@ def get_noncombat_guard_message(raw_input_text, active_combat_encounter):
         return "[skipTTS] Dungeon Master: [SYSTEM] No active combat encounter. Use /switch_pc_focus during combat to switch focus between party members."
 
     return "[skipTTS] Dungeon Master: [SYSTEM] That command is only available during active combat."
+
+
+# TABLETOP MODE: Keep `/usage` observational; a read-only command must not
+# advance campaign time before the local-command dispatcher handles it.
+def _is_usage_command_input(raw_input_text):
+    from core.combat.commands import is_usage_command_input
+
+    return is_usage_command_input(raw_input_text)
+
+
+def _apply_turn_time_sync_for_input(raw_input_text):
+    if _is_usage_command_input(raw_input_text):
+        return {"status": "no_op"}
+    return apply_turn_time_sync()
 
 
 def _get_new_pc_creation_guidance_message():
@@ -6389,6 +6255,7 @@ def main_game_loop():
                 location_data_post_combat,
                 conversation_history,
             )
+            trace_combat_exit_complete(active_encounter_id)
 
         debug(
             "CRITICAL: Combat resumption complete - attempting to enter main loop",
@@ -6710,6 +6577,7 @@ def main_game_loop():
                 "[skipTTS] Dungeon Master: [SYSTEM] Available Commands:\n"
                 "  /save - Save current game state\n"
                 "  /quit - Exit the game\n"
+                "  /usage - View router and session/week LLM usage\n"
                 "  /stats - View full character stats\n"
                 "  /hp [amount] - Heal (positive) or damage (negative)\n"
                 "  /xp [amount] - Add experience points\n"
@@ -6732,6 +6600,18 @@ def main_game_loop():
             import sys
 
             sys.stdout.flush()
+            return True
+
+        # TABLETOP MODE: Usage is a read-only router/tracker snapshot projection.
+        elif cmd == "/usage":
+            from core.combat.commands import run_usage_command
+            import sys
+
+            run_usage_command(
+                emit=lambda report: print(colored(report, "cyan")),
+                flush=sys.stdout.flush,
+                router_stats_getter=llm.get_usage_stats,
+            )
             return True
 
         # --- Character Info Commands ---
@@ -7309,7 +7189,7 @@ def main_game_loop():
             # TABLETOP MODE: Turn-synced wall-clock advancement.
             # Apply bounded world-time sync for accepted non-empty turns.
             try:
-                turn_sync_result = apply_turn_time_sync()
+                turn_sync_result = _apply_turn_time_sync_for_input(user_input_text)
                 applied_minutes = int(turn_sync_result.get("applied_minutes", 0) or 0)
                 if applied_minutes > 0:
                     elapsed_minutes = int(
@@ -8199,6 +8079,8 @@ def main_game_loop():
         retry_count = 0
         valid_response_received = False
         ai_response_content = None
+        terminal_llm_failure = False
+        from utils.llm_router import GameLLMTerminalError
 
         # TABLETOP MODE: Retry de-looping state (Task 3.3)
         last_validation_reason = None
@@ -8213,11 +8095,20 @@ def main_game_loop():
         while retry_count < 5 and not valid_response_received:
             # Pass validation retry count for intelligent model escalation
             # Pass transient correction note if this is a retry
-            ai_response_content = get_ai_response(
-                conversation_history,
-                validation_retry_count=retry_count,
-                transient_correction=retry_correction_note,
-            )
+            try:
+                ai_response_content = get_ai_response(
+                    conversation_history,
+                    validation_retry_count=retry_count,
+                    transient_correction=retry_correction_note,
+                )
+            except GameLLMTerminalError as exc:
+                error(
+                    f"AI provider terminal outcome ({exc.terminal_kind}); waiting for next player input",
+                    category="ai_provider",
+                )
+                terminal_llm_failure = True
+                status_ready()
+                break
 
             # PRE-PROCESSING: Normalize final action authority before validation.
             try:
@@ -8344,13 +8235,22 @@ def main_game_loop():
             if not transition_check_passed:
                 continue  # Skip to next retry iteration
 
-            validation_result = validate_ai_response(
-                ai_response_content,
-                user_input_text,
-                validation_prompt_text,
-                conversation_history,
-                party_tracker_data,
-            )
+            try:
+                validation_result = validate_ai_response(
+                    ai_response_content,
+                    user_input_text,
+                    validation_prompt_text,
+                    conversation_history,
+                    party_tracker_data,
+                )
+            except GameLLMTerminalError as exc:
+                error(
+                    f"AI provider terminal outcome ({exc.terminal_kind}); waiting for next player input",
+                    category="ai_provider",
+                )
+                terminal_llm_failure = True
+                status_ready()
+                break
 
             # Unpack the validation result tuple
             is_valid = False
@@ -8650,6 +8550,9 @@ def main_game_loop():
                 )
                 retry_count += 1
 
+        if terminal_llm_failure:
+            continue
+
         # TABLETOP MODE: Step 3.2 - Creation-flow redirect is terminal for this turn.
         if new_pc_creation_redirected:
             status_ready()
@@ -8729,6 +8632,9 @@ def main_game_loop():
 
 def main():
     """Main entry point with startup wizard integration"""
+    from utils.llm_runtime import begin_llm_session
+
+    begin_llm_session()
     setup_utf8_console()
 
     # Check if config.py exists, create from template if not

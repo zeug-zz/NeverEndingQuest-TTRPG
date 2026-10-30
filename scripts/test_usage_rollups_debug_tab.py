@@ -6,6 +6,7 @@ Tests session/week token math, cost source tracking, and compatibility
 
 import sys
 import os
+from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.llm_usage_tracker import (
@@ -220,12 +221,13 @@ def test_week_bootstrap_backfill():
     import os
     
     print("[TEST 6.1] Week bootstrap backfill...")
+    current_timestamp = datetime.now().isoformat()
     
     # Create temp telemetry log with historical entries (tokens but no cost)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
         # Entry 1: historical OpenAI-style (tokens only, no cost)
         f.write(json.dumps({
-            'timestamp': '2026-02-19T10:00:00',
+            'timestamp': current_timestamp,
             'total_tokens': 1000000,
             'prompt_tokens': 800000,
             'completion_tokens': 200000,
@@ -233,7 +235,7 @@ def test_week_bootstrap_backfill():
         }) + '\n')
         # Entry 2: historical with explicit cost
         f.write(json.dumps({
-            'timestamp': '2026-02-19T11:00:00',
+            'timestamp': current_timestamp,
             'total_tokens': 500000,
             'prompt_tokens': 400000,
             'completion_tokens': 100000,
@@ -274,18 +276,19 @@ def test_week_bootstrap_only_explicit():
     import os
     
     print("[TEST 6.2] Week bootstrap explicit cost only...")
+    current_timestamp = datetime.now().isoformat()
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
         # Two entries with explicit cost, no fallback needed
         f.write(json.dumps({
-            'timestamp': '2026-02-19T10:00:00',
+            'timestamp': current_timestamp,
             'total_tokens': 1000000,
             'cost_usd': 2.00,
             'cost_source': 'provider_reported',
             'cost_estimate': False
         }) + '\n')
         f.write(json.dumps({
-            'timestamp': '2026-02-19T11:00:00',
+            'timestamp': current_timestamp,
             'total_tokens': 500000,
             'cost_usd': 1.00,
             'cost_source': 'provider_reported',

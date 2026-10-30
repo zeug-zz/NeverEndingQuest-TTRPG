@@ -17,14 +17,9 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-try:
-    import openai
-except ImportError:
-    openai = None
-
-from model_config import DM_MINI_MODEL
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.enhanced_logger import debug, info, warning, error
+from utils.llm_router import llm
 
 # Cache file location
 CACHE_FILE = Path("data/companion_memories/name_normalization_cache.json")
@@ -102,14 +97,6 @@ def call_mini_model_for_name(full_name: str) -> str:
     Raises:
         Exception: If API call fails
     """
-    if openai is None:
-        raise RuntimeError("openai package unavailable")
-
-    from config import OPENAI_API_KEY
-
-    # Initialize OpenAI client
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
     prompt = f"""Extract the person's actual first name from this D&D character name: '{full_name}'
 
 Examples:
@@ -123,17 +110,17 @@ Examples:
 Return ONLY the first name, nothing else. No quotes, no explanation."""
 
     try:
-        response = client.chat.completions.create(
-            model=DM_MINI_MODEL,
+        canonical = llm.call(
+            task="npc_name_canonicalizer",
             messages=[
                 {"role": "system", "content": "You are a name extraction assistant. Extract only the person's actual first name from character names."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.0,
-            max_tokens=20
+            json_output=False,
+            max_tokens=20,
         )
 
-        canonical = response.choices[0].message.content.strip()
+        canonical = canonical.strip()
 
         # Remove any quotes that might have been added
         canonical = canonical.strip('"\'')

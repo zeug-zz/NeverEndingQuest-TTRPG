@@ -75,13 +75,8 @@ import random
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_completion_params,
-    get_model_config,
-    handle_provider_error,
-)
-from model_config import DM_MAIN_MODEL
+from utils.ai_client_factory import handle_provider_error
+from utils.llm_router import llm
 import jsonschema
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_write_json as save_json_safely
@@ -572,32 +567,26 @@ If the field expects an object, return just the object.
         if self.adaptation_mode:
             self._adaptation_log("module_field_started", count=1)
         else:
-            print(f"DEBUG: [ModuleGenerator] Making API call to {DM_MAIN_MODEL}...")
+            print(f"DEBUG: [ModuleGenerator] Making API call...")
             print(f"DEBUG: [ModuleGenerator] Prompt length: {len(prompt)} characters")
             print(f"INFO: Calling OpenAI API for {field_path}... This may take 10-30 seconds.")
         import time
         start_time = time.time()
-        client = create_chat_client()
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "module_generator",
-                        DM_MAIN_MODEL,
-                        temperature_override=0.7,
-                    ),
+                response = llm.call(
+                    task="module_generator",
                     messages=[
                         {"role": "system", "content": "You are an expert 5e module designer. Return only the requested data in the exact format needed."},
                         {"role": "user", "content": prompt}
                     ],
-                    **({"timeout": self.llm_timeout_seconds} if self.llm_timeout_seconds is not None else {}),
+                    json_output=False,
                 )
                 break
             except Exception as e:
                 error_result = handle_provider_error(e, "module_generator_field")
                 if error_result["should_fallback"] and attempt < max_retries - 1:
-                    client = create_chat_client(use_fallback=True)
                     continue
                 raise
         
@@ -607,7 +596,7 @@ If the field expects an object, return just the object.
         else:
             print(f"DEBUG: [ModuleGenerator] API call completed successfully in {elapsed:.1f} seconds")
         
-        content = response.choices[0].message.content.strip()
+        content = response.strip()
         
         # Try to parse as JSON if it looks like JSON
         if content.startswith(('[', '{')):

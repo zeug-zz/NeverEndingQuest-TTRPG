@@ -47,7 +47,6 @@ import urllib.request
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from unittest import mock
 
@@ -57,6 +56,8 @@ import utils.ai_client_factory as ai_client_factory
 import utils.toolkit_adaptation_author as author_module
 import web.extensions.toolkit_adaptation_runtime as runtime
 from utils.toolkit_adaptation_dossier import RIGHTS_CLASS_USER_AUTHORED
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 from utils.toolkit_homebrew_upload_contract import (
     REVIEW_DECISION_APPROVE,
     SOURCE_RIGHTS_USER_AUTHORED,
@@ -248,7 +249,7 @@ class FakeAuthorRunner:
 
 
 class EchoClient:
-    """Fake provider client that returns a valid dossier echoing the
+    """Facade-shaped fake that returns dossier text echoing the
     Python-owned attempt metadata carried inside the request. Never performs a
     network or provider call."""
 
@@ -263,16 +264,13 @@ class EchoClient:
         self.refuse = refuse
         self.malformed = malformed
         self.error = error
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
-    def _create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> str:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         if self.refuse:
-            message = SimpleNamespace(content=None, refusal="policy")
-            choice = SimpleNamespace(message=message, finish_reason="refusal")
-            return SimpleNamespace(choices=[choice], model="mock-model", id="req-tripwire-1")
+            raise GameLLMTerminalError("refusal")
         metadata: Dict[str, Any] = {}
         for item in kwargs.get("messages") or []:
             content = item.get("content", "") if isinstance(item, Mapping) else ""
@@ -302,9 +300,7 @@ class EchoClient:
                     dossier[field] = metadata[field]
             dossier["adaptation_mode"] = "llm_adaptation"
             content = json.dumps(dossier)
-        message = SimpleNamespace(content=content, refusal=None)
-        choice = SimpleNamespace(message=message, finish_reason="stop")
-        return SimpleNamespace(choices=[choice], model="mock-adaptation-model", id="req-tripwire-1")
+        return content
 
 
 class _ProviderTripwire:
@@ -335,9 +331,9 @@ class _ProviderTripwire:
 
     def __enter__(self) -> "_ProviderTripwire":
         # The live client funnel used by the adaptation author runner, plus
-        # the shared factory behind it.
+        # the facade transport and the shared factory behind it.
         self._arm("factory_create_chat_client", "utils.ai_client_factory.create_chat_client")
-        self._arm("author_create_chat_client", "utils.toolkit_adaptation_author.create_chat_client")
+        self._arm("author_facade_call", "utils.toolkit_adaptation_author.llm.call")
         # Provider SDK construction (defense in depth behind the factory).
         self._arm("openai_sdk_construction", "openai.OpenAI")
         # Network/HTTP surfaces.
@@ -484,10 +480,10 @@ class TestTripwireGuardsProviderSurfaces(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 ai_client_factory.create_chat_client()
 
-    def test_author_create_chat_client_tripwire_raises(self) -> None:
+    def test_author_facade_call_tripwire_raises(self) -> None:
         with _ProviderTripwire():
             with self.assertRaises(AssertionError):
-                author_module.create_chat_client()
+                author_module.llm.call(task="toolkit_adaptation_author", messages=[])
 
     def test_openai_sdk_construction_tripwire_raises(self) -> None:
         with _ProviderTripwire():
@@ -546,7 +542,7 @@ class TestUploadAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, unittest.
                 handoff,
                 client=client,
                 parameter_resolver=_fake_resolver,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_READY)
         self.assertTrue(result["ok"])
@@ -603,7 +599,7 @@ class TestUploadAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, unittest.
                 handoff,
                 client=client,
                 parameter_resolver=_fake_resolver,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_BLOCKED)
         self.assertFalse(result["ok"])
@@ -623,7 +619,7 @@ class TestUploadAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, unittest.
                 handoff,
                 client=client,
                 parameter_resolver=_fake_resolver,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_BLOCKED)
         self.assertFalse(result["ok"])
@@ -651,28 +647,28 @@ class TestUploadAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, unittest.
         self._assert_no_module_side_effects()
 
     def test_upload_missing_injection_seam_trips_and_fails_closed(self) -> None:
-        # With no injected client/runner/resolver the author runner would
-        # create a live client; the tripwire intercepts it, the adapter fails
+        # With no injected client/runner/resolver the author runner routes via
+        # the facade; the tripwire intercepts it, the adapter fails
         # closed with bounded provider-infrastructure diagnostics, and no
         # network surface is ever touched.
         with _ProviderTripwire() as tripwire:
             handoff = self._ready_handoff()
             result = runtime.run_upload_adaptation_authoring(
                 handoff,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_BLOCKED)
         self.assertFalse(result["ok"])
         self.assertIsNone(result["dossier"])
-        author_tripwire = tripwire.mocks.get("author_create_chat_client")
+        author_tripwire = tripwire.mocks.get("author_facade_call")
         self.assertIsNotNone(author_tripwire)
         self.assertEqual(author_tripwire.call_count, 1)
         self.assertEqual(result["authoring"]["safe_class"], "provider_infrastructure")
-        self.assertEqual(result["authoring"]["reason_code"], "provider_client_init_failed")
+        self.assertEqual(result["authoring"]["reason_code"], "provider_call_failed")
         self.assertFalse(result["guards"]["module_builder_allowed"])
         self._assert_bounded_diagnostics(result)
         for key, guard in tripwire.mocks.items():
-            if key == "author_create_chat_client":
+            if key == "author_facade_call":
                 continue
             if guard is not None:
                 guard.assert_not_called()
@@ -706,7 +702,7 @@ class TestTextDescriptionAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, 
                 manifest,
                 client=client,
                 parameter_resolver=_fake_resolver,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_READY)
         self.assertTrue(result["ok"])
@@ -774,19 +770,19 @@ class TestTextDescriptionAdapterThroughInjectedSeams(_ProjectLocalScratchMixin, 
             manifest = self._ready_manifest()
             result = runtime.run_text_description_adaptation_authoring(
                 manifest,
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             )
         self.assertEqual(result["status"], runtime.AUTHORING_ADAPTER_STATUS_BLOCKED)
         self.assertFalse(result["ok"])
         self.assertIsNone(result["dossier"])
-        author_tripwire = tripwire.mocks.get("author_create_chat_client")
+        author_tripwire = tripwire.mocks.get("author_facade_call")
         self.assertIsNotNone(author_tripwire)
         self.assertEqual(author_tripwire.call_count, 1)
         self.assertEqual(result["authoring"]["safe_class"], "provider_infrastructure")
-        self.assertEqual(result["authoring"]["reason_code"], "provider_client_init_failed")
+        self.assertEqual(result["authoring"]["reason_code"], "provider_call_failed")
         self._assert_bounded_diagnostics(result)
         for key, guard in tripwire.mocks.items():
-            if key == "author_create_chat_client":
+            if key == "author_facade_call":
                 continue
             if guard is not None:
                 guard.assert_not_called()

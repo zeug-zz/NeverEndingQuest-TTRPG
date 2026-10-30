@@ -13,6 +13,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scripts.core_chat_test_safety import arm_process_tripwires
+
+_PROCESS_TRIPWIRES = arm_process_tripwires()
+
 import utils.ai_client_factory as ai_client_factory
 
 
@@ -20,6 +24,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
     def setUp(self) -> None:
         self._legacy_temperature_flag = ai_client_factory.GPT5_INCLUDE_LEGACY_TEMPERATURE
         self._actual_provider = ai_client_factory._get_actual_provider
+        ai_client_factory._get_actual_provider = lambda use_fallback=False: ("openai", False)
 
     def tearDown(self) -> None:
         ai_client_factory.GPT5_INCLUDE_LEGACY_TEMPERATURE = self._legacy_temperature_flag
@@ -50,7 +55,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
         self.assertNotIn("temperature", params)
         self.assertNotIn("top_p", params)
 
-    def test_non_gpt5_preserves_temperature(self) -> None:
+    def test_non_gpt5_uses_task_temperature_policy(self) -> None:
         params = ai_client_factory.get_chat_completion_params(
             "dm_main",
             "gpt-4.1-2025-04-14",
@@ -58,7 +63,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
         )
 
         self.assertEqual(params["model"], "gpt-4.1-2025-04-14")
-        self.assertEqual(params["temperature"], 0.42)
+        self.assertEqual(params["temperature"], 0.7)
         self.assertNotIn("reasoning_effort", params)
         self.assertNotIn("verbosity", params)
 
@@ -75,7 +80,7 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
         self.assertEqual(params["verbosity"], "medium")
         self.assertEqual(params["temperature"], 0.8)
 
-    def test_openrouter_passthrough_keeps_existing_extra_body_shape(self) -> None:
+    def test_openrouter_passthrough_uses_sdk_compatible_extra_body_shape(self) -> None:
         ai_client_factory._get_actual_provider = lambda use_fallback=False: ("openrouter", True)
 
         params = ai_client_factory.get_chat_completion_params(
@@ -85,32 +90,44 @@ class TestGPT54MiniChatParamsShim(unittest.TestCase):
         )
 
         self.assertEqual(params["temperature"], 0.7)
-        if "extra_body" in params:
-            self.assertEqual(params["extra_body"]["thinking"]["type"], "enabled")
-        else:
-            self.assertEqual(params["thinking"]["type"], "enabled")
+        self.assertEqual(
+            params["extra_body"],
+            {"thinking": {"type": "enabled"}},
+        )
+        self.assertNotIn("thinking", params)
 
-    def test_hotpath_files_now_use_chat_param_helper(self) -> None:
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    def test_migrated_hotpaths_use_facade_routes_without_caller_sdk_parameters(self) -> None:
+        import ast
+        from scripts.test_core_chat_inventory_contract import _functions, _calls, _call_name
 
-        with open(os.path.join(root, "main.py"), "r", encoding="utf-8") as handle:
-            main_text = handle.read()
-        with open(
-            os.path.join(root, "core", "managers", "combat_manager.py"),
-            "r",
-            encoding="utf-8",
-        ) as handle:
-            combat_text = handle.read()
-        with open(
-            os.path.join(root, "core", "ai", "action_handler.py"),
-            "r",
-            encoding="utf-8",
-        ) as handle:
-            action_text = handle.read()
-
-        self.assertIn("get_chat_completion_params", main_text)
-        self.assertIn("get_chat_completion_params", combat_text)
-        self.assertIn("get_chat_completion_params", action_text)
+        expected = {
+            ("main.py", "get_ai_response"): ("dm_main", 1),
+            ("core/combat/turn.py", "run_combat_provider_retry_stage"): ("combat_main", 3),
+            ("core/combat/combat_manager.py", "summarize_dialogue"): ("combat_summary", 1),
+            ("core/ai/action_handler.py", "get_ai_npc_movement_decision"): ("updates", 1),
+        }
+        for (path, owner_name), (task, count) in expected.items():
+            owner = _functions(path)[owner_name]
+            calls = _calls(owner)
+            routed = [
+                call for call in calls
+                if _call_name(call) in {"llm.call", "dependencies.llm_call"}
+            ]
+            self.assertEqual(len(routed), count, path + "::" + owner_name)
+            for call in routed:
+                task_node = next(
+                    (item.value for item in call.keywords if item.arg == "task"),
+                    call.args[0] if call.args else None,
+                )
+                self.assertEqual(ast.literal_eval(task_node), task)
+                keywords = {item.arg for item in call.keywords}
+                self.assertNotIn("timeout", keywords)
+                self.assertNotIn("model", keywords)
+            self.assertFalse(any(
+                _call_name(call).endswith("chat.completions.create")
+                or _call_name(call) in {"OpenAI", "create_chat_client"}
+                for call in calls
+            ))
 
 
 if __name__ == "__main__":

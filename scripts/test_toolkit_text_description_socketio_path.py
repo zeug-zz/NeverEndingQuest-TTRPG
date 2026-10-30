@@ -435,8 +435,8 @@ class _TextSocketIoScratchMixin:
 
         self.tripwire_patchers = [
             patch.object(
-                adaptation_auditor,
-                "create_chat_client",
+                adaptation_auditor.llm,
+                "call",
                 side_effect=self._blocked_provider,
             ),
             patch(

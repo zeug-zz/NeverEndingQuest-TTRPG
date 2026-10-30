@@ -306,7 +306,7 @@ class _JeremysUploadScratchMixin:
 
         self.tripwire_patchers = [
             patch.object(
-                adaptation_auditor, "create_chat_client", side_effect=self._blocked_provider
+                adaptation_auditor.llm, "call", side_effect=self._blocked_provider
             ),
             patch(
                 "utils.ai_client_factory.create_chat_client",

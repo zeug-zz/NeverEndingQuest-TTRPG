@@ -51,15 +51,16 @@ import random
 import json
 import os
 
-def generate_generic_dice_pool():
+def generate_generic_dice_pool(rng=None):
     """Generate a pool of various dice types for flexible use"""
+    dice_source = rng if rng is not None else random
     dice_pool = {
-        "d4": [random.randint(1, 4) for _ in range(8)],
-        "d6": [random.randint(1, 6) for _ in range(8)], 
-        "d8": [random.randint(1, 8) for _ in range(6)],
-        "d10": [random.randint(1, 10) for _ in range(6)],
-        "d12": [random.randint(1, 12) for _ in range(4)],
-        "d20": [random.randint(1, 20) for _ in range(10)]  # Extra d20s for various uses
+        "d4": [dice_source.randint(1, 4) for _ in range(8)],
+        "d6": [dice_source.randint(1, 6) for _ in range(8)],
+        "d8": [dice_source.randint(1, 8) for _ in range(6)],
+        "d10": [dice_source.randint(1, 10) for _ in range(6)],
+        "d12": [dice_source.randint(1, 12) for _ in range(4)],
+        "d20": [dice_source.randint(1, 20) for _ in range(10)]  # Extra d20s for various uses
     }
     return dice_pool
 
@@ -157,7 +158,7 @@ def get_npc_attacks(npc_name):
         print(f"Error loading NPC {npc_name}: {e}")
         return [{"name": "weapon attack"}], 1
 
-def generate_prerolls(encounter_data, round_num=None):
+def generate_prerolls(encounter_data, round_num=None, *, rng=None):
     """Generate organized dice rolls with generic pool and creature-specific attacks.
     
     Args:
@@ -167,12 +168,16 @@ def generate_prerolls(encounter_data, round_num=None):
     Returns:
         str: Formatted preroll text with round tracking
     """
+    # TABLETOP MODE: Optional local RNG supports default-off isolated G7 fixtures.
+    # Calls without an RNG retain the historical module-level random sequence.
+    dice_source = rng if rng is not None else random
+
     # Determine round number
     if round_num is None:
         round_num = encounter_data.get('current_round', 1)
     
     # Generate preroll ID for tracking
-    preroll_id = f"{round_num}-{random.randint(1000,9999)}"
+    preroll_id = f"{round_num}-{dice_source.randint(1000,9999)}"
     
     preroll_lines = []
     preroll_lines.append(f"DM Note: COMBAT ROUND {round_num} - DICE AVAILABLE:")
@@ -188,7 +193,7 @@ def generate_prerolls(encounter_data, round_num=None):
     preroll_lines.append("")
     
     # Generate generic dice pool
-    dice_pool = generate_generic_dice_pool()
+    dice_pool = generate_generic_dice_pool(dice_source)
     preroll_lines.append("=== GENERIC DICE (use for spells, abilities, improvisation) ===")
     dice_line_parts = []
     for die_type, rolls in dice_pool.items():
@@ -250,7 +255,7 @@ def generate_prerolls(encounter_data, round_num=None):
             attacks_info = [{"name": f"{creature_type_name} attack"}]
         
         # Generate exact number of attack rolls needed
-        attack_rolls = [random.randint(1, 20) for _ in range(num_attacks)]
+        attack_rolls = [dice_source.randint(1, 20) for _ in range(num_attacks)]
         
         # Format attack information
         if num_attacks == 1:
@@ -271,12 +276,12 @@ def generate_prerolls(encounter_data, round_num=None):
         
         # Generate saving throws for this creature
         save_rolls = {
-            "STR": random.randint(1, 20),
-            "DEX": random.randint(1, 20), 
-            "CON": random.randint(1, 20),
-            "INT": random.randint(1, 20),
-            "WIS": random.randint(1, 20),
-            "CHA": random.randint(1, 20)
+            "STR": dice_source.randint(1, 20),
+            "DEX": dice_source.randint(1, 20),
+            "CON": dice_source.randint(1, 20),
+            "INT": dice_source.randint(1, 20),
+            "WIS": dice_source.randint(1, 20),
+            "CHA": dice_source.randint(1, 20)
         }
         save_rolls_str = ", ".join([f"{ability}:{roll}" for ability, roll in save_rolls.items()])
         saving_throw_creatures.append(f"{creature_name}: {save_rolls_str}")

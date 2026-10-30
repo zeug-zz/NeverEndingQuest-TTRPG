@@ -18,8 +18,7 @@ production policy:
   5. dossier ``status: refused`` is a distinct author-policy refusal channel;
   6. malformed structured output is ``invalid_model_response`` and never
      becomes build-ready;
-  7. direct GPT-5 requests retain ``reasoning_effort``/``verbosity`` and omit
-     legacy ``temperature``/``top_p`` while the Python parser stays the final
+  7. the facade owns model parameters while the Python parser stays the final
      schema and rights authority.
 
 Every provider surface is injected through fake clients/resolvers/runners;
@@ -41,13 +40,11 @@ import unittest
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.toolkit_adaptation_author import (
-    ADAPTATION_AUTHOR_RESPONSE_FORMAT_LEGACY,
     ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT,
     ADAPTATION_AUTHOR_TASK_ID,
     DIAGNOSTIC_CODE_INVALID_PROVENANCE,
@@ -96,6 +93,8 @@ from utils.toolkit_adaptation_dossier import (
     RIGHTS_REVIEW_PENDING,
 )
 from utils.toolkit_adaptation_source_context import build_adaptation_source_context
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRATCH_ROOT = REPO_ROOT / "tmp" / "toolkit_adaptation_author_provider_contract"
@@ -125,28 +124,24 @@ def _load_fixture() -> Dict[str, Any]:
 
 
 def _response(content: Optional[str] = None, *, refusal: Optional[str] = None) -> Any:
-    message = SimpleNamespace(content=content, refusal=refusal)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice], model="gpt-5.6-luna", id="resp-provider-contract-1")
+    if refusal:
+        return GameLLMTerminalError("refusal")
+    return content
 
 
-class FakeCompletions:
+class FakeClient:
     def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
         self.response = response
         self.error = error
         self.calls: List[Dict[str, Any]] = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
-
-
-class FakeClient:
-    def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
-        self.completions = FakeCompletions(response=response, error=error)
-        self.chat = SimpleNamespace(completions=self.completions)
 
 
 def _user_authored_metadata(fixture: Mapping[str, Any]) -> Dict[str, Any]:
@@ -266,7 +261,7 @@ class TestValidUserAuthoredMetadata(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
         self.assertEqual(result["outcome"], OUTCOME_VALID)
@@ -319,7 +314,7 @@ class TestValidUserAuthoredMetadata(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         encoded = json.dumps(result, sort_keys=True)
         self.assertNotIn("bounded_excerpt", encoded)
@@ -512,7 +507,7 @@ class TestApiLevelRefusal(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertEqual(result["status"], RUNNER_STATUS_REFUSED)
         self.assertEqual(result["outcome"], OUTCOME_EXPLICIT_REFUSAL)
@@ -535,7 +530,7 @@ class TestApiLevelRefusal(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertFalse(result["ok"])
         self.assertIsNone(result["dossier"])
@@ -558,7 +553,7 @@ class TestDossierStatusRefused(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=FakeClient(response=_response(json.dumps(payload))),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertEqual(result["status"], RUNNER_STATUS_REFUSED)
         self.assertEqual(result["safe_class"], REASON_CATEGORY_AUTHOR_POLICY_REFUSAL)
@@ -576,7 +571,7 @@ class TestDossierStatusRefused(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=FakeClient(response=_response(refusal="no")),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         payload = copy.deepcopy(self.fixture)
         payload["status"] = ADAPTATION_DOSSIER_STATUS_REFUSED
@@ -584,7 +579,7 @@ class TestDossierStatusRefused(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=FakeClient(response=_response(json.dumps(payload))),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         # Same runner status, different refusal channel and diagnostics.
         self.assertEqual(api_result["status"], RUNNER_STATUS_REFUSED)
@@ -620,7 +615,7 @@ class TestMalformedStructuredOutput(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=FakeClient(response=_response(content)),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
 
     def test_not_json_is_invalid_model_response_and_never_build_ready(self) -> None:
@@ -669,27 +664,26 @@ class TestMalformedStructuredOutput(unittest.TestCase):
         self.assertTrue(encoded.isascii())
 
 
-class TestGpt5ParameterIsolation(unittest.TestCase):
-    """Case 7: direct GPT-5 requests keep reasoning/verbosity, omit legacy
-    sampling, and stay on the strict structured-output contract."""
+class TestFacadeParameterIsolation(unittest.TestCase):
+    """Case 7: the task profile keeps facade-owned reasoning policy."""
 
     def setUp(self) -> None:
         self.fixture = _load_fixture()
         self.metadata = _user_authored_metadata(self.fixture)
         self.source_context = _source_context(self.fixture)
 
-    def test_direct_gpt5_request_keeps_reasoning_and_omits_legacy_sampling(self) -> None:
+    def test_task_profile_keeps_facade_owned_parameter_policy(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
         result = run_llm_adaptation_author(
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        request = client.completions.calls[0]
-        self.assertIn("reasoning_effort", request)
-        self.assertIn("verbosity", request)
+        request = client.calls[0]
+        self.assertNotIn("reasoning_effort", request)
+        self.assertNotIn("verbosity", request)
         self.assertNotIn("temperature", request)
         self.assertNotIn("top_p", request)
         self.assertEqual(
@@ -697,8 +691,8 @@ class TestGpt5ParameterIsolation(unittest.TestCase):
         )
         self.assertTrue(request["response_format"]["json_schema"]["strict"])
         self.assertEqual(result["request"]["response_format"], ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT)
-        # The bounded request metadata records the parameter keys actually
-        # sent to the provider without legacy sampling fields.
+        # Parameter metadata remains bounded while the facade owns request
+        # finalization and its kwargs are not leaked at the call site.
         parameter_keys = set(result["request"]["parameter_keys"])
         self.assertIn("reasoning_effort", parameter_keys)
         self.assertIn("verbosity", parameter_keys)
@@ -722,24 +716,24 @@ class TestGpt5ParameterIsolation(unittest.TestCase):
         self.assertEqual(result["reason_code"], REASON_CODE_PARAM_RESOLUTION_FAILED)
         codes = {item["code"] for item in result["diagnostics"]}
         self.assertIn(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, codes)
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
         self.assertFalse(result["revision_eligible"])
 
-    def test_openrouter_profile_uses_documented_json_object_fallback(self) -> None:
+    def test_task_profile_uses_direct_openai_strict_output_contract(self) -> None:
         client = FakeClient(response=_response(json.dumps(self.fixture)))
         result = run_llm_adaptation_author(
             self.source_context,
             self.metadata,
             client=client,
-            model="moonshotai/kimi-k2.5",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: {"model": model},
         )
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        request = client.completions.calls[0]
+        request = client.calls[0]
         self.assertEqual(
-            request["response_format"], {"type": ADAPTATION_AUTHOR_RESPONSE_FORMAT_LEGACY}
+            request["response_format"]["type"], ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT
         )
-        self.assertFalse(result["request"]["response_format_strict"])
+        self.assertTrue(result["request"]["response_format_strict"])
 
     def test_parameter_isolation_is_independent_of_resolver_injection(self) -> None:
         # An injected resolver still flows through the same strict response
@@ -749,7 +743,7 @@ class TestGpt5ParameterIsolation(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: {
                 "model": model,
                 "reasoning_effort": "high",
@@ -757,11 +751,13 @@ class TestGpt5ParameterIsolation(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], RUNNER_STATUS_SUCCESS)
-        request = client.completions.calls[0]
-        self.assertEqual(request["reasoning_effort"], "high")
-        self.assertEqual(request["verbosity"], "low")
+        request = client.calls[0]
+        self.assertNotIn("reasoning_effort", request)
+        self.assertNotIn("verbosity", request)
         self.assertNotIn("temperature", request)
         self.assertNotIn("top_p", request)
+        self.assertEqual(result["params_used"]["reasoning_effort"], "high")
+        self.assertEqual(result["params_used"]["verbosity"], "low")
         self.assertEqual(
             request["response_format"]["type"], ADAPTATION_AUTHOR_RESPONSE_FORMAT_STRICT
         )
@@ -779,13 +775,13 @@ class TestProviderContractHygiene(unittest.TestCase):
                 source_context,
                 metadata,
                 client=FakeClient(response=_response(refusal="api_key=sk-secret123 refused")),
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             ),
             run_llm_adaptation_author(
                 source_context,
                 metadata,
                 client=FakeClient(response=_response("not-json at all")),
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             ),
             run_llm_adaptation_author(
                 source_context,
@@ -795,7 +791,7 @@ class TestProviderContractHygiene(unittest.TestCase):
                         json.dumps({**copy.deepcopy(fixture), "status": ADAPTATION_DOSSIER_STATUS_REFUSED})
                     )
                 ),
-                model="gpt-5.6-luna",
+                model=DM_MAIN_MODEL,
             ),
         ]
         for result in results:

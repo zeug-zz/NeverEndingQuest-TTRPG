@@ -171,6 +171,24 @@
           ]
         }
       },
+      "multiattack": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": ["action", "count"],
+          "additionalProperties": false
+        }
+      },
       "legendaryActions": {
         "type": "array",
         "items": {

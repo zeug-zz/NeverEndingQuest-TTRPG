@@ -124,11 +124,11 @@ from core.validation.character_validator import AICharacterValidator
 from core.validation.character_effects_validator import AICharacterEffectsValidator
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.ai_client_factory import (
-    create_chat_client,
     get_chat_model_name,
     handle_provider_error,
-    get_fallback_notification
 )
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 from utils.character_ops_routing import (
     normalize_character_ops_payload,
     classify_character_update_payload,
@@ -139,9 +139,6 @@ from core.managers.world_observer import get_world_observer
 
 # Set script name for logging
 set_script_name(__name__)
-
-# Initialize client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 # Currency abbreviation normalization mapping
 _CURRENCY_ABBREVIATIONS = {
@@ -231,7 +228,7 @@ WEAPON_DATABASE = {
     "net": {"dice": "-", "type": "bludgeoning", "category": "martial", "properties": ["special", "thrown"]}
 }
 
-# ANSI escape codes - REMOVED per CLAUDE.md guidelines
+# ANSI escape codes - REMOVED per AGENTS.md ASCII rule
 # All color codes have been removed to prevent Windows console encoding errors
 
 def load_schema():
@@ -2133,7 +2130,15 @@ def _apply_character_ops_deterministic(character_data: Dict[str, Any], ops: List
     return (True, updated_data, "", [])
 
 
-def update_character_info(character_name, changes, character_role=None, ops=None):
+def update_character_info(
+    character_name,
+    changes,
+    character_role=None,
+    ops=None,
+    *,
+    _stage_only=False,
+    _stage_data=None,
+):
     """
     Unified function to update character information for both players and NPCs
     
@@ -2146,8 +2151,6 @@ def update_character_info(character_name, changes, character_role=None, ops=None
     Returns:
         bool: True if successful, False otherwise
     """
-
-    global client  # Required because fallback reassigns client at line 2110
 
     debug(f"STATE_CHANGE: Updating character info for: {character_name}", category="character_updates")
 
@@ -2210,7 +2213,12 @@ def update_character_info(character_name, changes, character_role=None, ops=None
     character_path = get_character_path(character_name, character_role)
     
     try:
-        character_data = safe_read_json(character_path)
+        if _stage_only:
+            if not isinstance(_stage_data, dict):
+                return False
+            character_data = copy.deepcopy(_stage_data)
+        else:
+            character_data = safe_read_json(character_path)
         if not character_data:
             error(f"FAILURE: Could not load character data for {character_name}", category="file_operations")
             return False
@@ -2228,13 +2236,13 @@ def update_character_info(character_name, changes, character_role=None, ops=None
         error(f"FAILURE: Error loading character data", exception=e, category="file_operations")
         return False
     
-    # Create file backup before any changes
-    backup_path = create_character_backup(character_path, "update")
-    if backup_path is None:
-        warning("FILE_OP: Could not create backup, but proceeding with update", category="file_operations")
-    else:
-        # Clean up old backups to prevent accumulation
-        cleanup_old_backups(character_path)
+    # A staged combat update must not create an independently durable backup.
+    if not _stage_only:
+        backup_path = create_character_backup(character_path, "update")
+        if backup_path is None:
+            warning("FILE_OP: Could not create backup, but proceeding with update", category="file_operations")
+        else:
+            cleanup_old_backups(character_path)
     
     # Create in-memory backup
     original_data = copy.deepcopy(character_data)
@@ -2317,6 +2325,9 @@ def update_character_info(character_name, changes, character_role=None, ops=None
                         category="character_validation",
                     )
                     return False
+
+                if _stage_only:
+                    return updated_data
 
                 save_result = safe_write_json(character_path, updated_data)
                 if not save_result:
@@ -2665,20 +2676,18 @@ Character Role: {character_role}
         try:
             debug(f"STATE_CHANGE: Attempt {attempt} of {max_attempts}", category="character_updates")
             
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=TEMPERATURE
+            # TABLETOP MODE: provider transport and model selection are router-owned.
+            observer = make_legacy_receipt_observer(
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
-            
-            # Track usage
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass
-            
-            raw_response = response.choices[0].message.content.strip()
+            raw_response = llm.call(
+                task="updates",
+                messages=messages,
+                json_output=False,
+                retry_tier="retry" if attempt > 1 else None,
+                observer=observer,
+            )
+            raw_response = raw_response.strip()
             
             # Log the raw LLM response for debugging ammunition issues
             if "ammunition" in changes.lower() or "bolt" in changes.lower() or "arrow" in changes.lower():
@@ -2947,6 +2956,9 @@ Please provide the CORRECT currency values:
             
             # Final repair pass before saving to ensure schema compliance
             updated_data = repair_character_data(updated_data)
+
+            if _stage_only:
+                return updated_data
             
             # Save updated character data
             # print(f"[DEBUG] Validation passed! About to save character data to: {character_path}")
@@ -3150,8 +3162,6 @@ Please provide the CORRECT currency values:
             error_result = handle_provider_error(e, f"character_update_{character_name}")
             if error_result['should_fallback'] and attempt < max_attempts:
                 warning(f"Provider error detected, attempting fallback for attempt {attempt + 1}", category="character_updates")
-                # Recreate client with fallback provider
-                client = create_chat_client(use_fallback=True)
                 attempt += 1
                 continue
             

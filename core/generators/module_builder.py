@@ -107,12 +107,6 @@ class ModuleBuilder:
             return timeout
         return None
 
-    def _llm_timeout_kwargs(self) -> Dict[str, Any]:
-        """Build request kwargs without changing legacy request shapes."""
-        if self.llm_timeout_seconds is None:
-            return {}
-        return {"timeout": self.llm_timeout_seconds}
-    
     def log(self, message: str):
         """Log messages if verbose mode is enabled"""
         if self.config.verbose:
@@ -708,10 +702,8 @@ The plot title should reference this specific area, not other locations.
             return
             
         # Import factory at the function level to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
-        from config import DM_MAIN_MODEL
-        
-        client = create_chat_client()
+        from utils.ai_client_factory import handle_provider_error
+        from utils.llm_router import llm
         
         # Prepare context for unification
         area_summaries = []
@@ -815,28 +807,23 @@ IMPORTANT:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "unify_plots",
-                            DM_MAIN_MODEL,
-                            temperature_override=0.7,
-                        ),
+                    response = llm.call(
+                        task="unify_plots",
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating coherent, engaging adventure narratives."},
                             {"role": "user", "content": prompt}
                         ],
+                        json_output=False,
                         response_format={"type": "json_object"},
-                        **self._llm_timeout_kwargs(),
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, "unify_plots")
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        client = create_chat_client(use_fallback=True)
                         continue
                     raise
             
-            unified_plot = json.loads(response.choices[0].message.content)
+            unified_plot = json.loads(response)
             
             # Add missing required fields if not present
             required_fields = ["activeQuests", "completedQuests", "failedQuests", "worldEvents", "dmNotes"]
@@ -916,16 +903,11 @@ IMPORTANT:
             return
         
         # Import here to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
-        from config import DM_MAIN_MODEL
-        
-        client = create_chat_client()
-        
         # Update each area's plot hooks
         for area_id in self.areas_data:
-            self._update_single_area_plot_hooks(area_id, unified_plot, client)
+            self._update_single_area_plot_hooks(area_id, unified_plot)
     
-    def _update_single_area_plot_hooks(self, area_id, unified_plot, client):
+    def _update_single_area_plot_hooks(self, area_id, unified_plot):
         """Atomically update plot hooks for a single area with deep merge and safety guards"""
         # Import here to avoid circular imports
         from utils.file_operations import safe_write_json, safe_read_json
@@ -985,7 +967,6 @@ IMPORTANT:
                 original_area_data, 
                 relevant_plot_points, 
                 relevant_side_quests, 
-                client
             )
             
             if not updated_hooks:
@@ -1021,11 +1002,11 @@ IMPORTANT:
             except:
                 self.log(f"Critical error: Could not restore {area_id} from backup")
     
-    def _generate_enhanced_plot_hooks(self, area_id, area_data, plot_points, side_quests, client):
+    def _generate_enhanced_plot_hooks(self, area_id, area_data, plot_points, side_quests, client=None):
         """Generate enhanced plot hooks that reference specific plot points and side quests"""
         # Import here to avoid circular imports
-        from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
-        from config import DM_MAIN_MODEL
+        from utils.ai_client_factory import handle_provider_error
+        from utils.llm_router import llm
         
         # Extract existing plot hooks from all locations in the area
         existing_hooks = []
@@ -1084,28 +1065,23 @@ IMPORTANT:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = client.chat.completions.create(
-                        **get_chat_completion_params(
-                            "update_plot_hooks",
-                            DM_MAIN_MODEL,
-                            temperature_override=0.6,
-                        ),
+                    response = llm.call(
+                        task="update_plot_hooks",
                         messages=[
                             {"role": "system", "content": "You are an expert 5th edition module designer specializing in creating actionable plot hooks that reference specific plot elements."},
                             {"role": "user", "content": prompt}
                         ],
+                        json_output=False,
                         response_format={"type": "json_object"},
-                        **self._llm_timeout_kwargs(),
                     )
                     break
                 except Exception as e:
                     error_result = handle_provider_error(e, "update_plot_hooks")
                     if error_result["should_fallback"] and attempt < max_retries - 1:
-                        client = create_chat_client(use_fallback=True)
                         continue
                     raise
             
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(response)
             return result.get("plotHookUpdates", [])
             
         except Exception as e:
@@ -1533,10 +1509,10 @@ def parse_narrative_to_module_params(narrative: str) -> Dict[str, Any]:
     Returns:
         Dict containing parsed module parameters
     """
-    from utils.ai_client_factory import create_chat_client, get_chat_completion_params, handle_provider_error
+    from utils.ai_client_factory import handle_provider_error
+    from utils.llm_router import llm
     import config
     
-    client = create_chat_client()
     
     parsing_prompt = """You are a module configuration parser for the world's most popular 5th edition tabletop role-playing game. Extract adventure module parameters from a narrative description.
 
@@ -1593,25 +1569,21 @@ Return ONLY the JSON object, no explanations or additional text."""
     for attempt in range(max_retries):
         try:
             try:
-                response = client.chat.completions.create(
-                    **get_chat_completion_params(
-                        "parse_module_params",
-                        config.DM_SUMMARIZATION_MODEL,
-                        temperature_override=0.3,
-                    ),
+                response = llm.call(
+                    task="parse_module_params",
                     messages=[
                         {"role": "system", "content": current_prompt},
                         {"role": "user", "content": f"Parse this module narrative:\n\n{narrative}"}
-                    ]
+                    ],
+                    json_output=False,
                 )
             except Exception as e:
                 error_result = handle_provider_error(e, "parse_module_parameters")
                 if error_result["should_fallback"] and attempt < max_retries - 1:
-                    client = create_chat_client(use_fallback=True)
                     continue
                 raise
                 
-            result = response.choices[0].message.content.strip()
+            result = response.strip()
             # Clean up potential code blocks
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()

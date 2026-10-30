@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2024 MoonlightByte
+# SPDX-License-Identifier: Fair-Source-1.0
+# License: See LICENSE file in the repository root
 """
 Apply incremental compression to actual conversation history.
 Filters validation errors and preserves recent valid context.
@@ -18,15 +21,14 @@ if __name__ == "__main__":
 import config
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.enhanced_logger import info, debug, warning, error
-from utils.ai_client_factory import create_chat_client, get_chat_model_name
+from utils.ai_client_factory import get_chat_model_name
+from utils.llm_router import llm
 from utils.location_context_hygiene import inject_location_provenance
 
 class IncrementalLocationCompressor:
     """Handles incremental compression of messages at current location."""
     
     def __init__(self):
-        # Use factory to create client (supports OpenAI and OpenRouter)
-        self.client = create_chat_client()
         self.COMPRESSION_MODEL = get_chat_model_name()
         self.COMPRESSION_TEMP = 0.3
         self.TRIGGER_THRESHOLD = 15  # Compress when reaching 15 pairs
@@ -185,11 +187,12 @@ Create a compressed narrative that:
 Format as a flowing narrative in 2-3 paragraphs. Focus on what happened, not meta-game mechanics."""
 
         try:
-            response = self.client.chat.completions.create(
+            # TABLETOP MODE: route incremental summaries through the shared facade.
+            response = llm.call(
+                task="compression",
                 messages=[{"role": "user", "content": compression_prompt}],
-                model=self.COMPRESSION_MODEL,
-                temperature=self.COMPRESSION_TEMP
-            ).choices[0].message.content
+                json_output=False,
+            )
             
             if response and response.strip():
                 location_id = location_info.get('id', 'Unknown')

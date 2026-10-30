@@ -39,14 +39,14 @@ from scripts import combat_latency_report
 
 class CombatLatencyTraceTests(unittest.TestCase):
     def test_disabled_gate_writes_nothing(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", False):
                 self.assertFalse(combat_latency_trace.emit_trace_event("stage", path=path))
             self.assertFalse(path.exists())
 
     def test_enabled_writer_appends_jsonl(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "nested" / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -64,7 +64,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertEqual(record["turn"], 2)
 
     def test_concurrent_emits_leave_each_line_intact(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -90,7 +90,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 self.assertEqual(json.loads(line)["event_type"], "stage")
 
     def test_unwritable_destination_fails_open(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True):
                 self.assertFalse(
                     combat_latency_trace.emit_trace_event(
@@ -99,7 +99,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 )
 
     def test_decision_event_fields_are_accepted(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -119,7 +119,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertTrue(record["provider_call_avoided"])
 
     def test_trace_decision_sources_and_latency(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -141,7 +141,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertTrue(all(record["decision_latency_ms"] >= 0 for record in records))
 
     def test_invalid_decision_source_emits_no_record(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -154,7 +154,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
     def test_disabled_decision_gate_writes_nothing(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", False), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -167,7 +167,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
     def test_stage_provider_compression_and_file_helpers(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
 
             class Usage:
@@ -194,7 +194,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertEqual(records[3]["category"], "read")
 
     def test_provider_helper_preserves_missing_usage(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
 
             class ResponseWithoutUsage:
@@ -219,7 +219,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             def usage(self):
                 raise AssertionError("usage must not be inspected while tracing is disabled")
 
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", False), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -231,7 +231,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
     def test_context_is_included_and_event_fields_win(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -247,7 +247,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 self.assertEqual(records[0]["mode"], "one_pc")
 
     def test_context_overwrite_and_bounded_values(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", True), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -261,7 +261,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 self.assertLessEqual(len(record["detail"]), combat_latency_trace.MAX_VALUE_CHARS)
 
     def test_disabled_context_does_no_work_and_does_not_leak(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             with patch.object(model_config, "ENABLE_COMBAT_TURN_TRACE", False), patch.object(
                 combat_latency_trace, "DEFAULT_TRACE_PATH", path
@@ -278,7 +278,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 self.assertNotIn("mode", record)
 
     def test_mp_fixture_tracing_enabled_captures_invariants(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             fixture = build_mp_fixture()
             trace_path = Path(directory) / "mp-trace.jsonl"
             try:
@@ -325,7 +325,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 fixture["tempdir"].cleanup()
 
     def test_mp_fixture_tracing_disabled_has_same_outcome_without_trace(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             enabled_fixture = build_mp_fixture()
             fixture = build_mp_fixture()
             enabled_trace_path = Path(directory) / "mp-trace-enabled-reference.jsonl"
@@ -352,7 +352,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 fixture["tempdir"].cleanup()
 
     def test_one_pc_fixture_tracing_enabled_captures_invariants(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             fixture = build_one_pc_fixture()
             trace_path = Path(directory) / "one-pc-trace.jsonl"
             try:
@@ -379,7 +379,7 @@ class CombatLatencyTraceTests(unittest.TestCase):
                 fixture["tempdir"].cleanup()
 
     def test_one_pc_fixture_tracing_disabled_has_same_outcome_without_trace(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             enabled_fixture = build_one_pc_fixture()
             fixture = build_one_pc_fixture()
             enabled_trace_path = Path(directory) / "one-pc-trace-enabled-reference.jsonl"
@@ -423,7 +423,7 @@ class CombatLatencyReportTests(unittest.TestCase):
             {"event_type": "decision", "decision_point": "pc_phase_parser", "decision_source": "deterministic", "decision_latency_ms": 2, "provider_call_avoided": True},
             {"event_type": "decision", "decision_point": "combat_command_fast_path", "decision_source": "llm_fallback", "decision_latency_ms": 8, "provider_call_avoided": False},
         ]
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             report = combat_latency_report.build_report(self._write_records(directory, records))
         self.assertEqual(report["status"], "ok")
         self.assertEqual(report["stages"]["turn"]["count"], 2)
@@ -434,7 +434,7 @@ class CombatLatencyReportTests(unittest.TestCase):
         self.assertEqual(report["nl_fast_path"], {"hit": 1, "miss": 1})
 
     def test_report_counts_malformed_lines_without_aborting(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "trace.jsonl"
             path.write_text('{"event_type":"stage","stage":"x","elapsed_ms":1}\nnot json\n', encoding="ascii")
             report = combat_latency_report.build_report(path)
@@ -450,7 +450,7 @@ class CombatLatencyReportTests(unittest.TestCase):
         self.assertIn("unable to read", result.stderr)
 
     def test_empty_trace_is_degraded_but_successful(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             path = Path(directory) / "empty.jsonl"
             path.write_text("", encoding="ascii")
             report = combat_latency_report.build_report(path)
@@ -464,7 +464,7 @@ class CombatLatencyReportTests(unittest.TestCase):
         self.assertNotIn("combat_latency_trace", source)
 
     def test_report_runs_against_mp_fixture_trace(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir="tmp") as directory:
             fixture = build_mp_fixture()
             trace_path = Path(directory) / "fixture-trace.jsonl"
             try:

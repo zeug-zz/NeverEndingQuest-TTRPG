@@ -7,10 +7,46 @@
 
 import os
 import sys
-import tempfile
 import unittest
+from types import ModuleType
+from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+os.environ["TMPDIR"] = os.path.join(REPO_ROOT, "tmp")
+
+import tempfile
+
+from scripts.core_chat_test_safety import arm_process_tripwires
+
+_TRIPWIRES = arm_process_tripwires()
+
+# Keep this lazy import provider-free; migrated character updates resolve the
+# facade only when an update is requested.
+import utils.ai_client_factory as _ai_client_factory
+
+
+_CONFIG_FIXTURE = ModuleType("config")
+_CONFIG_FIXTURE.OPENAI_API_KEY = "fixture-only-never-a-real-credential"
+_CONFIG_FIXTURE.PLAYER_INFO_UPDATE_MODEL = "fixture-player-update-model"
+_CONFIG_FIXTURE.NPC_INFO_UPDATE_MODEL = "fixture-npc-update-model"
+_CONFIG_FIXTURE.CHARACTER_VALIDATOR_MODEL = "fixture-character-validator-model"
+_CONFIG_FIXTURE.MULTIPLAYER_MODE = False
+_CONFIG_PATCHER = patch.dict(sys.modules, {"config": _CONFIG_FIXTURE})
+_CONFIG_PATCHER.start()
+unittest.addModuleCleanup(_CONFIG_PATCHER.stop)
+_FACTORY_PATCHER = patch.object(
+    _ai_client_factory,
+    "create_chat_client",
+    side_effect=AssertionError("character update import constructed a provider client"),
+)
+_CLIENT_FACTORY = _FACTORY_PATCHER.start()
+unittest.addModuleCleanup(_FACTORY_PATCHER.stop)
+import updates.update_character_info as _guarded_update_character_info
+
+_CLIENT_FACTORY.assert_not_called()
+assert not hasattr(_guarded_update_character_info, "client")
 
 from utils.file_operations import safe_write_json
 import utils.scene_follower_state as follower_state
@@ -473,3 +509,10 @@ class TestAuthoritativePacketSceneFollowers(unittest.TestCase):
         packet = build_authoritative_state_packet(party_data)
         followers = packet.get("scene_followers", [])
         self.assertFalse(any("hidden_follower" in str(r) for r in followers))
+
+
+class TestFollowerImportSafety(unittest.TestCase):
+    def test_import_constructs_no_provider_client_and_tripwires_remain_safe(self):
+        _CLIENT_FACTORY.assert_not_called()
+        self.assertFalse(hasattr(_guarded_update_character_info, "client"))
+        _TRIPWIRES.assert_untouched(self)

@@ -40,6 +40,7 @@ from utils.homebrewery_style import (
     sanitize_markdown_text,
 )
 from utils.toolkit_adaptation_provenance import render_adaptation_provenance_markdown
+from utils.llm_router import llm
 
 MODULES_DIR = Path("modules")
 
@@ -365,19 +366,9 @@ def _llm_intro_narrative(
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-        )
-        from model_config import DM_SUMMARIZATION_MODEL
-
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.5,
-            ),
+        response = llm.call(
+            task="summaries",
+            g10_source_id="utils/homebrewery_adventure_writer.py:_llm_intro_narrative",
             messages=[{
                 "role": "user",
                 "content": (
@@ -404,9 +395,10 @@ def _llm_intro_narrative(
                     )
                 )
             }],
+            json_output=False,
             max_completion_tokens=800,
         )
-        result = response.choices[0].message.content.strip()
+        result = response.strip()
         if result:
             # Force correct H3 heading levels regardless of LLM output
             result = re.sub(r"^##\s*(Module Overview)", r"### \1", result, flags=re.MULTILINE)
@@ -457,19 +449,9 @@ def _llm_plot_hook(plot_text: str, plot_count: int, author_name: str) -> Optiona
     if not plot_text.strip():
         return None
     try:
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-        )
-        from model_config import DM_SUMMARIZATION_MODEL
-
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.7,
-            ),
+        response = llm.call(
+            task="summaries",
+            g10_source_id="utils/homebrewery_adventure_writer.py:_llm_plot_hook",
             messages=[{
                 "role": "user",
                 "content": (
@@ -480,9 +462,10 @@ def _llm_plot_hook(plot_text: str, plot_count: int, author_name: str) -> Optiona
                     "PLOT TEXT:\n{}".format(plot_text)
                 )
             }],
+            json_output=False,
             max_completion_tokens=250,
         )
-        result = response.choices[0].message.content.strip()
+        result = response.strip()
         if result:
             return sanitize_markdown_text(result) + "\n\n"
     except Exception:
@@ -702,23 +685,14 @@ def _llm_area_overview(area: Dict[str, Any], data: Dict[str, Any]) -> Optional[s
     )
 
     try:
-        from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-        )
-        from model_config import DM_SUMMARIZATION_MODEL
-
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.6,
-            ),
+        response = llm.call(
+            task="summaries",
+            g10_source_id="utils/homebrewery_adventure_writer.py:_llm_area_overview",
             messages=[{"role": "user", "content": prompt}],
+            json_output=False,
             max_completion_tokens=500,
         )
-        result = response.choices[0].message.content.strip()
+        result = response.strip()
         if result:
             return sanitize_markdown_text(result)
     except Exception:

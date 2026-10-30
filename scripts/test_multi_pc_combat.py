@@ -24,10 +24,80 @@ import sys
 import os
 import json
 import types
+import importlib
+import builtins
+import io
+import pathlib
 from unittest import mock
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scripts.core_chat_test_safety import TripwireFailure, arm_process_tripwires
+
+PROCESS_TRIPWIRES = arm_process_tripwires()
+PRIVATE_READ_DENIALS = []
+
+
+class _PrivateRootReadDenied(BaseException):
+    pass
+
+
+def _is_private_root_read(path):
+    try:
+        candidate = pathlib.Path(os.fsdecode(path))
+        root = pathlib.Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).resolve()
+        if not candidate.is_absolute():
+            candidate = pathlib.Path.cwd() / candidate
+        return candidate.parent.resolve() == root and candidate.name in {"config.py", "party_tracker.json"}
+    except (TypeError, ValueError, OSError):
+        return False
+
+
+def _arm_private_root_read_guard():
+    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
+
+    def check(path, operation):
+        if _is_private_root_read(path):
+            PRIVATE_READ_DENIALS.append(operation)
+            raise _PrivateRootReadDenied("private root read denied: " + operation)
+
+    def guarded_open(path, mode="r", *args, **kwargs):
+        check(path, "builtins.open")
+        return real_open(path, mode, *args, **kwargs)
+
+    def guarded_io_open(path, mode="r", *args, **kwargs):
+        check(path, "io.open")
+        return real_io_open(path, mode, *args, **kwargs)
+
+    def guarded_os_open(path, flags, *args, **kwargs):
+        check(path, "os.open")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    patchers = [patch("builtins.open", guarded_open), patch("io.open", guarded_io_open), patch("os.open", guarded_os_open)]
+    for patcher in patchers:
+        patcher.start()
+    return patchers
+
+
+PRIVATE_READ_PATCHES = _arm_private_root_read_guard()
+import model_config
+_CONFIG_FIXTURE = types.ModuleType("config")
+for _config_name in dir(model_config):
+    if _config_name.isupper() and not _config_name.startswith("_"):
+        setattr(_CONFIG_FIXTURE, _config_name, getattr(model_config, _config_name))
+_CONFIG_FIXTURE.OPENAI_API_KEY = "DUMMY_OPENAI_KEY_FOR_MULTIPC_TEST"
+_CONFIG_FIXTURE.OPENROUTER_API_KEY = "DUMMY_OPENROUTER_KEY_FOR_MULTIPC_TEST"
+_CONFIG_MODULE_PATCHER = patch.dict(sys.modules, {"config": _CONFIG_FIXTURE})
+_CONFIG_MODULE_PATCHER.start()
+from utils import ai_client_factory
+_INERT_COMPLETIONS = mock.Mock(side_effect=lambda *a, **k: (_ for _ in ()).throw(
+    TripwireFailure("unexpected multi-PC provider request")
+))
+_INERT_CLIENT = types.SimpleNamespace(chat=types.SimpleNamespace(completions=_INERT_COMPLETIONS))
+_FACTORY_PATCHER = patch.object(ai_client_factory, "create_chat_client", return_value=_INERT_CLIENT)
+_FACTORY_MOCK = _FACTORY_PATCHER.start()
 
 from core.managers.multi_pc_combat import (
     MultiPCCombatManager,
@@ -40,6 +110,7 @@ from core.managers.multi_pc_combat import (
     temporary_combat_callback,
     reset_combat_state,
     get_combat_manager,
+    emit_combat_event,
     create_combat_manager,
     end_combat_session,
     modify_combat_prompt_for_multi_pc,
@@ -716,6 +787,53 @@ class TestLLMPromptIntegration(unittest.TestCase):
         self.assertIn("Result HP: 7/12", damage_log)
         self.assertTrue(damage_skip_llm)
 
+    def test_attack_hit_traces_deterministic_decision_without_changing_result(self):
+        """A hit emits its deterministic trace while preserving the command tuple."""
+        self.manager.initialize_from_party(self.sample_party)
+        self.manager._state.current_pc_name = "Acheron"
+        self.manager._state.pc_states["Acheron"].status = PCStatus.READY
+        encounter = {
+            "id": "TRACE-HIT-1",
+            "creatures": [{
+                "name": "Goblin",
+                "type": "enemy",
+                "initiative": 12,
+                "armorClass": 15,
+                "currentHitPoints": 12,
+                "maxHitPoints": 12,
+                "status": "alive",
+            }],
+        }
+        self.manager.initialize_turn_queue(encounter)
+        manager_module = importlib.import_module("core.combat.multi_pc.manager")
+
+        with mock.patch.object(manager_module, "trace_decision") as trace:
+            result = self.manager.handle_combat_command(
+                "/att Goblin 18", encounter, actor_name="Acheron"
+            )
+
+        self.assertEqual(
+            result,
+            (
+                "[skipTTS][ALREADY_APPLIED][prefill:/dmg ] Dungeon Master: Hit! (Rolled 18 vs AC 15). Roll damage.",
+                None,
+                None,
+                True,
+            ),
+        )
+        trace.assert_called_once_with(
+            "combat_command_fast_path", "deterministic", mock.ANY, True
+        )
+
+        with mock.patch.object(manager_module, "trace_decision") as miss_trace:
+            miss_result = self.manager.handle_combat_command(
+                "/att Goblin 9", encounter, actor_name="Acheron"
+            )
+        self.assertIn("Miss", miss_result[0])
+        miss_trace.assert_called_once_with(
+            "combat_command_fast_path", "deterministic", mock.ANY, True
+        )
+
     def test_unhandled_combat_command_returns_four_values(self):
         """Unhandled combat commands must still return the full four-value tuple."""
         self.manager.initialize_from_party(self.sample_party)
@@ -867,24 +985,25 @@ class TestLLMPromptIntegration(unittest.TestCase):
         )
 
         with temporary_combat_manager(manager):
-            end_combat_session()
+            with patch.object(manager, "persist_combat_changes", return_value={}):
+                end_combat_session()
 
         self.assertEqual(manager.pc_phase_event_ledger, [])
         self.assertEqual(manager.pc_phase_event_keys, {})
         self.assertEqual(manager.pc_phase_event_sequence, 0)
-    
+
     def test_format_initiative_tracker(self):
         """Test initiative tracker formatting."""
         self.manager.initialize_from_party(self.sample_party)
         self.manager._state.current_pc_name = "Acheron"
-        
+
         for pc_name in ["Acheron", "Merisiel"]:
             self.manager._state.pc_states[pc_name].initiative_modifier = 2
             self.manager._state.pc_states[pc_name].current_hp = 20
             self.manager._state.pc_states[pc_name].max_hp = 20
-        
+
         self.manager.initialize_turn_queue(self.sample_encounter)
-        
+
         tracker = self.manager.format_initiative_tracker(self.sample_encounter)
 
         # Check for key elements in the tracker (actual format uses "--- ROUND INFO ---" and "**Live Initiative Tracker:**")
@@ -924,6 +1043,7 @@ class TestContextManagers(unittest.TestCase):
     
     def test_temporary_combat_manager(self):
         """Test temporary_combat_manager context manager."""
+        legacy_module = importlib.import_module("core.managers.multi_pc_combat")
         mock_manager = MultiPCCombatManager()
         
         # Initially no manager
@@ -932,12 +1052,15 @@ class TestContextManagers(unittest.TestCase):
         # Use context manager
         with temporary_combat_manager(mock_manager):
             self.assertIs(get_combat_manager(), mock_manager)
+            self.assertIs(legacy_module._active_combat_manager, mock_manager)
         
         # Manager restored to None after context
         self.assertIsNone(get_combat_manager())
+        self.assertIsNone(legacy_module._active_combat_manager)
     
     def test_temporary_combat_manager_restores_previous(self):
         """Test that context manager restores previous manager."""
+        legacy_module = importlib.import_module("core.managers.multi_pc_combat")
         original_manager = MultiPCCombatManager()
         mock_manager = MultiPCCombatManager()
         
@@ -946,23 +1069,31 @@ class TestContextManagers(unittest.TestCase):
             # Now replace with mock
             with temporary_combat_manager(mock_manager):
                 self.assertIs(get_combat_manager(), mock_manager)
+                self.assertIs(legacy_module._active_combat_manager, mock_manager)
             
             # Should be restored to original
             self.assertIs(get_combat_manager(), original_manager)
+            self.assertIs(legacy_module._active_combat_manager, original_manager)
     
     def test_temporary_combat_callback(self):
         """Test temporary_combat_callback context manager."""
+        legacy_module = importlib.import_module("core.managers.multi_pc_combat")
         captured_events = []
         test_callback = lambda event, data: captured_events.append((event, data))
         
         with temporary_combat_callback(test_callback):
-            # Access internal callback to verify it's set
-            from core.managers.multi_pc_combat import _combat_callback
-            self.assertIs(_combat_callback, test_callback)
+            # Context-local callback is authoritative; the legacy global
+            # mirror must remain untouched so concurrent contexts cannot race.
+            self.assertIs(legacy_module._combat_callback, test_callback)
+            from core.managers.multi_pc_combat import _combat_callback as imported_callback
+            self.assertIs(imported_callback, test_callback)
+            emit_combat_event("context", {})
+            self.assertEqual(captured_events, [("context", {})])
         
         # Callback restored after context
-        from core.managers.multi_pc_combat import _combat_callback
-        self.assertIsNone(_combat_callback)
+        emit_combat_event("after_context", {})
+        self.assertEqual(captured_events, [("context", {})])
+        self.assertIsNone(legacy_module._combat_callback)
     
     def test_emit_combat_event(self):
         """Test event emission with callback."""
@@ -1091,32 +1222,33 @@ class TestEdgeCases(unittest.TestCase):
     def test_create_and_end_combat_session(self):
         """Test full combat session lifecycle."""
         party = {"partyMembers": ["Acheron"], "active_character": "Acheron"}
-        
+
         # Initially no manager
         self.assertIsNone(get_combat_manager())
-        
+
         # Create session
         manager = create_combat_manager(party)
         self.assertIsNotNone(manager)
         self.assertIs(get_combat_manager(), manager)
-        
+
         # End session
-        end_combat_session()
+        with patch.object(manager, "persist_combat_changes", return_value={}):
+            end_combat_session()
         self.assertIsNone(get_combat_manager())
 
 
 class TestIntegrationScenarios(unittest.TestCase):
     """Test realistic integration scenarios."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
         reset_combat_state()
         self.manager = MultiPCCombatManager()
-    
+
     def tearDown(self):
         """Clean up after each test."""
         reset_combat_state()
-    
+
     def test_full_combat_round(self):
         """Test a complete combat round with multiple PCs."""
         party = {"partyMembers": ["Acheron", "Merisiel"], "active_character": "Acheron"}
@@ -1209,54 +1341,9 @@ class TestCombatIntegrityValidation(unittest.TestCase):
 
     @staticmethod
     def _import_integrity_validator():
-        """Import validate_combatant_integrity with lightweight dependency stubs."""
-        openai_mod = types.ModuleType("openai")
-
-        class OpenAI:
-            def __init__(self, *args, **kwargs):
-                self.chat = types.SimpleNamespace(
-                    completions=types.SimpleNamespace(create=lambda *a, **k: None)
-                )
-
-        openai_mod.OpenAI = OpenAI
-        sys.modules["openai"] = openai_mod
-
-        update_character_info_mod = types.ModuleType("updates.update_character_info")
-        update_character_info_mod.update_character_info = lambda *a, **k: None
-        update_character_info_mod.normalize_character_name = lambda name: name
-        sys.modules["updates.update_character_info"] = update_character_info_mod
-        sys.modules["updates.update_encounter"] = types.ModuleType("updates.update_encounter")
-        sys.modules["updates.update_party_tracker"] = types.ModuleType("updates.update_party_tracker")
-
-        core_ai_pkg = types.ModuleType("core.ai")
-        sys.modules["core.ai"] = core_ai_pkg
-        import core
-        core.ai = core_ai_pkg
-
-        sys.modules["core.ai.cumulative_summary"] = types.ModuleType("core.ai.cumulative_summary")
-
-        combat_compressor_mod = types.ModuleType("core.ai.combat_compressor")
-
-        class CombatUserMessageCompressor:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def process_combat_conversation(self, history):
-                return history
-
-        combat_compressor_mod.CombatUserMessageCompressor = CombatUserMessageCompressor
-        sys.modules["core.ai.combat_compressor"] = combat_compressor_mod
-
-        inventory_mod = types.ModuleType("core.ai.inventory_context_integration")
-        inventory_mod.enhance_player_input_with_inventory = lambda *a, **k: a[0] if a else ""
-        sys.modules["core.ai.inventory_context_integration"] = inventory_mod
-
-        if "core.managers.combat_manager" in sys.modules:
-            del sys.modules["core.managers.combat_manager"]
-
-        from core.managers.combat_manager import validate_combatant_integrity
-
-        return validate_combatant_integrity
+        """Load the actual validator with its pure helper closure via C5's loader."""
+        from scripts.c5_regression_combat import _load_integrity_validator
+        return _load_integrity_validator()
 
     def test_accepts_non_active_pc_target_from_multi_pc_roster(self):
         """C4.A1/C4.A2: non-active PC target is legal during enemy phase."""
@@ -1299,6 +1386,33 @@ class TestCombatIntegrityValidation(unittest.TestCase):
         self.assertIsInstance(result, str)
         self.assertIn("INTEGRITY ERROR", result)
         self.assertIn("Phantom Knight", result)
+
+
+class TestImportSafetyProof(unittest.TestCase):
+    def test_private_root_reads_are_denied_and_tripwires_remain_armed(self):
+        root = pathlib.Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from scripts import c5_regression_combat as c5
+        for protected in ("config.py", "party_tracker.json"):
+            target = root / protected
+            for operation, attempt in (
+                ("builtins.open", lambda: builtins.open(target, "r", encoding="utf-8")),
+                ("io.open", lambda: io.open(target, "r", encoding="utf-8")),
+                ("os.open", lambda: os.open(target, os.O_RDONLY)),
+            ):
+                with self.subTest(path=protected, operation=operation), self.assertRaisesRegex(
+                    BaseException, "private root read denied"
+                ):
+                    attempt()
+        self.assertEqual(c5.PRIVATE_READ_DENIALS[-6:], ["builtins.open", "io.open", "os.open"] * 2)
+        self.assertEqual(_FACTORY_MOCK.call_count, 0)
+        self.assertEqual(_INERT_COMPLETIONS.call_count, 0)
+        PROCESS_TRIPWIRES.assert_untouched(self)
+        for name in ("openai.OpenAI", "socket.socket", "urlopen"):
+            guard = PROCESS_TRIPWIRES.calls[name]
+            with self.subTest(guard=name), self.assertRaises(TripwireFailure):
+                guard()
+            guard.reset_mock()
+        PROCESS_TRIPWIRES.assert_untouched(self)
 
 
 class TestDeathSaveDeterministic(unittest.TestCase):
@@ -1443,7 +1557,8 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestIntegrationScenarios))
     suite.addTests(loader.loadTestsFromTestCase(TestCombatIntegrityValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestDeathSaveDeterministic))
-    
+    suite.addTests(loader.loadTestsFromTestCase(TestImportSafetyProof))
+
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
@@ -1475,3 +1590,10 @@ if __name__ == "__main__":
     else:
         print("\n[FAIL] Some tests failed!")
         sys.exit(1)
+
+
+def tearDownModule():
+    _FACTORY_PATCHER.stop()
+    _CONFIG_MODULE_PATCHER.stop()
+    for patcher in reversed(PRIVATE_READ_PATCHES):
+        patcher.stop()

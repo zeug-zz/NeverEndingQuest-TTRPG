@@ -15,32 +15,15 @@ from typing import Dict, List, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-class _FakeResponse:
-    """Simple fake OpenAI chat response payload."""
-
-    def __init__(self, content: str):
-        self.choices = [type("Choice", (), {"message": type("Msg", (), {"content": content})()})()]
-
-
-class _FakeClient:
-    """Simple fake client with chat.completions.create API."""
-
-    def __init__(self, content: str):
-        self._content = content
-        self.chat = type("Chat", (), {})()
-        self.chat.completions = type("Completions", (), {})()
-        self.chat.completions.create = self._create
-
-    def _create(self, **kwargs):
-        _ = kwargs
-        return _FakeResponse(self._content)
-
-
 class TestGitInstallRuntimeCleanliness(unittest.TestCase):
     """Deterministic smoke pass for runtime-state cleanliness contract."""
 
     OVERLAY_FILES = [
         ".gitignore",
+        "utils/llm_router.py",
+        "utils/llm_runtime.py",
+        "updates/plot_update.py",
+        "utils/reconcile_location_state.py",
         "utils/runtime_hydration.py",
         "utils/startup_wizard.py",
         "utils/quest_player_formatter.py",
@@ -197,6 +180,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path.cwd()
 sys.path.insert(0, str(ROOT))
@@ -232,24 +216,17 @@ for point in plot_data.get("plotPoints", []):
         break
 assert plot_point_id is not None
 
-class _FakeResponse:
-    def __init__(self, content):
-        self.choices = [type("Choice", (), {"message": type("Msg", (), {"content": content})()})()]
-
-class _FakeClient:
+class _FakeFacade:
     def __init__(self, content):
         self._content = content
-        self.chat = type("Chat", (), {})()
-        self.chat.completions = type("Completions", (), {})()
-        self.chat.completions.create = self._create
 
-    def _create(self, **kwargs):
+    def call(self, **kwargs):
         _ = kwargs
-        return _FakeResponse(self._content)
+        return self._content
 
 qpf.format_quests_for_player = lambda module: True
 plot_payload = json.dumps({plot_point_id: {"status": "in progress", "plotImpact": "Smoke advancement"}})
-plot_update.client = _FakeClient(plot_payload)
+plot_update.llm = _FakeFacade(plot_payload)
 updated = plot_update.update_plot(plot_point_id, "in progress", "Smoke advancement", "module_plot.json", max_retries=1)
 assert updated is not None
 
@@ -286,8 +263,8 @@ if not (area_id and location_id):
     first_area.write_text(json.dumps(data, indent=2), encoding="utf-8")
     location_id = locations[0]["locationId"]
 
-reconcile.client = _FakeClient("[]")
-reconcile.run(area_id, location_id, [{"role": "assistant", "content": "The monsters are defeated."}])
+with patch.object(reconcile.llm, "call", return_value="[]"):
+    reconcile.run(area_id, location_id, [{"role": "assistant", "content": "The monsters are defeated."}])
 
 regen_result = ensure_player_quests_file(module_name)
 assert regen_result.get("status") in {"exists", "regenerated"}, regen_result

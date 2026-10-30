@@ -1,6 +1,6 @@
 ## Purpose
 
-Define factory-side chat parameter finalization: one normalized `extra_body` shape, a single `finalize_chat_params()` assembler that owns GPT-5 temperature policy and retry reasoning escalation, client-level timeout ownership for every chat client, and unchanged behavior for existing factory consumers.
+Define task-aware chat parameter finalization, portable Auto request settings, GPT-5 compatibility and preferred gpt-6-luna reasoning policy, bounded clients, and legacy consumer compatibility apart from the approved OpenAI model refresh.
 
 ## ADDED Requirements
 
@@ -26,39 +26,51 @@ Define factory-side chat parameter finalization: one normalized `extra_body` sha
 
 ### Requirement: Chat Parameter Finalization
 
-The factory SHALL provide `finalize_chat_params(model, params=None, temperature=None, is_openrouter=False, retry_tier=None)` as the single assembler for chat kwargs: OpenRouter calls receive profile params plus the provided temperature, direct-OpenAI GPT-5 family calls omit temperature and apply the GPT-5 reasoning profile, and other direct-OpenAI models receive the platform temperature.
+The factory SHALL provide `finalize_chat_params(model, params=None, temperature=None, is_openrouter=False, retry_tier=None, *, task_id)` as the single assembler for chat kwargs. It SHALL use explicit task context for direct-OpenAI reasoning-family policy, preserve legacy GPT-5 support and apply that task policy to `gpt-6-luna`, omit legacy sampling controls by default for those models, and merge portable OpenRouter extensions under `extra_body`.
 
-#### Scenario: GPT-5 omits legacy temperature
+#### Scenario: Preferred OpenAI model receives task policy
 
-- **WHEN** `finalize_chat_params("gpt-5.6-luna", temperature=0.7, is_openrouter=False)` is called
+- **WHEN** `finalize_chat_params("gpt-6-luna", temperature=0.7, is_openrouter=False, task_id="combat_validation")` is called
 - **THEN** the returned kwargs SHALL NOT contain `temperature`
-- **AND** they SHALL contain the GPT-5 reasoning profile fields for the task family
+- **AND** they SHALL contain the existing validation-family reasoning and verbosity policy
+- **AND** narration, summary, and compression tasks SHALL receive their own task-family policy rather than a single global default
+
+#### Scenario: Legacy GPT-5 support is preserved
+
+- **WHEN** a legacy GPT-5 model is finalized with the same task and retry context
+- **THEN** its task-policy kwargs SHALL match the existing legacy shim for that model
 
 #### Scenario: OpenRouter keeps temperature
 
-- **WHEN** `finalize_chat_params("deepseek/deepseek-v4-flash-0731", temperature=0.7, is_openrouter=True)` is called
+- **WHEN** `finalize_chat_params("openrouter/auto", temperature=0.7, is_openrouter=True, task_id="dm_main")` is called
 - **THEN** the returned kwargs SHALL contain `temperature` with the provided value
 - **AND** they SHALL include the supplied profile params
 
-#### Scenario: Non-GPT-5 OpenAI model keeps platform temperature
+#### Scenario: Other OpenAI models keep platform temperature
 
-- **WHEN** a direct-OpenAI model outside the GPT-5 family is finalized with a temperature
+- **WHEN** a direct-OpenAI model outside the supported reasoning families is finalized with a temperature
 - **THEN** the returned kwargs SHALL contain that temperature
 
 ### Requirement: Retry Reasoning Escalation Parity
 
-Reasoning escalation for retry attempts SHALL travel through the `retry_tier` parameter of `finalize_chat_params()` and SHALL NOT appear in outgoing request kwargs; a direct-OpenAI GPT-5 call finalized with `retry_tier="high"` SHALL reproduce the legacy `get_chat_completion_params(task, ..., retry_tier="high")` reasoning kwargs for that task family.
+Reasoning escalation SHALL use explicit `task_id` and `retry_tier` factory inputs, neither of which SHALL appear in outgoing kwargs. Direct-OpenAI GPT-5 and `gpt-6-luna` retries SHALL preserve the existing high-reasoning escalation policy; OpenRouter Auto SHALL NOT receive direct-OpenAI `reasoning_effort` or `verbosity` fields.
 
 #### Scenario: High retry tier escalates reasoning
 
-- **WHEN** `finalize_chat_params(..., retry_tier="high", is_openrouter=False)` finalizes a GPT-5 model
+- **WHEN** `finalize_chat_params(..., retry_tier="high", is_openrouter=False, task_id="combat_main")` finalizes a supported direct-OpenAI reasoning model
 - **THEN** the reasoning effort SHALL match the legacy shim's high-retry output for the task family
 - **AND** `retry_tier` SHALL NOT be present in the returned kwargs
 
 #### Scenario: Retry tier is not leaked to the SDK
 
 - **WHEN** finalized kwargs are passed to `chat.completions.create`
-- **THEN** the request SHALL contain no unknown `retry_tier` field
+- **THEN** the request SHALL contain neither `retry_tier` nor `task_id`
+
+#### Scenario: Auto extensions are SDK-compatible
+
+- **WHEN** portable OpenRouter profile params include reasoning, provider preferences, or Auto plugins
+- **THEN** the factory SHALL merge them under the SDK's `extra_body` mapping
+- **AND** it SHALL NOT leak them as unsupported top-level SDK kwargs
 
 ### Requirement: Client-Level Timeout Ownership
 
@@ -83,7 +95,7 @@ Reasoning escalation for retry attempts SHALL travel through the `retry_tier` pa
 
 ### Requirement: Existing Factory Consumers Keep Current Behavior
 
-Legacy helpers (`get_model_config`, `get_chat_completion_params`, `create_chat_client`) SHALL remain importable with unchanged contracts, and their behavior with `LLM_PROVIDER = "openai"` SHALL be unchanged by this change.
+Legacy helpers SHALL remain importable with unchanged signatures. For the same supplied legacy model and task, their parameter output SHALL remain compatible apart from the new client timeout bound. Active direct-OpenAI chat model assignments in `model_config.py` SHALL receive the owner-approved refresh to `gpt-6-luna`; no other model substitution SHALL be introduced under the compatibility claim.
 
 #### Scenario: Legacy params shim output is unchanged on OpenAI
 

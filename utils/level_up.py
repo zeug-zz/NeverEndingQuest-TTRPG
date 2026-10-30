@@ -6,12 +6,9 @@
 # level_up.py - Simplified level up system that returns changes dict
 
 import json
-from openai import OpenAI
-from config import OPENAI_API_KEY, LEVEL_UP_MODEL
 from .file_operations import safe_read_json
 from .xp_progression_utils import get_next_level_threshold
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+from utils.llm_router import llm
 
 def load_leveling_info():
     """Load leveling information from text file"""
@@ -97,16 +94,16 @@ Example response format:
 
     try:
         # Get AI response
-        response = client.chat.completions.create(
-            model=LEVEL_UP_MODEL,
+        response = llm.call(
+            task="level_up",
             messages=[
                 {"role": "system", "content": "You are a 5th edition of the world's most popular roleplaying game rules expert. Provide only valid JSON responses."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3  # Low temperature for consistency
+            json_output=False,
         )
-        
-        ai_response = response.choices[0].message.content.strip()
+
+        ai_response = response.strip()
         
         # Remove markdown if present
         if "```json" in ai_response:

@@ -10,19 +10,16 @@ import os
 import shutil
 import re
 from datetime import datetime
-from openai import OpenAI
 
 # Import project-specific modules
-from config import OPENAI_API_KEY, NPC_INFO_UPDATE_MODEL # Using a smaller, faster model is fine
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.location_context_hygiene import is_derived_location_context_message
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
+from utils.llm_router import llm
 
 # Set script name for logging
 set_script_name("reconcile_location_state")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 def create_area_backup(area_file_path):
     """Creates a timestamped backup of an area file before modification."""
@@ -134,12 +131,12 @@ Based on the conversation, what is the final list of active, hostile monsters re
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=NPC_INFO_UPDATE_MODEL, # A smaller model is sufficient and faster
+            response = llm.call(
+                task="updates",
                 messages=messages,
-                temperature=0.2 # Low temperature for deterministic results
+                json_output=False,
             )
-            raw_response = response.choices[0].message.content.strip()
+            raw_response = response.strip()
 
             # Clean and parse JSON response
             json_match = re.search(r'\[.*\]', raw_response, re.DOTALL)

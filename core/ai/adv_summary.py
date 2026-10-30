@@ -32,12 +32,12 @@ except:
     def track_response(r): pass
 
 from jsonschema import validate, ValidationError
-from config import ADVENTURE_SUMMARY_MODEL
 from utils.module_path_manager import ModulePathManager
 from utils.encoding_utils import sanitize_text, safe_json_load, safe_json_dump
 from core.managers.status_manager import status_generating_summary
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
-from utils.ai_client_factory import create_chat_client, get_chat_model_name, get_model_config  # OPENROUTER: Multi-provider support
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 
 def _normalize_display_location_name(location_name: str) -> str:
@@ -49,9 +49,6 @@ def _normalize_display_location_name(location_name: str) -> str:
 # Set script name for logging
 set_script_name("adv_summary")
 
-TEMPERATURE = 0.8
-# Initialize client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 def get_current_location():
     try:
@@ -233,21 +230,19 @@ def update_location_json(adventure_summary, location_info, current_area_id_from_
     for attempt in range(max_retries):
         debug_print(f"Attempt {attempt + 1} to update location JSON")
         try:
-            config = get_model_config("adventure_summary", ADVENTURE_SUMMARY_MODEL)  # OPENROUTER: 3-tier model selection
-            response = client.chat.completions.create(
-                model=config["model"], **config.get("extra_body", {}),
-                temperature=TEMPERATURE,
-                messages=location_updater_prompt
+            observer = make_legacy_receipt_observer(
+                legacy_context={"function": "update_location_json", "purpose": "location_update"},
+                g10_source_id="core/ai/adv_summary.py:adv_summary",
+                track_usage=USAGE_TRACKING_AVAILABLE,
             )
-            
-            # Track usage if available
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass
-            
-            location_updates = response.choices[0].message.content.strip()
+            # TABLETOP MODE: This location update is parsed and schema-validated as a JSON object.
+            location_updates = llm.call(
+                task="adventure_summary",
+                messages=location_updater_prompt,
+                json_output=False,
+                json_contract=True,
+                observer=observer,
+            ).strip()
             # Sanitize AI response to prevent encoding issues
             location_updates = sanitize_text(location_updates)
             location_updates = location_updates.replace("```json", "").replace("```", "").strip()
@@ -469,21 +464,17 @@ Your writing should feel immersive, literary, and grounded-like a historical ent
 
 
     try:
-        config = get_model_config("adventure_summary", ADVENTURE_SUMMARY_MODEL)  # OPENROUTER: 3-tier model selection
-        response = client.chat.completions.create(
-            model=config["model"], **config.get("extra_body", {}),
-            temperature=TEMPERATURE,
-            messages=dialogue_data
+        observer = make_legacy_receipt_observer(
+            legacy_context={"function": "generate_adventure_summary", "purpose": "adventure_summary"},
+            g10_source_id="core/ai/adv_summary.py:adv_summary",
+            track_usage=USAGE_TRACKING_AVAILABLE,
         )
-        
-        # Track usage if available
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-        
-        adventure_summary = response.choices[0].message.content.strip()
+        adventure_summary = llm.call(
+            task="adventure_summary",
+            messages=dialogue_data,
+            json_output=False,
+            observer=observer,
+        ).strip()
         # Sanitize AI response to prevent encoding issues
         adventure_summary = sanitize_text(adventure_summary)
         return adventure_summary

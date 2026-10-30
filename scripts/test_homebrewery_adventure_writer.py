@@ -12,8 +12,13 @@ sections, handles credits attribution correctly, and handles missing data.
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from scripts.core_chat_test_safety import arm_process_tripwires
+
+_TRIPWIRES = arm_process_tripwires()
 
 from utils.homebrewery_adventure_writer import (
     generate_homebrewery_adventure,
@@ -21,6 +26,13 @@ from utils.homebrewery_adventure_writer import (
     _parse_author_field,
     _npc_display_name,
 )
+from utils.llm_router import llm
+
+
+def _generate_homebrewery_adventure_offline(module_slug):
+    """Exercise deterministic document fallbacks without provider access."""
+    with mock.patch.object(llm, "call", return_value=""):
+        return generate_homebrewery_adventure(module_slug)
 
 
 class TestGenerateHomebreweryAdventure(unittest.TestCase):
@@ -28,7 +40,7 @@ class TestGenerateHomebreweryAdventure(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.md = generate_homebrewery_adventure("The_Ancients_Lab")
+        cls.md = _generate_homebrewery_adventure_offline("The_Ancients_Lab")
 
     def test_output_is_non_empty(self):
         self.assertIsInstance(self.md, str)
@@ -192,7 +204,7 @@ class TestMissingDataModule(unittest.TestCase):
 
     def test_missing_module_generates_minimal_doc(self):
         # Should not raise
-        result = generate_homebrewery_adventure("nonexistent_module_xyz")
+        result = _generate_homebrewery_adventure_offline("nonexistent_module_xyz")
         self.assertIsInstance(result, str)
         self.assertGreater(len(result), 100)
         self.assertIn("renderer: V3", result)
@@ -203,7 +215,7 @@ class TestGeneratedSections(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.md = generate_homebrewery_adventure("The_Ancients_Lab")
+        cls.md = _generate_homebrewery_adventure_offline("The_Ancients_Lab")
 
     def test_intro_contains_module_name(self):
         self.assertIn("The Ancients Lab", self.md)
@@ -312,7 +324,7 @@ class TestAdventureEndpointContract(unittest.TestCase):
 
     def test_adventure_endpoint_content_is_valid_markdown(self):
         """Endpoint returns valid V3 Homebrewery markdown (covers 5.10)."""
-        md = generate_homebrewery_adventure("The_Ancients_Lab")
+        md = _generate_homebrewery_adventure_offline("The_Ancients_Lab")
         self.assertIsInstance(md, str)
         self.assertGreater(len(md), 1000)
         self.assertIn("renderer: V3", md[:500])
@@ -320,7 +332,7 @@ class TestAdventureEndpointContract(unittest.TestCase):
 
     def test_adventure_endpoint_nonexistent_module(self):
         """Endpoint for nonexistent module returns minimal valid doc (covers 5.9)."""
-        md = generate_homebrewery_adventure("nonexistent_module_xyz")
+        md = _generate_homebrewery_adventure_offline("nonexistent_module_xyz")
         self.assertIsInstance(md, str)
         self.assertGreater(len(md), 100)
         self.assertIn("renderer: V3", md)
@@ -333,7 +345,7 @@ class TestAdventureEndpointContract(unittest.TestCase):
 
     def test_adventure_endpoint_content_type_text_markdown(self):
         """The generation function produces text-compatible markdown output."""
-        md = generate_homebrewery_adventure("The_Ancients_Lab")
+        md = _generate_homebrewery_adventure_offline("The_Ancients_Lab")
         self.assertTrue(md.startswith("<!--") or md.startswith("{{"))
 
 

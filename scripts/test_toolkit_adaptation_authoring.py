@@ -12,7 +12,6 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -36,6 +35,8 @@ from utils.toolkit_adaptation_authoring import (
     run_adaptation_authoring,
 )
 from utils.toolkit_adaptation_source_context import build_adaptation_source_context
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -51,30 +52,28 @@ def _load_fixture() -> Dict[str, Any]:
 
 
 def _response(content: Optional[str] = None, *, refusal: Optional[str] = None) -> Any:
-    message = SimpleNamespace(content=content, refusal=refusal)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice], model="mock-adaptation-model", id="request-author-1")
+    if refusal:
+        return GameLLMTerminalError("refusal")
+    return content
 
 
-class FakeCompletions:
+class FakeClient:
+    """Facade-shaped provider-free callable used by the authoring runner."""
+
     def __init__(self, response: Any = None, error: Optional[Exception] = None, events=None) -> None:
         self.response = response
         self.error = error
         self.events = events if events is not None else []
         self.calls = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> Any:
         self.events.append("provider")
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
-
-
-class FakeClient:
-    def __init__(self, response: Any = None, error: Optional[Exception] = None, events=None) -> None:
-        self.completions = FakeCompletions(response=response, error=error, events=events)
-        self.chat = SimpleNamespace(completions=self.completions)
 
 
 class TestAdaptationAuthoringPreflight(unittest.TestCase):
@@ -157,7 +156,14 @@ class TestAdaptationAuthoringPreflight(unittest.TestCase):
             self.assertEqual(artifact["provenance"]["rights_class"], "user_authored")
             self.assertEqual(artifact["provenance"]["rights_review_status"], "not_required")
             self.assertEqual(artifact["provenance"]["adaptation_mode"], "llm_adaptation")
-            self.assertEqual(artifact["provenance"]["model_metadata"]["model"], "mock-adaptation-model")
+        self.assertEqual(
+            source_artifact["provenance"]["model_metadata"]["model"],
+            "mock-adaptation-model",
+        )
+        self.assertEqual(
+            dossier_artifact["provenance"]["model_metadata"]["model"],
+            DM_MAIN_MODEL,
+        )
         self.assertEqual(dossier_artifact["payload"], self.fixture)
 
     def test_source_context_is_persisted_before_provider_call(self) -> None:
@@ -301,10 +307,10 @@ class TestAdaptationAuthoringPreflight(unittest.TestCase):
         self.assertEqual(replay["status"], AUTHORING_STATUS_BLOCKED)
         self.assertTrue(replay["idempotent_replay"])
         self.assertFalse(replay["completed"])
-        self.assertEqual(replay_client.completions.calls, [])
+        self.assertEqual(replay_client.calls, [])
         self.assertEqual(first["attempt_id"], replay["attempt_id"])
-        self.assertEqual(len(first_client.completions.calls), 1)
-        self.assertEqual(len(second_client.completions.calls), 1)
+        self.assertEqual(len(first_client.calls), 1)
+        self.assertEqual(len(second_client.calls), 1)
 
     def test_failed_authoring_does_not_touch_preexisting_module_or_registry_data(self) -> None:
         module_dir = WORKSPACE / "modules" / "Existing_Module"

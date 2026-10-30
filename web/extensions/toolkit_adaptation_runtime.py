@@ -49,6 +49,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from utils.file_operations import safe_write_json
+from utils.ai_client_factory import get_chat_completion_params
+from utils.llm_router import GameLLMTerminalError, llm
 from utils.toolkit_adaptation_artifacts import build_attempt_id
 from utils.toolkit_adaptation_author import (
     REASON_CODE_NONE,
@@ -1079,8 +1081,8 @@ def validate_adaptation_runtime_envelope(value: Any) -> Dict[str, Any]:
 def adaptation_convergence_callback(
     context: Mapping[str, Any],
     *,
-    client: Any = None,
-    client_factory: Optional[Callable[[], Any]] = None,
+    client: Optional[Callable[..., Any]] = None,
+    client_factory: Optional[Callable[[], Callable[..., Any]]] = None,
     parameter_resolver: Optional[Callable[..., Mapping[str, Any]]] = None,
     timeout_seconds: float = DEFAULT_CONVERGENCE_PROVIDER_TIMEOUT_SECONDS,
 ) -> Dict[str, Any]:
@@ -1166,6 +1168,13 @@ def adaptation_convergence_callback(
     def _response_content(response: Any) -> Any:
         if isinstance(response, Mapping):
             return response
+        if isinstance(response, str):
+            if not response.strip() or len(response) > MAX_CONVERGENCE_PROVIDER_RESPONSE_CHARS:
+                raise ValueError("provider response exceeds its bound")
+            try:
+                return json.loads(response)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("provider response JSON is invalid") from exc
         choices = getattr(response, "choices", None)
         if not isinstance(choices, (list, tuple)) or len(choices) != 1:
             raise ValueError("provider response shape is invalid")
@@ -1297,24 +1306,43 @@ def adaptation_convergence_callback(
 
     def _provider_call(request: Mapping[str, Any]) -> Dict[str, Any]:
         try:
-            from model_config import DM_MAIN_MODEL
-            from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+            profile = llm.resolve_profile(ADAPTATION_CONVERGENCE_TASK_ID)
+            profile_model = profile.get("model")
+            if not isinstance(profile_model, str) or not profile_model.strip():
+                return _failure(
+                    "provider_dependency_unavailable",
+                    ("provider_parameter_resolution",),
+                    provider_failure_class="unavailable",
+                    failure_class="dependency",
+                )
+            profile_model = profile_model.strip()
 
+            # TABLETOP MODE: Production convergence chat is routed through the shared facade.
             if client is not None:
-                resolved_client = client
-            else:
+                facade_call = client
+            elif client_factory is not None:
                 try:
-                    resolved_client = (
-                        client_factory() if client_factory is not None else create_chat_client()
-                    )
+                    facade_call = client_factory()
                 except Exception as exc:
                     return _provider_failure(exc, client_initialization=True)
+            else:
+                facade_call = llm.call
+            if not callable(facade_call):
+                return _provider_failure(
+                    TypeError("injected facade call must be callable"),
+                    client_initialization=True,
+                )
+
             resolver = parameter_resolver or get_chat_completion_params
             try:
-                params = resolver(ADAPTATION_CONVERGENCE_TASK_ID, DM_MAIN_MODEL)
+                params = resolver(ADAPTATION_CONVERGENCE_TASK_ID, profile_model)
             except Exception as exc:
                 return _provider_failure(exc, client_initialization=True)
-            if not isinstance(params, Mapping) or not isinstance(params.get("model"), str):
+            if (
+                not isinstance(params, Mapping)
+                or not isinstance(params.get("model"), str)
+                or params["model"].strip() != profile_model
+            ):
                 return _failure(
                     "provider_dependency_unavailable",
                     ("provider_parameter_resolution",),
@@ -1336,13 +1364,22 @@ def adaptation_convergence_callback(
                 },
                 {"role": "user", "content": _canonical_json(request)},
             ]
-            response = resolved_client.chat.completions.create(
+            response = facade_call(
+                task=ADAPTATION_CONVERGENCE_TASK_ID,
                 messages=messages,
-                timeout=timeout_seconds,
+                json_output=False,
                 response_format={"type": "json_object"},
-                **params,
             )
             return _proposal_result(response)
+        except GameLLMTerminalError as exc:
+            if exc.terminal_kind in {"refusal", "content_filter"}:
+                return _failure(
+                    "provider_response_malformed",
+                    ("provider_response_malformed",),
+                    provider_failure_class="malformed",
+                    failure_class="malformed",
+                )
+            return _provider_failure(exc)
         except Exception as exc:
             return _provider_failure(exc)
 

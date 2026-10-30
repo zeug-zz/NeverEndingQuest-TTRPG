@@ -10,15 +10,8 @@ Compresses location JSON into compact structured format
 import json
 import re
 from typing import Dict, Any, List, Optional
-from openai import OpenAI
-
-# Load configuration
-try:
-    import config
-    from model_config import LOCATION_COMPRESSION_MODEL
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
-except ImportError:
-    raise ImportError("Missing config.py or model_config.py")
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Import token tracking
 try:
@@ -135,24 +128,21 @@ Remove ALL role prefixes: "Kira" not "Scout_Kira", "Dorun" not "Elder_Dorun", "T
 """
             user_message = f"{example_format}This is a LOCATION MODULE requiring all location tables. Compress this location data:\n\n{location_json_str}"
             
-            response = client.chat.completions.create(
-                model=LOCATION_COMPRESSION_MODEL,
+            observer = make_legacy_receipt_observer(
+                track_usage=USAGE_TRACKING_AVAILABLE,
+            )
+            response_text = llm.call(
+                task="location_compression",
                 messages=[
                     {"role": "system", "content": LOCATION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=0.1  # Lower temperature for more deterministic output
+                json_output=False,
+                observer=observer,
             )
             
-            # Track token usage
-            if USAGE_TRACKING_AVAILABLE:
-                try:
-                    track_response(response)
-                except:
-                    pass  # Silently ignore tracking errors
-            
             # Extract response
-            response_text = response.choices[0].message.content.strip()
+            response_text = response_text.strip()
             
             # Remove markdown code blocks if present
             if response_text.startswith("```"):

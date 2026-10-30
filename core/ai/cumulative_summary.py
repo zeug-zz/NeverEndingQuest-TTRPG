@@ -69,7 +69,6 @@ except:
         pass
 
 
-from config import ADVENTURE_SUMMARY_MODEL
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_write_json, safe_read_json
 from utils.encoding_utils import sanitize_text, safe_json_load, safe_json_dump
@@ -80,18 +79,12 @@ from core.managers.status_manager import (
 )
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.location_context_hygiene import inject_location_provenance
-from utils.ai_client_factory import (
-    create_chat_client,
-    get_chat_model_name,
-    get_model_config,
-)  # OPENROUTER: Multi-provider support
+from utils.llm_router import llm
+from utils.llm_runtime import make_legacy_receipt_observer
 
 # Set script name for logging
 set_script_name("cumulative_summary")
 
-TEMPERATURE = 0.8
-# Initialize client using factory (supports OpenAI and OpenRouter)
-client = create_chat_client()
 
 CHECKPOINT_KIND_TRANSITION = "transition"
 CHECKPOINT_KIND_LONG_REST = "long_rest"
@@ -315,21 +308,17 @@ Keep the narrative engaging but factual.""",
     ]
 
     try:
-        config = get_model_config("adventure_summary", ADVENTURE_SUMMARY_MODEL)
-        response = client.chat.completions.create(
-            model=config["model"],
-            **config.get("extra_body", {}),
-            temperature=TEMPERATURE,
-            messages=messages,
+        observer = make_legacy_receipt_observer(
+            legacy_context={"function": "_enhance_summary_for_journal", "purpose": "journal_summary"},
+            g10_source_id="core/ai/cumulative_summary.py:cumulative_summary",
+            track_usage=USAGE_TRACKING_AVAILABLE,
         )
-
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except Exception:
-                pass
-
-        enhanced_summary = response.choices[0].message.content.strip()
+        enhanced_summary = llm.call(
+            task="adventure_summary",
+            messages=messages,
+            json_output=False,
+            observer=observer,
+        ).strip()
         enhanced_summary = sanitize_text(enhanced_summary)
         debug_print("Enhanced adventure summary generated successfully")
         return enhanced_summary
@@ -586,24 +575,17 @@ Use past tense and third person. Be vivid, specific, and emotional where appropr
     ]
 
     try:
-        config = get_model_config(
-            "adventure_summary", ADVENTURE_SUMMARY_MODEL
-        )  # OPENROUTER: 3-tier model selection
-        response = client.chat.completions.create(
-            model=config["model"],
-            **config.get("extra_body", {}),
-            temperature=TEMPERATURE,
-            messages=messages,
+        observer = make_legacy_receipt_observer(
+            legacy_context={"function": "generate_location_summary", "purpose": "location_summary"},
+            g10_source_id="core/ai/cumulative_summary.py:cumulative_summary",
+            track_usage=USAGE_TRACKING_AVAILABLE,
         )
-
-        # Track usage if available
-        if USAGE_TRACKING_AVAILABLE:
-            try:
-                track_response(response)
-            except:
-                pass
-
-        summary = response.choices[0].message.content.strip()
+        summary = llm.call(
+            task="adventure_summary",
+            messages=messages,
+            json_output=False,
+            observer=observer,
+        ).strip()
         # Sanitize AI response to prevent encoding issues
         summary = sanitize_text(summary)
         debug_print(f"Summary generated for {location_name}")

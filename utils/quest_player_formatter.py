@@ -13,22 +13,15 @@ import json
 import os
 from datetime import datetime
 from typing import Any, Dict
-from openai import OpenAI
-from config import OPENAI_API_KEY
-from model_config import DM_MINI_MODEL
 from utils.module_path_manager import ModulePathManager
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from utils.encoding_utils import sanitize_text
+from utils.llm_router import llm
 
 # Set script name for logging
 set_script_name("quest_player_formatter")
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Constants - model is imported from model_config
-TEMPERATURE = 0.3
 MAX_RETRIES = 3
 
 SYSTEM_PROMPT = """You are a quest journal formatter for a fantasy RPG. Your task is to convert DM-oriented quest descriptions into immersive, player-friendly journal entries.
@@ -184,16 +177,15 @@ def format_quest_batch(quests_to_format):
         
         debug(f"AI_REQUEST: Sending {len(quest_input)} quests for reformatting", category="quest_formatting")
         
-        response = client.chat.completions.create(
-            model=DM_MINI_MODEL,
-            temperature=TEMPERATURE,
+        ai_response = llm.call(
+            task="updates",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt}
-            ]
+            ],
+            json_output=False,
         )
-        
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = ai_response.strip()
         
         # Parse the response
         try:

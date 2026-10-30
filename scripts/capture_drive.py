@@ -32,11 +32,11 @@ Verified socket contract implemented here:
 - Emit `user_input` with `{"input": text, "character": name}`. A turn is
   complete when its first new `game_output` has arrived and the event stream
   (`game_output` plus `status_update`) has then been quiet for
-  `--turn-quiet-seconds` while `is_processing` is False. The wait is
-  processing-aware rather than edge-dependent, because deterministic fast-path
-  replies (for example `[ALREADY_APPLIED] Hit!`) emit output without any
-  `is_processing=True` edge. `--turn-timeout` caps the wait for the first
-  output; a timeout is recorded only when no new `game_output` arrived at all.
+  `--turn-quiet-seconds`. G5T additionally requires the matching server-side
+  completion marker from the opt-in combat trace. Other gates retain their
+  processing-aware completion rules. G10 `/save` instead requires the local
+  command's save-success `debug_output` and a quiet event window. `--turn-timeout`
+  caps all required completion evidence.
 - Every `game_output` payload is appended to the transcript verbatim. The
   transcript is evidence and is never synthesized.
 
@@ -48,7 +48,10 @@ sandbox runtime, never by this driver.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import re
 import shutil
 import sys
 import threading
@@ -56,6 +59,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 try:
     import socketio  # python-socketio client
@@ -63,6 +67,13 @@ except ImportError:  # pragma: no cover - dependency guard for --help
     socketio = None  # type: ignore[assignment]
 
 import requests as requests_module  # type: ignore[import-untyped]
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from scripts import combat_latency_fixtures as capture_fixtures
+from scripts import capture_evidence
+from utils import combat_latency_trace
 
 
 # Exit codes. The driver exits 0 when the scenario completed (turn timeouts
@@ -72,16 +83,23 @@ EXIT_CONNECT_FAILURE = 2
 EXIT_START_FAILURE = 3
 
 DEFAULT_URL = "http://localhost:8360"
+SANDBOX_PORT = 8360
 DEFAULT_START_TIMEOUT = 180.0
 DEFAULT_TURN_TIMEOUT = 150.0
 DEFAULT_SETTLE_SECONDS = 1.0
 DEFAULT_TURN_QUIET_SECONDS = 1.5
 DEFAULT_TRACE_SRC = "tmp/combat_capture/debug/combat_turn_trace.jsonl"
 DEFAULT_INIT_ROLL = 15
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_TMP = PROJECT_ROOT / "tmp"
 
 POLL_INTERVAL_SECONDS = 0.2
 READY_IDLE_SETTLE_SECONDS = 5.0
 REST_TIMEOUT_SECONDS = 10.0
+_G10_SAVE_SUCCESS_RE = re.compile(
+    r"^\[SYSTEM\] Save game created successfully: "
+    r"(?P<save_directory>modules/Capture_Arena/saved_games/save_[0-9]{8}_[0-9]{6})$"
+)
 
 # Initiative gate wording emitted by the runtime while /init is pending.
 INIT_REQUEST_MARKERS: Tuple[str, ...] = ("/init",)
@@ -118,9 +136,35 @@ MP_ENEMY_TARGET = "Goblin Alpha"
 # the seeded enemy.
 ONE_PC_ENEMY_TARGET = "Goblin"
 
+CAPTURE_SCENARIOS = (
+    "combat-smoke", "combat-smoke-allied-inactive", "initiative-pc",
+    "initiative-dm-tie", "death-save", "surrender-exit", "resume-replay",
+)
+CAPTURE_GATE_SCENARIOS = CAPTURE_SCENARIOS + (
+    "narrator-dialogue-travel", "g5t-commander-p1", "g5t-commander-p4",
+    "g5a-ally-p1", "g5a-ally-p4",
+    "turn-commit",
+) + capture_fixtures.G9_SCENARIOS + (capture_fixtures.G10_SCENARIO,)
+CAPTURE_BRANCHES = ("surrender", "explicit-exit")
+CAPTURE_PHASES = ("complete", "replay", "interrupt", "recover",
+                  capture_fixtures.G9_ROLLBACK_PHASE) + tuple(
+                      phase for phase in capture_fixtures.G10_PHASES
+                      if phase not in ("complete", "replay", "interrupt", "recover",
+                                       capture_fixtures.G9_ROLLBACK_PHASE)
+                  )
+
 
 class DriverConnectionError(RuntimeError):
     """Raised when the socket session cannot be used during a capture."""
+
+
+class _ExplicitPartyAction(argparse.Action):
+    """Preserve legacy party=4 default while recording explicit G9 selection."""
+
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace,
+                 values: Any, option_string: Optional[str] = None) -> None:
+        setattr(namespace, self.dest, values)
+        setattr(namespace, "_party_explicit", True)
 
 
 @dataclass(frozen=True)
@@ -142,6 +186,7 @@ class TurnResult:
     elapsed_seconds: float
     timed_out: bool
     new_game_outputs: int
+    backend_output_count: int = 0
 
 
 def build_mp_round_steps(round_number: int) -> List[Step]:
@@ -185,6 +230,190 @@ def build_one_pc_steps() -> List[Step]:
     ]
 
 
+def _g5_timing_values(
+    send_started_at: float,
+    backend_output_events: Sequence[Dict[str, Any]],
+    status_events: Sequence[Dict[str, Any]],
+    quiet_completion: bool,
+    quiet_completed_at: Optional[float],
+) -> Dict[str, Any]:
+    """Measure backend work through its last output/idle event, apart from quiet wait."""
+    work_end_epoch_seconds: Optional[float] = None
+    work_end_monotonic_seconds: Optional[float] = None
+    work_events: List[Dict[str, Any]] = list(backend_output_events)
+    processing_started = False
+    for event in status_events:
+        event_ts = event.get("ts")
+        if (not isinstance(event_ts, (int, float)) or isinstance(event_ts, bool) or
+                not math.isfinite(event_ts)):
+            continue
+        if event.get("is_processing") is True:
+            processing_started = True
+        elif event.get("is_processing") is False and processing_started:
+            work_events.append(event)
+            processing_started = False
+
+    valid_work_events = [event for event in work_events
+                         if isinstance(event.get("ts"), (int, float)) and
+                         not isinstance(event.get("ts"), bool) and
+                         math.isfinite(float(event["ts"]))]
+    if not valid_work_events:
+        work_only_ms = None
+        work_reason = "backend_output_or_processing_idle_not_observed"
+    else:
+        last_work_event = max(valid_work_events, key=lambda event: float(event["ts"]))
+        work_end_epoch_seconds = float(last_work_event["ts"])
+        monotonic_ts = last_work_event.get("monotonic_ts")
+        if (isinstance(monotonic_ts, (int, float)) and not isinstance(monotonic_ts, bool)
+                and math.isfinite(float(monotonic_ts))):
+            work_end_monotonic_seconds = float(monotonic_ts)
+        if work_end_epoch_seconds < send_started_at:
+            work_only_ms = None
+            work_reason = "backend_output_precedes_send"
+            work_end_epoch_seconds = None
+            work_end_monotonic_seconds = None
+        else:
+            work_only_ms = round((work_end_epoch_seconds - send_started_at) * 1000.0, 3)
+            work_reason = None
+
+    if (not quiet_completion or not isinstance(quiet_completed_at, (int, float)) or
+            isinstance(quiet_completed_at, bool) or not math.isfinite(quiet_completed_at)):
+        quiet_elapsed_ms = None
+        quiet_reason = "quiet_window_not_observed"
+    elif quiet_completed_at < send_started_at:
+        quiet_elapsed_ms = None
+        quiet_reason = "quiet_completion_precedes_send"
+    else:
+        quiet_elapsed_ms = round((quiet_completed_at - send_started_at) * 1000.0, 3)
+        quiet_reason = None
+
+    return {
+        "work_only_ms": work_only_ms,
+        "work_only_reason": work_reason,
+        "work_end_epoch_ms": (round(work_end_epoch_seconds * 1000.0, 3)
+                               if work_end_epoch_seconds is not None else None),
+        "work_end_monotonic_ms": (round(work_end_monotonic_seconds * 1000.0, 3)
+                                  if work_end_monotonic_seconds is not None else None),
+        "quiet_window_elapsed_ms": quiet_elapsed_ms,
+        "quiet_window_reason": quiet_reason,
+    }
+
+
+def _g5_clock_sample() -> Dict[str, float]:
+    """Record both clocks so epoch trace timestamps can be correlated safely."""
+    return {"epoch_ms": round(time.time() * 1000.0, 3),
+            "monotonic_ms": round(time.monotonic() * 1000.0, 3)}
+
+
+def _g5t_expected_trace_marker(step: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """Describe the bounded trace event that closes one G5T script step."""
+    if not isinstance(step, dict):
+        return None
+    if step.get("unit_type") == "batch":
+        batch_id = step.get("trace_batch_id")
+        if isinstance(batch_id, str) and re.fullmatch(r"enemy:r[0-9]{1,73}", batch_id):
+            if step.get("requires_combat_exit") is True:
+                return {"kind": "enemy_batch_exit", "batch_id": batch_id}
+            return {"kind": "enemy_batch", "batch_id": batch_id}
+        return None
+    if step.get("unit_type") == "action":
+        context = combat_latency_trace.build_work_unit_trace_context(
+            step.get("round"), step.get("phase"), step.get("character")
+        )
+        action_id = context.get("action_id")
+        if isinstance(action_id, str):
+            return {"kind": "pc_action", "action_id": action_id}
+    return None
+
+
+def _g5a_expected_trace_marker(step: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """Describe the logical enemy-batch event that closes a G5A batch step."""
+    if not isinstance(step, dict) or step.get("unit_type") != "batch":
+        return None
+    batch_id = step.get("trace_batch_id")
+    if isinstance(batch_id, str) and re.fullmatch(r"enemy:r[0-9]{1,73}", batch_id):
+        return {"kind": "logical_batch", "batch_id": batch_id}
+    return None
+
+
+def _g5t_trace_record_matches(
+    record: Dict[str, Any], expected: Optional[Dict[str, str]]
+) -> bool:
+    """Match only the current step's bounded batch/action completion event."""
+    if not isinstance(expected, dict):
+        return False
+    if expected.get("kind") in ("enemy_batch", "enemy_batch_exit"):
+        if record.get("event_type") != "stage":
+            return False
+        stage = record.get("stage")
+        if stage == "turn_end":
+            return (expected.get("kind") == "enemy_batch" and
+                    record.get("batch_id") == expected.get("batch_id"))
+        if stage == "combat_exit_complete":
+            observed_batch = record.get("batch_id")
+            return observed_batch in (None, expected.get("batch_id"))
+        return False
+    return (
+        expected.get("kind") == "pc_action"
+        and record.get("event_type") == "decision"
+        and record.get("decision_point") == "combat_command_fast_path"
+        and record.get("action_id") == expected.get("action_id")
+    )
+
+
+def _g5a_trace_record_matches(
+    record: Dict[str, Any], expected: Optional[Dict[str, str]], run_id: Any
+) -> bool:
+    """Match only this G5A run's accepted logical batch completion event."""
+    if (
+        not isinstance(expected, dict)
+        or expected.get("kind") != "logical_batch"
+        or not isinstance(run_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", run_id)
+    ):
+        return False
+    return (
+        record.get("event_type") == "combat_observation"
+        and record.get("observation") == "combat_logical_batch_completed"
+        and record.get("batch_id") == expected.get("batch_id")
+        and record.get("accepted_batch") is True
+        and record.get("validation_accepted") is True
+        and record.get("run_id") == run_id
+    )
+
+
+def _g5t_completion_marker_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only safe event names and run-local identifiers in driver evidence."""
+    summary = {"event_type": str(record.get("event_type", ""))[:32]}
+    for key in ("stage", "decision_point", "batch_id", "action_id", "encounter_id"):
+        value = record.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}", value):
+            summary[key] = value
+    recorded_at = record.get("recorded_at_ms")
+    if (isinstance(recorded_at, (int, float)) and not isinstance(recorded_at, bool)
+            and math.isfinite(float(recorded_at))):
+        summary["recorded_at_ms"] = float(recorded_at)
+    return summary
+
+
+def _g5a_completion_marker_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the G5A completion receipt bounded and tied to its run identity."""
+    summary = {"event_type": "combat_observation",
+               "observation": "combat_logical_batch_completed"}
+    for key in ("batch_id", "run_id"):
+        value = record.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}", value):
+            summary[key] = value
+    for key in ("accepted_batch", "validation_accepted"):
+        if record.get(key) is True:
+            summary[key] = True
+    recorded_at = record.get("recorded_at_ms")
+    if (isinstance(recorded_at, (int, float)) and not isinstance(recorded_at, bool)
+            and math.isfinite(float(recorded_at))):
+        summary["recorded_at_ms"] = float(recorded_at)
+    return summary
+
+
 def count_trace_records(path: Path) -> int:
     """Count non-empty JSONL lines in a trace file."""
     try:
@@ -194,10 +423,147 @@ def count_trace_records(path: Path) -> int:
         return 0
 
 
+def _is_project_tmp_path(path_value: Any) -> bool:
+    """Named cases may read/write only under this repository's tmp/ tree."""
+    try:
+        resolved = Path(str(path_value)).resolve()
+        root = PROJECT_TMP.resolve()
+        return resolved == root or root in resolved.parents
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _validate_g9_sandbox(profile: Dict[str, Any], args: argparse.Namespace) -> None:
+    """Bind one G9 row to the prepared Capture_Arena copy and its runtime posture."""
+    state_root = Path(args.state_root)
+    expected_root = PROJECT_TMP / "combat_capture"
+    if state_root.resolve() != expected_root.resolve():
+        raise ValueError("G9 --state-root must be exactly tmp/combat_capture")
+    if capture_evidence._has_symlink_component(state_root, PROJECT_TMP):
+        raise ValueError("G9 --state-root must not traverse symlinks")
+
+    marker_path = state_root / ".g9-capture.json"
+    marker, _digest, marker_error = capture_evidence._safe_json(marker_path, state_root)
+    if marker_error or not isinstance(marker, dict):
+        raise ValueError("G9 sandbox marker is missing or unreadable")
+    expected_run_dir = str(Path(args.run_dir).resolve().relative_to(PROJECT_ROOT))
+    if (marker.get("gate") != "g9" or marker.get("row_key") != profile.get("row_key") or
+            marker.get("scenario_id") != profile.get("scenario_id") or
+            marker.get("party_size") != profile.get("party_size") or
+            marker.get("run_dir") != expected_run_dir or
+            marker.get("initial_provider") != "openrouter" or
+            marker.get("active_profile") != "production-auto" or
+            marker.get("transport_failure_injection") is not
+            profile.get("g9_runtime", {}).get("transport_failure_injection") or
+            marker.get("reseed_after_rollback") is not False):
+        raise ValueError("G9 sandbox marker does not match the selected row, party, and run directory")
+
+    identity = capture_evidence.read_sandbox_g9_identity(state_root)
+    expected_runtime = profile.get("g9_runtime", {})
+    if (identity.get("status") != "ok" or
+            identity.get("configured_provider") != expected_runtime.get("configured_provider") or
+            identity.get("active_profile") != "production-auto" or
+            identity.get("configured_model") != "gpt-6-luna" or
+            identity.get("transport_fault_injection_enabled") is not
+            expected_runtime.get("transport_failure_injection")):
+        raise ValueError("G9 sandbox model_config.py does not match the selected row posture")
+
+    if profile["scenario_id"] == "preferred-openai-rollback":
+        if (getattr(args, "phase", None) != capture_fixtures.G9_ROLLBACK_PHASE or
+                marker.get("rollback_state") != "configured" or
+                marker.get("operator_restart_count_required") != 1):
+            raise ValueError(
+                "G9 preferred-openai-rollback requires --phase rollback after one operator restart; "
+                "do not reseed"
+            )
+    elif getattr(args, "phase", None):
+        raise ValueError("--phase applies only to G9 preferred-openai-rollback")
+    elif marker.get("rollback_state") != "not_required":
+        raise ValueError("non-rollback G9 rows cannot reuse a rollback sandbox")
+
+
+def _validate_g10_sandbox(profile: Dict[str, Any], args: argparse.Namespace) -> None:
+    """Bind G10 phases to the prepared sandbox and retained complete bundle."""
+    state_root = Path(args.state_root)
+    expected_root = capture_evidence.PROJECT_TMP / "combat_capture"
+    if state_root.resolve() != expected_root.resolve():
+        raise ValueError("G10 --state-root must be exactly tmp/combat_capture")
+    if capture_evidence._has_symlink_component(state_root, capture_evidence.PROJECT_TMP):
+        raise ValueError("G10 --state-root must not traverse symlinks")
+    marker = capture_evidence.read_sandbox_g10_marker(state_root)
+    if marker.get("status") != "ok":
+        raise ValueError("G10 sandbox marker is missing or unreadable")
+    expected_seed = hashlib.sha256(
+        json.dumps(profile.get("seed", {}), ensure_ascii=True, sort_keys=True).encode("ascii")
+    ).hexdigest()
+    if (marker.get("gate") != "g10" or
+            marker.get("scenario_id") != capture_fixtures.G10_SCENARIO or
+            marker.get("seed_scenario_id") != profile.get("seed_scenario_id") or
+            marker.get("party_size") != profile.get("party_size") or
+            marker.get("chain_id") != getattr(args, "chain_id", None) or
+            marker.get("seed_id") != expected_seed or
+            marker.get("script_sha256") != profile.get("applicability", {}).get("script_sha256")):
+        raise ValueError("G10 sandbox marker does not match the selected full-session identity")
+    complete_value = marker.get("complete_run_dir")
+    complete_run = Path(str(complete_value))
+    if not complete_run.is_absolute():
+        complete_run = capture_evidence.PROJECT_ROOT / complete_run
+    if (not capture_evidence._inside(complete_run, capture_evidence.G10_RUN_ROOT) or
+            complete_run.resolve() == capture_evidence.G10_RUN_ROOT.resolve() or
+            capture_evidence._has_symlink_component(complete_run, capture_evidence.PROJECT_TMP)):
+        raise ValueError("G10 marker complete bundle must be a safe child of tmp/router-rollout/g10/")
+    expected_complete_rel = Path(args.run_dir).resolve().relative_to(
+        capture_evidence.PROJECT_ROOT.resolve()
+    )
+    if profile.get("phase") == "complete":
+        if Path(complete_value) != expected_complete_rel:
+            raise ValueError("G10 complete --run-dir differs from the prepared sandbox marker")
+    else:
+        complete_manifest, error = capture_evidence.load_bundle_json(complete_run, "manifest.json")
+        complete = complete_manifest.get("g10") if isinstance(complete_manifest, dict) else None
+        if (error or not isinstance(complete_manifest, dict) or
+                complete_manifest.get("gate") != "g10" or not isinstance(complete, dict) or
+                complete.get("phase") != "complete" or
+                complete.get("chain_id") != marker.get("chain_id") or
+                complete.get("seed_id") != marker.get("seed_id") or
+                complete_manifest.get("party", {}).get("size") != profile.get("party_size") or
+                complete.get("lifecycle", {}).get("status") != "finalized" or
+                complete.get("save_state", {}).get("status") != "captured" or
+                complete.get("usage", {}).get("status") != "ok"):
+            raise ValueError("G10 resume requires finalized complete-phase save, usage, and lifecycle evidence")
+    args.g10_marker_observation = marker
+
+
+def validate_capture_url(url: Any) -> Tuple[bool, str]:
+    """Restrict every capture run to the canonical local port-8360 root URL."""
+    if not isinstance(url, str):
+        return False, "capture URL must be a string"
+    if url != url.strip() or any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        return False, "capture URL must not contain whitespace or control characters"
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False, "capture URL is malformed"
+    allowed_netlocs = {"localhost:8360", "127.0.0.1:8360", "[::1]:8360"}
+    if parsed.scheme != "http":
+        return False, "capture URL scheme must be http"
+    if parsed.username is not None or parsed.password is not None:
+        return False, "capture URL must not include user information"
+    if parsed.query or parsed.fragment or "?" in url or "#" in url:
+        return False, "capture URL must not include a query or fragment"
+    if parsed.path not in ("", "/"):
+        return False, "capture URL must use the root path"
+    if parsed.netloc not in allowed_netlocs or port != SANDBOX_PORT:
+        return False, "capture URL must be localhost, 127.0.0.1, or [::1] on port 8360"
+    return True, ""
+
+
 class CaptureSession:
     """Headless socket capture session against the sandbox server."""
 
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: argparse.Namespace, socket_client: Any = None,
+                 http_post: Any = None, http_get: Any = None) -> None:
         self.args = args
         self.url = str(args.url).rstrip("/")
         self.party = int(args.party)
@@ -205,18 +571,64 @@ class CaptureSession:
         self.transcript_path = Path(args.transcript)
         self.game_outputs: List[Dict[str, Any]] = []
         self.status_events: List[Dict[str, Any]] = []
+        self.game_started_events: List[Dict[str, Any]] = []
+        self.game_started_event_count = 0
+        self.debug_output_event_count = 0
+        self.debug_output_last_ts = 0.0
+        self.g10_save_completions: List[Dict[str, Any]] = []
+        self.debug_token_updates: List[Dict[str, Any]] = []
+        self.debug_token_update_event_count = 0
         self.processing_ever_true = False
         self.processing_true_since_start = False
         self.started_at: Optional[float] = None
         self.session_ready = threading.Event()
         self.disconnected = False
+        self.connected = False
         self.turn_index = 0
         self.timeout_count = 0
+        self.start_timed_out = False
+        self.step_caps_reached = 0
+        self.idle_settle_caps_reached = 0
+        self.active_switch_failures = 0
+        self.step_attempts = 0
+        self.steps_sent = 0
+        self.backend_output_count = 0
+        self.control_request_attempts = 0
+        self.control_request_calls = 0
+        self.control_request_failures = 0
+        self.control_requests_sent = 0
+        self.blocked_step_attempts = 0
+        self.blocked_control_attempts = 0
+        self.active_switch_attempts = 0
+        self.active_switch_requests_sent = 0
+        self.control_request_count = 0
+        self.active_switch_count = 0
+        self.capture_profile: Optional[Dict[str, Any]] = None
+        self.capture_gate = getattr(args, "gate", "g3")
+        self.g4_step_projections: List[Dict[str, Any]] = []
+        self.g4_startup_trace_span: Dict[str, Any] = {"status": "missing"}
+        self.g5_step_receipts: List[Dict[str, Any]] = []
+        self.g7_expected_stop: Dict[str, Any] = {"status": "not_applicable"}
+        self.g10_observation: Dict[str, Any] = {"status": "pending"}
+        self._g5t_exit_marker_seen = False
+        self.g5_startup_start_sample: Optional[Dict[str, float]] = None
+        self.g5_trace_end_sample: Optional[Dict[str, float]] = None
+        self._last_completion_criterion: Optional[Dict[str, Any]] = None
         self.init_fallback_sent = False
         self.current_character: Optional[str] = None
         self._transcript_handle: Optional[Any] = None
         self.socket: Optional[Any] = None
-        if socketio is not None:
+        self._http_post = http_post or requests_module.post
+        self._http_get = http_get or requests_module.get
+        self.transport_injected = socket_client is not None or http_post is not None or http_get is not None
+        self.health_read_attempts = 0
+        self.exit_health_read_attempts = 0
+        self.health_observation: Dict[str, Any] = {"status": "not_checked"}
+        self.start_readiness: Dict[str, Any] = {"status": "not_required"}
+        self.trace_start_metadata: Optional[Dict[str, Any]] = None
+        if socket_client is not None:
+            self.socket = socket_client
+        elif socketio is not None:
             self.socket = socketio.Client(
                 reconnection=False,
                 logger=False,
@@ -269,6 +681,10 @@ class CaptureSession:
             raise DriverConnectionError("python-socketio client is unavailable")
         self.socket.on("game_output", self._on_game_output)
         self.socket.on("status_update", self._on_status_update)
+        if self.capture_gate == "g10":
+            self.socket.on("game_started", self._on_game_started)
+        self.socket.on("debug_output", self._on_debug_output)
+        self.socket.on("token_update", self._on_token_update)
         self.socket.on("disconnect", self._on_disconnect)
 
     @staticmethod
@@ -283,7 +699,9 @@ class CaptureSession:
     def _on_game_output(self, data: Any) -> None:
         payload = data if isinstance(data, dict) else {"content": str(data)}
         with self.lock:
-            self.game_outputs.append({"ts": time.time(), "payload": payload})
+            self.game_outputs.append({"event_index": len(self.game_outputs) + 1,
+                                      "ts": time.time(), "monotonic_ts": time.monotonic(),
+                                      "payload": payload})
             if not self.session_ready.is_set():
                 self.session_ready.set()
         self.log("game_output", self._format_game_output(payload))
@@ -296,6 +714,7 @@ class CaptureSession:
             self.status_events.append(
                 {
                     "ts": time.time(),
+                    "monotonic_ts": time.monotonic(),
                     "is_processing": is_processing,
                     "message": message,
                 }
@@ -307,6 +726,222 @@ class CaptureSession:
             elif self.processing_true_since_start:
                 self.session_ready.set()
         self.log("status_update", "is_processing=%s message=%s" % (is_processing, message))
+
+    def _on_game_started(self, data: Any) -> None:
+        """Retain bounded timing evidence for the G10 start-success contract."""
+        timestamp = time.time()
+        monotonic_timestamp = time.monotonic()
+        message_matches_contract = (
+            isinstance(data, dict) and data.get("message") == "Game started successfully"
+        )
+        row: Dict[str, Any] = {
+            "source_event": "game_started",
+            "source_route": "socket.game_started",
+            "status": "valid" if message_matches_contract else "invalid",
+            "message_matches_contract": message_matches_contract,
+            "event_epoch_ms": round(timestamp * 1000.0, 3),
+            "event_monotonic_ms": round(monotonic_timestamp * 1000.0, 3),
+            "_event_monotonic_seconds": monotonic_timestamp,
+        }
+        run_dir = getattr(self.args, "run_dir", None)
+        if isinstance(run_dir, (str, Path)):
+            run_id = Path(run_dir).name
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", run_id):
+                row["run_id"] = run_id
+        with self.lock:
+            self.game_started_event_count += 1
+            row["source_event_index"] = self.game_started_event_count
+            self.game_started_events.append(row)
+            if len(self.game_started_events) > 8:
+                del self.game_started_events[:-8]
+        self.log("game_started", "status=%s source=socket.game_started" % row["status"])
+
+    def _g10_game_started_observation(
+        self, after_event_index: int, started_monotonic: float, deadline: float
+    ) -> Dict[str, Any]:
+        """Project only this start attempt's event and classify late/invalid evidence."""
+        with self.lock:
+            events = [dict(row) for row in self.game_started_events
+                      if row.get("source_event_index", 0) > after_event_index]
+        if not events:
+            return {"status": "missing", "source_event": "game_started",
+                    "source_route": "socket.game_started"}
+        event = events[0]
+        event_time = event.pop("_event_monotonic_seconds", None)
+        if event.get("status") != "valid":
+            status = "invalid"
+        elif (not isinstance(event_time, (int, float)) or isinstance(event_time, bool) or
+              not math.isfinite(float(event_time)) or event_time < started_monotonic):
+            status = "invalid"
+        elif event_time > deadline:
+            status = "delayed"
+        else:
+            status = "valid"
+        event["status"] = status
+        return event
+
+    def _g10_startup_barrier_satisfied(self) -> bool:
+        """Require the successful event, loop readiness, and health observation."""
+        readiness = self.start_readiness
+        event = readiness.get("game_started") if isinstance(readiness, dict) else None
+        health = readiness.get("health") if isinstance(readiness, dict) else None
+        return (
+            isinstance(readiness, dict) and readiness.get("status") == "ready" and
+            readiness.get("loop_ready") is True and isinstance(health, dict) and
+            health.get("status") == "ok" and isinstance(event, dict) and
+            event.get("status") == "valid"
+        )
+
+    def _on_debug_output(self, data: Any) -> None:
+        """Track debug-event timing and retain only an exact local-save confirmation."""
+        payload = data if isinstance(data, dict) else {}
+        timestamp = time.time()
+        content = payload.get("content")
+        match = None
+        if (payload.get("type") == "debug" and payload.get("is_error") is not True and
+                isinstance(content, str)):
+            match = _G10_SAVE_SUCCESS_RE.fullmatch(content.strip())
+        with self.lock:
+            self.debug_output_event_count += 1
+            self.debug_output_last_ts = timestamp
+            if match is not None:
+                self.g10_save_completions.append({
+                    "event_index": self.debug_output_event_count,
+                    "ts": timestamp,
+                    "save_directory": match.group("save_directory"),
+                })
+                if len(self.g10_save_completions) > 8:
+                    del self.g10_save_completions[:-8]
+
+    def _on_token_update(self, data: Any) -> None:
+        """Retain bounded Debug cost fields without writing runtime state."""
+        if not isinstance(data, dict):
+            return
+        cost_fields = (
+            "session_cost_actual_usd", "session_cost_estimated_usd", "session_unpriced_calls",
+            "week_cost_actual_usd", "week_cost_estimated_usd", "week_unpriced_calls",
+        )
+        count_fields = ("session_unpriced_calls", "week_unpriced_calls",
+                        "session_tokens", "week_tokens")
+        bool_fields = ("session_cost_complete", "week_cost_complete")
+        fields = cost_fields + ("session_cost_complete", "week_cost_complete",
+                                "session_tokens", "week_tokens")
+        row: Dict[str, Any] = {
+            "source_event": "token_update",
+            "source_route": "socket.token_update",
+            "ts": time.time(),
+        }
+        invalid_fields: List[str] = []
+        for key in fields:
+            if key not in data:
+                continue
+            value = data[key]
+            if key in bool_fields:
+                if isinstance(value, bool):
+                    row[key] = value
+                else:
+                    invalid_fields.append(key)
+            elif key in count_fields:
+                if (isinstance(value, int) and not isinstance(value, bool) and
+                        0 <= value <= capture_evidence._G10_USAGE_MAX_VALUE):
+                    row[key] = value
+                else:
+                    invalid_fields.append(key)
+            else:
+                try:
+                    number = float(value) if isinstance(value, (int, float)) and not isinstance(
+                        value, bool) else float("nan")
+                except (OverflowError, TypeError, ValueError):
+                    number = float("nan")
+                if math.isfinite(number) and 0 <= number <= capture_evidence._G10_USAGE_MAX_VALUE:
+                    row[key] = number
+                else:
+                    invalid_fields.append(key)
+        if invalid_fields:
+            row["invalid_fields"] = sorted(set(invalid_fields))
+        with self.lock:
+            self.debug_token_update_event_count += 1
+            row["source_event_index"] = self.debug_token_update_event_count
+            self.debug_token_updates.append(row)
+            if len(self.debug_token_updates) > 256:
+                del self.debug_token_updates[:-256]
+        self.log("debug", "token_update observed fields=%d" % len(fields))
+
+    def wait_for_debug_token_update(self, after_index: int, timeout_seconds: float = 6.0) -> bool:
+        """Wait for one bounded Debug refresh after a local /usage command."""
+        deadline = time.monotonic() + max(0.0, min(float(timeout_seconds), 10.0))
+        while time.monotonic() < deadline:
+            with self.lock:
+                if len(self.debug_token_updates) > after_index:
+                    return True
+                disconnected = self.disconnected
+            if disconnected:
+                return False
+            time.sleep(min(POLL_INTERVAL_SECONDS, max(0.001, deadline - time.monotonic())))
+        return False
+
+    def capture_g10_usage_observation(self, output_start: int, debug_start: int,
+                                      usage_step: int,
+                                      command_sent_epoch: Optional[float] = None) -> Dict[str, Any]:
+        """Project the bounded WebOutputCapture usage event and matching Debug fields."""
+        with self.lock:
+            output_rows = list(self.game_outputs[output_start:])
+            debug_rows = list(self.debug_token_updates[debug_start:])
+        usage_events = []
+        for entry in output_rows:
+            payload = entry.get("payload") if isinstance(entry, dict) else None
+            content = payload.get("content") if isinstance(payload, dict) else None
+            if not isinstance(content, str):
+                continue
+            if "[SYSTEM] Usage" not in content:
+                continue
+            event = {
+                "source_event": "game_output",
+                "source_route": "WebOutputCapture.game_output",
+                "source_event_index": entry.get("event_index"),
+                "source_event_ts": entry.get("ts"),
+                "driver_step": usage_step,
+                "type": payload.get("type"),
+            }
+            if len(content) > capture_evidence._G10_USAGE_MAX_REPORT_CHARS:
+                event["capture_error"] = ["usage_output_exceeds_bound"]
+            else:
+                event["content"] = content
+            usage_events.append(event)
+            if len(usage_events) > capture_evidence._G10_USAGE_MAX_EVENTS:
+                return {"status": "BLOCKED", "reason": "usage_observation_exceeds_bound",
+                        "output_event_count": len(output_rows),
+                        "debug_token_updates": debug_rows[:capture_evidence._G10_USAGE_MAX_DEBUG_UPDATES],
+                        "usage_events": []}
+        if len(debug_rows) > capture_evidence._G10_USAGE_MAX_DEBUG_UPDATES:
+            return {"status": "BLOCKED", "reason": "usage_observation_exceeds_bound",
+                    "output_event_count": len(output_rows),
+                    "debug_token_updates": debug_rows[:capture_evidence._G10_USAGE_MAX_DEBUG_UPDATES],
+                    "usage_events": []}
+        projection = capture_evidence.project_g10_usage_observations(usage_events, debug_rows)
+        baseline = getattr(self.args, "g10_tracker_baseline_observation", None)
+        baseline_snapshot = baseline.get("snapshot") if isinstance(baseline, dict) else None
+        baseline_source = (baseline_snapshot.get("source")
+                           if isinstance(baseline_snapshot, dict) else None)
+        if (isinstance(baseline_source, dict) and
+                isinstance(baseline_source.get("bytes"), int) and
+                isinstance(baseline_source.get("sha256"), str) and
+                isinstance(getattr(self.args, "state_root", None), str)):
+            tracker_snapshot = capture_evidence.capture_g10_tracker_snapshot(
+                Path(self.args.state_root), prefix_bytes=baseline_source["bytes"],
+                prefix_sha256=baseline_source["sha256"],
+            )
+        else:
+            tracker_snapshot = {"status": "BLOCKED",
+                                "problems": ["g10_tracker_pre_run_boundary_missing"]}
+        return {"status": "captured" if usage_events else "missing_usage_output",
+                "output_event_count": len(output_rows),
+                "usage_events": projection.get("usage_events", []),
+                "debug_token_updates": debug_rows,
+                "debug_update_observed": bool(debug_rows),
+                "source_route": "WebOutputCapture.game_output",
+                "usage_command_sent_epoch": command_sent_epoch,
+                "tracker_snapshot": tracker_snapshot}
 
     def _on_disconnect(self, *args: Any) -> None:
         with self.lock:
@@ -332,6 +967,7 @@ class CaptureSession:
                 "connect to %s failed: %s" % (self.url, exc)
             )
         self.log("driver", "socket connected url=%s" % self.url)
+        self.connected = True
 
     def disconnect(self) -> None:
         """Best-effort socket teardown; never raises."""
@@ -344,37 +980,255 @@ class CaptureSession:
                 "[capture_drive][WARN] best-effort disconnect failed: %s" % (exc,),
                 file=sys.stderr,
             )
+        finally:
+            self.connected = False
 
     def emit(self, event: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Emit a socket event, converting any failure into a session error."""
         if self.socket is None:
             raise DriverConnectionError("socket client is unavailable")
+        if (event == "user_input" and self.capture_gate == "g10" and
+                not self._g10_startup_barrier_satisfied()):
+            raise DriverConnectionError("G10 startup barrier is not satisfied; refusing user_input")
+        self.control_request_attempts += 1
+        if self.capture_profile is not None:
+            if self.control_requests_sent >= self.capture_profile["max_requests"]:
+                self.blocked_control_attempts += 1
+                raise DriverConnectionError("named scenario control-request bound exceeded")
+        self.control_request_calls += 1
         try:
             if data is None:
                 self.socket.emit(event)
             else:
                 self.socket.emit(event, data)
         except Exception as exc:
+            self.control_request_failures += 1
             raise DriverConnectionError("emit %s failed: %s" % (event, exc))
+        self.control_requests_sent += 1
+        self.control_request_count = self.control_requests_sent
 
-    def start_session(self) -> bool:
+    def start_session(self, require_ready_quiet: bool = False) -> bool:
         """Emit start_game and wait for bounded session readiness."""
+        startup_started_monotonic = time.monotonic()
+        startup_deadline = startup_started_monotonic + float(self.args.start_timeout)
         self.started_at = time.time()
+        with self.lock:
+            output_start = len(self.game_outputs)
+            status_start = len(self.status_events)
+            game_started_start = self.game_started_event_count
+        if self.capture_gate in capture_fixtures.G5_CAPTURE_GATES:
+            self.g5_startup_start_sample = _g5_clock_sample()
         self.emit("start_game")
         self.log(
             "driver",
             "start_game emitted; waiting for readiness (cap %.0fs)" % float(self.args.start_timeout),
         )
-        ready = self.session_ready.wait(timeout=float(self.args.start_timeout))
+        if self.capture_gate == "g10":
+            ready = self._wait_for_g10_startup(
+                output_start, status_start, game_started_start,
+                startup_started_monotonic, startup_deadline,
+            )
+        elif require_ready_quiet:
+            ready = self._wait_for_ready_quiet(output_start, status_start)
+        else:
+            ready = self.session_ready.wait(timeout=float(self.args.start_timeout))
         if not ready:
+            if self.capture_gate == "g10":
+                self.start_timed_out = self.start_timed_out or bool(
+                    self.start_readiness.get("timed_out")
+                )
+            else:
+                self.start_timed_out = (not require_ready_quiet or
+                                        self.start_readiness.get("status") == "ready_quiet_timeout")
             self.log(
                 "driver",
                 "[ERROR] session not ready within %.0fs" % float(self.args.start_timeout),
             )
             return False
         self.log("driver", "session ready")
-        self.wait_for_idle(READY_IDLE_SETTLE_SECONDS)
+        if not require_ready_quiet:
+            if self.capture_gate != "g10":
+                self.wait_for_idle(READY_IDLE_SETTLE_SECONDS)
         return True
+
+    def _wait_for_g10_startup(
+        self, output_start: int, status_start: int, game_started_start: int,
+        started_monotonic: float, deadline: float,
+    ) -> bool:
+        """Require game_started plus quiet loop readiness and health by one deadline."""
+        quiet_window = float(self.args.turn_quiet_seconds)
+        health: Dict[str, Any] = {"status": "not_checked"}
+        output_count = 0
+        idle_status_observed = False
+        quiet_for = 0.0
+        loop_ready = False
+
+        while True:
+            now = time.monotonic()
+            game_started = self._g10_game_started_observation(
+                game_started_start, started_monotonic, deadline
+            )
+            if game_started.get("status") in ("invalid", "delayed"):
+                self.start_timed_out = game_started.get("status") == "delayed"
+                self.start_readiness = {
+                    "status": "game_started_%s" % game_started["status"],
+                    "game_started": game_started, "loop_ready": False,
+                    "health": health, "output_count": output_count,
+                    "processing_idle": False,
+                    "idle_status_observed": idle_status_observed,
+                    "quiet_seconds": quiet_for,
+                    "timed_out": self.start_timed_out,
+                }
+                return False
+
+            with self.lock:
+                outputs = list(self.game_outputs[output_start:])
+                statuses = list(self.status_events[status_start:])
+                disconnected = self.disconnected
+            output_count = len(outputs)
+            if disconnected:
+                self.start_readiness = {
+                    "status": "disconnected", "game_started": game_started,
+                    "loop_ready": False, "health": health,
+                    "output_count": output_count, "processing_idle": False,
+                    "idle_status_observed": False, "quiet_seconds": 0.0,
+                    "timed_out": False,
+                }
+                return False
+
+            processing_idle = bool(statuses) and statuses[-1].get("is_processing") is False
+            idle_status_observed = processing_idle
+            loop_ready = False
+            quiet_for = 0.0
+            if outputs and processing_idle:
+                event_times = [row.get("monotonic_ts") for row in outputs + statuses]
+                valid_times = [float(value) for value in event_times
+                               if isinstance(value, (int, float)) and
+                               not isinstance(value, bool) and math.isfinite(float(value))]
+                if valid_times:
+                    quiet_for = max(0.0, now - max(valid_times))
+                    loop_ready = quiet_for >= quiet_window
+
+            if loop_ready and health.get("status") == "not_checked":
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                roster = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
+                health = self.read_server_health(
+                    expected_roster=list(roster),
+                    timeout=min(REST_TIMEOUT_SECONDS, remaining),
+                )
+                if time.monotonic() > deadline:
+                    self.start_timed_out = True
+                    self.start_readiness = {
+                        "status": "startup_deadline_exceeded",
+                        "game_started": self._g10_game_started_observation(
+                            game_started_start, started_monotonic, deadline
+                        ),
+                        "loop_ready": loop_ready, "health": health,
+                        "output_count": output_count, "processing_idle": processing_idle,
+                        "idle_status_observed": idle_status_observed,
+                        "quiet_seconds": round(quiet_for, 3), "timed_out": True,
+                    }
+                    return False
+                if health.get("status") != "ok":
+                    self.start_readiness = {
+                        "status": "health_unavailable",
+                        "game_started": game_started, "loop_ready": loop_ready,
+                        "health": health, "output_count": output_count,
+                        "processing_idle": processing_idle,
+                        "idle_status_observed": idle_status_observed,
+                        "quiet_seconds": round(quiet_for, 3), "timed_out": False,
+                    }
+                    return False
+
+            game_started = self._g10_game_started_observation(
+                game_started_start, started_monotonic, deadline
+            )
+            if game_started.get("status") in ("invalid", "delayed"):
+                self.start_timed_out = game_started.get("status") == "delayed"
+                self.start_readiness = {
+                    "status": "game_started_%s" % game_started["status"],
+                    "game_started": game_started, "loop_ready": loop_ready,
+                    "health": health, "output_count": output_count,
+                    "processing_idle": processing_idle,
+                    "idle_status_observed": idle_status_observed,
+                    "quiet_seconds": round(quiet_for, 3),
+                    "timed_out": self.start_timed_out,
+                }
+                return False
+            if (loop_ready and health.get("status") == "ok" and
+                    game_started.get("status") == "valid" and time.monotonic() <= deadline):
+                self.start_readiness = {
+                    "status": "ready", "game_started": game_started,
+                    "loop_ready": True, "health": health,
+                    "output_count": output_count, "processing_idle": True,
+                    "idle_status_observed": idle_status_observed,
+                    "quiet_seconds": round(quiet_for, 3), "timed_out": False,
+                }
+                return True
+
+            if time.monotonic() >= deadline:
+                break
+            remaining = deadline - time.monotonic()
+            time.sleep(min(POLL_INTERVAL_SECONDS, max(0.001, quiet_window / 2.0), remaining))
+
+        game_started = self._g10_game_started_observation(
+            game_started_start, started_monotonic, deadline
+        )
+        self.start_timed_out = True
+        if game_started.get("status") == "valid":
+            status = "loop_readiness_timeout"
+        elif game_started.get("status") == "delayed":
+            status = "game_started_delayed"
+        else:
+            status = "game_started_timeout"
+        self.start_readiness = {
+            "status": status, "game_started": game_started,
+            "loop_ready": loop_ready, "health": health,
+            "output_count": output_count,
+            "processing_idle": idle_status_observed,
+            "idle_status_observed": idle_status_observed,
+            "quiet_seconds": round(quiet_for, 3), "timed_out": True,
+        }
+        return False
+
+    def _wait_for_ready_quiet(self, output_start: int, status_start: int) -> bool:
+        """Require an output, idle processing state, a quiet interval and a live read-only route."""
+        deadline = time.monotonic() + float(self.args.start_timeout)
+        quiet_window = float(self.args.turn_quiet_seconds)
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            with self.lock:
+                outputs = list(self.game_outputs[output_start:])
+                statuses = list(self.status_events[status_start:])
+                disconnected = self.disconnected
+            if disconnected:
+                self.start_readiness = {"status": "disconnected"}
+                return False
+            if outputs:
+                last_event_at = max([float(row["ts"]) for row in outputs] +
+                                    [float(row["ts"]) for row in statuses])
+                idle_status_observed = bool(statuses) and statuses[-1]["is_processing"] is False
+                processing = bool(statuses[-1]["is_processing"]) if statuses else True
+                quiet_for = max(0.0, time.time() - last_event_at)
+                if idle_status_observed and not processing and quiet_for >= quiet_window:
+                    roster = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
+                    remaining = max(0.05, deadline - now)
+                    health = self.read_server_health(expected_roster=list(roster),
+                                                     timeout=min(REST_TIMEOUT_SECONDS, remaining))
+                    self.start_readiness = {
+                        "status": "ready" if health.get("status") == "ok" else "health_unavailable",
+                        "output_count": len(outputs), "processing_idle": True,
+                        "idle_status_observed": idle_status_observed,
+                        "quiet_seconds": quiet_for, "health": health,
+                    }
+                    return health.get("status") == "ok"
+            remaining = max(0.0, deadline - time.monotonic())
+            time.sleep(min(POLL_INTERVAL_SECONDS, max(0.001, quiet_window / 2.0), remaining))
+        self.start_timed_out = True
+        self.start_readiness = {"status": "ready_quiet_timeout"}
+        return False
 
     def wait_for_idle(self, timeout_seconds: float) -> None:
         """Boundedly wait for the last status_update to report idle.
@@ -393,18 +1247,33 @@ class CaptureSession:
                 return
             time.sleep(POLL_INTERVAL_SECONDS)
         self.log("driver", "[WARN] idle settle cap reached; continuing")
+        self.idle_settle_caps_reached += 1
 
     def set_active_character(self, name: str) -> bool:
         """POST /api/party/set_active and require success: true."""
         endpoint = "%s/api/party/set_active" % self.url
+        self.control_request_attempts += 1
+        self.active_switch_attempts += 1
+        if self.capture_profile is not None:
+            if self.control_requests_sent >= self.capture_profile["max_requests"]:
+                self.blocked_control_attempts += 1
+                raise DriverConnectionError("named scenario control-request bound exceeded")
+            if self.active_switch_attempts > self.capture_profile["max_active_switches"]:
+                self.blocked_control_attempts += 1
+                raise DriverConnectionError("named scenario active-PC switch bound exceeded")
+        self.control_request_calls += 1
         status_code = 0
         data: Dict[str, Any] = {}
         try:
-            response = requests_module.post(
+            response = self._http_post(
                 endpoint,
                 json={"character": name},
                 timeout=REST_TIMEOUT_SECONDS,
             )
+            self.control_requests_sent += 1
+            self.control_request_count = self.control_requests_sent
+            self.active_switch_requests_sent += 1
+            self.active_switch_count = self.active_switch_requests_sent
             status_code = int(response.status_code)
             try:
                 parsed = response.json()
@@ -413,17 +1282,56 @@ class CaptureSession:
             if isinstance(parsed, dict):
                 data = parsed
         except Exception as exc:
+            self.active_switch_failures += 1
+            self.control_request_failures += 1
             self.log(
                 "driver",
                 "[WARN] set_active request failed character=%s error=%s" % (name, exc),
             )
             return False
         success = data.get("success") is True
+        if not success:
+            self.active_switch_failures += 1
         self.log(
             "driver",
             "set_active character=%s status=%s success=%s" % (name, status_code, success),
         )
         return success
+
+    def read_server_health(self, expected_roster: Optional[List[str]] = None,
+                            timeout: float = REST_TIMEOUT_SECONDS, *,
+                            bounded_for_exit: bool = False) -> Dict[str, Any]:
+        """Use the existing read-only party GET as a lifecycle/health observation."""
+        if (self.capture_profile is not None and self.capture_profile.get("gate") == "g4" and
+                self.health_read_attempts >= int(self.capture_profile.get("max_health_reads", 0))):
+            self.blocked_control_attempts += 1
+            raise DriverConnectionError("G4 health-observation bound exceeded")
+        if (bounded_for_exit and self.capture_profile is not None and
+                self.exit_health_read_attempts >= int(self.capture_profile.get("max_health_reads", 0))):
+            self.blocked_control_attempts += 1
+            raise DriverConnectionError("named scenario health-read bound exceeded")
+        if bounded_for_exit:
+            self.exit_health_read_attempts += 1
+        self.health_read_attempts += 1
+        try:
+            response = self._http_get("%s/api/party" % self.url, timeout=timeout)
+            status = int(response.status_code)
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            roster = body.get("partyMembers") if isinstance(body, dict) else None
+            route_ok = status == 200 and isinstance(body, dict)
+            identity_ok = expected_roster is None or roster == expected_roster
+            result = {"status": "ok" if route_ok and identity_ok else "failed",
+                      "http_status": status,
+                      "party_roster": roster, "roster_matches": identity_ok}
+        except Exception as exc:
+            result = {"status": "unavailable", "error_type": type(exc).__name__}
+        self.health_observation = result
+        self.log("health", "read-only /api/party status=%s http=%s" %
+                 (result["status"], result.get("http_status", "unknown")))
+        return result
 
     def ensure_active(self, name: Optional[str]) -> None:
         """Switch the active PC when the scripted turn needs a different one."""
@@ -439,6 +1347,60 @@ class CaptureSession:
         with self.lock:
             return len(self.game_outputs)
 
+    @staticmethod
+    def _is_backend_game_output(payload: Dict[str, Any], submitted_input: str) -> bool:
+        """Exclude GUI echoes and generic startup/system notices from replies."""
+        output_type = str(payload.get("type", "message")).strip().lower().replace("_", "-")
+        content = str(payload.get("content", ""))
+        if output_type in {"user-input", "echo", "system", "startup"}:
+            return False
+        normalized = content.strip().casefold()
+        if any(marker in normalized for marker in (
+                "session ready", "combat in progress - awaiting your action",
+                "enter your command:", "ready for input")):
+            return False
+        return bool(normalized) and normalized != submitted_input.strip().casefold()
+
+    @staticmethod
+    def _is_usable_local_output(payload: Dict[str, Any], submitted_input: str) -> bool:
+        """Accept local-command confirmation output, including system messages."""
+        output_type = str(payload.get("type", "message")).strip().lower().replace("_", "-")
+        content = str(payload.get("content", "")).strip()
+        if output_type in {"user-input", "echo", "startup"} or not content:
+            return False
+        normalized = content.casefold()
+        return normalized != submitted_input.strip().casefold() and not any(
+            marker in normalized for marker in (
+                "session ready", "combat in progress - awaiting your action",
+                "enter your command:", "ready for input",
+            )
+        )
+
+    def _read_exit_clear_state(self, encounter_id: Optional[str]) -> Dict[str, Any]:
+        """Read only the canonical sandbox tracker/encounter snapshot for exit gating."""
+        state_root = getattr(self.args, "state_root", None)
+        if not state_root:
+            return {"status": "unavailable"}
+        snapshot = capture_evidence.snapshot_state(
+            Path(state_root), "exit-completion-observation", encounter_id=encounter_id
+        )
+        records = snapshot.get("records", {})
+        tracker = records.get("party_tracker.json", {})
+        encounter = records.get("selected_encounter", {})
+        world = tracker.get("worldConditions")
+        party = tracker.get("partyMembers")
+        expected = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
+        valid = (tracker.get("status") == "ok" and isinstance(world, dict) and
+                 party == list(expected) and encounter.get("status") == "ok" and
+                 (not encounter_id or encounter.get("encounterId") == encounter_id))
+        active = world.get("activeCombatEncounter") if isinstance(world, dict) else None
+        return {"status": "ok" if valid else "invalid", "active_encounter": active,
+                "canonical_encounter_cleared": valid and active in (None, ""),
+                "party_roster": party, "roster_matches": party == list(expected),
+                "tracker_sha256": tracker.get("sha256"),
+                "selected_encounter_status": encounter.get("status"),
+                "selected_encounter_id": encounter.get("encounterId")}
+
     def _output_text_since(self, start_index: int) -> str:
         with self.lock:
             payloads = [entry["payload"] for entry in self.game_outputs[start_index:]]
@@ -452,29 +1414,125 @@ class CaptureSession:
         """Transcript-side heuristic for an early stop."""
         return self.has_marker(0, COMBAT_ENDED_MARKERS)
 
-    def send_turn(self, label: str, text: str, character: Optional[str]) -> TurnResult:
-        """Emit one user_input and complete on the turn's quiet window.
+    def _g5t_target_is_inactive(self, target_name: str) -> Optional[bool]:
+        """Return a strict sandbox-state answer for whether a scripted target is inactive."""
+        state_root = getattr(self.args, "state_root", None)
+        if not state_root:
+            return None
+        snapshot = capture_evidence.snapshot_state(
+            Path(state_root), "g5t-target-observation",
+            encounter_id=getattr(self.args, "selected_encounter_id", None),
+        )
+        encounter = snapshot.get("records", {}).get("selected_encounter", {})
+        if (not isinstance(encounter, dict) or encounter.get("status") != "ok" or
+                not isinstance(encounter.get("creatures"), list)):
+            return None
+        target_rows = [row for row in encounter["creatures"]
+                       if isinstance(row, dict) and
+                       isinstance(row.get("name"), str) and
+                       row["name"].casefold() == target_name.casefold()]
+        if len(target_rows) != 1:
+            return None
+        target = target_rows[0]
+        status = str(target.get("status", "")).strip().casefold()
+        hp = target.get("currentHitPoints")
+        if isinstance(hp, bool) or not isinstance(hp, int):
+            return None
+        if status in {"dead", "defeated", "unconscious", "incapacitated", "stable"} or hp <= 0:
+            return True
+        if status in {"alive", "active"} and hp > 0:
+            return False
+        return None
 
-        Completion contract: wait for the first new ``game_output`` (capped by
-        ``--turn-timeout``); then keep waiting while ``is_processing`` is True
-        or new ``game_output`` / ``status_update`` events keep arriving;
-        complete once the event stream has been quiet for
-        ``--turn-quiet-seconds`` and ``is_processing`` is False. ``timed_out``
-        is recorded only when no new ``game_output`` arrived within the cap,
-        which is what the deterministic fast path requires: an
-        ``[ALREADY_APPLIED]`` style reply emits output without any
-        ``is_processing=True`` edge.
+    def _g5t_combat_is_over(self) -> bool:
+        """Only the post-narration server exit marker closes the G5T combat."""
+        if self.capture_gate == "g5t":
+            return self._g5t_exit_marker_seen
+        if self.combat_ended():
+            return True
+        observation = self._read_exit_clear_state(
+            getattr(self.args, "selected_encounter_id", None)
+        )
+        return observation.get("canonical_encounter_cleared") is True
+
+    def _record_g5t_skipped_step(self, step: Dict[str, Any], reason: str) -> None:
+        """Keep a bounded receipt for a scripted row that correctly sent no input."""
+        self._record_skipped_script_step(step, reason, "G5T")
+
+    def _record_skipped_script_step(
+        self, step: Dict[str, Any], reason: str, gate_label: str
+    ) -> None:
+        """Keep a bounded receipt for a gated script row that sent no input."""
+        self.step_attempts += 1
+        if self.capture_profile is not None and self.step_attempts > self.capture_profile["max_steps"]:
+            self.blocked_step_attempts += 1
+            raise DriverConnectionError("named scenario step bound exceeded")
+        work_unit = {
+            "type": step.get("unit_type"), "id": step.get("unit_id"),
+            "round": step.get("round"),
+        }
+        self.g5_step_receipts.append({
+            "step": step.get("step"),
+            "script_step": step.get("step"),
+            "label": str(step.get("label", ""))[:80],
+            "character": step.get("character"),
+            "status": "skipped",
+            "skip_reason": reason,
+            "work_only_ms": None,
+            "work_only_reason": "not_sent:%s" % reason,
+            "quiet_window_elapsed_ms": None,
+            "quiet_window_reason": "not_sent:%s" % reason,
+            "timed_out": False,
+            "cap_reached": False,
+            "work_unit": work_unit,
+        })
+        self.log("driver", "%s scripted step %s skipped reason=%s" % (
+            gate_label, step.get("step", "unknown"), reason))
+
+    def send_turn(self, label: str, text: str, character: Optional[str], *,
+                  allow_canonical_exit_completion: bool = False,
+                  fixture_step: Optional[Dict[str, Any]] = None,
+                  allow_local_output_completion: bool = False,
+                  require_g10_save_confirmation: bool = False) -> TurnResult:
+        """Emit one user_input and wait for the gate-specific completion contract.
+
+        Completion contract: wait for the first new backend ``game_output`` (capped by
+        ``--turn-timeout``); GUI echoes and generic system notices are transcript-only.
+        The fixed G10 ``/save`` step instead requires its exact local save-success
+        ``debug_output`` and a quiet event window.
+        Non-G5T gates keep waiting while ``is_processing`` is True or new events
+        arrive, then complete after an idle quiet window. G5T ignores processing
+        status and requires backend output, a quiet window, and the matching
+        server-side trace marker. A closing G5T batch specifically requires the
+        post-combat ``combat_exit_complete`` marker, not an ordinary ``turn_end``.
+        ``timed_out`` is recorded when required evidence
+        is missing at the cap. Only the named non-G5T explicit-exit branch may
+        instead complete from a validated canonical-clear/idle/quiet/health observation.
         """
+        if self.capture_gate == "g10" and not self._g10_startup_barrier_satisfied():
+            raise DriverConnectionError("G10 startup barrier is not satisfied; refusing scripted input")
+        self.step_attempts += 1
+        attempt_index = self.step_attempts
+        if self.capture_profile is not None and attempt_index > self.capture_profile["max_steps"]:
+            self.blocked_step_attempts += 1
+            raise DriverConnectionError("named scenario step bound exceeded")
         self.turn_index += 1
-        index = self.turn_index
         self.ensure_active(character)
         effective_character = character or self.current_character
+        # Snapshot indices count actual socket inputs, while the G5T script-step
+        # identity remains stable when a branch-valid row is skipped locally.
+        index = self.steps_sent + 1
         turn_timeout = float(self.args.turn_timeout)
         quiet_window = float(self.args.turn_quiet_seconds)
+        if require_g10_save_confirmation and (
+                self.capture_gate != "g10" or text.strip().casefold() != "/save"):
+            raise DriverConnectionError("G10 save confirmation is valid only for the fixed /save command")
 
         with self.lock:
             output_start = len(self.game_outputs)
             status_start = len(self.status_events)
+            debug_output_start = self.debug_output_event_count
+            save_completion_start = len(self.g10_save_completions)
 
         self.log(
             "driver",
@@ -485,32 +1543,225 @@ class CaptureSession:
         payload: Dict[str, Any] = {"input": text}
         if effective_character:
             payload["character"] = effective_character
+        trace_path = getattr(self.args, "trace_src", None)
+        state_root = getattr(self.args, "state_root", None)
+        trace_available = bool(trace_path and state_root)
+        trace_before = (capture_evidence.trace_byte_offset(
+            Path(trace_path), Path(state_root)
+        ) if trace_available and (getattr(self.args, "run_dir", None) or
+                                  self.capture_gate in {"g5t", "g5a"}) else
+            {"status": "not_recorded"})
+        trace_cursor = (trace_before.get("offset_bytes")
+                        if self.capture_gate in {"g5t", "g5a"} and
+                        trace_before.get("status") == "captured" else None)
+        if getattr(self.args, "run_dir", None):
+            capture_evidence.write_step_snapshot(
+                Path(self.args.run_dir), Path(self.args.state_root), index, "before",
+                encounter_id=getattr(self.args, "selected_encounter_id", None),
+                observation={"label": label, "input": text, "character": effective_character,
+                             "runtimeTrace": trace_before},
+            )
+        if (self.capture_gate == "g4" and self.capture_profile is not None and
+                self.steps_sent >= int(self.capture_profile.get("max_inputs", 0))):
+            raise DriverConnectionError("G4 input bound exceeded; no further inputs will be sent")
+        send_sample = (_g5_clock_sample()
+                       if self.capture_gate in capture_fixtures.G5_CAPTURE_GATES else None)
+        fixture_steps = ((self.capture_profile or {}).get("fixture") or {}).get("steps", [])
+        matching_step = (fixture_step if isinstance(fixture_step, dict) else
+                         fixture_steps[index - 1] if index <= len(fixture_steps) and
+                         isinstance(fixture_steps[index - 1], dict) else None)
+        expected_g5t_marker = (_g5t_expected_trace_marker(matching_step)
+                               if self.capture_gate == "g5t" else None)
+        expected_g5a_marker = (_g5a_expected_trace_marker(matching_step)
+                               if self.capture_gate == "g5a" else None)
+        g5a_run_id = (Path(str(self.args.run_dir)).name
+                      if self.capture_gate == "g5a" and
+                      getattr(self.args, "run_dir", None) else None)
         self.emit("user_input", payload)
+        accepted_at = time.time()
+        accepted_sample = (_g5_clock_sample()
+                           if self.capture_gate in capture_fixtures.G5_CAPTURE_GATES else None)
+        self.steps_sent += 1
 
         deadline = started + turn_timeout
         new_game_outputs = 0
+        backend_output_entries: List[Dict[str, Any]] = []
         first_output_seen = False
         last_event_ts = started
         processing = False
+        processing_true_seen = False
         quiet_completion = False
+        quiet_completed_at: Optional[float] = None
+        quiet_completed_monotonic: Optional[float] = None
+        observed_debug_output_count = debug_output_start
+        save_completion: Optional[Dict[str, Any]] = None
+        server_completion_marker: Optional[Dict[str, Any]] = None
+        completion_criterion: Dict[str, Any] = {
+            "criterion": ("g10_save_success_confirmation" if require_g10_save_confirmation
+                          else "g5t_trace_marker" if self.capture_gate == "g5t"
+                          else "g5a_logical_batch_completion" if expected_g5a_marker is not None
+                          else "backend_output"),
+            "canonical_encounter_cleared": False,
+        }
         cap_reached = False
         disconnected = False
         while True:
             now = time.time()
+            if ((self.capture_gate == "g5t" or
+                 (self.capture_gate == "g5a" and expected_g5a_marker is not None))
+                    and now >= deadline):
+                cap_reached = True
+                break
             with self.lock:
                 output_entries = list(self.game_outputs[output_start:])
                 events = list(self.status_events[status_start:])
                 disconnected = self.disconnected
+                debug_output_count = self.debug_output_event_count
+                debug_output_last_ts = self.debug_output_last_ts
+                save_completions = list(self.g10_save_completions[save_completion_start:])
             new_game_outputs = len(output_entries)
-            if new_game_outputs >= 1:
+            backend_output_entries = [entry for entry in output_entries
+                                      if self._is_backend_game_output(entry["payload"], text)]
+            local_output_entries = [
+                entry for entry in output_entries
+                if allow_local_output_completion and
+                self._is_usable_local_output(entry["payload"], text)
+            ]
+            completion_output_entries = (local_output_entries if allow_local_output_completion
+                                         else backend_output_entries)
+            if require_g10_save_confirmation:
+                completion_output_entries = []
+                if debug_output_count > observed_debug_output_count:
+                    last_event_ts = max(last_event_ts, debug_output_last_ts)
+                    observed_debug_output_count = debug_output_count
+                valid_completions = [row for row in save_completions
+                                     if row.get("event_index", 0) > debug_output_start]
+                save_completion = valid_completions[-1] if valid_completions else None
+                if save_completion is not None:
+                    last_event_ts = max(last_event_ts, float(save_completion["ts"]))
+            if events:
+                processing_true_seen = processing_true_seen or any(
+                    bool(event["is_processing"]) for event in events
+                )
+            if completion_output_entries:
                 first_output_seen = True
-                last_event_ts = max(last_event_ts, float(output_entries[-1]["ts"]))
+                last_event_ts = max(last_event_ts, float(completion_output_entries[-1]["ts"]))
             if events:
                 last_event_ts = max(last_event_ts, float(events[-1]["ts"]))
                 processing = bool(events[-1]["is_processing"])
-            if first_output_seen and not processing and (now - last_event_ts) >= quiet_window:
-                quiet_completion = True
-                break
+
+            if self.capture_gate in {"g5t", "g5a"} and trace_cursor is not None:
+                try:
+                    trace_update = capture_evidence.read_trace_records_since(
+                        Path(trace_path), Path(state_root), trace_cursor
+                    )
+                except Exception:
+                    trace_update = {"status": "unavailable", "records": [],
+                                    "offset_bytes": trace_cursor}
+                if trace_update.get("status") == "captured":
+                    trace_cursor = trace_update.get("offset_bytes", trace_cursor)
+                    for record in trace_update.get("records", []):
+                        if (self.capture_gate == "g5t" and
+                                _g5t_trace_record_matches(record, expected_g5t_marker)):
+                            server_completion_marker = _g5t_completion_marker_summary(record)
+                            if record.get("stage") == "combat_exit_complete":
+                                self._g5t_exit_marker_seen = True
+                        elif (self.capture_gate == "g5a" and
+                              _g5a_trace_record_matches(
+                                  record, expected_g5a_marker, g5a_run_id
+                              )):
+                            server_completion_marker = _g5a_completion_marker_summary(record)
+
+            if require_g10_save_confirmation:
+                if (save_completion is not None and not processing and
+                        (now - last_event_ts) >= quiet_window):
+                    first_output_seen = True
+                    quiet_completion = True
+                    quiet_completed_at = now
+                    quiet_completed_monotonic = time.monotonic()
+                    completion_criterion = {
+                        "criterion": "g10_save_success_confirmation",
+                        "confirmation_source": "debug_output",
+                        "save_directory": save_completion["save_directory"],
+                    }
+                    break
+            elif self.capture_gate == "g5t":
+                quiet_ready = first_output_seen and (now - last_event_ts) >= quiet_window
+                if quiet_ready:
+                    if not quiet_completion:
+                        quiet_completed_at = now
+                        quiet_completed_monotonic = time.monotonic()
+                    quiet_completion = True
+                else:
+                    quiet_completion = False
+                    quiet_completed_at = None
+                    quiet_completed_monotonic = None
+                if quiet_completion and server_completion_marker is not None:
+                    completion_criterion = {
+                        "criterion": "backend_output_quiet_and_trace_marker",
+                        "canonical_encounter_cleared": False,
+                        "quiet_window_observed": True,
+                        "server_completion_marker": server_completion_marker,
+                    }
+                    break
+            elif self.capture_gate == "g5a" and expected_g5a_marker is not None:
+                quiet_ready = (first_output_seen and not processing and
+                               (now - last_event_ts) >= quiet_window)
+                if quiet_ready:
+                    if not quiet_completion:
+                        quiet_completed_at = now
+                        quiet_completed_monotonic = time.monotonic()
+                    quiet_completion = True
+                else:
+                    quiet_completion = False
+                    quiet_completed_at = None
+                    quiet_completed_monotonic = None
+                if quiet_completion and server_completion_marker is not None:
+                    completion_criterion = {
+                        "criterion": "backend_output_quiet_and_logical_batch_marker",
+                        "canonical_encounter_cleared": False,
+                        "quiet_window_observed": True,
+                        "server_completion_marker": server_completion_marker,
+                    }
+                    break
+            else:
+                if (first_output_seen and not processing and
+                        (now - last_event_ts) >= quiet_window
+                        and not allow_canonical_exit_completion):
+                    quiet_completion = True
+                    quiet_completed_at = now
+                    quiet_completed_monotonic = time.monotonic()
+                    completion_criterion = {
+                        "criterion": "backend_narration" if label == "post-exit narrator handoff" else "backend_output",
+                        "canonical_encounter_cleared": False,
+                    }
+                    break
+                if (allow_canonical_exit_completion and events and
+                        not processing and (now - last_event_ts) >= quiet_window):
+                    state_observation = self._read_exit_clear_state(
+                        getattr(self.args, "selected_encounter_id", None)
+                    )
+                    if state_observation.get("canonical_encounter_cleared") is True:
+                        remaining = max(0.05, deadline - now)
+                        health = self.read_server_health(
+                            expected_roster=list(MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER),
+                            timeout=min(REST_TIMEOUT_SECONDS, remaining),
+                            bounded_for_exit=True,
+                        )
+                        if health.get("status") == "ok":
+                            quiet_completion = True
+                            quiet_completed_at = now
+                            quiet_completed_monotonic = time.monotonic()
+                            completion_criterion = {
+                                "criterion": "canonical_exit_clear",
+                                "canonical_encounter_cleared": True,
+                                "backend_ready": True,
+                                "processing_true_seen": processing_true_seen,
+                                "quiet_seconds": max(0.0, now - last_event_ts),
+                                "state": state_observation,
+                                "health": health,
+                            }
+                            break
             if now >= deadline:
                 cap_reached = True
                 break
@@ -518,24 +1769,129 @@ class CaptureSession:
                 break
             time.sleep(POLL_INTERVAL_SECONDS)
 
-        timed_out = not first_output_seen
+        completion_sample = (_g5_clock_sample()
+                             if self.capture_gate in capture_fixtures.G5_CAPTURE_GATES else None)
+        self.backend_output_count += len(backend_output_entries)
+        if require_g10_save_confirmation:
+            timed_out = not (save_completion is not None and quiet_completion)
+            completion_criterion["quiet_window_observed"] = quiet_completion
+            completion_criterion["confirmation_source"] = "debug_output"
+            completion_criterion["save_directory"] = (
+                save_completion.get("save_directory") if save_completion else None
+            )
+        elif self.capture_gate == "g5t":
+            timed_out = not (
+                first_output_seen and quiet_completion and
+                server_completion_marker is not None
+            )
+            completion_criterion["quiet_window_observed"] = quiet_completion
+            completion_criterion["server_completion_marker"] = server_completion_marker
+        elif self.capture_gate == "g5a" and expected_g5a_marker is not None:
+            timed_out = not (
+                first_output_seen and quiet_completion and
+                server_completion_marker is not None
+            )
+            completion_criterion["quiet_window_observed"] = quiet_completion
+            completion_criterion["server_completion_marker"] = server_completion_marker
+        else:
+            timed_out = not first_output_seen and not quiet_completion
         cap_note = ""
         if timed_out:
             self.timeout_count += 1
+            if require_g10_save_confirmation and save_completion is None:
+                timeout_reason = "authoritative save success confirmation not observed"
+            elif require_g10_save_confirmation:
+                timeout_reason = "save confirmation quiet window not observed"
+            elif not first_output_seen:
+                timeout_reason = "no new game_output"
+            elif self.capture_gate == "g5t" and server_completion_marker is None:
+                timeout_reason = "server trace completion marker not observed"
+            elif self.capture_gate == "g5t" and not quiet_completion:
+                timeout_reason = "quiet window not observed"
+            elif (self.capture_gate == "g5a" and expected_g5a_marker is not None and
+                  server_completion_marker is None):
+                timeout_reason = "server logical batch completion marker not observed"
+            elif (self.capture_gate == "g5a" and expected_g5a_marker is not None and
+                  not quiet_completion):
+                timeout_reason = "quiet window not observed"
+            else:
+                timeout_reason = "required completion evidence missing"
             self.log(
                 "driver",
-                "[WARN] step=%d timeout=yes no new game_output within %.0fs"
-                % (index, turn_timeout),
+                "[WARN] step=%d timeout=yes %s within %.0fs"
+                % (index, timeout_reason, turn_timeout),
             )
         elif cap_reached:
+            self.step_caps_reached += 1
             cap_note = " cap-reached=yes"
             self.log(
                 "driver",
                 "[WARN] step=%d turn cap reached with the event stream still "
                 "active; completing anyway (timed_out=no)" % index,
             )
+        if self.capture_gate in capture_fixtures.G5_CAPTURE_GATES:
+            timing = _g5_timing_values(
+                float(send_sample["epoch_ms"]) / 1000.0 if send_sample else accepted_at,
+                backend_output_entries, events, quiet_completion, quiet_completed_at
+            )
+            receipt: Dict[str, Any] = {
+                "step": (matching_step.get("step", index)
+                         if fixture_step is not None and matching_step is not None else index),
+                "label": str(label)[:80],
+                "character": str(effective_character)[:80] if effective_character else None,
+                **timing,
+                "timed_out": timed_out,
+                "cap_reached": cap_reached,
+            }
+            if self.capture_gate == "g5t":
+                receipt["server_completion_marker"] = server_completion_marker
+            elif self.capture_gate == "g5a" and expected_g5a_marker is not None:
+                receipt["server_completion_marker"] = server_completion_marker
+            if fixture_step is not None and matching_step is not None:
+                receipt["script_step"] = matching_step.get("step")
+                receipt["status"] = "sent"
+            if send_sample is not None and completion_sample is not None:
+                receipt["trace_window"] = {
+                    "start_epoch_ms": send_sample["epoch_ms"],
+                    "end_epoch_ms": completion_sample["epoch_ms"],
+                    "start_monotonic_ms": send_sample["monotonic_ms"],
+                    "end_monotonic_ms": completion_sample["monotonic_ms"],
+                    "accepted_epoch_ms": accepted_sample["epoch_ms"] if accepted_sample else None,
+                    "quiet_end_epoch_ms": (round(quiet_completed_at * 1000.0, 3)
+                                           if quiet_completed_at is not None else None),
+                    "quiet_end_monotonic_ms": (round(quiet_completed_monotonic * 1000.0, 3)
+                                               if quiet_completed_monotonic is not None else None),
+                    "unit_type": matching_step.get("unit_type") if matching_step else None,
+                    "unit_id": matching_step.get("unit_id") if matching_step else None,
+                    "round": matching_step.get("round") if matching_step else None,
+                    "step": index,
+                }
+                if fixture_step is not None and matching_step is not None:
+                    receipt["trace_window"]["script_step"] = matching_step.get("step")
+            if matching_step is not None:
+                receipt["work_unit"] = {
+                    "type": matching_step.get("unit_type"),
+                    "id": matching_step.get("unit_id"),
+                    "round": matching_step.get("round"),
+                }
+            else:
+                receipt["work_unit"] = {"type": "unattributed", "id": None, "round": None}
+            self.g5_step_receipts.append(receipt)
         if disconnected:
             raise DriverConnectionError("socket disconnected during step %d" % index)
+        trace_after = (capture_evidence.trace_byte_offset(
+            Path(self.args.trace_src), Path(self.args.state_root)
+        ) if getattr(self.args, "run_dir", None) and quiet_completion else
+            ({"status": "unavailable", "reason": (
+                "quiet_window_not_observed" if self.capture_gate == "g5t"
+                else "idle_not_observed"
+            )}
+             if getattr(self.args, "run_dir", None) else {"status": "not_recorded"}))
+        if label == "post-exit narrator handoff":
+            canonical = self._read_exit_clear_state(getattr(self.args, "selected_encounter_id", None))
+            completion_criterion["canonical_encounter_cleared"] = canonical.get("canonical_encounter_cleared") is True
+            completion_criterion["state"] = canonical
+        self._last_completion_criterion = completion_criterion
 
         # The quiet window is the settle when it ended the turn; the extra
         # --settle-seconds pause is kept for turns that did not settle quietly.
@@ -556,6 +1912,48 @@ class CaptureSession:
                 new_game_outputs,
             ),
         )
+        if getattr(self.args, "run_dir", None):
+            capture_evidence.write_step_snapshot(
+                Path(self.args.run_dir), Path(self.args.state_root), index, "after",
+                encounter_id=getattr(self.args, "selected_encounter_id", None),
+                observation={"label": label, "input": text, "character": effective_character,
+                             "game_output_count": len(output_entries),
+                             "backend_output_count": len(backend_output_entries),
+                              "actual_backend_outputs": [
+                                   {"type": str(entry["payload"].get("type", "message")),
+                                    "author": entry["payload"].get("author"),
+                                    "content": str(entry["payload"].get("content", ""))}
+                                   for entry in (completion_output_entries if allow_local_output_completion
+                                                 else backend_output_entries)
+                               ],
+                              "input_echoes": [
+                                  {"type": str(entry["payload"].get("type", "message")),
+                                   "content": str(entry["payload"].get("content", ""))}
+                                  for entry in output_entries
+                                  if str(entry["payload"].get("type", "")).casefold() in
+                                  ("user-input", "user_input")
+                              ],
+                             "game_output_types": [str(entry["payload"].get("type", "message"))[:40]
+                                                    for entry in output_entries],
+                              "backend_output_types": [str(entry["payload"].get("type", "message"))[:40]
+                                                       for entry in backend_output_entries],
+                             "game_output_authors": [str(entry["payload"].get("author", ""))[:80]
+                                                      for entry in output_entries if entry["payload"].get("author")],
+                              "timed_out": timed_out, "cap_reached": cap_reached,
+                              "runtimeTrace": trace_after,
+                              "completion_criterion": completion_criterion,
+                              "disconnected": disconnected},
+            )
+        if self.capture_profile is not None and (timed_out or cap_reached):
+            failure = "timeout" if timed_out else "turn cap"
+            self.log(
+                "scenario",
+                "[ERROR] named scenario fail-stop after first %s at step=%d; no further gameplay controls will be sent"
+                % (failure, index),
+            )
+            raise DriverConnectionError(
+                "named scenario stopped after first %s at step %d" % (failure, index)
+            )
         return TurnResult(
             index=index,
             label=label,
@@ -563,6 +1961,7 @@ class CaptureSession:
             elapsed_seconds=elapsed,
             timed_out=timed_out,
             new_game_outputs=new_game_outputs,
+            backend_output_count=len(backend_output_entries),
         )
 
     def maybe_send_init_fallback(self) -> None:
@@ -584,6 +1983,9 @@ class CaptureSession:
     # ------------------------------------------------------------------
     def run_scenario(self) -> int:
         """Run the selected scripted scenario; returns an exit code."""
+        scenario_id = getattr(self.args, "scenario", None)
+        if scenario_id:
+            return self.run_named_scenario(scenario_id)
         roster = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
         first_pc = roster[0]
         if not self.set_active_character(first_pc):
@@ -599,6 +2001,379 @@ class CaptureSession:
             self.run_mp_scenario()
         else:
             self.run_one_pc_scenario()
+        return EXIT_OK
+
+    def run_named_scenario(self, scenario_id: str) -> int:
+        """Run one of the small, fixed G3 scripts; no server lifecycle control."""
+        roster = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
+        first_pc = roster[0]
+        branch = getattr(self.args, "branch", None)
+        phase = getattr(self.args, "phase", None)
+        gate = getattr(self.args, "gate", "g3")
+        profile = capture_fixtures.build_gate_profile(
+            gate, scenario_id, self.party, branch or "", phase or "",
+            getattr(self.args, "path", None) or "",
+            getattr(self.args, "boundary", None) or "",
+        )
+        self.capture_profile = profile
+        # start_game was emitted before run_scenario selected its named profile.
+        self.control_request_attempts = max(self.control_request_attempts, 1)
+        self.control_request_calls = max(self.control_request_calls, 1)
+        self.control_requests_sent = max(self.control_requests_sent, 1)
+        self.control_request_count = max(self.control_request_count, 1)
+        if gate == "g7":
+            return self.run_g7_scenario(profile)
+        if gate == "g10":
+            return self.run_g10_scenario(profile)
+        if gate == "g9" and scenario_id != "narrator-auto":
+            if not self.set_active_character(first_pc):
+                return EXIT_START_FAILURE
+            self.current_character = first_pc
+            self.run_g5_scenario()
+            self.log(
+                "scenario",
+                "id=%s row=%s phase=%s step_attempts=%d steps_sent=%d controls=%d/%d"
+                % (scenario_id, profile["row_key"], profile.get("phase") or "-",
+                   self.step_attempts, self.steps_sent, self.control_requests_sent,
+                   profile["max_requests"]),
+            )
+            return EXIT_OK
+        if scenario_id in ("combat-smoke", "combat-smoke-allied-inactive",
+                           "g5t-commander-p1", "g5t-commander-p4",
+                           "g5a-ally-p1", "g5a-ally-p4"):
+            if not self.set_active_character(first_pc):
+                return EXIT_START_FAILURE
+            self.current_character = first_pc
+            if gate not in capture_fixtures.G5_CAPTURE_GATES:
+                self.maybe_send_init_fallback()
+            if gate == "g5t":
+                self.run_g5t_scenario(profile)
+            elif gate == "g5a":
+                self.run_g5a_scenario(profile)
+            elif self.party == 4:
+                if gate in capture_fixtures.G5_CAPTURE_GATES:
+                    self.run_g5_scenario()
+                else:
+                    self.run_mp_scenario()
+            else:
+                if gate in capture_fixtures.G5_CAPTURE_GATES:
+                    self.run_g5_scenario()
+                else:
+                    self.run_one_pc_scenario()
+            self.log(
+                "scenario",
+                "id=%s branch=- phase=- applicability=%s step_attempts=%d steps_sent=%d "
+                "control_attempts=%d control_requests_sent=%d blocked_steps=%d blocked_controls=%d "
+                "bounds=%d/%d"
+                % (scenario_id, profile["applicability"], self.step_attempts, self.steps_sent,
+                   self.control_request_attempts, self.control_requests_sent,
+                   self.blocked_step_attempts, self.blocked_control_attempts,
+                   profile["max_steps"], profile["max_requests"]),
+            )
+            return EXIT_OK
+
+        if ((gate == "g4" and scenario_id == "narrator-dialogue-travel") or
+                (gate == "g9" and scenario_id == "narrator-auto")):
+            if not self.set_active_character(first_pc):
+                return EXIT_START_FAILURE
+            self.current_character = first_pc
+            for index, turn in enumerate(profile["turns"], 1):
+                result = self.send_turn(turn["label"], turn["input"], turn["character"])
+                if result.timed_out:
+                    raise DriverConnectionError("G4 narrator timeout; no further queued inputs will be sent")
+                step_path = Path(self.args.run_dir) / "snapshots" / ("step-%03d-after.json" % index)
+                snapshot, error = capture_evidence.load_bundle_json(Path(self.args.run_dir),
+                                                                    str(step_path.relative_to(Path(self.args.run_dir))))
+                projection = capture_evidence.g4_location_projection(
+                    snapshot, turn["expected_location_id"], list(roster), turn["character"]
+                )
+                outputs = (snapshot or {}).get("observation", {}).get("actual_backend_outputs", [])
+                self.g4_step_projections.append({
+                    "step": index, "label": turn["label"], "expected_location_id": turn["expected_location_id"],
+                    "expected_active_character": turn["character"], "projection": projection,
+                    "kind": turn["kind"], "actual_backend_outputs": outputs,
+                    "input_echoes": (snapshot or {}).get("observation", {}).get("input_echoes", []),
+                })
+                self._last_completion_criterion = {"criterion": "g4_backend_output_and_location",
+                                                   "location": projection}
+                if projection["status"] != "PASS":
+                    raise DriverConnectionError("G4 persisted location mismatch or missing projection; stopped")
+                if turn.get("kind") == "mira_dialogue":
+                    outputs = (snapshot or {}).get("observation", {}).get("actual_backend_outputs", [])
+                    actual_npc = [row for row in outputs if str(row.get("content") or "").strip() and
+                                  str(row.get("content") or "").strip().casefold() != turn["input"].strip().casefold()]
+                    if not actual_npc:
+                        raise DriverConnectionError("G4 Mira backend response missing or echo-only; stopped")
+            self.log("scenario", "id=%s steps_sent=%d controls=%d/%d" % (
+                scenario_id, self.steps_sent, self.control_requests_sent, profile["max_controls"]))
+            return EXIT_OK
+
+        if scenario_id == "resume-replay" and phase == "replay":
+            # This phase is deliberately observation-only: the primary restarts
+            # the same sandbox externally and this driver sends no gameplay input.
+            self.log(
+                "scenario",
+                "id=resume-replay phase=replay applicability=%s step_attempts=0 steps_sent=0 "
+                "control_attempts=%d control_requests_sent=%d bounds=0/%d; existing sandbox retained"
+                % (profile["applicability"], self.control_request_attempts,
+                   self.control_requests_sent, profile["max_requests"]),
+            )
+            return EXIT_OK
+
+        if scenario_id in ("initiative-pc", "initiative-dm-tie"):
+            roll = "18" if scenario_id == "initiative-pc" else "12"
+            inputs = [("invalid initiative", "/init 21", first_pc)]
+            inputs.append(("resolve initiative", "/init " + roll, first_pc))
+        elif scenario_id == "death-save":
+            pending = "Acheron"
+            inputs = []
+            if self.party == 4:
+                inputs.append(("wrong actor", "10", "Merisiel"))
+            inputs.extend([
+                ("invalid death save", "21", pending),
+                ("legal death save", "10", pending),
+            ])
+        elif scenario_id == "surrender-exit":
+            if branch == "surrender":
+                last_hostile = profile["seed"]["last_hostile"]
+                inputs = [(
+                    "accept last hostile surrender",
+                    "%s offers to surrender; the party accepts and restrains %s."
+                    % (last_hostile, last_hostile),
+                    first_pc,
+                )]
+            else:
+                inputs = [
+                    ("explicit exit branch", "/end_combat", first_pc),
+                    ("post-exit narrator handoff",
+                     "Describe the quiet gravel yard now that combat has ended.", first_pc),
+                ]
+        elif scenario_id == "resume-replay":
+            inputs = [
+                ("completed turn attack", "/att %s 20 training blade" % (MP_ENEMY_TARGET if self.party == 4 else ONE_PC_ENEMY_TARGET), first_pc),
+                ("completed turn damage", "/dmg 1", first_pc),
+            ]
+        else:
+            raise ValueError("unsupported capture scenario: %s" % scenario_id)
+
+        if len(inputs) > profile["max_steps"] or len(inputs) + 1 > profile["max_requests"]:
+            raise ValueError("scenario script exceeds its declared bounds")
+        if not self.set_active_character(first_pc):
+            return EXIT_START_FAILURE
+        self.current_character = first_pc
+        for label, text, character in inputs:
+            result = self.send_turn(
+                label, text, character,
+                allow_canonical_exit_completion=(scenario_id == "surrender-exit" and
+                                                  branch == "explicit-exit" and label == "explicit exit branch"),
+            )
+            if scenario_id == "surrender-exit" and branch == "explicit-exit" and label == "explicit exit branch":
+                criterion = getattr(self, "_last_completion_criterion", None)
+                if (result.timed_out or not isinstance(criterion, dict) or
+                        criterion.get("criterion") != "canonical_exit_clear" or
+                        criterion.get("canonical_encounter_cleared") is not True or
+                        criterion.get("backend_ready") is not True):
+                    raise DriverConnectionError("explicit exit did not reach validated canonical clear before handoff")
+        self.log(
+            "scenario",
+            "id=%s branch=%s phase=%s applicability=%s step_attempts=%d steps_sent=%d "
+            "control_attempts=%d control_requests_sent=%d blocked_steps=%d blocked_controls=%d "
+            "bounds=%d/%d"
+            % (scenario_id, branch or "-", phase or "-", profile["applicability"],
+               self.step_attempts, self.steps_sent, self.control_request_attempts,
+               self.control_requests_sent, self.blocked_step_attempts,
+               self.blocked_control_attempts, profile["max_steps"], profile["max_requests"]),
+        )
+        return EXIT_OK
+
+    def run_g10_scenario(self, profile: Dict[str, Any]) -> int:
+        """Run the fixed G10 full-session or observation-only resume phase."""
+        if not self._g10_startup_barrier_satisfied():
+            raise DriverConnectionError("G10 startup barrier is not satisfied; refusing scenario")
+        phase = profile.get("phase")
+        steps = (profile.get("fixture") or {}).get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise DriverConnectionError("G10 fixed session steps are missing")
+        if phase == "complete":
+            first_pc = ONE_PC_ROSTER[0] if self.party == 1 else MP_PARTY_ROSTER[0]
+            if not self.set_active_character(first_pc):
+                return EXIT_START_FAILURE
+            self.current_character = first_pc
+            narration = steps[0]
+            narration_index = self.steps_sent + 1
+            self.send_turn(narration["label"], narration["input"], narration.get("character"))
+            combat_steps = capture_fixtures.build_g5_script_steps(self.party)
+            combat_start = self.steps_sent
+            self.run_g5_scenario()
+            if self.steps_sent - combat_start != len(combat_steps):
+                raise DriverConnectionError("G10 combat script ended before every fixed step was observed")
+            save_row = steps[-2]
+            save_command = (profile.get("fixture") or {}).get("save_command")
+            if (not isinstance(save_command, str) or
+                    save_command != save_row.get("input") or
+                    save_command.strip().casefold() != "/save"):
+                raise DriverConnectionError("G10 fixed fixture does not declare the canonical /save command")
+            save_index = self.steps_sent + 1
+            self.send_turn(save_row["label"], save_command, save_row.get("character"),
+                           require_g10_save_confirmation=True)
+            save_criterion = self._last_completion_criterion
+            if (not isinstance(save_criterion, dict) or
+                    save_criterion.get("criterion") != "g10_save_success_confirmation" or
+                    save_criterion.get("confirmation_source") != "debug_output" or
+                    not isinstance(save_criterion.get("save_directory"), str)):
+                raise DriverConnectionError("G10 save did not receive authoritative local completion")
+            save_completion_observation = {
+                "status": "captured",
+                "source": "debug_output",
+                "save_directory": save_criterion["save_directory"],
+            }
+            usage_row = steps[-1]
+            usage_index = self.steps_sent + 1
+            output_start = self.output_count()
+            debug_start = len(self.debug_token_updates)
+            usage_command_sent_epoch = time.time()
+            self.send_turn(usage_row["label"], usage_row["input"], usage_row.get("character"),
+                           allow_local_output_completion=True)
+            self.wait_for_debug_token_update(debug_start)
+            usage_observation = self.capture_g10_usage_observation(
+                output_start, debug_start, usage_index, usage_command_sent_epoch
+            )
+            self.g10_observation = {
+                "status": "captured", "phase": phase,
+                "narration_step": narration_index,
+                "combat_steps": len(combat_steps),
+                "save_step": save_index, "usage_step": usage_index,
+                "save_completion": save_completion_observation,
+                "usage": usage_observation,
+            }
+        elif phase == "resume":
+            usage_row = steps[0]
+            usage_index = self.steps_sent + 1
+            output_start = self.output_count()
+            debug_start = len(self.debug_token_updates)
+            usage_command_sent_epoch = time.time()
+            self.send_turn(usage_row["label"], usage_row["input"], None,
+                           allow_local_output_completion=True)
+            self.wait_for_debug_token_update(debug_start)
+            usage_observation = self.capture_g10_usage_observation(
+                output_start, debug_start, usage_index, usage_command_sent_epoch
+            )
+            self.g10_observation = {
+                "status": "captured", "phase": phase,
+                "usage_step": usage_index,
+                "usage": usage_observation,
+                "gameplay_inputs_sent": 0,
+            }
+        else:
+            raise DriverConnectionError("unsupported G10 full-session phase")
+        self.log("scenario", "id=full-session phase=%s row=%s steps=%d controls=%d/%d" % (
+            phase, profile.get("row_key"), self.steps_sent, self.control_requests_sent,
+            profile["max_requests"]))
+        return EXIT_OK
+
+    def _send_g7_interrupt_input(self, text: str, character: Optional[str],
+                                 boundary: str) -> bool:
+        """Send one G7 input and wait for the declared runtime fault marker.
+
+        A combat fault sentinel is an expected lifecycle boundary, not a
+        gameplay timeout. The driver reads only the owned server log and does
+        not stop or restart the server itself.
+        """
+        self.step_attempts += 1
+        if self.capture_profile is None or self.step_attempts > self.capture_profile["max_steps"]:
+            self.blocked_step_attempts += 1
+            raise DriverConnectionError("G7 scenario step bound exceeded")
+        self.turn_index += 1
+        index = self.steps_sent + 1
+        output_start = self.output_count()
+        marker = "COMBAT_TURN_FAULT_INJECTED:%s" % boundary
+        server_log_value = getattr(self.args, "server_log", None)
+        if not isinstance(server_log_value, str) or not server_log_value:
+            raise DriverConnectionError("G7 interrupt requires --server-log for expected-stop evidence")
+        server_log = Path(server_log_value)
+        state_root = Path(self.args.state_root)
+        trace_before = capture_evidence.trace_byte_offset(Path(self.args.trace_src), state_root)
+        self.log("driver", "step=%d start label=G7 interrupted turn character=%s input=%s" %
+                 (index, character, text))
+        capture_evidence.write_step_snapshot(
+            Path(self.args.run_dir), state_root, index, "before",
+            encounter_id=getattr(self.args, "selected_encounter_id", None),
+            observation={"label": "G7 interrupted turn", "input": text,
+                         "character": character, "runtimeTrace": trace_before},
+        )
+        payload = {"input": text}
+        if character:
+            payload["character"] = character
+        self.emit("user_input", payload)
+        self.steps_sent += 1
+        wait_started = time.monotonic()
+        timeout = float(self.capture_profile.get("lifecycle_stop_timeout_seconds", 30))
+        deadline = wait_started + timeout
+        observed = False
+        while time.monotonic() < deadline:
+            raw, error = capture_evidence._safe_read_bytes(server_log, PROJECT_TMP)
+            if error is None and raw is not None and marker.encode("ascii") in raw:
+                observed = True
+                break
+            time.sleep(min(POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic())))
+        elapsed = max(0.0, time.monotonic() - wait_started)
+        self.g7_expected_stop = {
+            "declared": True,
+            "status": "observed" if observed else "missing",
+            "marker": marker,
+            "wait_timed_out": not observed,
+            "wait_timeout_seconds": timeout,
+            "wait_elapsed_seconds": round(elapsed, 3),
+            "classification": "expected_lifecycle_stop",
+        }
+        with self.lock:
+            observed_outputs = list(self.game_outputs[output_start:])
+        capture_evidence.write_step_snapshot(
+            Path(self.args.run_dir), state_root, index, "after",
+            encounter_id=getattr(self.args, "selected_encounter_id", None),
+            observation={"label": "G7 interrupted turn", "input": text,
+                         "character": character, "runtimeTrace": capture_evidence.trace_byte_offset(
+                             Path(self.args.trace_src), state_root),
+                         "expected_lifecycle_stop": dict(self.g7_expected_stop),
+                         "game_output_count": len(observed_outputs),
+                         "disconnected": self.disconnected},
+        )
+        self.log("lifecycle", "expected_stop=%s marker=%s wait_timed_out=%s elapsed=%.3fs" %
+                 (self.g7_expected_stop["status"], marker,
+                  "yes" if not observed else "no", elapsed))
+        if not observed:
+            raise DriverConnectionError(
+                "G7 expected lifecycle stop marker was not observed within %.1fs" % timeout
+            )
+        self.log("driver", "step=%d done label=G7 interrupted turn expected-stop=yes timeout=no new_game_output=%d" %
+                 (index, len(observed_outputs)))
+        return True
+
+    def run_g7_scenario(self, profile: Dict[str, Any]) -> int:
+        """Drive one fixed G7 lifecycle phase without owning server lifecycle."""
+        phase = profile["phase"]
+        path = profile["path"]
+        boundary = profile["boundary"]
+        roster = MP_PARTY_ROSTER if self.party == 4 else ONE_PC_ROSTER
+        actor = roster[0]
+        if phase in ("interrupt", "complete"):
+            input_character = actor if path == "normal" else None
+            if input_character is not None:
+                if not self.set_active_character(input_character):
+                    return EXIT_START_FAILURE
+                self.current_character = input_character
+            turn_input = profile["seed"]["input"]
+            if phase == "interrupt":
+                self._send_g7_interrupt_input(turn_input, input_character, boundary)
+            else:
+                self.send_turn("G7 completed turn", turn_input, input_character)
+        else:
+            self.log("scenario", "id=turn-commit path=%s boundary=%s phase=%s "
+                     "steps_sent=0 retained_state=yes" % (path, boundary, phase))
+        self.log("scenario", "id=turn-commit path=%s boundary=%s phase=%s "
+                 "step_attempts=%d steps_sent=%d controls=%d/%d" %
+                 (path, boundary, phase, self.step_attempts, self.steps_sent,
+                  self.control_requests_sent, profile["max_requests"]))
         return EXIT_OK
 
     def run_mp_scenario(self) -> None:
@@ -641,6 +2416,104 @@ class CaptureSession:
                     "round %d enemy phase not pending; skipping /end" % round_number,
                 )
 
+    def run_g5_scenario(self) -> None:
+        """Run the existing fixed P1/P4 command script without changing its steps."""
+        for step in capture_fixtures.build_g5_script_steps(self.party):
+            self.send_turn(step["label"], step["input"], step["character"])
+            if self.combat_ended():
+                self.log("driver", "G5 combat end detected after script step %s; stopping early" %
+                         step["label"])
+                return
+
+    def run_g5a_scenario(self, profile: Dict[str, Any]) -> None:
+        """Run G5A while sending damage only after an observed non-critical hit."""
+        attack_results: Dict[int, Optional[bool]] = {}
+        rows = capture_fixtures.build_g5a_script_steps(self.party)
+        for position, step in enumerate(rows):
+            if self.combat_ended():
+                for remaining in rows[position:]:
+                    self._record_skipped_script_step(remaining, "combat_ended", "G5A")
+                return
+
+            command = str(step.get("input", ""))
+            required_hit_step = step.get("requires_hit_step")
+            if isinstance(required_hit_step, int) and not isinstance(required_hit_step, bool):
+                hit_result = attack_results.get(required_hit_step)
+                if hit_result is not True:
+                    reason = "attack_missed" if hit_result is False else "attack_outcome_unverified"
+                    self._record_skipped_script_step(step, reason, "G5A")
+                    continue
+
+            output_start = self.output_count()
+            self.send_turn(
+                step["label"],
+                command,
+                step.get("character"),
+                fixture_step=step,
+            )
+            if command.casefold().startswith("/att "):
+                attack_results[step["step"]] = self._g5t_attack_hit(
+                    step, self._output_text_since(output_start)
+                )
+
+    def run_g5t_scenario(self, profile: Dict[str, Any]) -> None:
+        """Run the isolated G5T script, skipping only branch-invalid actions locally."""
+        attack_results: Dict[int, Optional[bool]] = {}
+        attack_skip_reasons: Dict[int, str] = {}
+        rows = capture_fixtures.build_g5t_script_steps(self.party)
+        for position, step in enumerate(rows):
+            if self._g5t_combat_is_over():
+                for remaining in rows[position:]:
+                    self._record_g5t_skipped_step(remaining, "combat_ended")
+                return
+
+            target = step.get("target")
+            command = str(step.get("input", ""))
+            required_hit_step = step.get("requires_hit_step")
+            if command.casefold().startswith("/att ") and isinstance(target, str):
+                inactive = self._g5t_target_is_inactive(target)
+                if inactive is True:
+                    script_step = step.get("step")
+                    if isinstance(script_step, int):
+                        attack_results[script_step] = False
+                        attack_skip_reasons[script_step] = "target_inactive"
+                    self._record_g5t_skipped_step(step, "target_inactive")
+                    continue
+            if isinstance(required_hit_step, int) and not isinstance(required_hit_step, bool):
+                hit_result = attack_results.get(required_hit_step)
+                if hit_result is not True:
+                    if attack_skip_reasons.get(required_hit_step) == "target_inactive":
+                        reason = "attack_target_inactive"
+                    elif hit_result is False:
+                        reason = "attack_missed"
+                    else:
+                        reason = "attack_outcome_unverified"
+                    self._record_g5t_skipped_step(step, reason)
+                    continue
+
+            output_start = self.output_count()
+            self.send_turn(step["label"], step["input"], step["character"],
+                           fixture_step=step)
+            if command.casefold().startswith("/att "):
+                script_step = step.get("step")
+                if isinstance(script_step, int):
+                    attack_results[script_step] = self._g5t_attack_hit(
+                        step, self._output_text_since(output_start)
+                    )
+
+    @staticmethod
+    def _g5t_attack_hit(step: Dict[str, Any], output_text: str) -> Optional[bool]:
+        """Classify a scripted attack only from its deterministic roll/AC reply."""
+        compared = re.search(r"\bRolled\s+(\d+)\s+vs AC\s+(\d+)\b",
+                             output_text, re.IGNORECASE)
+        if compared:
+            return int(compared.group(1)) >= int(compared.group(2))
+        if re.search(r"\bMiss(?:ed)?\s*[.!]", output_text, re.IGNORECASE):
+            return False
+        if re.search(r"\bHit!", output_text, re.IGNORECASE):
+            return True
+        return None
+
     def run_one_pc_scenario(self) -> None:
         """1-PC scenario: one round with the deterministic and free-text turns."""
         for step in build_one_pc_steps():
@@ -656,6 +2529,24 @@ class CaptureSession:
     # ------------------------------------------------------------------
     def preserve_trace(self) -> Dict[str, Any]:
         """Copy the sandbox trace to the caller path and report record counts."""
+        if (self.capture_gate in capture_fixtures.G5_CAPTURE_GATES and
+                self.g5_trace_end_sample is None):
+            self.g5_trace_end_sample = _g5_clock_sample()
+        if getattr(self.args, "run_dir", None):
+            if self.trace_start_metadata is None:
+                result = {"source": str(self.args.trace_src), "destination": str(self.args.trace_dst),
+                          "status": "offset_not_captured", "source_records": 0, "destination_records": 0}
+            else:
+                result = capture_evidence.preserve_trace_span(
+                    Path(self.args.trace_src), Path(self.args.trace_dst),
+                    Path(self.args.state_root), self.trace_start_metadata,
+                )
+                result.update({"source": str(self.args.trace_src), "destination": str(self.args.trace_dst),
+                               "source_records": result.get("destination_records", 0)})
+            self.log("driver", "run trace span status=%s offset=%s bytes=%s" %
+                     (result.get("status"), result.get("offset_before_bytes", "unknown"),
+                      result.get("span_bytes", "unknown")))
+            return result
         source = Path(str(self.args.trace_src))
         destination_arg = self.args.trace_dst
         result: Dict[str, Any] = {
@@ -705,11 +2596,21 @@ class CaptureSession:
 
     def report_summary(self, trace_result: Dict[str, Any], total_elapsed: float) -> None:
         """Emit the final bounded capture summary."""
-        self.log(
-            "summary",
-            "party=%d steps=%d timeouts=%d elapsed_total=%.1fs"
-            % (self.party, self.turn_index, self.timeout_count, total_elapsed),
-        )
+        if self.capture_profile is not None:
+            self.log(
+                "summary",
+                "party=%d step_attempts=%d steps_sent=%d timeouts=%d control_attempts=%d "
+                "control_requests_sent=%d blocked_steps=%d blocked_controls=%d elapsed_total=%.1fs"
+                % (self.party, self.step_attempts, self.steps_sent, self.timeout_count,
+                   self.control_request_attempts, self.control_requests_sent,
+                   self.blocked_step_attempts, self.blocked_control_attempts, total_elapsed),
+            )
+        else:
+            self.log(
+                "summary",
+                "party=%d steps=%d timeouts=%d elapsed_total=%.1fs"
+                % (self.party, self.turn_index, self.timeout_count, total_elapsed),
+            )
         self.log("summary", "transcript=%s" % self.transcript_path)
         self.log(
             "summary",
@@ -745,18 +2646,36 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.set_defaults(_party_explicit=False)
     parser.add_argument(
         "--url",
         default=DEFAULT_URL,
-        help="Sandbox base URL (default: %(default)s)",
+        help="Local Capture_Arena root URL only (localhost/127.0.0.1/[::1]:8360; default: %(default)s)",
     )
     parser.add_argument(
         "--party",
         type=int,
         choices=(1, 4),
         default=4,
-        help="Scenario party size: 4 (three rounds) or 1 (one round)",
+        action=_ExplicitPartyAction,
+        help="Scenario party size: 4 (three rounds) or 1 (one round); required for G9",
     )
+    parser.add_argument("--gate", choices=capture_fixtures.CAPTURE_GATE_CHOICES, default="g3",
+                        help="fixed capture gate (default: g3)")
+    parser.add_argument(
+        "--scenario", choices=CAPTURE_GATE_SCENARIOS,
+        help="bounded named scenario; omitted keeps the exact legacy latency script",
+    )
+    parser.add_argument("--branch", choices=CAPTURE_BRANCHES,
+                        help="required for surrender-exit: separate surrender or explicit-exit run")
+    parser.add_argument("--phase", choices=CAPTURE_PHASES,
+                        help="required scenario lifecycle phase (G7: interrupt/recover/complete/replay)")
+    parser.add_argument("--path", choices=capture_fixtures.G7_COMMIT_PATHS,
+                        help="G7 turn-commit path: normal or enemy_batch")
+    parser.add_argument("--boundary", choices=(capture_fixtures.G7_COMMIT_BOUNDARIES +
+                                                  (capture_fixtures.G7_COMMIT_BOUNDARY_P4_NORMAL_ONLY,
+                                                   "none")),
+                         help="G7 fault boundary, or none for completed-turn replay")
     parser.add_argument(
         "--start-timeout",
         type=float,
@@ -807,6 +2726,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trace copy destination under tmp/; required for preservation",
     )
     parser.add_argument(
+        "--run-dir", default=None,
+        help="unique named-run bundle directory under tmp/router-rollout/<gate>/<run-id>/",
+    )
+    parser.add_argument(
+        "--state-root", default="tmp/combat_capture",
+        help="existing isolated sandbox root to snapshot; read-only",
+    )
+    parser.add_argument(
+        "--server-log", default=None,
+        help="existing owned-server stdout log under tmp/ to preserve in the run bundle",
+    )
+    parser.add_argument(
+        "--g9-lifecycle-log", default=None,
+        help="G9 helper event log under tmp/; finalized after the owned server stops",
+    )
+    parser.add_argument(
+        "--g9-before-restart-server-log", default=None,
+        help="G9 rollback pre-restart owned-server log; G9 rollback rows only",
+    )
+    parser.add_argument(
+        "--g10-lifecycle-log", default=None,
+        help="G10 primary-helper lifecycle event log under tmp/",
+    )
+    parser.add_argument(
+        "--g10-tracker-baseline", default=None,
+        help="G10 pre-server sanitized tracker boundary under tmp/router-rollout/g10/",
+    )
+    parser.add_argument("--chain-id", default=None,
+                        help="shared explicit identity for the complete/replay phases of one resume case")
+    parser.add_argument("--declared-provider", default=None,
+                        help="non-secret operator-declared provider/profile provenance")
+    parser.add_argument("--declared-profile", default=None,
+                        help="non-secret operator-declared runtime profile")
+    parser.add_argument("--declared-model", default=None,
+                        help="requested model identity only; never treated as resolved response model")
+    parser.add_argument("--synthetic", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
         "--init-roll",
         type=int,
         default=DEFAULT_INIT_ROLL,
@@ -815,13 +2771,289 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
+def _build_capture_time_checks(
+    profile: Dict[str, Any],
+    before: Optional[Dict[str, Any]],
+    after: Dict[str, Any],
+    artifacts: Dict[str, Any],
+    steps: List[Dict[str, Any]],
+    positioned: List[Dict[str, Any]],
+    position_errors: List[str],
+    *,
+    g5a_metadata: Optional[Dict[str, Any]] = None,
+    g5a_sandbox_identity: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Build checks from the same observation/provider views used offline."""
+    observations, provider_events = capture_evidence.trace_check_inputs(positioned)
+    artifacts["trace_position_errors"] = position_errors
+    artifacts["trace_provider_events"] = provider_events
+    checks = capture_evidence.observed_checks(
+        profile, before, after, artifacts, steps, observations,
+        g5a_metadata=g5a_metadata,
+        g5a_sandbox_identity=g5a_sandbox_identity,
+    )
+    return checks, observations
+
+
+def run(args: argparse.Namespace, *, socket_factory: Any = None,
+        http_post: Any = None, http_get: Any = None) -> int:
     """Execute one capture run; returns the process exit code."""
     if not 1 <= int(args.init_roll) <= 20:
         print("[ERROR] --init-roll must be between 1 and 20", flush=True)
         return EXIT_CONNECT_FAILURE
     if float(args.turn_quiet_seconds) <= 0:
         print("[ERROR] --turn-quiet-seconds must be greater than 0", flush=True)
+        return EXIT_CONNECT_FAILURE
+    try:
+        gate = getattr(args, "gate", "g3")
+        if gate not in capture_fixtures.CAPTURE_GATE_CHOICES:
+            raise ValueError("--gate must be %s" % ", ".join(capture_fixtures.CAPTURE_GATE_CHOICES))
+        if (gate in ("g9", "g10") and
+                not getattr(args, "_party_explicit", args.party is not None)):
+            raise ValueError("--gate %s requires an explicit --party 1|4" % gate)
+        if getattr(args, "party", None) is None:
+            args.party = 4
+        if type(args.party) is not int or args.party not in (1, 4):
+            raise ValueError("--party must be 1 or 4")
+        if gate == "g4" and not args.scenario:
+            raise ValueError("--gate g4 requires --scenario narrator-dialogue-travel|combat-smoke")
+        if gate in capture_fixtures.G5_CAPTURE_GATES and not args.scenario:
+            requirement = ("g5t-commander-p1|g5t-commander-p4" if gate == "g5t"
+                           else "combat-smoke")
+            raise ValueError("--gate %s requires --scenario %s" % (gate, requirement))
+        if gate == "g7" and not args.scenario:
+            raise ValueError("--gate g7 requires --scenario turn-commit")
+        if gate == "g9" and not args.scenario:
+            raise ValueError("--gate g9 requires --scenario %s" % "|".join(capture_fixtures.G9_SCENARIOS))
+        if gate == "g10" and args.scenario != capture_fixtures.G10_SCENARIO:
+            raise ValueError("--gate g10 requires --scenario %s" % capture_fixtures.G10_SCENARIO)
+        if args.scenario:
+            capture_fixtures.build_gate_profile(
+                gate, args.scenario, int(args.party), getattr(args, "branch", None) or "",
+                getattr(args, "phase", None) or "", getattr(args, "path", None) or "",
+                getattr(args, "boundary", None) or "",
+            )
+            selected_profile = capture_fixtures.build_gate_profile(
+                gate, args.scenario, int(args.party), getattr(args, "branch", None) or "",
+                getattr(args, "phase", None) or "", getattr(args, "path", None) or "",
+                 getattr(args, "boundary", None) or "")
+            if (gate == "g9" and args.scenario == "preferred-openai-rollback" and
+                    getattr(args, "phase", None) != capture_fixtures.G9_ROLLBACK_PHASE):
+                raise ValueError(
+                    "preferred-openai-rollback requires --phase rollback after seeder --rollback-openai"
+                )
+            turn_timeout = selected_profile.get("turn_timeout_seconds", args.turn_timeout)
+            if gate == "g4" or (gate == "g9" and args.scenario == "narrator-auto"):
+                args.turn_timeout = turn_timeout
+            timeout_valid = (
+                (turn_timeout == 300 and (
+                    gate == "g4" or (gate == "g9" and args.scenario == "narrator-auto")
+                )) or capture_fixtures.capture_turn_timeout_allowed(
+                args.scenario, args.party, getattr(args, "branch", None), turn_timeout
+                )
+            )
+            if not timeout_valid:
+                raise ValueError(
+                    "named captures require a finite positive timeout up to 150 seconds, "
+                    "except declared combat-smoke variants and 4-PC surrender-exit surrender, "
+                    "which may use 300 seconds"
+                )
+            turn_timeout = float(turn_timeout)
+        elif (getattr(args, "branch", None) or getattr(args, "phase", None) or
+              getattr(args, "path", None) or getattr(args, "boundary", None)):
+            raise ValueError("--branch/--phase/--path/--boundary require --scenario")
+        if gate == "g7" and (getattr(args, "path", None) is None or
+                             getattr(args, "boundary", None) is None or
+                             getattr(args, "phase", None) is None):
+            raise ValueError("G7 requires --path, --boundary, and --phase")
+        if gate == "g9" and not getattr(args, "server_log", None):
+            raise ValueError("G9 evidence requires --server-log for the owned capture server")
+        if gate == "g9" and not getattr(args, "g9_lifecycle_log", None):
+            raise ValueError("G9 evidence requires --g9-lifecycle-log from the primary helper")
+        if (gate == "g9" and args.scenario == "preferred-openai-rollback" and
+                not getattr(args, "g9_before_restart_server_log", None)):
+            raise ValueError("G9 rollback requires --g9-before-restart-server-log")
+        if (gate == "g9" and args.scenario != "preferred-openai-rollback" and
+                getattr(args, "g9_before_restart_server_log", None)):
+            raise ValueError("--g9-before-restart-server-log applies only to G9 rollback")
+        if (gate != "g9" and (getattr(args, "g9_lifecycle_log", None) or
+                               getattr(args, "g9_before_restart_server_log", None))):
+            raise ValueError("G9 lifecycle log options require --gate g9")
+        if gate == "g10" and not getattr(args, "server_log", None):
+            raise ValueError("G10 evidence requires --server-log for the owned capture server")
+        if gate == "g10" and not getattr(args, "g10_lifecycle_log", None):
+            raise ValueError("G10 evidence requires --g10-lifecycle-log from the primary helper")
+        if gate == "g10" and not getattr(args, "g10_tracker_baseline", None):
+            raise ValueError("G10 evidence requires --g10-tracker-baseline captured before server start")
+        if gate != "g10" and getattr(args, "g10_lifecycle_log", None):
+            raise ValueError("--g10-lifecycle-log requires --gate g10")
+        if gate != "g10" and getattr(args, "g10_tracker_baseline", None):
+            raise ValueError("--g10-tracker-baseline requires --gate g10")
+        if gate != "g7" and (getattr(args, "path", None) or getattr(args, "boundary", None)):
+            raise ValueError("--path/--boundary apply only with --gate g7")
+        if args.scenario:
+            if not getattr(args, "run_dir", None):
+                raise ValueError("named captures require --run-dir for per-run evidence")
+            if gate == "g7" and not getattr(args, "server_log", None):
+                raise ValueError("G7 evidence requires --server-log for bounded lifecycle-stop verification")
+            if args.scenario == "resume-replay" and not getattr(args, "chain_id", None):
+                raise ValueError("resume-replay requires the same explicit --chain-id across complete/replay")
+            if getattr(args, "chain_id", None) and not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", str(args.chain_id)
+            ):
+                raise ValueError("--chain-id must be a simple 1-80 character identifier")
+            if (args.scenario != "resume-replay" and gate != "g10" and
+                    getattr(args, "chain_id", None)):
+                raise ValueError("--chain-id applies only to resume-replay or G10")
+            if gate == "g10" and not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}",
+                    str(getattr(args, "chain_id", ""))):
+                raise ValueError("G10 requires a simple --chain-id")
+            observation_only = ((args.scenario == "resume-replay" and getattr(args, "phase", None) == "replay") or
+                                (gate == "g7" and getattr(args, "phase", None) in ("recover", "replay")) or
+                                (gate == "g10" and getattr(args, "phase", None) == "resume"))
+            replay_reason = ("resume replay is observation-only"
+                             if args.scenario == "resume-replay" and
+                             getattr(args, "phase", None) == "replay" else
+                             "G10 retained-state resume is observation-only"
+                             if gate == "g10" and getattr(args, "phase", None) == "resume" else
+                             "retained-state restart is observation-only")
+            args.trace_applicability_declaration = {
+                "status": "pending" if observation_only else "required",
+                "declared_before_run": observation_only,
+                "reason": replay_reason if observation_only else "required for this scenario",
+            }
+            for option, value in (("--declared-provider", getattr(args, "declared_provider", None)),
+                                  ("--declared-profile", getattr(args, "declared_profile", None)),
+                                  ("--declared-model", getattr(args, "declared_model", None))):
+                if value is not None and (not isinstance(value, str) or
+                        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,159}", value) or
+                        re.search(r"(?i)(api[_-]?key|secret|bearer|token|sk-[A-Za-z0-9_-]{16,})", value)):
+                    raise ValueError("%s accepts only a non-secret identifier" % option)
+            for path_label, path_value in (
+                ("--transcript", args.transcript), ("--trace-src", args.trace_src),
+                ("--trace-dst", args.trace_dst),
+            ):
+                if path_value and not _is_project_tmp_path(path_value):
+                    raise ValueError("%s must resolve under project tmp/ for named captures" % path_label)
+            if getattr(args, "run_dir", None):
+                run_dir, state_root = capture_evidence.validate_evidence_paths(
+                    args.run_dir, getattr(args, "state_root", "tmp/combat_capture"), gate
+                )
+                args.run_dir = str(run_dir)
+                args.state_root = str(state_root)
+                args.trace_gate_observation = capture_evidence.read_sandbox_trace_gate(state_root)
+                if (args.trace_gate_observation.get("status") != "ok" or
+                        args.trace_gate_observation.get("enabled") is not True):
+                    raise ValueError("named evidence capture requires an observed ENABLE_COMBAT_TURN_TRACE=True sandbox literal")
+                if gate == "g9":
+                    _validate_g9_sandbox(selected_profile, args)
+                if gate == "g10":
+                    _validate_g10_sandbox(selected_profile, args)
+                    boundary_path = Path(args.g10_tracker_baseline)
+                    if (not capture_evidence._inside(
+                            boundary_path, capture_evidence.G10_RUN_ROOT) or
+                            capture_evidence._has_symlink_component(
+                                boundary_path, capture_evidence.PROJECT_TMP)):
+                        raise ValueError("G10 tracker baseline must be a safe file under tmp/router-rollout/g10/")
+                    boundary_raw, boundary_error = capture_evidence._safe_read_bytes(
+                        boundary_path, capture_evidence.PROJECT_TMP
+                    )
+                    if boundary_error or boundary_raw is None:
+                        raise ValueError("G10 tracker baseline is missing or unreadable")
+                    try:
+                        boundary = json.loads(boundary_raw.decode("utf-8"))
+                    except (UnicodeError, ValueError) as exc:
+                        raise ValueError("G10 tracker baseline is malformed") from exc
+                    marker = args.g10_marker_observation
+                    sandbox_id = hashlib.sha256(
+                        str(Path(args.state_root).resolve()).encode("utf-8")
+                    ).hexdigest()
+                    if (not isinstance(boundary, dict) or boundary.get("status") != "captured" or
+                            boundary.get("phase") != selected_profile.get("phase") or
+                            boundary.get("run_id") != Path(args.run_dir).name or
+                            boundary.get("chain_id") != args.chain_id or
+                            boundary.get("seed_id") != marker.get("seed_id") or
+                            boundary.get("sandbox_id") != sandbox_id or
+                            not isinstance(boundary.get("snapshot"), dict) or
+                            boundary["snapshot"].get("status") != "captured"):
+                        raise ValueError("G10 tracker baseline identity does not match the selected run")
+                    args.g10_tracker_baseline_observation = boundary
+                if gate == "g5r":
+                    args.resolver_gate_observation = capture_evidence.read_sandbox_resolver_identity(state_root)
+                    if (args.resolver_gate_observation.get("status") != "ok" or
+                            args.resolver_gate_observation.get("enabled") is not True):
+                        raise ValueError(
+                            "G5R capture requires an observed "
+                            "DETERMINISTIC_ENEMY_RESOLUTION_ENABLED=True sandbox literal"
+                        )
+                if gate == "g5t":
+                    args.resolver_gate_observation = capture_evidence.read_sandbox_resolver_identity(state_root)
+                    args.tactical_gate_observation = capture_evidence.read_sandbox_tactical_identity(state_root)
+                    if (args.resolver_gate_observation.get("status") != "ok" or
+                            args.resolver_gate_observation.get("enabled") is not True or
+                            args.tactical_gate_observation.get("status") != "ok" or
+                            args.tactical_gate_observation.get("enabled") is not True):
+                        raise ValueError(
+                            "G5T capture requires observed DETERMINISTIC_ENEMY_RESOLUTION_ENABLED=True "
+                            "and COMBAT_TACTICAL_BRAIN_ENABLED=True sandbox literals"
+                        )
+                if gate == "g7":
+                    args.g7_gate_observation = capture_evidence.read_sandbox_g7_identity(state_root)
+                    if args.g7_gate_observation.get("status") != "ok":
+                        raise ValueError(
+                            "G7 capture requires the exact trace/fault/resolver flags enabled "
+                            "and tactical brain/prefetch disabled in sandbox model_config.py"
+                        )
+                if args.transcript is None or Path(args.transcript) == Path("tmp/capture_transcript_%d.log" % int(args.party)):
+                    args.transcript = str(run_dir / "transcript.log")
+                if not args.trace_dst:
+                    args.trace_dst = str(run_dir / "trace.jsonl")
+                if not _is_project_tmp_path(args.transcript) or not Path(args.transcript).resolve().is_relative_to(run_dir.resolve()):
+                    raise ValueError("--transcript must be inside --run-dir for evidence runs")
+                if capture_evidence._has_symlink_component(Path(args.transcript), run_dir):
+                    raise ValueError("--transcript must not traverse symlinks")
+                if not _is_project_tmp_path(args.trace_dst) or not Path(args.trace_dst).resolve().is_relative_to(run_dir.resolve()):
+                    raise ValueError("--trace-dst must be inside --run-dir for evidence runs")
+                if capture_evidence._has_symlink_component(Path(args.trace_dst), run_dir):
+                    raise ValueError("--trace-dst must not traverse symlinks")
+                if getattr(args, "server_log", None) and not _is_project_tmp_path(args.server_log):
+                    raise ValueError("--server-log must resolve under project tmp/")
+                if getattr(args, "server_log", None) and capture_evidence._has_symlink_component(
+                    Path(args.server_log), PROJECT_TMP
+                ):
+                    raise ValueError("--server-log must not traverse symlinks")
+                if getattr(args, "g9_lifecycle_log", None):
+                    lifecycle_path = Path(args.g9_lifecycle_log)
+                    if (not _is_project_tmp_path(lifecycle_path) or
+                            capture_evidence._has_symlink_component(lifecycle_path, PROJECT_TMP) or
+                            not lifecycle_path.is_file()):
+                        raise ValueError("--g9-lifecycle-log must be an existing non-symlink file under tmp/")
+                if getattr(args, "g10_lifecycle_log", None):
+                    lifecycle_path = Path(args.g10_lifecycle_log)
+                    if (not _is_project_tmp_path(lifecycle_path) or
+                            capture_evidence._has_symlink_component(lifecycle_path, PROJECT_TMP) or
+                            not lifecycle_path.is_file()):
+                        raise ValueError("--g10-lifecycle-log must be an existing non-symlink file under tmp/")
+                if getattr(args, "g9_before_restart_server_log", None):
+                    rollback_log = Path(args.g9_before_restart_server_log)
+                    if (not _is_project_tmp_path(rollback_log) or
+                            capture_evidence._has_symlink_component(rollback_log, PROJECT_TMP) or
+                            not rollback_log.is_file()):
+                        raise ValueError("--g9-before-restart-server-log must be an existing non-symlink file under tmp/")
+                trace_src = Path(args.trace_src)
+                if not capture_evidence._inside(trace_src, state_root) or capture_evidence._has_symlink_component(trace_src, state_root):
+                    raise ValueError("--trace-src must be a non-symlink path inside --state-root")
+                if Path(args.transcript).resolve() == Path(args.trace_dst).resolve():
+                    raise ValueError("--transcript and --trace-dst must be distinct run artifacts")
+        elif getattr(args, "run_dir", None) or getattr(args, "server_log", None):
+            raise ValueError("--run-dir/--server-log require a named --scenario")
+    except ValueError as exc:
+        print("[ERROR] %s" % exc, flush=True)
+        return EXIT_CONNECT_FAILURE
+    url_ok, url_error = validate_capture_url(getattr(args, "url", None))
+    if not url_ok:
+        print("[ERROR] capture isolation refused URL: %s" % url_error, flush=True)
         return EXIT_CONNECT_FAILURE
     if socketio is None:
         print(
@@ -831,7 +3063,28 @@ def run(args: argparse.Namespace) -> int:
         )
         return EXIT_CONNECT_FAILURE
 
-    session = CaptureSession(args)
+    run_dir = Path(args.run_dir) if getattr(args, "run_dir", None) else None
+    state_root = Path(args.state_root) if run_dir else None
+    started_at = capture_evidence._now()
+    initial_snapshot = None
+    seed_identity: Dict[str, Any] = {}
+    initial_snapshot_digest: Optional[str] = None
+    g10_saves_before: List[str] = []
+    if run_dir is not None and state_root is not None:
+        run_dir.mkdir(parents=True, exist_ok=False)
+        if getattr(args, "gate", "g3") == "g10":
+            g10_saves_before = capture_evidence.g10_save_directories(state_root)
+        initial_snapshot = capture_evidence.snapshot_state(state_root, "before-run")
+        capture_evidence._write_new(run_dir / "snapshots" / "before-run.json", initial_snapshot)
+        party_row = initial_snapshot["records"].get("party_tracker.json", {})
+        seed_identity = {"roster": party_row.get("partyMembers"),
+                         "active_encounter": (party_row.get("worldConditions") or {}).get("activeCombatEncounter")}
+        args.selected_encounter_id = seed_identity["active_encounter"]
+        initial_snapshot_digest = capture_evidence.snapshot_digest(initial_snapshot)
+    socket_client = socket_factory() if socket_factory is not None else None
+    if socket_factory is not None or http_post is not None or http_get is not None:
+        args.synthetic = True
+    session = CaptureSession(args, socket_client=socket_client, http_post=http_post, http_get=http_get)
     session.open_transcript()
     started = time.time()
     exit_code = EXIT_OK
@@ -848,8 +3101,30 @@ def run(args: argparse.Namespace) -> int:
         except DriverConnectionError as exc:
             session.log("driver", "[ERROR] %s" % exc)
             return EXIT_CONNECT_FAILURE
-        if not session.start_session():
+        if run_dir is not None and state_root is not None:
+            session.trace_start_metadata = capture_evidence.capture_trace_start(
+                Path(args.trace_src), state_root
+            )
+        require_ready_quiet = ((getattr(args, "scenario", None) == "resume-replay" and
+                               getattr(args, "phase", None) == "replay") or getattr(args, "gate", "g3") == "g4"
+                               or (getattr(args, "gate", "g3") == "g7" and
+                                   getattr(args, "phase", None) in ("recover", "replay")) or
+                               (getattr(args, "gate", "g3") == "g10" and
+                                getattr(args, "phase", None) == "resume"))
+        if not session.start_session(require_ready_quiet=require_ready_quiet):
             return EXIT_START_FAILURE
+        if getattr(args, "gate", "g3") in ("g4", "g9", "g10"):
+            start_offset = (session.trace_start_metadata or {}).get("offset_bytes")
+            after_start = capture_evidence.trace_byte_offset(Path(args.trace_src), state_root)
+            session.g4_startup_trace_span = {
+                "status": "captured" if isinstance(start_offset, int) and
+                not isinstance(start_offset, bool) and after_start.get("status") == "captured" else "unavailable",
+                "offset_before_bytes": start_offset,
+                "offset_after_bytes": after_start.get("offset_bytes"),
+                "start_status": (session.trace_start_metadata or {}).get("status"),
+                "end_status": after_start.get("status"),
+                "readiness": dict(session.start_readiness),
+            }
         exit_code = session.run_scenario()
         if exit_code != EXIT_OK:
             return exit_code
@@ -861,9 +3136,701 @@ def run(args: argparse.Namespace) -> int:
         session.log("driver", "[ERROR] interrupted before the scenario completed")
         return EXIT_START_FAILURE
     finally:
+        if run_dir is not None and trace_result.get("status") == "skipped":
+            trace_result = session.preserve_trace()
+        if (run_dir is not None and session.socket is not None and session.connected and
+                not (getattr(args, "gate", "g3") == "g7" and
+                     session.start_readiness.get("health", {}).get("status") == "ok")):
+            session.read_server_health(expected_roster=seed_identity.get("roster"))
         session.report_summary(trace_result, time.time() - started)
         session.disconnect()
         session.close_transcript()
+        if run_dir is not None and state_root is not None:
+            # Preserve evidence before an orchestrator-owned teardown can remove
+            # the sandbox. A missing log/trace/report remains explicitly missing.
+            after_snapshot = capture_evidence.snapshot_state(
+                state_root, "after-run", encounter_id=args.selected_encounter_id
+            )
+            capture_evidence._write_new(run_dir / "snapshots" / "after-run.json", after_snapshot)
+            artifacts: Dict[str, Any] = {
+                "transcript": None, "server_log": None, "trace": None, "report": None,
+                "server_lifecycle": None, "rollback_server_log": None,
+                "g10_usage": None, "g10_marker": None, "g10_save_state": None,
+                "g10_tracker_telemetry": None,
+                "before_snapshot": "snapshots/before-run.json", "after_snapshot": "snapshots/after-run.json",
+                "required_evidence_status": "missing",
+                "trace_copy": trace_result, "copy_errors": [],
+                "health_probe": session.health_observation,
+                "health_read_attempts": session.health_read_attempts,
+                "startup_readiness": session.start_readiness,
+                "checks": "checks.json",
+                "trace_applicability": getattr(args, "trace_applicability_declaration", {
+                    "status": "required", "declared_before_run": False,
+                    "reason": "required for this scenario"}),
+                "matrix_keys": [capture_evidence.matrix_key(
+                    args.scenario, args.party, getattr(args, "branch", None),
+                    getattr(args, "phase", None), getattr(args, "path", None),
+                    getattr(args, "boundary", None))],
+            }
+            transcript_source = Path(args.transcript)
+            if transcript_source.is_file():
+                transcript_target = run_dir / "transcript.log"
+                if transcript_source.resolve() != transcript_target.resolve():
+                    try:
+                        shutil.copyfile(transcript_source, transcript_target)
+                    except OSError as exc:
+                        artifacts["copy_errors"].append("transcript:%s" % type(exc).__name__)
+                if transcript_target.is_file():
+                    artifacts["transcript"] = "transcript.log"
+            server_log = getattr(args, "server_log", None)
+            if server_log and Path(server_log).is_file():
+                log_safe, log_reason = capture_evidence.server_log_safety(Path(server_log))
+                if not log_safe:
+                    artifacts["copy_errors"].append("server_log:%s" % log_reason)
+                else:
+                    try:
+                        shutil.copyfile(Path(server_log), run_dir / "server.log")
+                        artifacts["server_log"] = "server.log"
+                    except OSError as exc:
+                        artifacts["copy_errors"].append("server_log:%s" % type(exc).__name__)
+            if getattr(args, "gate", "g3") == "g9":
+                lifecycle_log = Path(args.g9_lifecycle_log)
+                lifecycle_safe, lifecycle_reason = capture_evidence.server_log_safety(lifecycle_log)
+                if not lifecycle_safe:
+                    artifacts["copy_errors"].append("server_lifecycle:%s" % lifecycle_reason)
+                else:
+                    try:
+                        shutil.copyfile(lifecycle_log, run_dir / "server_lifecycle.jsonl")
+                        artifacts["server_lifecycle"] = "server_lifecycle.jsonl"
+                    except OSError as exc:
+                        artifacts["copy_errors"].append("server_lifecycle:%s" % type(exc).__name__)
+                pre_restart_log = getattr(args, "g9_before_restart_server_log", None)
+                if pre_restart_log and Path(pre_restart_log).is_file():
+                    pre_safe, pre_reason = capture_evidence.server_log_safety(Path(pre_restart_log))
+                    if not pre_safe:
+                        artifacts["copy_errors"].append("rollback_server_log:%s" % pre_reason)
+                    else:
+                        try:
+                            shutil.copyfile(Path(pre_restart_log), run_dir / "server_before_rollback.log")
+                            artifacts["rollback_server_log"] = "server_before_rollback.log"
+                        except OSError as exc:
+                            artifacts["copy_errors"].append("rollback_server_log:%s" % type(exc).__name__)
+            if getattr(args, "gate", "g3") == "g10":
+                lifecycle_log = Path(args.g10_lifecycle_log)
+                lifecycle_safe, lifecycle_reason = capture_evidence.server_log_safety(lifecycle_log)
+                if not lifecycle_safe:
+                    artifacts["copy_errors"].append("server_lifecycle:%s" % lifecycle_reason)
+                else:
+                    try:
+                        shutil.copyfile(lifecycle_log, run_dir / "server_lifecycle.jsonl")
+                        artifacts["server_lifecycle"] = "server_lifecycle.jsonl"
+                    except OSError as exc:
+                        artifacts["copy_errors"].append("server_lifecycle:%s" % type(exc).__name__)
+            if trace_result.get("status") == "copied" and args.trace_dst and Path(args.trace_dst).is_file():
+                artifacts["trace"] = str(Path(args.trace_dst).resolve().relative_to(run_dir.resolve())) if _is_project_tmp_path(args.trace_dst) and Path(args.trace_dst).resolve().is_relative_to(run_dir.resolve()) else None
+            if artifacts["trace"]:
+                from scripts.combat_latency_report import build_report
+                report = build_report(Path(args.trace_dst))
+                capture_evidence._write_new(run_dir / "report.json", report)
+                artifacts["report"] = "report.json"
+                artifacts["required_evidence_status"] = report.get("status", "unknown")
+            profile = capture_fixtures.build_gate_profile(
+                getattr(args, "gate", "g3"), args.scenario, int(args.party), getattr(args, "branch", None) or "",
+                getattr(args, "phase", None) or "", getattr(args, "path", None) or "",
+                getattr(args, "boundary", None) or "",
+            )
+            manifest = capture_evidence.build_manifest(profile, args, session, seed_identity, started_at)
+            seed_profile = dict(profile.get("seed", {}))
+            seed_profile.pop("resume_phase", None)
+            manifest["seed"].update({
+                "profile_seed": seed_profile,
+                "seed_profile_sha256": hashlib.sha256(
+                    json.dumps(seed_profile, sort_keys=True).encode("utf-8")).hexdigest(),
+            })
+            manifest["seed"]["seed_id"] = manifest["seed"]["seed_profile_sha256"]
+            manifest["run_id"] = run_dir.name
+            if getattr(args, "gate", "g3") == "g7":
+                manifest["g7"] = {
+                    "phase": profile["phase"],
+                    "path": profile["path"],
+                    "boundary": profile["boundary"],
+                    "expected_stop": dict(session.g7_expected_stop),
+                    "configured_runtime": capture_evidence.read_sandbox_model_config_identity(state_root),
+                }
+                manifest["configuration"]["configured_runtime"] = manifest["g7"]["configured_runtime"]
+            if getattr(args, "gate", "g3") == "g9":
+                g9_config = capture_evidence.read_sandbox_g9_identity(state_root)
+                g9_marker = capture_evidence.read_sandbox_g9_marker(state_root)
+                manifest["configuration"]["g9_runtime"] = g9_config
+                manifest["g9"] = {
+                    "row_key": profile["row_key"],
+                    "sandbox_marker": g9_marker,
+                    "worktree_identity": {
+                        "status": "ok" if isinstance(manifest.get("source"), dict) else "unknown",
+                        "root": str(capture_evidence.PROJECT_ROOT.resolve()),
+                        "head": (manifest.get("source") or {}).get("head"),
+                        "relevant_dirty_sha256": (manifest.get("source") or {}).get(
+                            "relevant_dirty_sha256"),
+                        "relevant_source_sha256": hashlib.sha256(json.dumps(
+                            (manifest.get("source") or {}).get("relevant_source_sha256", {}),
+                            sort_keys=True).encode("utf-8")).hexdigest(),
+                        "provenance": "git HEAD and relevant source identity",
+                    },
+                    "response_receipts": [],
+                    "receipt_status": "pending",
+                    "lifecycle": {"status": "pending", "artifact": artifacts.get("server_lifecycle")},
+                }
+            if getattr(args, "gate", "g3") in capture_fixtures.G5_CAPTURE_GATES:
+                selected_gate = getattr(args, "gate", "g3")
+                gate_metadata_key = (
+                    selected_gate if selected_gate in ("g5t", "g5a") else "g5"
+                )
+                metadata_builder = {
+                    "g5t": capture_evidence.build_g5t_capture_metadata,
+                    "g5a": capture_evidence.build_g5a_capture_metadata,
+                }.get(gate_metadata_key, capture_evidence.build_g5_capture_metadata)
+                manifest[gate_metadata_key] = metadata_builder(
+                    profile, run_dir.name, manifest.get("source", {}), manifest["seed"]["seed_id"]
+                )
+                manifest[gate_metadata_key]["receipts"] = list(session.g5_step_receipts)
+                configured_identity = capture_evidence.read_sandbox_model_config_identity(state_root)
+                manifest[gate_metadata_key]["configured_runtime"] = configured_identity
+                manifest[gate_metadata_key]["identity"].update({
+                    "configured_provider": configured_identity.get("configured_provider"),
+                    "configured_model": configured_identity.get("configured_model"),
+                })
+                if getattr(args, "gate", "g3") in ("g5r", "g5t", "g5a"):
+                    resolver_identity = capture_evidence.read_sandbox_resolver_identity(state_root)
+                    manifest["configuration"]["deterministic_enemy_resolution"] = resolver_identity
+                if getattr(args, "gate", "g3") == "g5t":
+                    tactical_identity = capture_evidence.read_sandbox_tactical_identity(state_root)
+                    manifest["configuration"]["tactical_brain"] = tactical_identity
+                if getattr(args, "gate", "g3") == "g5a":
+                    ally_identity = capture_evidence.read_sandbox_ally_controller_identity(state_root)
+                    manifest["configuration"]["ally_controller"] = ally_identity
+                receipt_windows = [row.get("trace_window") for row in session.g5_step_receipts
+                                   if isinstance(row, dict) and isinstance(row.get("trace_window"), dict)]
+                receipts_accounted = all(
+                    isinstance(row, dict) and (
+                        isinstance(row.get("trace_window"), dict) or
+                        (row.get("status") == "skipped" and
+                         isinstance(row.get("skip_reason"), str) and
+                         row.get("work_only_ms") is None)
+                    )
+                    for row in session.g5_step_receipts
+                )
+                startup_sample = session.g5_startup_start_sample
+                end_sample = session.g5_trace_end_sample
+                window_status = ("captured" if startup_sample is not None and end_sample is not None and
+                                 receipts_accounted else "incomplete")
+                first_step_start = (receipt_windows[0].get("start_epoch_ms")
+                                    if receipt_windows else (end_sample or {}).get("epoch_ms"))
+                last_step_end = (receipt_windows[-1].get("end_epoch_ms")
+                                 if receipt_windows else first_step_start)
+                manifest[gate_metadata_key]["trace_windows"] = {
+                    "status": window_status,
+                    "clock": "epoch_ms_and_monotonic_ms",
+                    "startup": {
+                        "start_epoch_ms": (startup_sample or {}).get("epoch_ms"),
+                        "end_epoch_ms": first_step_start,
+                        "start_monotonic_ms": (startup_sample or {}).get("monotonic_ms"),
+                        "end_monotonic_ms": (receipt_windows[0].get("start_monotonic_ms")
+                                              if receipt_windows else (end_sample or {}).get("monotonic_ms")),
+                    },
+                    "steps": [
+                        {"step": receipt.get("step"),
+                         "unit_type": (receipt.get("work_unit") or {}).get("type"),
+                         "unit_id": (receipt.get("work_unit") or {}).get("id"),
+                         "round": (receipt.get("work_unit") or {}).get("round"),
+                         "label": receipt.get("label"),
+                         "start_epoch_ms": frame.get("start_epoch_ms"),
+                         "end_epoch_ms": frame.get("end_epoch_ms"),
+                         "start_monotonic_ms": frame.get("start_monotonic_ms"),
+                         "end_monotonic_ms": frame.get("end_monotonic_ms")}
+                        for receipt in session.g5_step_receipts
+                        if isinstance(receipt, dict) and
+                        isinstance((frame := receipt.get("trace_window")), dict)
+                    ],
+                    "teardown": {
+                        "start_epoch_ms": last_step_end,
+                        "end_epoch_ms": (end_sample or {}).get("epoch_ms"),
+                        "start_monotonic_ms": (receipt_windows[-1].get("end_monotonic_ms")
+                                                if receipt_windows else (end_sample or {}).get("monotonic_ms")),
+                        "end_monotonic_ms": (end_sample or {}).get("monotonic_ms"),
+                    },
+                }
+                manifest[gate_metadata_key]["observed"] = {
+                    "steps_sent": session.steps_sent,
+                    "rounds": None,
+                    "rounds_reason": "trace_attribution_pending",
+                    "enemy_batches": None,
+                    "enemy_batches_reason": "trace_attribution_pending",
+                }
+            manifest["trace_span"] = trace_result
+            manifest["trace_start_offset"] = {
+                "status": (session.trace_start_metadata or {}).get("status", "missing"),
+                "source_byte_offset": (session.trace_start_metadata or {}).get("offset_bytes"),
+                "prefix_sha256": (session.trace_start_metadata or {}).get("prefix_sha256"),
+            }
+            manifest["counts"]["attempted_control_request_count"] = session.control_request_attempts
+            manifest["counts"]["confirmed_sent_control_request_count"] = session.control_requests_sent
+            if getattr(args, "gate", "g3") == "g4":
+                manifest["bounds"].update({
+                    "max_inputs": profile["max_inputs"],
+                    "max_controls": profile["max_controls"],
+                    "turn_timeout_seconds": 300,
+                })
+                manifest["party"]["active_character_before_run"] = (
+                    (initial_snapshot or {}).get("records", {}).get("party_tracker.json", {}).get("active_character")
+                )
+                manifest["g4_step_projections"] = session.g4_step_projections
+                manifest["g4_startup_trace_span"] = session.g4_startup_trace_span
+            if artifacts["trace"]:
+                provider_count = capture_evidence.count_observed_provider_events(Path(args.trace_dst))
+                manifest["counts"]["provider_calls"] = {
+                    "count": provider_count,
+                    "source": "runtime-trace" if provider_count is not None else "unknown",
+                }
+                if getattr(args, "gate", "g3") == "g4":
+                    positioned_receipts, receipt_parse_errors = capture_evidence.parse_trace_positions(
+                        Path(args.trace_dst), trace_result.get("offset_before_bytes", 0)
+                    )
+                    receipt_projection = capture_evidence.project_g4_receipts(positioned_receipts)
+                    manifest["configuration"]["actual_runtime"] = {
+                        "status": receipt_projection["status"] if not receipt_parse_errors else "BLOCKED",
+                        "provider": sorted({row.get("provider") for row in receipt_projection["receipts"]
+                                            if row.get("provider")}) or "unknown",
+                        "response_model": sorted({row.get("resolved_model") for row in receipt_projection["receipts"]
+                                                  if row.get("resolved_model")}) or "unknown",
+                        "receipts": receipt_projection["receipts"],
+                        "receipt_parse_errors": receipt_parse_errors,
+                        "receipt_reason": receipt_projection.get("reason"),
+                    }
+                    manifest["receipt_projection"] = receipt_projection
+            manifest["timestamps"]["ended_at"] = capture_evidence._now()
+            manifest["snapshot_chain"] = {
+                "before_run_sha256": initial_snapshot_digest,
+                "after_run_sha256": capture_evidence.snapshot_digest(after_snapshot),
+                "before_projection": (initial_snapshot or {}).get("mechanical_projection"),
+                "after_projection": after_snapshot.get("mechanical_projection"),
+                "before_history_inventory": capture_evidence._history_inventory(initial_snapshot or {}),
+                "after_history_inventory": capture_evidence._history_inventory(after_snapshot),
+            }
+            if args.scenario == "resume-replay" and getattr(args, "phase", None) == "replay":
+                probe_manifest = dict(manifest)
+                probe_manifest["trace_span"] = trace_result
+                probe_loaded = {"report": report if artifacts.get("report") else {},
+                                "trace_records": [],
+                                "before_snapshot": initial_snapshot,
+                                "after_snapshot": after_snapshot}
+                candidate_trace = (trace_result.get("status") == "copied" and
+                                   trace_result.get("span_bytes") == 0 and
+                                   artifacts.get("required_evidence_status") == "degraded")
+                if candidate_trace:
+                    artifacts["trace_applicability"]["status"] = "non_applicable"
+                    if capture_evidence._non_applicable_replay_trace(probe_manifest, artifacts, probe_loaded):
+                        artifacts["required_evidence_status"] = "non_applicable"
+                    else:
+                        artifacts["trace_applicability"]["status"] = "required"
+            expected_step_snapshots = [
+                "snapshots/step-%03d-%s.json" % (number, edge)
+                for number in range(1, session.steps_sent + 1) for edge in ("before", "after")
+            ]
+            artifacts["step_snapshots"] = [
+                ref for ref in expected_step_snapshots if (run_dir / ref).is_file()
+            ]
+            artifacts["missing_step_snapshots"] = [
+                ref for ref in expected_step_snapshots if not (run_dir / ref).is_file()
+            ]
+            manifest["artifacts"] = artifacts
+            steps, step_errors = capture_evidence.load_step_snapshots(run_dir, manifest)
+            if getattr(args, "gate", "g3") == "g4":
+                if artifacts.get("trace"):
+                    all_positioned, all_position_errors = capture_evidence.parse_trace_positions(
+                        Path(args.trace_dst), trace_result.get("offset_before_bytes", 0)
+                    )
+                else:
+                    all_positioned, all_position_errors = [], ["trace_unavailable"]
+                paired_receipts = capture_evidence.pair_g4_receipts(
+                    all_positioned, steps, session.g4_startup_trace_span, args.scenario
+                )
+                if step_errors or all_position_errors:
+                    paired_receipts = {"status": "BLOCKED", "reason": "missing_step_or_trace_data", "receipts": []}
+                manifest["receipt_projection"] = paired_receipts
+                manifest["configuration"]["actual_runtime"]["receipts"] = paired_receipts["receipts"]
+                manifest["configuration"]["actual_runtime"]["legacy_observations"] = paired_receipts.get(
+                    "legacy_observations", [])
+                manifest["configuration"]["actual_runtime"]["status"] = paired_receipts["status"]
+                manifest["counts"]["provider_calls"] = {
+                    "count": paired_receipts.get("counts", {}).get("trace_provider_rows"),
+                    "source": "runtime-trace",
+                    "core_receipts": paired_receipts.get("counts", {}).get("core_receipts"),
+                    "legacy_provider_observations": paired_receipts.get("counts", {}).get(
+                        "legacy_provider_observations"),
+                }
+            report_obj = report if artifacts.get("report") else {}
+            if artifacts.get("trace"):
+                positioned, position_errors = capture_evidence.parse_trace_positions(
+                    Path(args.trace_dst), trace_result.get("offset_before_bytes", 0)
+                )
+            else:
+                position_errors = ["trace_unavailable"]
+                positioned = []
+            if getattr(args, "gate", "g3") == "g9":
+                g9_projection = capture_evidence.project_g9_receipts(
+                    positioned, manifest.get("run_id", "")
+                )
+                if position_errors:
+                    g9_projection = {"status": "BLOCKED", "reason": "trace_position_parse_error",
+                                     "receipts": []}
+                g9_receipts = g9_projection.get("receipts", [])
+                g9_status = g9_projection.get("status", "BLOCKED")
+                manifest["g9"].update({
+                    "response_receipts": g9_receipts,
+                    "receipt_status": g9_status,
+                    "receipt_reason": g9_projection.get("reason"),
+                })
+                actual_runtime = capture_evidence._g9_runtime_summary(g9_receipts, g9_status)
+                manifest["configuration"]["actual_runtime"] = actual_runtime
+                manifest["transport"]["resolved_response_model"] = actual_runtime["response_model"]
+                manifest["transport"]["response_requested_models"] = actual_runtime["requested_models"]
+                manifest["counts"]["provider_calls"] = {
+                    "count": len(g9_receipts), "source": "router-response-receipts",
+                    "response_receipts": sum(row.get("outcome") == "response" for row in g9_receipts),
+                    "transport_errors": sum(row.get("outcome") == "transport_error" for row in g9_receipts),
+                }
+            if getattr(args, "gate", "g3") in capture_fixtures.G5_CAPTURE_GATES:
+                gate_metadata_key = (
+                    getattr(args, "gate", "g3")
+                    if getattr(args, "gate", "g3") in ("g5t", "g5a") else "g5"
+                )
+                gate_metadata = manifest[gate_metadata_key]
+                trace_windows = gate_metadata.get("trace_windows", {})
+                g5_projection = capture_evidence.project_g5_trace(
+                    positioned, manifest.get("run_id"), position_errors, trace_windows
+                )
+                receipt_projection = capture_evidence.project_g4_receipts(
+                    positioned, expected_run_id=manifest.get("run_id")
+                )
+                manifest["receipt_projection"] = receipt_projection
+                gate_metadata["trace_attribution"] = g5_projection
+                observed_from_trace = g5_projection.get("status") == "PASS"
+                gate_metadata["observed"].update({
+                    "rounds": g5_projection.get("observed_rounds") if observed_from_trace else None,
+                    "rounds_reason": None if observed_from_trace else "trace_attribution_not_pass",
+                    "enemy_batches": (g5_projection.get("observed_enemy_batches")
+                                      if observed_from_trace else None),
+                    "enemy_batches_reason": (None if observed_from_trace else
+                                             "trace_attribution_not_pass"),
+                })
+                runtime = manifest["configuration"]["actual_runtime"]
+                receipt_rows = receipt_projection.get("receipts", [])
+                providers = sorted({row.get("provider") for row in receipt_rows
+                                    if isinstance(row, dict) and row.get("provider")})
+                models = sorted({row.get("resolved_model") for row in receipt_rows
+                                 if isinstance(row, dict) and row.get("resolved_model")})
+                runtime_provider = providers[0] if len(providers) == 1 else providers or "unknown"
+                runtime_model = models[0] if len(models) == 1 else models or "unknown"
+                runtime.update({
+                    "status": "PASS" if receipt_projection.get("status") == "ok" else "BLOCKED",
+                    "provider": runtime_provider,
+                    "response_model": runtime_model,
+                    "receipts": receipt_projection.get("receipts", []),
+                    "receipt_reason": receipt_projection.get("reason"),
+                })
+                manifest["transport"]["resolved_response_model"] = runtime_model
+                gate_metadata["identity"].update({
+                    "provider": runtime_provider,
+                    "model": runtime_model,
+                })
+                manifest["counts"]["provider_calls"] = {
+                    "count": g5_projection.get("counts", {}).get("provider_calls"),
+                    "source": "runtime-trace",
+                    "grouped_by": "driver_step_window",
+                }
+            if getattr(args, "gate", "g3") == "g10":
+                marker = getattr(args, "g10_marker_observation", {
+                    "status": "unknown", "reason": "sandbox_marker_unavailable"})
+                save_roster = seed_identity.get("roster")
+                try:
+                    marker_complete = marker.get("complete_run_dir") if isinstance(marker, dict) else None
+                    complete_run_dir = Path(str(marker_complete)) if marker_complete else None
+                    if complete_run_dir is not None and not complete_run_dir.is_absolute():
+                        complete_run_dir = capture_evidence.PROJECT_ROOT / complete_run_dir
+                    save_completion = session.g10_observation.get("save_completion", {})
+                    save_confirmation_directory = (
+                        save_completion.get("save_directory")
+                        if isinstance(save_completion, dict) and
+                        save_completion.get("status") == "captured" and
+                        save_completion.get("source") == "debug_output" else None
+                    )
+                    save_state = capture_evidence.capture_g10_save_state(
+                        state_root, run_dir, g10_saves_before,
+                        save_roster if isinstance(save_roster, list) else [],
+                        args.selected_encounter_id, phase=profile.get("phase"),
+                        complete_run_dir=complete_run_dir,
+                        expected_chain_id=getattr(args, "chain_id", None),
+                        save_confirmation_directory=save_confirmation_directory,
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    save_state = {"status": "BLOCKED",
+                                  "reason": "save_evidence_%s" % type(exc).__name__,
+                                  "save_directories_before": g10_saves_before,
+                                  "saved_state_files": []}
+                usage_observation = session.g10_observation.get("usage", {})
+                usage_projection = capture_evidence.project_g10_usage_observations(
+                    usage_observation.get("usage_events"),
+                    usage_observation.get("debug_token_updates"),
+                ) if isinstance(usage_observation, dict) else {
+                    "status": "BLOCKED", "problems": ["g10_usage_observation_missing"]}
+                receipt_projection = capture_evidence.project_g10_receipts(
+                    positioned, manifest.get("run_id", "")
+                )
+                receipt_reconciliation = capture_evidence.reconcile_g10_router_usage(
+                    usage_projection, receipt_projection
+                )
+                usage_step_number = session.g10_observation.get("usage_step")
+                usage_step = (steps[usage_step_number - 1]
+                              if isinstance(usage_step_number, int) and
+                              not isinstance(usage_step_number, bool) and
+                              1 <= usage_step_number <= len(steps) else None)
+                usage_before = (usage_step.get("before") or {}).get("observation", {}) \
+                    if isinstance(usage_step, dict) else {}
+                usage_after = (usage_step.get("after") or {}).get("observation", {}) \
+                    if isinstance(usage_step, dict) else {}
+                usage_before_trace = usage_before.get("runtimeTrace", {})
+                usage_after_trace = usage_after.get("runtimeTrace", {})
+                usage_trace_start = usage_before_trace.get("offset_bytes")
+                usage_trace_end = usage_after_trace.get("offset_bytes")
+                usage_span_valid = (
+                    usage_before_trace.get("status") == "captured" and
+                    usage_after_trace.get("status") == "captured" and
+                    isinstance(usage_trace_start, int) and not isinstance(usage_trace_start, bool) and
+                    isinstance(usage_trace_end, int) and not isinstance(usage_trace_end, bool) and
+                    usage_trace_end >= usage_trace_start
+                )
+                if usage_span_valid:
+                    usage_provider_events = [
+                        event for event in positioned
+                        if event.get("event_type") == "provider" and
+                        usage_trace_start <= event.get("_source_byte_start", -1) and
+                        event.get("_source_byte_end", -1) <= usage_trace_end
+                    ]
+                    usage_receipts = capture_evidence.project_g10_receipts(
+                        usage_provider_events, manifest.get("run_id", "")
+                    )
+                else:
+                    usage_receipts = {"status": "BLOCKED", "reason": "usage_step_trace_span_missing",
+                                      "receipts": []}
+                response_receipts = [
+                    row for row in receipt_projection.get("receipts", [])
+                    if isinstance(row, dict) and row.get("outcome") == "response"
+                ]
+                providers = sorted({row.get("provider") for row in response_receipts
+                                    if isinstance(row.get("provider"), str) and row.get("provider")})
+                models = sorted({row.get("resolved_model") for row in response_receipts
+                                 if isinstance(row.get("resolved_model"), str) and
+                                 row.get("resolved_model") not in ("", "unknown")})
+                phase = profile.get("phase")
+                usage_problems = list(usage_projection.get("problems", []))
+                usage_problems.extend(receipt_reconciliation)
+                if usage_receipts.get("status") != "none_observed":
+                    usage_problems.append("g10_usage_provider_request_observed_or_unverified")
+                if phase == "resume" and receipt_projection.get("status") != "none_observed":
+                    usage_problems.append("g10_resume_provider_request_observed")
+                if phase == "complete" and not response_receipts:
+                    usage_problems.append("g10_complete_provider_receipt_missing")
+                if usage_observation.get("status") != "captured":
+                    usage_problems.append("g10_usage_output_not_captured")
+                baseline = getattr(args, "g10_tracker_baseline_observation", {})
+                baseline_snapshot = baseline.get("snapshot") if isinstance(baseline, dict) else None
+                tracker_snapshot = (usage_observation.get("tracker_snapshot")
+                                    if isinstance(usage_observation, dict) else None)
+                tracker_artifact = {
+                    "schema_version": 1,
+                    "status": "pending",
+                    "phase": phase,
+                    "run_id": manifest.get("run_id"),
+                    "chain_id": manifest.get("chain_id"),
+                    "seed_id": manifest.get("seed", {}).get("seed_id"),
+                    "sandbox_id": manifest.get("sandbox_id"),
+                    "pre_run": baseline_snapshot,
+                    "post_usage": tracker_snapshot,
+                    "post_shutdown": {"status": "pending"},
+                    "prior_link": (baseline.get("prior_link")
+                                   if isinstance(baseline, dict) else None),
+                    "usage_interval": {
+                        "command_sent_epoch": (usage_observation.get(
+                            "usage_command_sent_epoch")
+                            if isinstance(usage_observation, dict) else None),
+                    },
+                    "server_launch_epoch": None,
+                }
+                tracker_reconciliation = {
+                    "status": "BLOCKED",
+                    "problems": ["g10_tracker_shutdown_snapshot_missing"],
+                }
+                usage_problems.append("g10_tracker_shutdown_snapshot_missing")
+                usage_artifact = {
+                    "status": "ok" if not usage_problems else "BLOCKED",
+                    "phase": phase,
+                    "expected": {
+                        "sections": ["router", "session", "week"],
+                        "debug_fields": [
+                            "session_cost_actual_usd", "session_cost_estimated_usd",
+                            "session_unpriced_calls", "session_cost_complete",
+                            "week_cost_actual_usd", "week_cost_estimated_usd",
+                            "week_unpriced_calls", "week_cost_complete",
+                        ],
+                        "usage_provider_requests": 0,
+                    },
+                    "observed": usage_projection,
+                    "usage_capture": usage_observation,
+                    "router_receipts": receipt_projection,
+                    "usage_step_receipts": usage_receipts,
+                    "tracker_reconciliation": tracker_reconciliation,
+                    "router_receipt_reconciliation_problems": sorted(set(usage_problems)),
+                }
+                if phase == "resume":
+                    applicability = artifacts.get("trace_applicability", {})
+                    applicability["status"] = "non_applicable"
+                    probe_manifest = dict(manifest)
+                    probe_manifest["trace_span"] = trace_result
+                    probe_loaded = {
+                        "report": report_obj,
+                        "trace_records": positioned,
+                        "snapshots/step-001-before.json": (
+                            usage_step.get("before") if isinstance(usage_step, dict) else None
+                        ),
+                        "snapshots/step-001-after.json": (
+                            usage_step.get("after") if isinstance(usage_step, dict) else None
+                        ),
+                        "g10_usage": usage_artifact,
+                    }
+                    if (trace_result.get("span_bytes") == 0 and
+                            capture_evidence._non_applicable_g10_trace(
+                                probe_manifest, artifacts, probe_loaded)):
+                        artifacts["required_evidence_status"] = "non_applicable"
+                    else:
+                        applicability["status"] = "required"
+                capture_evidence._write_new(run_dir / "g10_usage.json", usage_artifact)
+                capture_evidence._write_new(run_dir / "g10_tracker_telemetry.json",
+                                            tracker_artifact)
+                capture_evidence._write_new(run_dir / "g10_marker.json", marker)
+                capture_evidence._write_new(run_dir / "g10_save_state.json", save_state)
+                artifacts["g10_usage"] = "g10_usage.json"
+                artifacts["g10_tracker_telemetry"] = "g10_tracker_telemetry.json"
+                artifacts["g10_marker"] = "g10_marker.json"
+                artifacts["g10_save_state"] = "g10_save_state.json"
+
+                source_identity = manifest.get("source", {})
+                source_hashes = source_identity.get("relevant_source_sha256", {})
+                source_digest = hashlib.sha256(json.dumps(
+                    source_hashes if isinstance(source_hashes, dict) else {},
+                    sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")).hexdigest()
+                worktree_identity = {
+                    "status": "ok" if isinstance(source_identity, dict) and
+                    source_identity.get("head") and source_identity.get("relevant_dirty_sha256") else "unknown",
+                    "root": str(capture_evidence.PROJECT_ROOT.resolve()),
+                    "head": source_identity.get("head"),
+                    "relevant_dirty_sha256": source_identity.get("relevant_dirty_sha256"),
+                    "relevant_source_sha256": source_digest,
+                    "provenance": "git HEAD and relevant source identity",
+                }
+                provider_status = ("ok" if response_receipts and providers and models else
+                                   "none_observed" if not response_receipts else "unknown")
+                provider_identity = {
+                    "status": provider_status, "providers": providers,
+                    "response_models": models,
+                    "response_receipt_count": len(response_receipts),
+                }
+                runtime_config = capture_evidence.read_sandbox_model_config_identity(state_root)
+                manifest["configuration"]["g10_runtime"] = runtime_config
+                manifest["configuration"]["actual_runtime"] = {
+                    "status": "ok" if provider_status == "ok" else "unknown",
+                    "provider": providers if providers else "unknown",
+                    "response_model": models if models else "unknown",
+                    "receipts": response_receipts,
+                    "provenance": "runtime router response receipts",
+                }
+                manifest["transport"]["resolved_response_model"] = models if models else "unknown"
+                manifest["counts"]["provider_calls"] = {
+                    "count": len(response_receipts),
+                    "source": "runtime-router-response-receipts",
+                }
+                manifest["g10"] = {
+                    "row_key": profile.get("row_key"), "phase": phase,
+                    "chain_id": manifest.get("chain_id"),
+                    "seed_id": manifest.get("seed", {}).get("seed_id"),
+                    "script_sha256": profile.get("applicability", {}).get("script_sha256"),
+                    "sandbox_id": manifest.get("sandbox_id"),
+                    "worktree_identity": worktree_identity,
+                    "provider_identity": provider_identity,
+                    "expected": {
+                        "steps": [{"label": row.get("label"), "input": row.get("input"),
+                                   "character": row.get("character"), "kind": row.get("kind")}
+                                  for row in profile.get("fixture", {}).get("steps", [])],
+                        "complete_script_sha256": profile.get("applicability", {}).get(
+                            "script_sha256"),
+                    },
+                    "driver_observation": {
+                        key: session.g10_observation.get(key)
+                        for key in ("status", "phase", "narration_step", "combat_steps",
+                                    "save_step", "usage_step", "gameplay_inputs_sent")
+                        if key in session.g10_observation
+                    },
+                    "usage": {"status": usage_artifact["status"],
+                              "artifact": artifacts["g10_usage"]},
+                    "save_state": {"status": save_state.get("status"),
+                                   "artifact": artifacts["g10_save_state"]},
+                    "lifecycle": {"status": "pending",
+                                  "artifact": artifacts.get("server_lifecycle")},
+                }
+            if getattr(args, "gate", "g3") == "g7":
+                checks, observations = [], []
+            else:
+                checks, observations = _build_capture_time_checks(
+                    profile, initial_snapshot, after_snapshot, artifacts, steps,
+                    positioned, position_errors,
+                    g5a_metadata=(manifest.get("g5a")
+                                  if getattr(args, "gate", "g3") == "g5a" else None),
+                    g5a_sandbox_identity=(manifest.get("configuration", {}).get(
+                        "ally_controller")
+                        if getattr(args, "gate", "g3") == "g5a" else None),
+                )
+            session.trace_observations_observed = bool(observations)
+            if getattr(args, "gate", "g3") == "g4":
+                checks = capture_evidence._g4_check_applicability(
+                    checks, args.scenario, manifest, steps
+                )
+            if getattr(args, "gate", "g3") == "g10":
+                checks.extend(capture_evidence.build_g10_checks(
+                    profile, manifest, steps, step_errors, usage_artifact, save_state,
+                    manifest.get("g10", {}).get("lifecycle", {}).get("status", "pending"),
+                ))
+            if step_errors:
+                checks.append({"id": "all_step_snapshots_readable", "required": True,
+                               "expected": "complete before/after snapshot pair for each sent step",
+                               "observed": step_errors, "status": "BLOCKED",
+                                "evidence": "manifest artifact step refs"})
+            checks_document = {"checks": checks, "primary_verdict": "PENDING"}
+            capture_evidence._write_new(run_dir / "checks.json", checks_document)
+            manifest["artifact_sha256"] = capture_evidence.hash_artifacts(run_dir, artifacts)
+            if getattr(args, "gate", "g3") == "g4":
+                manifest["artifact_sha256"][artifacts["checks"]] = hashlib.sha256(
+                    (run_dir / artifacts["checks"]).read_bytes()
+                ).hexdigest()
+            capture_evidence._write_new(run_dir / "manifest.json", manifest)
+            if getattr(args, "gate", "g3") == "g7":
+                verdict = capture_evidence.evaluate_g7_bundle(manifest, artifacts, run_dir)
+            elif getattr(args, "gate", "g3") == "g10":
+                verdict = capture_evidence.evaluate_g10_bundle(manifest, artifacts, run_dir)
+            else:
+                verdict = capture_evidence.evaluate_evidence(
+                    manifest, checks, artifacts, run_dir=run_dir, profile=profile
+                )
+            session.log("evidence", "automated_status=%s primary_verdict=PENDING" % verdict["automated_status"])
     return exit_code
 
 

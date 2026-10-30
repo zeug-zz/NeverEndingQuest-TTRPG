@@ -49,19 +49,8 @@ class TestMonsterBuilderOutputDirectory(unittest.TestCase):
     def test_adaptation_safe_generation_suppresses_raw_ai_response(self):
         sentinel = "RAW_AI_RESPONSE_SENTINEL_FULL_PROMPT"
 
-        class FakeCompletions:
-            def create(self, **_kwargs):
-                return type(
-                    "Response",
-                    (),
-                    {"choices": [type("Choice", (), {"message": type("Message", (), {"content": sentinel})()})()]},
-                )()
-
-        fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": FakeCompletions()})()})()
         output = io.StringIO()
-        with patch("core.generators.monster_builder.create_chat_client", return_value=fake_client), patch(
-            "core.generators.monster_builder.get_chat_completion_params", return_value={}
-        ), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        with patch("core.generators.monster_builder.llm.call", return_value=sentinel), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             result = generate_monster(
                 "Goblin",
                 {"type": "object"},

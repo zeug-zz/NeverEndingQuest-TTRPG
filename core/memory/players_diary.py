@@ -37,11 +37,10 @@ except ImportError:
 
 try:
     from utils.ai_client_factory import (
-        create_chat_client,
-        get_chat_completion_params,
         get_model_config,
         handle_provider_error,
     )
+    from utils.llm_router import llm
 
     AI_CLIENTS_AVAILABLE = True
 except ImportError:
@@ -308,10 +307,12 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
         }
 
     config = get_model_config("summaries", DM_SUMMARIZATION_MODEL)
-    client = create_chat_client()
 
     try:
-        response = client.chat.completions.create(
+        # TABLETOP MODE: G10 provenance is a fixed capture-only source label.
+        raw_text = llm.call(
+            task="summaries",
+            g10_source_id="core/memory/players_diary.py:_generate_markdown_from_prompt",
             messages=[
                 {
                     "role": "system",
@@ -322,15 +323,9 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
                     "content": prompt_text,
                 },
             ],
-            **get_chat_completion_params(
-                "summaries",
-                DM_SUMMARIZATION_MODEL,
-                temperature_override=0.8,
-            ),
+            json_output=False,
         )
-        raw_text = ""
-        if response.choices and response.choices[0].message:
-            raw_text = str(response.choices[0].message.content or "")
+        raw_text = str(raw_text or "")
         markdown_text = _sanitize_generated_markdown(raw_text)
         if not markdown_text:
             return {
@@ -349,8 +344,9 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
         error_info = handle_provider_error(generation_error, context=context_tag)
         if error_info.get("should_fallback"):
             try:
-                fallback_client = create_chat_client(use_fallback=True)
-                fallback_response = fallback_client.chat.completions.create(
+                fallback_text = llm.call(
+                    task="summaries",
+                    g10_source_id="core/memory/players_diary.py:_generate_markdown_from_prompt",
                     messages=[
                         {
                             "role": "system",
@@ -361,15 +357,9 @@ def _generate_markdown_from_prompt(prompt_text: str, context_tag: str) -> Dict[s
                             "content": prompt_text,
                         },
                     ],
-                    **get_chat_completion_params(
-                        "summaries",
-                        DM_SUMMARIZATION_MODEL,
-                        temperature_override=0.8,
-                    ),
+                    json_output=False,
                 )
-                raw_text = ""
-                if fallback_response.choices and fallback_response.choices[0].message:
-                    raw_text = str(fallback_response.choices[0].message.content or "")
+                raw_text = str(fallback_text or "")
                 markdown_text = _sanitize_generated_markdown(raw_text)
                 if markdown_text:
                     return {

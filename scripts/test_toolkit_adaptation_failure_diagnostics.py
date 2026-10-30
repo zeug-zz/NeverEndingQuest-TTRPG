@@ -36,7 +36,6 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -94,6 +93,8 @@ from utils.toolkit_adaptation_dossier import (
     RIGHTS_CLASS_USER_AUTHORED,
 )
 from utils.toolkit_adaptation_source_context import build_adaptation_source_context
+from utils.llm_router import GameLLMTerminalError
+from model_config import DM_MAIN_MODEL
 from utils.toolkit_homebrew_upload_contract import (
     REVIEW_DECISION_APPROVE,
     SOURCE_RIGHTS_USER_AUTHORED,
@@ -130,28 +131,24 @@ def _load_fixture() -> Dict[str, Any]:
 
 
 def _response(content: Optional[str] = None, *, refusal: Optional[str] = None) -> Any:
-    message = SimpleNamespace(content=content, refusal=refusal)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice], model="gpt-5.6-luna", id="resp-diagnostics-1")
+    if refusal:
+        return GameLLMTerminalError("refusal")
+    return content
 
 
-class FakeCompletions:
+class FakeClient:
     def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
         self.response = response
         self.error = error
         self.calls = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, BaseException):
+            raise self.response
         return self.response
-
-
-class FakeClient:
-    def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
-        self.completions = FakeCompletions(response=response, error=error)
-        self.chat = SimpleNamespace(completions=self.completions)
 
 
 class _ProjectLocalScratchMixin:
@@ -186,7 +183,7 @@ class TestAuthorRunnerReasonCategories(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=FakeClient(response=response, error=error),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
             parameter_resolver=resolver,
         )
 
@@ -266,7 +263,7 @@ class TestAuthorRunnerReasonCategories(unittest.TestCase):
             self.source_context,
             self.metadata,
             client=client,
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
             parameter_resolver=lambda task_id, model: (_ for _ in ()).throw(
                 RuntimeError("resolver secret must not leak")
             ),
@@ -278,7 +275,7 @@ class TestAuthorRunnerReasonCategories(unittest.TestCase):
         self.assertFalse(result["revision_eligible"])
         self.assertFalse(result["retryable"])
         self.assertTrue(result["terminal"])
-        self.assertEqual(client.completions.calls, [])
+        self.assertEqual(client.calls, [])
         self.assertNotIn("resolver secret", json.dumps(result, sort_keys=True))
 
     def test_invalid_model_response_is_distinguishable(self) -> None:
@@ -386,7 +383,7 @@ class TestAuthorParserReasonCategories(unittest.TestCase):
             {"source_title": "t", "bounded_excerpt": "x"},
             self.metadata,
             client=FakeClient(response=_response(json.dumps(_load_fixture()))),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
             timeout_seconds=0,
         )
 
@@ -700,7 +697,7 @@ class TestDiagnosticLeakageBounds(unittest.TestCase):
             source_context,
             metadata,
             client=FakeClient(response=_response(refusal=refusal_text)),
-            model="gpt-5.6-luna",
+            model=DM_MAIN_MODEL,
         )
         encoded = json.dumps(result, sort_keys=True)
         self.assertNotIn("secret material", encoded)

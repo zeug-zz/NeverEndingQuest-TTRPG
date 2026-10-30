@@ -8,6 +8,54 @@
     "encounterSummary": {
       "type": "string"
     },
+    "position_deltas": {},
+    "turn_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "turn_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "applied_id": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "encounter_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "combat_round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "commit_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+          },
+          "position_deltas": {}
+        },
+        "required": [
+          "schema_version",
+          "turn_id",
+          "applied_id",
+          "encounter_id",
+          "combat_round",
+          "commit_timestamp"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "combat_phase": {
+      "type": "string",
+      "enum": ["PC_PHASE", "ENEMY_PHASE"]
+    },
     "creatures": {
       "type": "array",
       "items": {
@@ -21,6 +69,24 @@
             "enum": ["player", "enemy", "npc"]
           },
           "monsterType": {
+            "type": "string"
+          },
+          "leader": {
+            "type": "boolean"
+          },
+          "tactics": {
+            "type": "string",
+            "enum": ["rule", "commander"]
+          },
+          "defeatReason": {
+            "type": "string",
+            "enum": ["fled", "surrendered"]
+          },
+          "coverType": {
+            "type": "string",
+            "enum": ["half", "three_quarters"]
+          },
+          "coverFeatureId": {
             "type": "string"
           },
           "npcType": {

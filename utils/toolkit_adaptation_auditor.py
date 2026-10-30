@@ -32,12 +32,8 @@ try:
 except Exception:  # pragma: no cover - dependency availability is environment-specific
     Draft7Validator = None  # type: ignore[assignment,misc]
 
-try:
-    from model_config import DM_MAIN_MODEL
-except Exception:  # pragma: no cover - provider-free import fallback
-    DM_MAIN_MODEL = "gpt-4.1-2025-04-14"
-
-from utils.ai_client_factory import create_chat_client, get_chat_completion_params
+from utils.ai_client_factory import get_chat_completion_params
+from utils.llm_router import GameLLMTerminalError, llm
 from utils.toolkit_adaptation_artifacts import (
     FAILURE_CLASS_DEPENDENCY,
     FAILURE_CLASS_FILE,
@@ -755,6 +751,8 @@ def parse_adaptation_auditor_response(
 
 
 def _extract_response_parts(response: Any) -> Tuple[Optional[str], bool, Dict[str, str]]:
+    if isinstance(response, str):
+        return (response if response.strip() else None), False, {}
     metadata: Dict[str, str] = {}
     try:
         model = getattr(response, "model", None)
@@ -877,16 +875,18 @@ def _refusal_payload(authorization: Mapping[str, Any], reason: str) -> Dict[str,
 def run_llm_adaptation_auditor(
     failure_packet: Mapping[str, Any],
     *,
-    client: Optional[Any] = None,
+    client: Optional[Callable[..., Any]] = None,
     model: Optional[str] = None,
     parameter_resolver: Optional[Callable[..., Mapping[str, Any]]] = None,
     timeout_seconds: Optional[float] = ADAPTATION_AUDITOR_DEFAULT_TIMEOUT_SECONDS,
 ) -> Dict[str, Any]:
-    """Run the final auditor through injectable provider seams.
+    """Run the final auditor through the facade and provider-free seams.
 
     Every terminal path exposes one of the three auditor decisions. Provider,
     parameter, and parser failures are represented as the safe ``failed``
-    decision and never invoke a semantic retry themselves.
+    decision and never invoke a semantic retry themselves. A supplied ``client``
+    is a facade-shaped callable for provider-free tests; production uses
+    ``llm.call``. The task profile owns model selection.
     """
     authorization, diagnostics = _packet_authorization(failure_packet)
     if diagnostics or authorization is None:
@@ -922,28 +922,43 @@ def run_llm_adaptation_auditor(
         response = _failure_payload(authorization, FAILURE_CLASS_FILE, "failed", "auditor_prompt_failed", "auditor prompt or packet serialization failed")
         return _base_result(authorization, status=AUDITOR_STATUS_PROMPT_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_INVALID_PACKET, "auditor prompt or packet serialization failed")])
 
-    requested_model = model if model is not None else DM_MAIN_MODEL
-    if not isinstance(requested_model, str) or not requested_model.strip():
+    if model is not None and (not isinstance(model, str) or not model.strip()):
         response = _failure_payload(authorization, FAILURE_CLASS_DEPENDENCY, "invalid", "invalid_model", "auditor model resolution failed")
         return _base_result(authorization, status=AUDITOR_STATUS_PARAM_RESOLUTION_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, "auditor model must be a non-empty string")])
-    requested_model = requested_model.strip()
+
+    try:
+        profile = llm.resolve_profile(ADAPTATION_AUDITOR_TASK_ID)
+        resolved_model = profile.get("model")
+        profile_provider = profile.get("provider_name")
+        if not isinstance(resolved_model, str) or not resolved_model.strip():
+            raise ValueError("task profile has no model")
+        resolved_model = resolved_model.strip()
+        profile_provider = str(profile_provider or "openai")
+    except Exception:
+        response = _failure_payload(authorization, FAILURE_CLASS_DEPENDENCY, "parameter_resolution_failed", "param_resolution_failed", "auditor task profile resolution failed")
+        return _base_result(authorization, status=AUDITOR_STATUS_PARAM_RESOLUTION_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, "auditor task profile resolution failed")])
+
     resolver = parameter_resolver or get_chat_completion_params
     try:
-        params = resolver(ADAPTATION_AUDITOR_TASK_ID, requested_model)
-        if not isinstance(params, Mapping):
+        resolved_params = resolver(ADAPTATION_AUDITOR_TASK_ID, resolved_model)
+        if not isinstance(resolved_params, Mapping):
             raise TypeError("parameter resolver must return an object")
-        params = dict(params)
-        if not isinstance(params.get("model"), str) or not params.get("model"):
+        resolved_params = dict(resolved_params)
+        if not isinstance(resolved_params.get("model"), str) or not resolved_params.get("model"):
             raise ValueError("resolved parameters must include a model")
-        if _RESERVED_REQUEST_KEYS.intersection(params):
+        if resolved_params["model"].strip() != resolved_model:
+            raise ValueError("parameter resolver model must match the task profile")
+        if _RESERVED_REQUEST_KEYS.intersection(resolved_params):
             raise ValueError("resolved parameters contain reserved request keys")
-        if any(not isinstance(key, str) for key in params):
+        if any(not isinstance(key, str) for key in resolved_params):
             raise ValueError("resolved parameters contain a non-string key")
+        # The resolver remains a provider-free metadata/error seam. The facade
+        # owns transport parameters and does not receive these resolved kwargs.
+        params = resolved_params
     except Exception:
         response = _failure_payload(authorization, FAILURE_CLASS_DEPENDENCY, "parameter_resolution_failed", "param_resolution_failed", "auditor chat parameter resolution failed")
         return _base_result(authorization, status=AUDITOR_STATUS_PARAM_RESOLUTION_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, "auditor chat parameter resolution failed")])
 
-    resolved_model = str(params["model"])
     if timeout_seconds is not None and (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, (int, float))
@@ -954,23 +969,29 @@ def run_llm_adaptation_auditor(
         return _base_result(authorization, status=AUDITOR_STATUS_PARAM_RESOLUTION_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PARAM_RESOLUTION_FAILED, "auditor timeout must be positive")])
 
     client_was_injected = client is not None
-    if client is None:
-        try:
-            client = create_chat_client()
-        except Exception as exc:
-            failure_class = _provider_failure_class(exc)
-            response = _failure_payload(authorization, failure_class, "provider_failed", "provider_client_failed", "auditor provider client initialization failed")
-            return _base_result(authorization, status=AUDITOR_STATUS_PROVIDER_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PROVIDER_FAILED, "auditor provider client initialization failed")])
-
-    request_kwargs: Dict[str, Any] = dict(params)
-    request_kwargs.update({
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-    })
-    if timeout_seconds is not None:
-        request_kwargs["timeout"] = timeout_seconds
     try:
-        provider_response = client.chat.completions.create(**request_kwargs)
+        # TABLETOP MODE: Production auditor chat is routed through the shared facade.
+        facade_call = client if client is not None else llm.call
+        if not callable(facade_call):
+            raise TypeError("injected facade call must be callable")
+        provider_response = facade_call(
+            task=ADAPTATION_AUDITOR_TASK_ID,
+            messages=messages,
+            json_output=False,
+            response_format={"type": "json_object"},
+        )
+    except GameLLMTerminalError as exc:
+        if exc.terminal_kind in {"refusal", "content_filter"}:
+            provider_response = None
+            raw_content = None
+            provider_refusal = True
+            response_metadata: Dict[str, str] = {}
+        else:
+            failure_class = _provider_failure_class(exc)
+            response = _failure_payload(authorization, failure_class, "provider_failed", "provider_call_failed", "auditor provider call failed")
+            result = _base_result(authorization, status=AUDITOR_STATUS_PROVIDER_FAILED, decision=AUDITOR_DECISION_FAILED, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PROVIDER_FAILED, "auditor provider call failed")])
+            result["params_used"] = _safe_params(params)
+            return result
     except Exception as exc:
         failure_class = _provider_failure_class(exc)
         response = _failure_payload(authorization, failure_class, "provider_failed", "provider_call_failed", "auditor provider call failed")
@@ -978,7 +999,8 @@ def run_llm_adaptation_auditor(
         result["params_used"] = _safe_params(params)
         return result
 
-    raw_content, provider_refusal, response_metadata = _extract_response_parts(provider_response)
+    else:
+        raw_content, provider_refusal, response_metadata = _extract_response_parts(provider_response)
     if provider_refusal:
         response = _refusal_payload(authorization, "Provider refused the semantic audit request.")
         result = _base_result(authorization, status=AUDITOR_STATUS_REFUSED, decision=AUDITOR_DECISION_REFUSE, response=response, diagnostics=[_diagnostic(DIAGNOSTIC_CODE_PROVIDER_REFUSAL, "provider returned an explicit refusal")])
@@ -995,7 +1017,9 @@ def run_llm_adaptation_auditor(
             status = AUDITOR_STATUS_SUCCESS if decision == AUDITOR_DECISION_REVISE else AUDITOR_STATUS_REFUSED if decision == AUDITOR_DECISION_REFUSE else AUDITOR_STATUS_FAILED
             result = _base_result(authorization, status=status, decision=decision, response=parsed.get("response"), diagnostics=parsed.get("diagnostics"))
     result["params_used"] = _safe_params(params)
-    result["provider"] = "injected" if client_was_injected else "configured"
+    result["provider"] = (
+        "injected" if client_was_injected else profile_provider
+    )
     result["model"] = response_metadata.get("model", resolved_model)
     result["response_metadata"] = response_metadata
     result["request"] = {

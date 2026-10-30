@@ -35,6 +35,7 @@ from utils.critical_narrative_repair import (
     validate_repair_plan,
     write_builder_repair_result,
 )
+from utils.llm_router import llm
 
 
 def _try_provider_call(prompt: str) -> str:
@@ -45,25 +46,18 @@ def _try_provider_call(prompt: str) -> str:
     provider_stage = "accurate_ingest.critical_narrative_repair"
     try:
         from utils.ai_client_factory import (
-            create_chat_client,
-            get_chat_completion_params,
-            get_chat_model_name,
             handle_provider_error,
         )
-        client = create_chat_client()
-        response = client.chat.completions.create(
-            **get_chat_completion_params(
-                "builders",
-                get_chat_model_name(),
-                temperature_override=0.2,
-            ),
+        # TABLETOP MODE: provider transport and model selection are router-owned.
+        content = llm.call(
+            task="builders",
             messages=[
                 {"role": "system", "content": "Return structured JSON only. No markdown, no prose outside the JSON object."},
                 {"role": "user", "content": prompt},
             ],
-            timeout=120,
+            json_output=False,
         )
-        return response.choices[0].message.content or ""
+        return content or ""
     except Exception as exc:
         error_result = {"should_fallback": False}
         try:
