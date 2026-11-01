@@ -17,6 +17,6 @@ Introduce a central router facade (`llm.call`) that maps capabilities and roles 
 - Migration work remains substantial and must preserve existing gameplay contracts.
 
 ## Sources
-- `plans/version-2/openrouter_llm_router_architecture.md`
+- `plans/archive/openrouter_llm_router_architecture.md`
 - `AGENTS.md`
 - `openspec/changes/openrouter-llm-router-facade/`

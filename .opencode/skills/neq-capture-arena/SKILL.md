@@ -57,7 +57,7 @@ Sandbox fixture/runtime writes performed by the documented commands are part of
 verification, not product source implementation.
 
 Before execution, read the owning OpenSpec coverage and the rollout matrix in
-`plans/combat-openrouter-alignment.md`. Declare the scenario, party size, seed,
+`plans/archive/combat-openrouter-alignment.md`. Declare the scenario, party size, seed,
 step/request bounds, and expected assertions. A goal-owned capture requires an
 active, authorized goal. A separate guideline/planning request does not resume a
 paused goal or authorize a live run.

@@ -30,7 +30,7 @@ Biggest mismatch:
 | `scripts/remediate_session_diary_entries.py` | no active doc example found | venv-required | `.venv/bin/python scripts/remediate_session_diary_entries.py --db data/memory.db --apply` |
 | `AGENTS.md:1523-1526` | `.venv/bin/python scripts/test_session_diary_mvp.py` etc. | venv-required | no change |
 | `plans/version-2/journal.md:378` | `python3 -m py_compile ...` | interpreter-agnostic | no change |
-| `plans/version-2/combat-manager-refactor.md:145-158` | `python3 -m py_compile ...` | interpreter-agnostic | no change |
+| `plans/archive/combat-manager-refactor.md:145-158` | `python3 -m py_compile ...` | interpreter-agnostic | no change |
 
 ### Highest-risk documented mismatches
 

@@ -20,5 +20,5 @@ Plan a continuous import pipeline:
 - Significant implementation effort remains across extract/normalize/rewrite stages.
 
 ## Sources
-- `plans/version-2/module-import.md`
+- `plans/archive/module-import.md` (archived planning reference; former path `plans/version-2/module-import.md`)
 - `AGENTS.md`

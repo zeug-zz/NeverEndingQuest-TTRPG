@@ -77,7 +77,7 @@ This EGO/RATIO plan operates on interpreted world model state:
 
 This plan depends on completion of the OpenRouter router facade work:
 
-- `plans/version-2/openrouter_llm_router_architecture.md`
+- `plans/archive/openrouter_llm_router_architecture.md`
 
 Required capability:
 - Unified `llm.call(task=...)` entrypoint with role/task routing, usage stats, and fallback.

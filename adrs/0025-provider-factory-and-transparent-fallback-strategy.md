@@ -19,4 +19,4 @@ Use provider factory routing (`create_chat_client`) with transparent fallback ha
 ## Sources
 - `AGENTS.md`
 - `utils/ai_client_factory.py`
-- `plans/version-2/openrouter_llm_router_architecture.md`
+- `plans/archive/openrouter_llm_router_architecture.md`
