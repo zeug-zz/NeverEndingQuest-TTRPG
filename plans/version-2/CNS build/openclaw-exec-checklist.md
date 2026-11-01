@@ -4,7 +4,7 @@ Status: Execution companion
 Date: 2026-02-18
 Primary plan: `plans/version-2/CNS build/openclaw.md`
 Related architecture plans:
-- `plans/version-2/openrouter_llm_router_architecture.md`
+- `plans/archive/openrouter_llm_router_architecture.md`
 - `plans/version-2/CNS build/EGO.md`
 
 ---
@@ -31,7 +31,7 @@ Use `plans/version-2/CNS build/openclaw.md` for full rationale and references.
 ## Quick Reading Order Before Coding
 
 - [ ] Read `plans/version-2/CNS build/openclaw.md` sections 4, 6, 7, 9.
-- [ ] Re-read `plans/version-2/openrouter_llm_router_architecture.md` sections on facade + fallback.
+- [ ] Re-read `plans/archive/openrouter_llm_router_architecture.md` sections on facade + fallback.
 - [ ] Re-read `plans/version-2/CNS build/EGO.md` boundary contract and phase gates.
 
 ---

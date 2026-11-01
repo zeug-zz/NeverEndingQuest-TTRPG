@@ -1,5 +1,13 @@
 # Module Import and World Expansion Plan
 
+> Archived planning reference. The current builder plan is
+> [`plans/v2-module-builder.md`](../v2-module-builder.md). Bulk inventory, scaled
+> import, progression ladders, continuous operations and optional fork proposals
+> remain deferred, not completed or implicitly authorized. Existing continuity
+> contracts remain governed by current code and OpenSpec specifications. The
+> canonical shared-world wording here requires reconciliation with campaign-scoped
+> history before any future scaled-import implementation.
+
 ## Status
 
 - Lifecycle state: Planning in progress

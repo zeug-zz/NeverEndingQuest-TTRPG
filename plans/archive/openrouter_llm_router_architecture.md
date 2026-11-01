@@ -1,5 +1,7 @@
 # OpenRouter LLM Router Architecture Plan
 
+> Archived 2026-10-31: Historical reference only; this document does not authorize new implementation. Current contracts and evidence live in OpenSpec. Older, optional, or future scope is not thereby declared shipped.
+
 Version: 5.0 - Auto routing and accelerated build handoff
 Updated: 2026-10-13
 Status: READY FOR IMPLEMENTATION via `openspec/changes/llm-router-facade`
@@ -12,8 +14,8 @@ combat, and Titan default to `openrouter/auto` so downstream model selection is
 maintained by OpenRouter rather than a fixed local model roster.
 
 `AGENTS.md` governs repository constraints. Active OpenSpec artifacts govern their
-change scope. `plans/combat-openrouter-alignment.md` owns the eight-change execution
-sequence; `plans/version-2/combat-manager-refactor.md` owns combat architecture and
+change scope. `plans/archive/combat-openrouter-alignment.md` owns the eight-change execution
+sequence; `plans/archive/combat-manager-refactor.md` owns combat architecture and
 latency targets. This plan replaces the obsolete v4 fixed-model examples and
 reference implementation; implement the current contracts, not historical snippets.
 
@@ -201,7 +203,7 @@ multi-PC integration smoke, model/cost observation, and rollback verification.
 
 Required gameplay captures are primary-orchestrator phase gates, not builder
 completion claims. Follow the gate-specific G3/G4/G5/G7/G9/G10 matrix and evidence
-contract in `plans/combat-openrouter-alignment.md` and the Capture_Arena skill.
+contract in `plans/archive/combat-openrouter-alignment.md` and the Capture_Arena skill.
 Use a real sandbox copy on port 8360 and unique per-gate/run bundles under
 `tmp/router-rollout/`; inspect transcript, trace, relevant persisted state and
 expected/observed checks before teardown. Exit zero or degraded required evidence

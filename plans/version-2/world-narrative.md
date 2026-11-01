@@ -19,7 +19,7 @@ Track reference: `plans/v2-narrative-overview.md`
 
 Related plans:
 
-- `plans/version-2/module-import.md` = scaled canonical module-import lane
+- `plans/archive/module-import.md` = historical scaled canonical module-import proposal; a reviewed successor is needed before implementing its deferred bulk scope
 - `plans/v2-memory-draft.md` = provisional shared retrieval/storage reference
 - `plans/v2-titan-game-engine.md` = consolidated TITAN world-engine planning owner
 

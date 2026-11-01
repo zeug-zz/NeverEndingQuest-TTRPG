@@ -8,8 +8,8 @@ Related:
 - `.opencode/skills/neq-capture-arena/SKILL.md` - the runbook/skill (primary socket path + browser appendix)
 - `openspec/changes/archive/2026-09-22-combat-latency-baseline/` - completed rig and G1 baseline
 - `openspec/changes/combat-manager-decomposition/` - required bounded G3 scenario/evidence tasks
-- `plans/combat-openrouter-alignment.md` - primary-owned G3/G4/G5/G7/G9/G10 matrix; candidate bake-off already accepted
-- `plans/version-2/openrouter_llm_router_architecture.md` - model/stack decisions the rig can measure
+- `plans/archive/combat-openrouter-alignment.md` - primary-owned G3/G4/G5/G7/G9/G10 matrix; candidate bake-off already accepted
+- `plans/archive/openrouter_llm_router_architecture.md` - model/stack decisions the rig can measure
 - `adrs/0032-single-tabletop-runtime.md`, `adrs/0031-independent-development-fork.md`
 
 This document describes what the rig can do today, then outlines five open-ended

@@ -1,5 +1,7 @@
 # Combat PC Phase Enhancements Plan
 
+> Archived 2026-10-31: Historical reference only; this document does not authorize new implementation. Current contracts and evidence live in OpenSpec. Older, optional, or future scope is not thereby declared shipped.
+
 **Status:** Draft for review  
 **Priority:** High (Gameplay Speed and Tabletop UX)  
 **Effort:** Medium-Large (~4-7 focused implementation passes)  

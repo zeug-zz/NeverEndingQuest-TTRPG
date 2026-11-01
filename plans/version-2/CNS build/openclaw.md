@@ -30,7 +30,7 @@ NEQ keeps its current architectural doctrine:
 ## 2) Why this matters now
 
 NEQ already has the right direction in flight:
-- `plans/version-2/openrouter_llm_router_architecture.md`
+- `plans/archive/openrouter_llm_router_architecture.md`
 - `plans/version-2/CNS build/EGO.md`
 
 What this document adds is a "fine-toothed comb" pass over battle-tested patterns from OpenClaw, mapped directly into NEQ implementation sequencing so we avoid both:

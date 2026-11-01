@@ -1,13 +1,15 @@
 # Combat x OpenRouter Alignment Plan
 
+> Archived 2026-10-31: Historical reference only; this document does not authorize new implementation. Current contracts and evidence live in OpenSpec. Older, optional, or future scope is not thereby declared shipped.
+
 Updated: 2026-10-14
 Status: EIGHT-CHANGE ROLLOUT IN PROGRESS; G2 verified, G3 implementation incomplete; orchestrator-owned capture gates required
 Owner: Combat/tabletop runtime and LLM platform
 
 Inputs:
 
-- `plans/version-2/combat-manager-refactor.md` (combat architecture and targets)
-- `plans/version-2/openrouter_llm_router_architecture.md` (v5 Auto routing contract)
+- `plans/archive/combat-manager-refactor.md` (combat architecture and targets)
+- `plans/archive/openrouter_llm_router_architecture.md` (v5 Auto routing contract)
 - `openspec/changes/llm-router-facade/` (existing implementation-ready artifacts)
 
 Authority: `AGENTS.md` governs repo-wide constraints; active OpenSpec artifacts

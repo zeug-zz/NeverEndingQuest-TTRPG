@@ -1,12 +1,14 @@
 # Combat Manager Refactor Plan (v2) - Latency First, Multi-PC Primary
 
+> Archived 2026-10-31: Historical reference only; this document does not authorize new implementation. Current contracts and evidence live in OpenSpec. Older, optional, or future scope is not thereby declared shipped.
+
 Status: APPROVED BUILD OUTLINE - remaining required changes are authorized for artifact creation and verified implementation by the 2026-10-13 eight-change handoff
 Priority: High (combat responsiveness is a product requirement, not a nice-to-have)
 Date: 2026-09-21; coordination updated 2026-10-13
 Owner: Combat systems + tabletop mode
 Supersedes: 2026-02-26 revision of this file (its scope is completed or obsolete; see section 3)
 Related: `adrs/0031-independent-development-fork.md`, `adrs/0032-single-tabletop-runtime.md`, `plans/archive/upstream-merge-0826.md`,
-`plans/version-2/openrouter_llm_router_architecture.md` (interlock: section 3.1)
+`plans/archive/openrouter_llm_router_architecture.md` (interlock: section 3.1)
 
 ---
 
@@ -108,14 +110,14 @@ needed because this section records the delta. The old revision remains in git h
 
 ### 3.1) Interlock with the LLM router plan (approved 2026-09-21)
 
-`plans/version-2/openrouter_llm_router_architecture.md` changes how every combat
+`plans/archive/openrouter_llm_router_architecture.md` changes how every combat
 provider call is made: its Phase 2 Tier 1 migrates the 9 `combat_manager.py` call sites
 to `llm.call()`, one task id per call site (re-inventory the historical site count
 during authoring). The completed baseline is reused. Owner decisions on
 2026-10-13 select configurable `openrouter/auto` for narrator/combat/Titan,
 `gpt-6-luna` for direct OpenAI, and accept live candidate bake-off completion.
 The remaining eight-change order and gates are tracked in
-`plans/combat-openrouter-alignment.md`.
+`plans/archive/combat-openrouter-alignment.md`.
 
 | Step | Work | Change owner |
 |---|---|---|
