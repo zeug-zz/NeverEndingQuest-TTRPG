@@ -170,4 +170,4 @@ None. The scope excludes player cover acquisition; the effective-AC contract sti
 - Grid-derived cover may later feed the same D5 effective-AC contract; today cover is authored only via tacticalFeatures.
 - The D6 standing-orders snapshot fingerprint and re-plan conditions MUST include positions once positions exist, so movement can invalidate a plan.
 - Known positionless assumptions to revisit: abstract flee/Disengage without positional opportunity attacks; declared but unenforced weapon ranges (e.g. Javelin 30/120); G5T scripts, narration validator, and byte-identical goldens assume a positionless fight and would need new gates rather than edits.
-- See the "Forward compatibility: V2 spatial combat" section in plans/combat-openrouter-alignment.md. None of this changes current requirements.
+- See the "Forward compatibility: V2 spatial combat" section in plans/archive/combat-openrouter-alignment.md. None of this changes current requirements.

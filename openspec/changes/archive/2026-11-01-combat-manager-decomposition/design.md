@@ -2,7 +2,7 @@
 
 ## Context
 
-See `proposal.md` for motivation. The approved layout and phase scope come from `plans/version-2/combat-manager-refactor.md` and `plans/combat-openrouter-alignment.md`. The existing facade is verified complete in `openspec/changes/llm-router-facade/reports/final-verification.md`; combat Tier 1 router migration follows this change.
+See `proposal.md` for motivation. The approved layout and phase scope come from `plans/archive/combat-manager-refactor.md` and `plans/archive/combat-openrouter-alignment.md`. The existing facade is verified complete in `openspec/changes/llm-router-facade/reports/final-verification.md`; combat Tier 1 router migration follows this change.
 
 Current source checks show `core/managers/combat_manager.py` at 5,584 lines, including a 2,594-line `_run_combat_simulation_internal` loop; `core/managers/multi_pc_combat.py` is approximately 2,783 lines. Legacy importers include `main.py`, `core/ai/action_handler.py`, web/debug paths, and tests. `scripts/test_multi_pc_combat.py` imports and patches old module surfaces, and `scripts/c5_regression_combat.py` reads source files and checks source anchors. These are deliberate compatibility constraints, not reasons to retain ownership in the old files.
 
@@ -91,7 +91,7 @@ Remove a candidate dead function only after repository-wide reference checks inc
 
 ### 5. G3 is a primary-owned live evidence gate
 
-The owner-approved capture workflow in `plans/combat-openrouter-alignment.md` and
+The owner-approved capture workflow in `plans/archive/combat-openrouter-alignment.md` and
 `.opencode/skills/neq-capture-arena/SKILL.md` applies to this change. Before live
 execution, tasks 4.3 and 4.4 extend only the existing seeder, driver and fixture/report
 helpers with bounded named cases, state snapshots and required-check evidence.
