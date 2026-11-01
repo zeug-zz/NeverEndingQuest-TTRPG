@@ -2,7 +2,7 @@
 
 ## Context
 
-The router plan (`plans/version-2/openrouter_llm_router_architecture.md`, v5) defines a
+The router plan (`plans/archive/openrouter_llm_router_architecture.md`, v5) defines a
 thin facade over the existing `utils/ai_client_factory.py` infrastructure. This change
 implements Phase 0 (config and factory prep) and Phase 1 (facade, unit tests, bake-off
 harness) only. No call site is migrated, and `LLM_PROVIDER` stays `"openai"`.
@@ -13,7 +13,7 @@ by owner attestation. The model refresh is intentional; the old blanket claim of
 unchanged model selection is superseded. No live report or numerical result was
 supplied with the attestation, so none is manufactured here.
 
-The interleave with `plans/version-2/combat-manager-refactor.md` section 3.1 is binding:
+The interleave with `plans/archive/combat-manager-refactor.md` section 3.1 is binding:
 combat Phase 0 latency baseline -> this change's Phase 0/1 -> combat Phase 1 decomposition
 -> router Phase 2 Tier 1 migration. This change authors the client-level timeout bound and
 the `retry_tier` channel that combat migration later depends on, but it does not touch
