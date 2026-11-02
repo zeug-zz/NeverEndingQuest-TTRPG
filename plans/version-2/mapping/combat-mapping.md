@@ -1,5 +1,10 @@
 # Combat Mapping UX Plan (PlaySCII-Inspired, NEQ-Native)
 
+> **Superseded reference (2026-11-03).** Planning authority moved to
+> [V2 Spatial](../../v2-spatial.md) and [V2 mapping pilot](../../v2-mapping-pilot.md).
+> Ideas here carry forward as input. The schemas, file targets and phases below
+> are not requirements. Deliberation record: [map-review-oct26.md](map-review-oct26.md).
+
 Status: Draft for implementation
 Priority: High
 Date: 2026-02-23
