@@ -4,6 +4,9 @@ Status: Deliberation record and proposed research scope; not implementation appr
 Recorded: 2026-10-27
 Filename: Owner-requested `map-review-oct26.md`
 Purpose: Preserve the mapping discussion and define the experiment that should inform the consolidated mapping implementation plan.
+Successors (2026-11-03): Stage 1 ran on 2026-10-27 (protocol `v1-5b81f5a2`). The
+live stage and the build are now planned in [V2 mapping pilot](../../v2-mapping-pilot.md)
+and [V2 Spatial](../../v2-spatial.md). This record is preserved unchanged below.
 
 ## 1. The problem to solve
 

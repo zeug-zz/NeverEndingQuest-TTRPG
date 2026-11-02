@@ -1,5 +1,10 @@
 # DM Regional Grid (Macro World Map & Procedural Discovery)
 
+> **Superseded reference (2026-11-03).** Planning authority moved to
+> [V2 Spatial](../../v2-spatial.md) and [V2 mapping pilot](../../v2-mapping-pilot.md).
+> Ideas here carry forward as input. The schemas, file targets and phases below
+> are not requirements. Deliberation record: [map-review-oct26.md](map-review-oct26.md).
+
 ## 1. Objective
 Scale the "phenomenological bounds" concept from the local room level to the macro world level. By placing isolated adventure modules onto a dynamic, procedurally generated `WorldX, WorldY` grid, we give the LLM DM awareness of neighboring regions. This enables organic travel, geographically consistent rumors, and a true "Fog of War" experience as the campaign expands endlessly.
 
