@@ -91,13 +91,11 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Audit dependencies
-        # Accepted risks: msgpack/tornado are transitively capped by mitmproxy 12.2.3
-        # (latest release). Fixed versions cannot be installed until mitmproxy lifts
-        # the caps. Tracked in SECURITY.md Accepted Risks.
+        # Accepted risk: tornado CVE-2026-115927/116577/116578 (fix 6.6). Every mitmproxy
+        # release (latest 12.3.1) caps tornado<=6.5.10, so 6.6 cannot be installed.
+        # Tracked in SECURITY.md Accepted Risks; remove when mitmproxy lifts the cap.
         run: |
           pip-audit -r requirements.txt --strict \
-            --ignore-vuln GHSA-6v7p-g79w-8964 \
-            --ignore-vuln CVE-2026-49853 \
-            --ignore-vuln CVE-2026-49854 \
-            --ignore-vuln CVE-2026-49855 \
-            --ignore-vuln GHSA-pw6j-qg29-8w7f
+            --ignore-vuln CVE-2026-115927 \
+            --ignore-vuln CVE-2026-116577 \
+            --ignore-vuln CVE-2026-116578
