@@ -64,15 +64,22 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json
-          SEV = {"critical": "9.5", "high": "8.0", "medium": "5.0", "low": "2.0"}
+          SEV = {"critical": "9.5", "high": "8.0", "error": "8.0", "medium": "5.0", "warning": "5.0", "low": "2.0", "info": "2.0", "note": "2.0", "none": "0.0"}
           with open("semgrep-results.sarif") as f:
               data = json.load(f)
           for run in data.get("runs", []):
               for rule in run.get("tool", {}).get("driver", {}).get("rules", []):
                   props = rule.get("properties", {})
                   val = props.get("security-severity")
-                  if isinstance(val, str) and val.lower() in SEV:
-                      props["security-severity"] = SEV[val.lower()]
+                  if isinstance(val, str):
+                      try:
+                          float(val)
+                      except ValueError:
+                          # Unknown label: map it, else drop it so upload succeeds
+                          if val.lower() in SEV:
+                              props["security-severity"] = SEV[val.lower()]
+                          else:
+                              del props["security-severity"]
           with open("semgrep-results.sarif", "w") as f:
               json.dump(data, f)
           EOF
