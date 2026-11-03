@@ -3,6 +3,8 @@
 Status: Cross-track index and sequencing reference; not implementation authorization.
 Date: 2026-10-30. Updated 2026-11-03: overriding experience goal (s2), Track F
 Spatial, and a revised start of Network plus mapping pilot first (s7).
+Updated 2026-11-04: Track G Firelight rules engine and phased context
+compression (s8.3, s8.4); owner decisions in `plans/v2-firelight.md` s2.
 Replaces: `plans/archive/v2-narrative-track.md` (2026-03-09 cohesion spine, its
 phase map, "Next Milestone" and exit criteria). Archived/ADR links to the old
 path remain provenance only.
@@ -13,7 +15,7 @@ This index lists the v2 master plans, what each owns, which shared contracts eac
 provides, and the build sequence. It owns no requirements.
 
 The initial planning set now comprises Network, Narrator, Memory Pilot, TITAN,
-Module Builder and Spatial (mapping pilot plus spatial master plan). It is assembled for whole-program owner review, not approved for
+Module Builder, Spatial (mapping pilot plus spatial master plan) and Firelight. It is assembled for whole-program owner review, not approved for
 execution. Review precedes clean-base verification, worktree creation and focused
 OpenSpec implementation authorization; no goal or worktree is started by this index.
 
@@ -38,6 +40,7 @@ Each track serves that goal:
 | Spatial | Makes the world an imaginable, stable place |
 | Memory Pilot and TITAN | Give the world continuity and a life of its own |
 | Builder | Supplies coherent places and stories to play |
+| Firelight | Keeps the party's coins, gear, charges and resources from contradicting themselves |
 
 Technical success (correct state, smaller prompts, passing tests) is necessary
 but never sufficient. A plan or gate that improves mechanics while making the
@@ -125,6 +128,15 @@ Prime directive:
   transitions and save/restore.
 - Zone ledger: Python's theatre-of-the-mind combat positions, made of named zones
   and engaged, near, far and out-of-sight bands.
+- Rules engine: the pinned Firelight binary, a stateless deterministic function
+  the Python host calls. It is not a store; canonical owners are unchanged.
+- Engine receipt: a committed transaction's revision, request id and typed
+  before/after events. Refusals are typed diagnostics.
+- Live-state document: the campaign-scoped record of what only the engine writes
+  (occupants, quest logs, map position and state, clock), stored atomically by
+  the host.
+- Family registry: per rule family, whether Python, shadow or the engine
+  decides. See `plans/v2-firelight.md` s6.4.
 
 ## 4. Plan ownership
 
@@ -138,6 +150,7 @@ Prime directive:
 | `plans/v2-module-builder.md` | Faithful source model, reviewed adaptation, seed-enriched playable blueprint, DM presentation, campaign binding and TITAN consumer, MB0-MB5 | Track E; companion producer, not a second engine |
 | `plans/v2-mapping-pilot.md` | Live Capture Arena spatial research: arms A/B/D, theatre-of-the-mind zone ledger, layout feasibility, map sketches, decision gate SP0-SP4 | Track F research; first Track F worktree |
 | `plans/v2-spatial.md` | Spatial authority and projections, exploration and Narrator spatial phases S1-S5, spatial combat SC0-SC4 | Track F; provisional on the pilot gate |
+| `plans/v2-firelight.md` | Firelight rules engine under Python host authority: ADR, pin and upgrade policy, bridge, shadow, family cutovers G0-G6 and GU; phased context compression | Track G |
 | `plans/version-2/mapping/*` (six drafts) and `map-review-oct26.md` | Earlier mapping designs; deliberation record | Superseded reference; the review stays the deliberation record |
 | `plans/neq-world-handover.md` | Seed producer contract | External dependency |
 | `plans/v2-memory-draft.md` | Provisional reference; companion relationship migration | Reference; Narrator/pilot win on overlap |
@@ -170,6 +183,10 @@ Prime directive:
 | Player map projection | Spatial S4, as a message within the Network P1 protocol | `/client`, host tab |
 | Encounter spatial state, typed `position_deltas` | Spatial SC1, extending combat turn receipts | Tactical brain, ally controller, Narrator P1 commit identity |
 | Regional geography | Spatial S5 (separate plan first) | TITAN, Builder MB3 |
+| Firelight ADR, pin record and upgrade policy | Track G0 | All tracks; `AGENTS.md` rule on acceptance |
+| Firelight bridge, world projection, live-state document and family registry | Track G2 | Narrator P1/P2 (receipts, save manifest, fencing), SC combat bookkeeping, Network views, TITAN operations |
+| Rule-family cutovers and retirement of matching guards and validator sections | Track G3-G6 | Validator and prompt owners |
+| Context views (compact evidence, one mention per fact, typed history markers) | `v2-context-views` (s8.4) | Narrator P4, Spatial S2 |
 | `memory.db` migration chain | Serialized by merge order | All |
 
 ## 6. Dependency graph
@@ -187,6 +204,12 @@ B0: router + combat refactor committed (incl. llm-router-cleanup,
  |     S1 + Builder MB1/MB2 -> S3 authored layouts (backfill only if pilot D1 passes)
  |     S1 + SC0 contracts -> SC1 zone ledger -> SC2 tactics -> SC3 intent ; + S4 -> SC4
  |     S4 + SC2 + TITAN P0 + a separate regional plan -> S5 regional layer
+ |-- Track G  Firelight G0 ADR (docs in main; accepted before Narrator P0
+ |     ratifies the envelope) ; G1 offline spike (scripts/tmp)
+ |     G0 + G1 gate + pilot SP3 done -> worktree G: G2 bridge + shadow
+ |     G2 -> G3 new capabilities (storage, trade, charges) -> G4 inventory/AC
+ |     G4 + SC0 -> G5 resources/conditions/clock (combat bookkeeping SC-owned)
+ |     G5 -> G6 progression/quests/occupants ; GU per upstream release
  |-- Track B  Narrator P0 (docs in main) ; worktree R opens after the pilot gate
  |     P0..P6
  |     P1 merged  -> Track C Pilot P1-P2  (Pilot P0 is docs/audit; may start before B0)
@@ -220,18 +243,18 @@ Worktree R opens after the pilot gate. This moves Narrator delivery about five
 weeks later than the 2026-10-30 timeline; Network and the tester date are
 unchanged.
 
-| Weeks | Main checkout | Worktree N `feature/v2-network` | Worktree S (Spatial) | Worktree R `feature/v2-narrator` | Memory / TITAN |
-| --- | --- | --- | --- | --- | --- |
-| 0-2 | Stage 0 (B0): push the local commits to `origin` through reviewed PRs, archive completed changes, record B0 SHA. Pilot SP0 preregistration (docs); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets | -- | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); send producer request early; reconcile TITAN s3 seed facts |
-| 2-3 | Narrator P0 contracts and budgets (docs); draft event envelope jointly with network | N0 feasibility | `feature/v2-mapping-pilot`: SP1 tooling | -- | Pilot P0 complete |
-| 3-5 | Narrator P0 complete; index/ADR upkeep | N1 security and protocol | SP2 offline (D1 layouts, M1 sketches); SP3 live matrix, serialized on port 8360 | -- | -- |
-| 5-8 | Pilot decision gate (about week 5-6); spatial ADR; `plans/v2-spatial.md` moved from provisional to decided | N2 React vertical slice | SP4 report, then `feature/v2-spatial`: S1 foundation | Opens after the pilot gate: P1 events -> merge PR (rebase N and S) | -- |
-| 8-10 | | N3 packaging -> N4 live; testers around week 10 | S1 event wiring (after Narrator P1 merges) -> S2 Narrator spatial packet | P2 Hindsight and portability (largest phase); rebase onto S2 | Worktree M `feature/v2-memory-pilot` after Narrator P1 merges: Pilot P1-P2. TITAN P0 contracts + superseding ADR (docs) |
-| 10-13 | Tester feedback fixes; retire worktree N | -- | S2 live gate -> S4 shared player map (Network N2 merged); SC0 combat contracts (docs) | P2 continues | Pilot P1-P2 continue |
-| 13-16 | Second tester cohort with the shared map | -- | S3 authored layouts with Builder; worktree SC `feature/v2-spatial-combat`: SC1-SC2 | P3 retrieval | Pilot P3 (after Narrator P2) |
-| 16-19 | | | SC3-SC4 intent, combat map, live gates | P4 Archivist (consumes the S2 packet) | Pilot P4-P5; TITAN P2 ledger |
-| 19-22 | | | Regional (S5) plan | P5 agendas, P6 live; human testers on thin clients cover multi-session continuity scenarios | Pilot P6 when the producer delivers |
-| 22+ | | | S5 build alongside TITAN | -- | TITAN P3-P6 in worktree T |
+| Weeks | Main checkout | Worktree N `feature/v2-network` | Worktree S (Spatial) | Worktree R `feature/v2-narrator` | Worktree G `feature/v2-firelight` | Memory / TITAN |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0-2 | Stage 0 (B0): push the local commits to `origin` through reviewed PRs, archive completed changes, record B0 SHA. Pilot SP0 preregistration (docs); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets. Firelight G0 ADR, pin and gap inventory (docs) | -- | -- | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); send producer request early; reconcile TITAN s3 seed facts |
+| 2-3 | Narrator P0 contracts and budgets (docs); draft event envelope jointly with network; G0 ADR accepted before the envelope is ratified; G1 offline spike in `scripts/`/`tmp/` | N0 feasibility | `feature/v2-mapping-pilot`: SP1 tooling | -- | -- | Pilot P0 complete |
+| 3-5 | Narrator P0 complete (with C7 block/cache logging baseline); index/ADR upkeep; G1 gate | N1 security and protocol | SP2 offline (D1 layouts, M1 sketches); SP3 live matrix, serialized on port 8360 | -- | -- | -- |
+| 5-8 | Pilot decision gate (about week 5-6); spatial ADR; `plans/v2-spatial.md` moved from provisional to decided; `v2-context-views` after SP3 and the P0 baseline | N2 React vertical slice | SP4 report, then `feature/v2-spatial`: S1 foundation | Opens after the pilot gate: P1 events -> merge PR (rebase N and S) | Opens after SP3: G2 bridge and shadow | -- |
+| 8-10 | | N3 packaging -> N4 live; testers around week 10 | S1 event wiring (after Narrator P1 merges) -> S2 Narrator spatial packet | P2 Hindsight and portability (largest phase); rebase onto S2 | G3 storage, trade, charged items (joins the tester build only if merged before the tagged SHA) | Worktree M `feature/v2-memory-pilot` after Narrator P1 merges: Pilot P1-P2. TITAN P0 contracts + superseding ADR (docs) |
+| 10-13 | Tester feedback fixes; retire worktree N | -- | S2 live gate -> S4 shared player map (Network N2 merged); SC0 combat contracts (docs) | P2 continues | G4 inventory, coins, equipment, AC cutover | Pilot P1-P2 continue |
+| 13-16 | Second tester cohort with the shared map | -- | S3 authored layouts with Builder; worktree SC `feature/v2-spatial-combat`: SC1-SC2 (combat bookkeeping via the G bridge) | P3 retrieval | G5 resources, slots, rests, conditions, ammunition, clock cutover | Pilot P3 (after Narrator P2) |
+| 16-19 | | | SC3-SC4 intent, combat map, live gates | P4 Archivist (consumes the S2 packet) | G6 progression, quests, occupants cutover | Pilot P4-P5; TITAN P2 ledger |
+| 19-22 | | | Regional (S5) plan | P5 agendas, P6 live; human testers on thin clients cover multi-session continuity scenarios | Retire worktree G; GU upgrades as small changes in main | Pilot P6 when the producer delivers |
+| 22+ | | | S5 build alongside TITAN | -- | -- | TITAN P3-P6 in worktree T |
 
 ### Goals (one per worktree)
 
@@ -245,6 +268,7 @@ unchanged.
 | M | Candidate objective of `plans/v2-memory-pilot.md` s4 | Full-seed criterion may end BLOCKED on the producer; report it, never drop it |
 | T (later) | TITAN P0 and P2-P6; P1 recorded as delivered by the pilot | Separate goal so a blocked pilot does not hold the engine open |
 | B `feature/v2-module-builder` | Candidate objective and full completion criteria of `plans/v2-module-builder.md` s8/s9 | Create only after owner approval and B0; MB0-MB2 may precede TITAN runtime, but full completion retains seed/MB3-MB5 gates |
+| G `feature/v2-firelight` | Candidate goal of `plans/v2-firelight.md` s13 | After the G0 ADR, the G1 gate and pilot SP3; G0/G1 run in main and `tmp/` beforehand |
 
 ### Parallel-worktree rules
 
@@ -261,9 +285,18 @@ unchanged.
   - S2 owns the `main.py` DM-note exits block and the
     `core/ai/conversation_utils.py` atlas injection first. The Narrator
     rebases P3/P4 onto it.
-  - `core/combat/` changes belong to the SC worktree only.
+  - `core/combat/` changes belong to the SC worktree only, including combat
+    bookkeeping routed through the Firelight bridge.
   - S4 and SC4 touch `web/` and `/client` only after Network N2 merges, and only
     through the Network protocol.
+- Firelight file ownership (`plans/v2-firelight.md` s10):
+  - G1 stays in `scripts/` and `tmp/`; no runtime hook before worktree G.
+  - G owns `core/rules/firelight/`, the `updates/` mechanics paths, the
+    mechanics guards and prechecks, and the validator rules sections.
+  - Worktree G opens only after pilot SP3, so the pilot's frozen production
+    configuration is not disturbed.
+  - `main.py` and the prompt files are shared hotspots with R and S2: small
+    PRs, rebase after each merge.
 - Live captures are serialized: the pilot's SP3 matrix window must not overlap
   Network or other gates on port 8360.
 - Builder host/toolkit changes coordinate with Network's `web/` ownership; review
@@ -342,6 +375,48 @@ The spatial pilot does not wait for Narrator P1. It is research and touches no
 shared runtime path. The spatial build (S1 onward) consumes Narrator contracts
 rather than defining rival event or save models.
 
+### 8.3 Firelight alongside the other tracks
+
+Track G adopts upstream's public rules engine (Firelight Engine v0.1.0, by
+Eternal Tavern) as a pinned binary behind a fork-native Python bridge. It
+shares upstream's rules development without re-merging upstream code
+(ADR-0031). Python stays host and canonical store; the engine decides legality
+and bookkeeping for each family the registry has migrated. Details, owner
+decisions and phases live in `plans/v2-firelight.md`.
+
+| Track | Seam | When |
+| --- | --- | --- |
+| Narrator | Engine receipts supply commit identity to the P1 envelope; the live-state document joins the P2 save manifest; `expected_revision` supports fencing; committed engine events feed Hindsight retention | G0 hands the seam to P0, before the envelope is ratified |
+| Spatial | The SP4 spatial ADR evaluates the engine map for S1 routes/visited places and S5 travel time; layout, zones and cover stay in Python | SP4, S1 |
+| Combat / SC | Bookkeeping only (damage, healing, conditions, concentration, saves, resource spend); attack resolution and tactics stay in `core/combat/`; SC owns the change and reruns affected gates | SC0, with G5 |
+| Network | Player views of inventory, storage and resources through the P1 projection; binary placement with N3 packaging | N1, N3 |
+| Builder | MB1/MB2 emit route times, item catalogue and stock references | MB0 adopts the projection draft |
+| TITAN | Mechanical intervention effects compile to engine actions and accept refusals | TITAN P0 |
+
+The engine's journal and relationship families are not adopted; Narrator,
+Pilot and TITAN keep those responsibilities unless a reviewed upgrade decides
+otherwise.
+
+### 8.4 Context compression, phased
+
+Compression is not a separate build. The upstream README figures (92% system
+prompt, 87% validation, 90%+ conversation) predate the fork, and the fork
+already runs those techniques. The worthwhile upstream work is "context views"
+and the removal of rules from prompts as Firelight takes them over. Ownership
+is split across existing phases (`plans/v2-firelight.md` s9):
+
+- Narrator P0: per-block byte counts and cached-token logging in the baseline.
+- `v2-context-views` (main, or the first R task, after SP3 and the P0
+  baseline): compact validator evidence, one mention per fact, fixed
+  instructions in the system prompt, typed history markers.
+- Spatial S2: atlas once per revision, one mention for exits and adjacency.
+- Narrator P4: stable cacheable prefix and cache key; the Archivist replaces
+  the old location and history summarisers; no silent truncation.
+- Track G4-G6: each cutover removes its rules from prompts and the validator.
+
+Budgets come from the fork's own P0 baseline. Story context is not compressed
+at the cost of a less vivid shared picture (s2).
+
 ## 9. Index health checks
 
 1. Each master plan links here and matches s4/s5.
@@ -352,7 +427,7 @@ rather than defining rival event or save models.
 5. Builder source fidelity, reviewed adaptation, seed enrichment, module publication
    and campaign commitment are separate claims; fixtures and safe failed smoke runs
    do not satisfy production-seed or successful live-release gates.
-6. The seven-plan review set (now including Track F) is complete as planning
+6. The eight-plan review set (now including Tracks F and G) is complete as planning
    input only. B0, worktrees, goals, OpenSpec implementation and
    installed-campaign operations still require their explicit approvals; no track
    is reported delivered because its plan exists.
@@ -369,4 +444,10 @@ rather than defining rival event or save models.
    records each seam without expanding those plans' requirements.
 9. Every track's acceptance includes the overriding experience goal (s2).
    Technical gates that worsen the imagined experience are not a release.
+10. Firelight claims are kept separate: a family in shadow is not migrated; a
+    pinned build that does not reproduce the upstream checksums is not adopted;
+    a migrated family has its Python guard and validator section retired in the
+    same change. The owning plans adopt their Track G seams (s8.3) at their
+    next review: Narrator P0, Network N1, Spatial SP4, SC0, Builder MB0 and
+    TITAN P0.
 
