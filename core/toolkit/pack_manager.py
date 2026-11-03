@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Set
 import hashlib
+import re
 
 class PackManager:
     """Service for managing graphic packs"""
@@ -24,6 +25,19 @@ class PackManager:
         "npcs": "npcs",
     }
     
+    _PACK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.()\-]{0,127}")
+
+    def _pack_path(self, name: str) -> Path:
+        """Resolve a pack folder name inside packs_dir; raise ValueError if unsafe."""
+        # TABLETOP MODE: containment guard for user-supplied pack names
+        if not isinstance(name, str) or not self._PACK_NAME_RE.fullmatch(name) or ".." in name:
+            raise ValueError(f"Invalid pack name: {name!r}")
+        base = os.path.abspath(str(self.packs_dir))
+        full = os.path.normpath(os.path.join(base, name))
+        if not full.startswith(base + os.sep):
+            raise ValueError(f"Invalid pack name: {name!r}")
+        return Path(full)
+
     def __init__(self):
         """Initialize the pack manager"""
         self.packs_dir = Path(self.PACKS_DIRECTORY)
@@ -94,7 +108,7 @@ class PackManager:
         if media_key not in self.STATIC_MEDIA_TARGETS:
             raise ValueError(f"Unsupported media type: {media_type}")
 
-        pack_dir = self.packs_dir / pack_name
+        pack_dir = self._pack_path(pack_name)
         if not pack_dir.exists():
             return {}
 
@@ -206,7 +220,10 @@ class PackManager:
         """Create reversible backup pack from current live static targets."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         resolved_name = str(backup_name or f"live_backup_{timestamp}").strip()
-        backup_dir = self.packs_dir / resolved_name
+        try:
+            backup_dir = self._pack_path(resolved_name)
+        except ValueError:
+            return {"success": False, "error": "Invalid backup name"}
 
         if backup_dir.exists():
             return {
@@ -350,7 +367,10 @@ class PackManager:
         """
         # Sanitize pack name
         safe_name = name.replace(" ", "_").lower()
-        pack_dir = self.packs_dir / safe_name
+        try:
+            pack_dir = self._pack_path(safe_name)
+        except ValueError:
+            return {"success": False, "error": "Invalid pack name"}
         
         if pack_dir.exists():
             return {
@@ -484,7 +504,7 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
                     pack_name = pack_name.replace(" ", "_").lower()
                 
                 # Check if pack already exists
-                pack_dir = self.packs_dir / pack_name
+                pack_dir = self._pack_path(pack_name)
                 if pack_dir.exists():
                     # Version check
                     existing_manifest_path = pack_dir / "manifest.json"
@@ -500,7 +520,7 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
                     
                     # Backup existing pack
                     backup_name = f"{pack_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    shutil.move(str(pack_dir), str(self.packs_dir / backup_name))
+                    shutil.move(str(pack_dir), str(self._pack_path(backup_name)))
                     print(f"Backed up existing pack to {backup_name}")
                 
                 # Create pack directory
@@ -586,7 +606,10 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
         Returns:
             Export result dictionary
         """
-        pack_dir = self.packs_dir / pack_name
+        try:
+            pack_dir = self._pack_path(pack_name)
+        except ValueError:
+            return {"success": False, "error": "Invalid pack name"}
         
         if not pack_dir.exists():
             return {
@@ -640,7 +663,10 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
         Returns:
             Activation result dictionary
         """
-        pack_dir = self.packs_dir / pack_name
+        try:
+            pack_dir = self._pack_path(pack_name)
+        except ValueError:
+            return {"success": False, "error": "Invalid pack name"}
         
         if not pack_dir.exists():
             return {
@@ -667,10 +693,10 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
                 # Generate backup name with timestamp
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"{self.active_pack}_backup_{timestamp}"
-                backup_dir = self.packs_dir / backup_name
+                backup_dir = self._pack_path(backup_name)
                 
                 # Copy current pack to backup
-                current_pack_dir = self.packs_dir / self.active_pack
+                current_pack_dir = self._pack_path(self.active_pack)
                 if current_pack_dir.exists():
                     try:
                         shutil.copytree(current_pack_dir, backup_dir)
@@ -849,7 +875,10 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
         Returns:
             Detailed pack information or None if not found
         """
-        pack_dir = self.packs_dir / pack_name
+        try:
+            pack_dir = self._pack_path(pack_name)
+        except ValueError:
+            return None
         
         if not pack_dir.exists():
             return None
@@ -926,7 +955,10 @@ Created: {datetime.now().strftime("%Y-%m-%d")}
                 "error": "Cannot delete the active pack. Please activate another pack first."
             }
         
-        pack_dir = self.packs_dir / pack_name
+        try:
+            pack_dir = self._pack_path(pack_name)
+        except ValueError:
+            return {"success": False, "error": "Invalid pack name"}
         
         if not pack_dir.exists():
             return {

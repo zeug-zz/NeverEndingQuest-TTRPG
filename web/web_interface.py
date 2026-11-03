@@ -3118,7 +3118,7 @@ def get_module_unified_assets(module_name):
         
     except Exception as e:
         error(f"TOOLKIT: Failed to get unified assets for module {module_name}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Failed to load module assets'}), 500
 
 
 def _validate_download_summary(markdown):
@@ -3332,8 +3332,6 @@ def get_module_adventure_markdown(module_name):
         'error': result.get('reason', 'Unavailable'),
         'module': result.get('module', ''),
     }
-    if result.get('detail'):
-        payload['detail'] = result['detail']
     return jsonify(payload), result.get('status', 500)
 
 
