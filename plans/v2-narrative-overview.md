@@ -493,6 +493,10 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | N | `feature/v2-network` | B0 | Prompt ready (s10.5); not opened | N0 | N0 |
 | S | `feature/v2-mapping-pilot` | B0 | Prompt ready (s10.5); not opened | SP0 | SP0 review |
 
+Both worktrees were created 2026-11-05 under
+`~/.local/share/opencode/worktree/e52afe/`, as `neq-v2-network` and
+`neq-v2-mapping-pilot`.
+
 Port 8360 live-capture window: free. A session books it through the Overseer
 before a live run and releases it after teardown. The SP3 matrix and Network
 live runs never overlap.
