@@ -5,6 +5,8 @@ Date: 2026-10-30. Updated 2026-11-03: overriding experience goal (s2), Track F
 Spatial, and a revised start of Network plus mapping pilot first (s7).
 Updated 2026-11-04: Track G Firelight rules engine and phased context
 compression (s8.3, s8.4); owner decisions in `plans/v2-firelight.md` s2.
+Updated 2026-11-05: owner approval to start the build; B0 recorded; worktrees
+N and S approved; build ledger and goal prompts (s10).
 Replaces: `plans/archive/v2-narrative-track.md` (2026-03-09 cohesion spine, its
 phase map, "Next Milestone" and exit criteria). Archived/ADR links to the old
 path remain provenance only.
@@ -15,9 +17,11 @@ This index lists the v2 master plans, what each owns, which shared contracts eac
 provides, and the build sequence. It owns no requirements.
 
 The initial planning set now comprises Network, Narrator, Memory Pilot, TITAN,
-Module Builder, Spatial (mapping pilot plus spatial master plan) and Firelight. It is assembled for whole-program owner review, not approved for
-execution. Review precedes clean-base verification, worktree creation and focused
-OpenSpec implementation authorization; no goal or worktree is started by this index.
+Module Builder, Spatial (mapping pilot plus spatial master plan) and Firelight.
+On 2026-11-05 the owner approved starting the build: B0 and worktrees N and S
+with one goal each, recorded in the build ledger (s10). Every other worktree,
+goal and installed-campaign operation still needs its own approval; this index
+starts nothing by itself.
 
 Precedence: `AGENTS.md` > accepted ADRs > active OpenSpec changes > master plans >
 this index. Conflicts are resolved in the owning plan or by ADR, never here.
@@ -245,7 +249,7 @@ unchanged.
 
 | Weeks | Main checkout | Worktree N `feature/v2-network` | Worktree S (Spatial) | Worktree R `feature/v2-narrator` | Worktree G `feature/v2-firelight` | Memory / TITAN |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0-2 | Stage 0 (B0): push the local commits to `origin` through reviewed PRs, archive completed changes, record B0 SHA. Pilot SP0 preregistration (docs); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets. Firelight G0 ADR, pin and gap inventory (docs) | -- | -- | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); send producer request early; reconcile TITAN s3 seed facts |
+| 0-2 | Stage 0 (B0) recorded 2026-11-05 (s10.1). After N and S launch: Firelight G0 ADR, pin and gap inventory (docs) | Opens 2026-11-05: N0 feasibility | `feature/v2-mapping-pilot` opens 2026-11-05: SP0 preregistration (docs PR); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); send producer request early; reconcile TITAN s3 seed facts |
 | 2-3 | Narrator P0 contracts and budgets (docs); draft event envelope jointly with network; G0 ADR accepted before the envelope is ratified; G1 offline spike in `scripts/`/`tmp/` | N0 feasibility | `feature/v2-mapping-pilot`: SP1 tooling | -- | -- | Pilot P0 complete |
 | 3-5 | Narrator P0 complete (with C7 block/cache logging baseline); index/ADR upkeep; G1 gate | N1 security and protocol | SP2 offline (D1 layouts, M1 sketches); SP3 live matrix, serialized on port 8360 | -- | -- | -- |
 | 5-8 | Pilot decision gate (about week 5-6); spatial ADR; `plans/v2-spatial.md` moved from provisional to decided; `v2-context-views` after SP3 and the P0 baseline | N2 React vertical slice | SP4 report, then `feature/v2-spatial`: S1 foundation | Opens after the pilot gate: P1 events -> merge PR (rebase N and S) | Opens after SP3: G2 bridge and shadow | -- |
@@ -260,8 +264,8 @@ unchanged.
 
 | Worktree | Goal objective | Notes |
 | --- | --- | --- |
-| N | Network N0-N4 delivered to invited testers | Tester builds come from a tagged `main` SHA |
-| S `feature/v2-mapping-pilot` | Objective and immutable completion criteria of `plans/v2-mapping-pilot.md` s11, verbatim | Opens with N after B0; research only; ends at the owner decision gate |
+| N `feature/v2-network` | Network N0-N4 delivered to invited testers; full prompt in s10.5 | Tester builds come from a tagged `main` SHA |
+| S `feature/v2-mapping-pilot` | Objective and immutable completion criteria of `plans/v2-mapping-pilot.md` s11, verbatim; full prompt in s10.5 | Opens with N after B0; owns SP0 (owner decision 2026-11-05); research only; ends at the owner decision gate |
 | SB `feature/v2-spatial` | S1-S4 objective of `plans/v2-spatial.md` s11 | After the pilot gate; may reuse worktree S once the pilot branch merges |
 | SC `feature/v2-spatial-combat` | SC0-SC4 objective of `plans/v2-spatial.md` s11 | After S1 merges and SC0 is accepted |
 | R | Objective and immutable completion criteria of `plans/v2-narrator.md` s17, verbatim | Opens after the pilot gate; P0 runs as docs in main beforehand |
@@ -273,9 +277,10 @@ unchanged.
 ### Parallel-worktree rules
 
 - Each worktree has its own `.venv`; the owner provides `config.py`. Never copy secrets.
-- Ports never collide: the network dev player listener gets a new port (not 8357
-  or 8360); Hindsight/PostgreSQL namespaces are per worktree; live captures are
-  serialized on port 8360 regardless of worktree.
+- Ports never collide: the network dev player listener uses port 8370 (owner
+  decision 2026-11-05; never 8357 or 8360); Hindsight/PostgreSQL namespaces are
+  per worktree; live captures are serialized on port 8360 regardless of
+  worktree, booked through the ledger (s10.2).
 - Small PRs per phase; rebase the other worktree after each merge. The narrator
   branch stays out of `web/` until Network N2 merges. Expect
   `requirements-lock.txt` conflicts.
@@ -427,10 +432,10 @@ at the cost of a less vivid shared picture (s2).
 5. Builder source fidelity, reviewed adaptation, seed enrichment, module publication
    and campaign commitment are separate claims; fixtures and safe failed smoke runs
    do not satisfy production-seed or successful live-release gates.
-6. The eight-plan review set (now including Tracks F and G) is complete as planning
-   input only. B0, worktrees, goals, OpenSpec implementation and
-   installed-campaign operations still require their explicit approvals; no track
-   is reported delivered because its plan exists.
+6. The eight-plan review set (now including Tracks F and G) is planning input.
+   Approvals granted so far are listed in s10.1; anything not listed there still
+   needs explicit approval. No track is reported delivered because its plan
+   exists or its goal is open; only a gate verdict in s10.3 records progress.
 7. Spatial claims are kept separate:
    - pilot research versus production behavior;
    - prompt-only, offline and live evidence;
@@ -450,4 +455,189 @@ at the cost of a less vivid shared picture (s2).
     same change. The owning plans adopt their Track G seams (s8.3) at their
     next review: Narrator P0, Network N1, Spatial SP4, SC0, Builder MB0 and
     TITAN P0.
+
+## 10. Build ledger
+
+The Overseer (an owner-directed session working from this index, with no goal
+of its own) maintains this section. It records approvals, open goals, gate
+verdicts and pending owner actions; the owning plans keep the requirements.
+Build sessions do not edit this index. They report gates, blockers and PRs to
+the Overseer, which reviews the evidence before recording a verdict. A builder
+claim, a driver exit code or green unit tests alone never move a row to PASS.
+
+### 10.1 Baseline and approvals
+
+- B0: `f9b32f0fe0b97f837eeca0966e0fdce794ad144a`. On 2026-11-05 `main` equalled
+  `origin/main` with a clean tree. Security Audit and CodeQL passed on that
+  SHA. The completed router and combat changes are archived. The only active
+  change, `mapping-research-arena-comparison`, is superseded by pilot SP0.
+- Owner approvals, 2026-11-05:
+  - start the build from B0;
+  - worktrees N and S, each with one goal opened from s10.5;
+  - SP0 runs inside worktree S under the S goal and merges as a docs PR (this
+    replaces the s7 entry that placed it in the main checkout);
+  - the Network dev player listener uses port 8370;
+  - the remaining Stage 0 docs work (Firelight G0 ADR, pin and gap inventory;
+    Pilot P0; the producer request; TITAN s3 seed reconciliation) starts in the
+    main checkout after N and S launch.
+- An open goal authorizes proposing and building its owning plan's listed
+  OpenSpec changes in phase order. The owner reviews and merges each phase PR.
+  Scope beyond the owning plan needs a plan review first.
+- Not yet approved: worktrees R, SB, SC, M, T, B and G, and any
+  installed-campaign operation.
+
+### 10.2 Worktrees and goals
+
+| Worktree | Branch | Base | Goal | Current phase | Next gate |
+| --- | --- | --- | --- | --- | --- |
+| N | `feature/v2-network` | B0 | Prompt ready (s10.5); not opened | N0 | N0 |
+| S | `feature/v2-mapping-pilot` | B0 | Prompt ready (s10.5); not opened | SP0 | SP0 review |
+
+Port 8360 live-capture window: free. A session books it through the Overseer
+before a live run and releases it after teardown. The SP3 matrix and Network
+live runs never overlap.
+
+### 10.3 Gate record
+
+| Gate | Worktree | Verdict | Date | Evidence | PR |
+| --- | --- | --- | --- | --- | --- |
+| N0 transport feasibility | N | pending | -- | -- | -- |
+| N1 player boundary and contract | N | pending | -- | -- | -- |
+| N2 React vertical slice | N | pending | -- | -- | -- |
+| N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
+| N4 internet gameplay and release | N | pending | -- | -- | -- |
+| SP0 preregistration reviewed | S | pending | -- | -- | -- |
+| SP1 tooling | S | pending | -- | -- | -- |
+| SP2 offline D1/M1 | S | pending | -- | -- | -- |
+| SP3 live matrix | S | pending | -- | -- | -- |
+| SP4 decision gate | S | pending | -- | -- | -- |
+
+Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
+not yet judged.
+
+### 10.4 Pending owner actions
+
+1. Open the N and S sessions in their worktrees and start each goal with its
+   s10.5 prompt.
+2. Provide `config.py` in each worktree. Agents never copy secrets.
+3. Rate the 36 Stage 1 packets, in parallel with SP0 and SP1 (S criterion 5).
+4. Review the SP0 preregistration before the pilot makes any provider call.
+5. Review and merge phase PRs as they arrive.
+
+### 10.5 Goal prompts
+
+Paste each prompt as the `/goal` in its worktree session, unchanged. The
+operating rules are shared; the S objective and criteria are copied verbatim
+from `plans/v2-mapping-pilot.md` s11.
+
+**Worktree S** (`feature/v2-mapping-pilot`):
+
+```text
+Worktree S, branch feature/v2-mapping-pilot, base f9b32f0f. Authority:
+plans/v2-mapping-pilot.md; program index plans/v2-narrative-overview.md (s10
+ledger, owned by the Overseer). Operating rules: research only, in scripts/,
+sandbox fixtures and tmp/; no production default changed and no core hook
+without explicit owner approval (pilot plan s5.3). SP0 is phase 1 of this goal
+and merges as a docs-only PR; no provider call before the owner has reviewed
+it. One OpenSpec change per phase as listed in pilot plan s9, proposed with
+openspec-propose and built with openspec-build-loop; one small PR per phase to
+origin main, merged by the owner; rebase onto main after each merge. Live
+captures only through neq-capture-arena on port 8360, booked with the Overseer
+and never overlapping Network live work; never port 8357 or the installed
+campaign. Own .venv; owner-provided config.py; per-worktree Hindsight
+namespace. Do not edit plans/v2-narrative-overview.md; report each gate,
+blocker and PR to the Overseer. Do not touch MULTIPLAYER_MODE or party-size
+gates.
+
+Objective: Determine, through preregistered live Capture Arena play with
+one-PC and four-PC parties, which spatial context best improves gameplay UX in
+the theatre of the players' mind. Compare the current game with
+explicit-relationship and hybrid spatial packets, test a theatre-of-the-mind
+zone ledger for combat, and assess layout backfill feasibility and shared map
+sketches. Deliver an evidence-backed decision report, a draft spatial ADR and
+concrete inputs for the v2 spatial build, without changing production
+behavior.
+
+Immutable completion criteria:
+1. SP0 preregistration (fixtures, scripts, rubric anchors, thresholds,
+   budgets, frozen route) is reviewed before any provider call. The superseded
+   change is archived with a pointer.
+2. Tooling has passing provider-free tests and ASCII compliance, proves arm A
+   is a no-op, and changes no production default.
+3. The s6 matrix is executed within caps. Every cell is reported PASS, FAIL,
+   BLOCKED or missing with preserved evidence. Nothing is silently waived.
+4. D1 and M1 are completed and owner-audited, or reported blocked with
+   evidence.
+5. Owner ratings exist for the live transcripts (and Stage 1 packets). No
+   ratings are invented.
+6. The decision report, draft ADR and S1/S2/SC1/S3/S4 inputs are reviewed at
+   the owner decision gate.
+
+The goal may close unmet only with a concrete blocker and evidence. An
+*inconclusive* verdict with complete evidence satisfies criteria 3 and 6.
+```
+
+**Worktree N** (`feature/v2-network`). The criteria restate the plan's s9 gates
+and s11 checklist; the plan wins on any difference.
+
+```text
+Worktree N, branch feature/v2-network, base f9b32f0f. Authority:
+plans/v2-server-client-network.md; program index plans/v2-narrative-overview.md
+(s10 ledger, owned by the Overseer). Operating rules: Python stays
+authoritative for mechanics, narration orchestration, validation, combat,
+party state, persistence, publication and campaign state; React owns
+presentation and local UI state only. Do not touch MULTIPLAYER_MODE or
+party-size gates. Core host edits are marked # TABLETOP MODE:; prefer
+extensions. Dev player listener on port 8370; never use port 8357 or the
+installed campaign as a fixture. Live gates only through neq-capture-arena on
+port 8360, booked with the Overseer and never overlapping pilot live work.
+One OpenSpec change per network plan s10 entry, proposed with openspec-propose
+and built with openspec-build-loop; one small PR per phase to origin main,
+merged by the owner; rebase onto main after each merge. Own .venv;
+owner-provided config.py; per-worktree Hindsight namespace. Do not edit
+plans/v2-narrative-overview.md; report each gate, blocker and PR to the
+Overseer. Material architecture or scope changes found in N0 go to owner plan
+review before code.
+
+Objective: Deliver Network N0-N4 of plans/v2-server-client-network.md, so that
+invited internet test players join real NeverEndingQuest gameplay on thin
+React browser clients through a facilitator-started OpenTunnel share from a
+macOS or Linux host, with every player in the same authoritative Python
+tabletop session, from a tagged main SHA.
+
+Completion criteria:
+1. N0: macOS and Linux transport feasibility is evidenced with an inert
+   authenticated fixture, and the listener, serving stack and tunnel choices
+   are recorded. No real campaign or unfiltered host surface is publicly
+   exposed. A BLOCKED N0 goes to owner plan review, never a workaround.
+2. N1: unauthenticated and authenticated negative tests show that players
+   cannot invoke host operations or receive privileged payloads; 1-PC and
+   4-PC projections and input validation pass.
+3. N2: isolated multi-browser checks show coherent host and player state for
+   1-PC and 4-PC parties, no duplicate actions on retry or reconnect, no
+   stale-PC misapplication, and no host-only bundle or event leakage. The
+   local host works with sharing disabled or with a missing or broken client
+   build.
+4. N3: clean macOS and Linux installs and updates start local play, start and
+   stop authenticated remote play, survive relay loss and restart, and leave
+   no unintended live exposure; existing campaigns and unrelated tunnels stay
+   intact.
+5. N4: the orchestrator runs and judges all eight required live scenarios of
+   network plan s9 Phase 4 through the public tunnel URL from a genuinely
+   external network, including current Windows Chrome and Edge clients, with
+   evidence and the runtime model/provider recorded under
+   tmp/router-rollout/v2-network/<run-id>/.
+6. Every network plan s11 test category has exact commands and results;
+   ASCII compliance, openspec validate --specs and each change's --strict
+   validation pass; the security scans run without bypass.
+7. Tester documentation (facilitator quickstart, join and reconnect guide,
+   platform matrix, network and privacy limits, failure recovery, private
+   issue reporting) and a release evidence index with the tagged build
+   identity are delivered.
+
+The goal may close unmet only with a concrete blocker and evidence. Missing
+platforms, connectivity, credentials, scenarios or assertions are BLOCKED or
+FAIL, never waived. Driver exit codes, builder claims and green unit tests
+alone do not pass a gate.
+```
 
