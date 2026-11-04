@@ -493,9 +493,10 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | N | `feature/v2-network` | B0 | Prompt ready (s10.5); not opened | N0 | N0 |
 | S | `feature/v2-mapping-pilot` | B0 | Prompt ready (s10.5); not opened | SP0 | SP0 review |
 
-Both worktrees were created 2026-11-05 under
-`~/.local/share/opencode/worktree/e52afe/`, as `neq-v2-network` and
-`neq-v2-mapping-pilot`.
+Both worktrees were created 2026-11-05 as siblings of the main checkout:
+`~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. Keep
+worktrees under `~/Projects`, because the nono-sandboxed OpenCode wrapper
+refuses to start outside its approved roots.
 
 Port 8360 live-capture window: free. A session books it through the Overseer
 before a live run and releases it after teardown. The SP3 matrix and Network
