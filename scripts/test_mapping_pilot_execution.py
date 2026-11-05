@@ -49,7 +49,12 @@ from scripts.mapping_pilot.execution import (
 )
 from scripts.mapping_pilot.manifest import DEFAULT_PREREG_ROOT, PROJECT_ROOT
 from scripts.mapping_pilot.evidence import create_evidence_bundle
-from scripts.mapping_pilot.row_runner import RowRunnerHooks, execute_row
+from scripts.mapping_pilot.row_runner import (
+    DEFAULT_ROW_EVIDENCE_ROOT,
+    RowRunnerHooks,
+    _resolve_frozen_row,
+    execute_row,
+)
 from scripts.mapping_pilot.scoring import (
     MATRIX_ATTEMPT_CAP,
     MATRIX_WALL_TIME_CAP_SECONDS,
@@ -67,16 +72,6 @@ class MappingPilotExecutionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(PROJECT_ROOT / self.base, ignore_errors=True)
-        for run_id in getattr(self, "row_run_ids", []):
-            shutil.rmtree(
-                PROJECT_ROOT
-                / "tmp"
-                / "router-rollout"
-                / "mapping-pilot"
-                / "sp3"
-                / run_id,
-                ignore_errors=True,
-            )
         for directory in getattr(self, "guard_directories", []):
             shutil.rmtree(PROJECT_ROOT / directory, ignore_errors=True)
 
@@ -118,6 +113,47 @@ class MappingPilotExecutionTests(unittest.TestCase):
         return create_or_resume_ledger(
             self.run_id, ledger_root=self.base, now=self.now
         )
+
+    def test_resolves_all_planned_frozen_rows_without_runtime_side_effects(self) -> None:
+        counterbalance = json.loads(
+            (DEFAULT_PREREG_ROOT / "counterbalance.json").read_text(encoding="ascii")
+        )
+        planned = [row for row in counterbalance["rows"] if row["row_type"] == "planned"]
+        self.assertEqual(len(planned), 26)
+        for frozen in planned:
+            with self.subTest(row_id=frozen["row_id"]):
+                row, script, fixture_id = _resolve_frozen_row(frozen["row_id"], None)
+                expected_script = json.loads(
+                    (DEFAULT_PREREG_ROOT / frozen["script"]).read_text(encoding="ascii")
+                )
+                self.assertEqual(row["script"], frozen["script"])
+                self.assertEqual(row["party"], frozen["party"])
+                self.assertEqual(row["fixed_seed"], frozen["fixed_seed"])
+                self.assertEqual(script["script_id"], expected_script["script_id"])
+                self.assertEqual(script["fixture_ids"], expected_script["fixture_ids"])
+                self.assertEqual(fixture_id, expected_script["fixture_ids"][0])
+        landscape, script, fixture_id = _resolve_frozen_row("E04", None)
+        self.assertEqual(script["fixture_ids"], ["landscape_village", "transition_tower_approach"])
+        self.assertEqual(fixture_id, "landscape_village")
+        self.assertEqual(landscape["fixed_seed"], 5102)
+
+    def test_frozen_row_rejects_unsupported_or_duplicate_fixture_ids(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        for fixture_ids in (["unknown_fixture"], ["interior_tavern", "interior_tavern"]):
+            with self.subTest(fixture_ids=fixture_ids):
+                with mock.patch.object(row_runner, "verify_manifest", return_value={
+                    "counterbalance.json": "hash", "scripts/test.json": "hash"
+                }), mock.patch.object(
+                    row_runner,
+                    "_read_json",
+                    side_effect=[
+                        {"rows": [{"row_id": "E01", "row_type": "planned", "script": "scripts/test.json", "party": 1, "arm": "A", "fixed_seed": 1}]},
+                        {"script_id": "test", "fixture_ids": fixture_ids, "turns": [], "model_bearing_turn_count": 0},
+                    ],
+                ):
+                    with self.assertRaises(row_runner.RowExecutionError):
+                        _resolve_frozen_row("E01", "unused")
 
     def _record_booking(
         self,
@@ -1126,24 +1162,29 @@ class MappingPilotExecutionTests(unittest.TestCase):
         row_id: str,
         *,
         packet_status: str = "recorded",
+        startup_receipt_status: str = "recorded",
+        unexpected_at_startup: bool = False,
         unexpected_after_restart: bool = False,
         unexpected_before_first_model: bool = False,
+        invalid_pre_model_attribution: bool = False,
         unexpected_at_e4_08_boundary: bool = False,
+        state_mismatch_after_restart: bool = False,
+        receipt_write_failed: bool = False,
+        co_located_runtime_metadata: bool = False,
         live_time_cap: bool = False,
         pre_content_decision: dict[str, Any] | None = None,
         pre_content_exception: Exception | None = None,
         prepared_run_id: str | None = None,
         prepared_row_run_id: str | None = None,
         prepared_ledger_root: Path | None = None,
+        row_evidence_root: Path | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         from scripts.mapping_pilot.manifest import PROJECT_ROOT as PILOT_ROOT
 
         run_id = prepared_run_id or ("runner-" + uuid.uuid4().hex[:10])
         row_run_id = prepared_row_run_id or ("row-" + uuid.uuid4().hex)
-        self.row_run_ids = getattr(self, "row_run_ids", [])
-        self.row_run_ids.append(run_id)
         ledger_root = prepared_ledger_root or (self.base / ("ledger-" + run_id))
-        evidence_root = self.base / ("evidence-" + run_id)
+        evidence_root = row_evidence_root or (self.base / ("evidence-" + run_id))
         if prepared_run_id is None:
             create_or_resume_ledger(run_id, ledger_root=ledger_root, now=self.now)
             record_booking(
@@ -1219,6 +1260,9 @@ class MappingPilotExecutionTests(unittest.TestCase):
                 self.sent: list[str] = []
 
             def start(self) -> dict[str, Any]:
+                if self.segment == 1 and unexpected_at_startup:
+                    for _ in range(6):
+                        append_unexpected_lifecycle_receipt(1, "startup")
                 if self.segment == 2 and unexpected_after_restart:
                     append_unexpected_lifecycle_receipt(2, "E4-07")
                 return {"ready": True}
@@ -1281,10 +1325,32 @@ class MappingPilotExecutionTests(unittest.TestCase):
             def close(self) -> None:
                 return None
 
+        class FakeServer(dict[str, Any]):
+            @property
+            def log_path(self) -> Path:
+                return Path(self["log_path"])
+
         def start_server(
-            _row: dict[str, Any], run_token: str, lifecycle_id: str, log_path: Path
+            row: dict[str, Any], run_token: str, lifecycle_id: str, log_path: Path
         ) -> dict[str, Any]:
-            server = {"run_token": run_token, "lifecycle_id": lifecycle_id, "log_path": log_path}
+            if co_located_runtime_metadata:
+                runtime_directory = Path(row["_request_guard_directory"])
+                metadata_path = runtime_directory / "sitecustomize.py"
+                if not metadata_path.exists():
+                    metadata_path.write_text(
+                        "provider-free runtime metadata\n", encoding="ascii"
+                    )
+            log_path.write_text(
+                "mapping_pilot_router_receipt_write_failed\n"
+                if receipt_write_failed
+                else "",
+                encoding="ascii",
+            )
+            server = FakeServer(
+                run_token=run_token,
+                lifecycle_id=lifecycle_id,
+                log_path=log_path,
+            )
             trace["servers_started"].append(server)
             return server
 
@@ -1310,6 +1376,8 @@ class MappingPilotExecutionTests(unittest.TestCase):
                 and not trace["drivers"][0].sent
             ):
                 append_unexpected_lifecycle_receipt(1, "E1-01")
+                if invalid_pre_model_attribution:
+                    trace["receipts"][-1]["attribution"] = "unverified"
                 trace["pre_model_injected"] = True
             if (
                 unexpected_at_e4_08_boundary
@@ -1358,7 +1426,22 @@ class MappingPilotExecutionTests(unittest.TestCase):
             }
 
         def load_receipts(_run_token: str) -> dict[str, Any]:
-            return {"evidence_status": "recorded", "records": list(trace["receipts"])}
+            return {
+                "evidence_status": startup_receipt_status,
+                "records": list(trace["receipts"]),
+            }
+
+        def state_hasher(_root: str) -> dict[str, Any]:
+            state_hash = (
+                "c" * 64
+                if state_mismatch_after_restart and len(trace["servers_started"]) > 1
+                else "a" * 64
+            )
+            return {
+                "status": "recorded",
+                "sha256": state_hash,
+                "files": {"party_tracker.json": "b" * 64},
+            }
 
         def scorer(row_data: dict[str, Any]) -> dict[str, Any]:
             trace["events"].append("score")
@@ -1402,11 +1485,7 @@ class MappingPilotExecutionTests(unittest.TestCase):
             driver_factory=driver_factory,
             load_packet_evidence=load_packet_evidence,
             load_router_receipts=load_receipts,
-            state_hasher=lambda _root: {
-                "status": "recorded",
-                "sha256": "a" * 64,
-                "files": {"party_tracker.json": "b" * 64},
-            },
+            state_hasher=state_hasher,
             write_step_context=write_context,
             evidence_writer=create_evidence_bundle,
             scorer=scorer,
@@ -1510,6 +1589,128 @@ class MappingPilotExecutionTests(unittest.TestCase):
             / p1_trace["row_run_id"]
             / "server_logs.txt"
         ).read_text(encoding="ascii"))
+
+    def test_row_bundle_root_is_separate_from_default_layout_ledger_and_runtime(self) -> None:
+        mapping_root = self.base / "router-rollout" / "mapping-pilot"
+        ledger_root = mapping_root / "sp3"
+        evidence_root = mapping_root / "row-bundles"
+        run_id = "co-located-" + uuid.uuid4().hex[:10]
+        row_run_id = "row-" + uuid.uuid4().hex
+        create_or_resume_ledger(run_id, ledger_root=ledger_root, now=self.now)
+        record_booking(
+            run_id,
+            booking_id="booking-co-located",
+            holder="Overseer: provider-free test",
+            window_start=(self.now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+            window_end=(self.now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            network_non_overlap_confirmed=True,
+            ledger_root=ledger_root,
+            now=self.now,
+        )
+        prior_runtime = ledger_root / run_id / "runtime" / "prior-row"
+        prior_runtime.mkdir(parents=True)
+        (prior_runtime / "sitecustomize.py").write_text(
+            "provider-free prior runtime metadata\n", encoding="ascii"
+        )
+
+        result, trace = self._run_injected_row(
+            "E07",
+            prepared_run_id=run_id,
+            prepared_row_run_id=row_run_id,
+            prepared_ledger_root=ledger_root,
+            row_evidence_root=evidence_root,
+            co_located_runtime_metadata=True,
+        )
+
+        self.assertEqual(
+            DEFAULT_ROW_EVIDENCE_ROOT,
+            Path("tmp/router-rollout/mapping-pilot/row-bundles"),
+        )
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(
+            result["evidence_path"],
+            (evidence_root / "sp3" / row_run_id).as_posix(),
+        )
+        self.assertTrue(
+            (ledger_root / run_id / "matrix_ledger.json").is_file()
+        )
+        self.assertTrue((prior_runtime / "sitecustomize.py").is_file())
+        self.assertTrue(
+            (
+                ledger_root
+                / run_id
+                / "runtime"
+                / row_run_id
+                / "sitecustomize.py"
+            ).is_file()
+        )
+        self.assertTrue(
+            (
+                PROJECT_ROOT
+                / result["evidence_path"]
+                / "manifest.json"
+            ).is_file()
+        )
+        self.assertEqual(trace["evidence_root"], evidence_root)
+
+    def test_row_runner_continues_after_unexpected_startup_receipts_but_blocks_pass(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        _row, frozen_script, _fixture_id = row_runner._resolve_frozen_row("E01", None)
+        expected_step_ids = [step["id"] for step in frozen_script["turns"]]
+        result, trace = self._run_injected_row(
+            "E01",
+            packet_status="not_applicable",
+            unexpected_at_startup=True,
+        )
+
+        self.assertEqual(result["driver_exit_code"], 0)
+        self.assertEqual(trace["drivers"][0].sent + trace["drivers"][1].sent, expected_step_ids)
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["provider_call_expected_false_observed"], 6)
+        expected_attempts = len(expected_step_ids) + 6
+        self.assertEqual(result["router_attempt_count"], expected_attempts)
+        self.assertEqual(result["ledger_attempt_count"], expected_attempts)
+        self.assertEqual(trace["scoring_inputs"][0]["attempt_count"], expected_attempts)
+        self.assertEqual(len(trace["scoring_inputs"][0]["model_turns"]), len(expected_step_ids))
+        self.assertEqual(len(trace["scoring_inputs"][0]["provider_calls"]), len(expected_step_ids))
+
+        bundle = PROJECT_ROOT / result["evidence_path"]
+        receipts = json.loads((bundle / "router_receipts.json").read_text(encoding="ascii"))
+        counts = json.loads((bundle / "cap_counts.json").read_text(encoding="ascii"))
+        logs = (bundle / "server_logs.txt").read_text(encoding="ascii")
+        self.assertEqual(receipts["startup_provider_call_expected_false_observed"], 6)
+        self.assertEqual(receipts["attempt_count"], expected_attempts)
+        self.assertEqual(counts["row_attempts"], expected_attempts)
+        self.assertIn("UnexpectedStartupProviderCall", logs)
+        self.assertEqual(trace["ledger"]["slots"][0]["status"], "BLOCKED")
+
+    def test_row_runner_missing_startup_receipts_still_fail_closed(self) -> None:
+        result, trace = self._run_injected_row(
+            "E01",
+            packet_status="not_applicable",
+            startup_receipt_status="missing",
+        )
+
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["driver_exit_code"], 1)
+        self.assertEqual(trace["drivers"][0].sent, [])
+        self.assertEqual(result["router_attempt_count"], 0)
+
+    def test_row_runner_receipt_write_failure_still_stops_before_script(self) -> None:
+        result, trace = self._run_injected_row(
+            "E01",
+            packet_status="not_applicable",
+            receipt_write_failed=True,
+        )
+
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["driver_exit_code"], 1)
+        self.assertEqual(trace["drivers"][0].sent, [])
+        logs = (
+            PROJECT_ROOT / result["evidence_path"] / "server_logs.txt"
+        ).read_text(encoding="ascii")
+        self.assertIn("RouterReceiptWriteFailed", logs)
 
     def test_row_runner_blocks_exit_zero_when_required_evidence_is_degraded(self) -> None:
         result, trace = self._run_injected_row("E07", packet_status="degraded")
@@ -1746,19 +1947,31 @@ class MappingPilotExecutionTests(unittest.TestCase):
             slot["execution"]["live_interval"]["ended_at"],
         )
 
-    def test_row_runner_prevents_e4_08_after_unexpected_restart_receipt(self) -> None:
+    def test_row_runner_continues_after_unexpected_restart_receipt_but_blocks_pass(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        _row, frozen_script, _fixture_id = row_runner._resolve_frozen_row("E07", None)
+        expected_step_ids = [step["id"] for step in frozen_script["turns"]]
         result, trace = self._run_injected_row(
             "E07", unexpected_after_restart=True
         )
-        self.assertEqual(result["lifecycle_checkpoint"]["status"], "blocked")
-        self.assertEqual(result["lifecycle_checkpoint"]["provider_call_expected_false_observed"], 1)
-        self.assertNotIn("E4-08", trace["drivers"][1].sent)
-        self.assertEqual(result["provider_call_expected_false_observed"], 1)
-        self.assertEqual(trace["scoring_inputs"][0]["attempt_count"], 8)
-        self.assertEqual(len(trace["scoring_inputs"][0]["provider_calls"]), 7)
-        self.assertIsNone(
-            trace["scoring_inputs"][0]["model_turns"][-1]["latency_seconds"]
+        self.assertEqual(result["lifecycle_checkpoint"]["status"], "degraded")
+        self.assertTrue(result["lifecycle_checkpoint"]["resume_integrity_verified"])
+        self.assertEqual(
+            result["lifecycle_checkpoint"]["provider_call_expected_false_observed"],
+            1,
         )
+        self.assertEqual(
+            trace["drivers"][0].sent + trace["drivers"][1].sent,
+            expected_step_ids,
+        )
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["provider_call_expected_false_observed"], 1)
+        expected_attempts = len(expected_step_ids) + 1
+        self.assertEqual(result["router_attempt_count"], expected_attempts)
+        self.assertEqual(result["ledger_attempt_count"], expected_attempts)
+        self.assertEqual(trace["scoring_inputs"][0]["attempt_count"], expected_attempts)
+        self.assertEqual(len(trace["scoring_inputs"][0]["provider_calls"]), len(expected_step_ids))
         cap_artifact = json.loads(
             (
                 PROJECT_ROOT
@@ -1768,12 +1981,12 @@ class MappingPilotExecutionTests(unittest.TestCase):
                 / "cap_counts.json"
             ).read_text(encoding="ascii")
         )
-        self.assertEqual(cap_artifact["row_attempts"], 8)
+        self.assertEqual(cap_artifact["row_attempts"], expected_attempts)
 
         boundary_result, boundary_trace = self._run_injected_row(
             "E07", unexpected_at_e4_08_boundary=True
         )
-        self.assertEqual(boundary_result["lifecycle_checkpoint"]["status"], "blocked")
+        self.assertEqual(boundary_result["lifecycle_checkpoint"]["status"], "degraded")
         self.assertEqual(
             boundary_result["lifecycle_checkpoint"][
                 "provider_call_expected_false_observed"
@@ -1781,17 +1994,52 @@ class MappingPilotExecutionTests(unittest.TestCase):
             1,
         )
         self.assertTrue(boundary_trace["e4_08_injected"])
-        self.assertNotIn("E4-08", boundary_trace["drivers"][1].sent)
+        self.assertIn("E4-08", boundary_trace["drivers"][1].sent)
+        self.assertEqual(boundary_result["verdict"], "BLOCKED")
 
-    def test_row_runner_blocks_lifecycle_call_before_first_model_turn(self) -> None:
+    def test_row_runner_continues_after_attributable_pre_model_call_but_blocks_pass(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        _row, frozen_script, _fixture_id = row_runner._resolve_frozen_row("E07", None)
+        expected_step_ids = [step["id"] for step in frozen_script["turns"]]
         result, trace = self._run_injected_row(
             "E07", unexpected_before_first_model=True
+        )
+        self.assertEqual(result["driver_exit_code"], 0)
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(
+            trace["drivers"][0].sent + trace["drivers"][1].sent,
+            expected_step_ids,
+        )
+        self.assertTrue(trace["pre_model_injected"])
+        self.assertEqual(result["provider_call_expected_false_observed"], 1)
+        self.assertEqual(
+            result["router_attempt_count"], len(expected_step_ids) + 1
+        )
+        self.assertEqual(
+            result["ledger_attempt_count"], len(expected_step_ids) + 1
+        )
+
+    def test_row_runner_stops_on_unattributed_pre_model_receipt(self) -> None:
+        result, trace = self._run_injected_row(
+            "E07",
+            unexpected_before_first_model=True,
+            invalid_pre_model_attribution=True,
         )
         self.assertEqual(result["driver_exit_code"], 1)
         self.assertEqual(result["verdict"], "BLOCKED")
         self.assertEqual(trace["drivers"][0].sent, [])
-        self.assertTrue(trace["pre_model_injected"])
-        self.assertEqual(result["provider_call_expected_false_observed"], 1)
+        self.assertEqual(result["router_attempt_count"], 1)
+
+    def test_row_runner_does_not_waive_restart_state_hash_mismatch(self) -> None:
+        result, trace = self._run_injected_row(
+            "E07", state_mismatch_after_restart=True
+        )
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["lifecycle_checkpoint"]["status"], "blocked")
+        self.assertFalse(result["lifecycle_checkpoint"]["resume_integrity_verified"])
+        self.assertFalse(result["lifecycle_checkpoint"]["state_hash_matches"])
+        self.assertNotIn("E4-08", trace["drivers"][1].sent)
 
     def test_server_receipt_observer_attributes_startup_and_model_turn_without_content(self) -> None:
         from scripts.mapping_pilot import server as server_module
