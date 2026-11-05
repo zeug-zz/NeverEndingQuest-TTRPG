@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -116,6 +117,108 @@ class CartographerTests(unittest.TestCase):
     def test_repeated_location_ids_are_namespaced_by_module(self) -> None:
         prompts = build_location_prompts(extract_sources(self.root, self.slugs, self.selected))
         self.assertEqual(sum(row["key"].endswith(":LOC01") for row in prompts), 3)
+
+    def test_area_files_supply_locations_when_context_locations_are_empty(self) -> None:
+        module = self.root / self.slugs[0]
+        area_one_path = module / "areas" / "AREA1_BU.json"
+        area_one = json.loads(area_one_path.read_text(encoding="utf-8"))
+        moved_row = next(row for row in area_one["locations"] if row["locationId"] == "LOC02")
+        location_one = next(row for row in area_one["locations"] if row["locationId"] == "LOC01")
+        location_one["areaConnectivityId"] = ["LOC02"]
+        area_one["locations"] = [row for row in area_one["locations"] if row["locationId"] != "LOC02"]
+        area_one_path.write_text(json.dumps(area_one), encoding="utf-8")
+        area_two_path = module / "areas" / "AREA2_BU.json"
+        area_two_path.write_text(json.dumps({
+            "areaId": "AREA2",
+            "areaName": "Far Courtyard",
+            "areaDescription": "A separate authored area.",
+            "locations": [moved_row],
+        }), encoding="utf-8")
+        (module / "module_context.json").write_text(
+            json.dumps({"locations": {}}), encoding="utf-8"
+        )
+
+        sources = extract_sources(self.root, self.slugs, self.selected)
+        source = next(row for row in sources if row["module_slug"] == self.slugs[0] and row["location_id"] == "LOC01")
+
+        self.assertEqual(source["context"], {})
+        self.assertEqual(source["area"]["area_id"], "AREA1")
+        self.assertEqual(set(source["authored_graph"]["location_ids"]), set(self.selected[self.slugs[0]]))
+        self.assertIn("LOC02", source["authored_graph"]["location_ids"])
+        self.assertIn(
+            {
+                "from_location_id": "LOC01",
+                "to_location_id": "LOC02",
+                "source_field": "area.areaConnectivityId",
+            },
+            source["authored_graph"]["outgoing_edges"],
+        )
+        self.assertIn("Module_A/areas/AREA1_BU.json", source["source_references"])
+        self.assertIn("Module_A/module_context.json", source["source_references"])
+
+    def test_duplicate_location_across_area_files_is_refused(self) -> None:
+        module = self.root / self.slugs[0]
+        source_area_path = module / "areas" / "AREA1_BU.json"
+        source_area = json.loads(source_area_path.read_text(encoding="utf-8"))
+        duplicate = next(row for row in source_area["locations"] if row["locationId"] == "LOC01")
+        (module / "areas" / "AREA2_BU.json").write_text(json.dumps({
+            "areaId": "AREA2",
+            "areaName": "Second Area",
+            "areaDescription": "Duplicate fixture location.",
+            "locations": [duplicate],
+        }), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "duplicate authored location ID LOC01"):
+            extract_sources(self.root, self.slugs, self.selected)
+
+    def test_context_area_disagreement_and_missing_context_are_handled(self) -> None:
+        module = self.root / self.slugs[0]
+        context_path = module / "module_context.json"
+        context_path.write_text(json.dumps({"locations": {"LOC01": {"area": "OTHER"}}}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "context area disagrees"):
+            extract_sources(self.root, self.slugs, self.selected)
+
+        context_path.unlink()
+        sources = extract_sources(self.root, self.slugs, self.selected)
+        source = next(row for row in sources if row["module_slug"] == self.slugs[0] and row["location_id"] == "LOC01")
+        self.assertEqual(source["context"], {})
+        self.assertEqual(source["source_references"], ["Module_A/areas/AREA1_BU.json"])
+        self.assertEqual(set(source["source_sha256"]), set(source["source_references"]))
+
+    def test_extracts_owner_selected_real_locations_read_only(self) -> None:
+        module_slugs = ["Keep_of_Doom", "The_Thornwood_Watch", "The_Pumpkin_Kings_Curse"]
+        modules_root = PROJECT_ROOT / "modules"
+        missing = [slug for slug in module_slugs if not (modules_root / slug).is_dir()]
+        if missing:
+            self.skipTest("owner-selected module is absent: %s" % ", ".join(missing))
+        selected = {
+            "Keep_of_Doom": ["AN01", "AA01", "AG01", "AE01", "AL01", "AN02", "AA02"],
+            "The_Thornwood_Watch": ["NC01", "NC02", "NC03", "NC04", "NC05", "RO01"],
+            "The_Pumpkin_Kings_Curse": ["AD01", "AB01", "V01", "AB02", "V02", "AB03", "V03"],
+        }
+
+        def module_hashes() -> dict[str, str]:
+            return {
+                path.relative_to(modules_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted(modules_root.rglob("*"))
+                if path.is_file()
+            }
+
+        before = module_hashes()
+        sources = extract_sources(modules_root, module_slugs, selected)
+        after = module_hashes()
+
+        self.assertEqual(len(sources), 20)
+        self.assertEqual(
+            {(row["module_slug"], row["location_id"]) for row in sources},
+            {(slug, location_id) for slug, location_ids in selected.items() for location_id in location_ids},
+        )
+        for source in sources:
+            outgoing_edges = source["authored_graph"]["outgoing_edges"]
+            self.assertIsInstance(outgoing_edges, list)
+            if not outgoing_edges:
+                self.assertEqual(outgoing_edges, [])
+        self.assertEqual(after, before)
 
     def test_rejects_duplicate_or_nonpublished_slugs_and_bad_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "three unique"):
