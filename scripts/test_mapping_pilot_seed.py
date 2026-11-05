@@ -10,6 +10,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import io
+import importlib.util
 import json
 import os
 import pathlib
@@ -411,12 +412,17 @@ class MappingPilotSeedTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         ).stdout
         self.assertNotIn(b"--mapping-pilot-fixture", legacy_source)
-        legacy_module = types.ModuleType("_mapping_pilot_legacy_seed_combat_capture")
-        legacy_module.__file__ = str(ROOT / "scripts" / "seed_combat_capture.py")
-        exec(
-            compile(legacy_source, legacy_module.__file__, "exec"),
-            legacy_module.__dict__,
+        legacy_source_path = ROOT / self.scratch / "legacy_seed_combat_capture.py"
+        legacy_source_path.write_bytes(legacy_source)
+        spec = importlib.util.spec_from_file_location(
+            "_mapping_pilot_legacy_seed_combat_capture", legacy_source_path
         )
+        if spec is None or spec.loader is None:
+            raise ImportError("could not load pinned legacy combat seeder")
+        legacy_module = importlib.util.module_from_spec(spec)
+        # Keep the pinned module's original project-root bootstrap semantics.
+        legacy_module.__file__ = str(ROOT / "scripts" / "seed_combat_capture.py")
+        spec.loader.exec_module(legacy_module)
 
         sandbox = ROOT / self.scratch / "legacy-parity" / "combat_capture"
         runs = []
