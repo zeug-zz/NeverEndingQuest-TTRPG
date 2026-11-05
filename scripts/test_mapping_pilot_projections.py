@@ -26,6 +26,7 @@ from scripts.mapping_pilot.fixtures import load_verified_fixtures
 from scripts.mapping_pilot.knowledge import filter_layout_for_viewpoint
 from scripts.mapping_pilot.projections import (
     SHARED_INSTRUCTION,
+    _anchor_phrase,
     packet_hash,
     relationship_statements,
     render_packet,
@@ -62,6 +63,24 @@ class MappingPilotProjectionTests(unittest.TestCase):
                 self.assertEqual(render_packet(projection, "D").encode("ascii"), d_packet.encode("ascii"))
                 self.assertEqual(packet_hash(b_packet), hashlib.sha256(b_packet.encode("ascii")).hexdigest())
                 self.assertEqual(packet_hash(d_packet), hashlib.sha256(d_packet.encode("ascii")).hexdigest())
+
+    def test_frozen_fixture_packets_match_pinned_pre_change_packet_hashes(self) -> None:
+        # pinned pre-change packet hashes
+        expected = {
+            "interior_tavern": ("083dda49c032417f52de821845c6e691bc9bb27683c5de48b1d54394ae92e5ae", "2c12d5fa8aa51c934b242a0bf7aa9039fbbd32e714611d7f71394abebc09eca1"),
+            "landscape_village": ("39c75b316c1a5a68af134f217da9550f390b1e85846c7b6e3661655b96edd91c", "99c56f4649d518cc403fd77aff42eef9d6befb6c6e172701c4776999a9865b20"),
+            "transition_tower_approach": ("034e0364a9ad2a8afa487925ee522b3053e5a1fd134e62ca81ef94ed1cb07a18", "391b2028406679567e8da69ff3c767919ecb11f3397640d86860b5a77265389c"),
+            "combat_stage_tavern_zones": ("43054b4134d4eea5e7b5bfc7d660fa50778c92aec49486b4067f34ff8ff7afea", "7de28dbab9891e1d5735e66b8171a2000b68405714b38324682bb085425e7544"),
+        }
+        for fixture_id, hashes in expected.items():
+            with self.subTest(fixture=fixture_id):
+                projection = self._project(self.fixtures[fixture_id])
+                self.assertEqual(tuple(packet_hash(render_packet(projection, arm)) for arm in ("B", "D")), hashes)
+
+    def test_anchor_phrase_avoids_duplicate_preposition(self) -> None:
+        self.assertEqual(_anchor_phrase("Markers", "on the standing stones"), "Markers on the standing stones")
+        self.assertEqual(_anchor_phrase("Window", "north_window_view"), "Window at north window view")
+        self.assertEqual(_anchor_phrase("Alcove", "small alcove in the central marker"), "Alcove at small alcove in the central marker")
 
     def test_exact_instruction_and_no_ids_or_unfiltered_facts(self) -> None:
         fixture = copy.deepcopy(self.fixtures["interior_tavern"])
