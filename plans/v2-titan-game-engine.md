@@ -93,7 +93,7 @@ The review found existing bootstrap entrypoints in `core/memory/memory_db.py`:
 `run_memory_migrations()`. This does not establish completed runtime retrieval,
 world generation or Titan integration.
 
-On 2026-10-27, a read-only inspection of `data/world_narrative_seed.db` found:
+Historical, pre-delivery observation (2026-10-27), retained as provenance only:
 
 - SHA-256: `0ed5a2a74cafe26cd6bd82beddbdaa0bdb14964102282e326b4567f7b3b85de7`.
 - `inspiration_atoms`: 0 rows; `alignment_profiles`: 0 rows;
@@ -101,12 +101,17 @@ On 2026-10-27, a read-only inspection of `data/world_narrative_seed.db` found:
 - The installed alignment schema includes `ethical_score`, `moral_score`,
   `balance_score`, `classic_label`, `source` and `confidence`.
 
-The handover instead records hash
-`a4d8c58f6c3b3b4649d35afa6af16c408095252c3352341cbbedd072f628b5e6`,
-41,216 atoms and 3,944 alignment profiles. The difference is unresolved; this is
-not evidence that alignments were deliberately stripped. The owner intends to
-investigate/re-export. Recheck before implementation; this dated finding is not
-a permanent assertion about later seed exports.
+Reconciled 2026-11-05: the current handover sections 1-10 record the delivered
+pilot main-file hash
+`6dbefe49f72733d11cc1ae6c15c41f9ce97435235842192effd9295ab56bb66e`.
+The disposable SQLite-backup audit independently finds 41,216 atoms, 3,944
+alignment profiles, 240 v1-shaped detail envelopes and zero relations. Its
+backup hash differs from the source hash; see
+`v2-memory-pilot-p0/baseline-audit.md` for the exact identity and limitations.
+The earlier empty-seed observation is superseded, not a current blocker.
+The delivered alignment schema lacks the historical `source` column. Full
+consumer validation, semantic quality and publication clearance remain open;
+240 enriched pilot cells do not establish full-corpus enrichment.
 
 P0 must verify the actual export, integrity, foreign keys, schema/version,
 representative fragment quality, alignment distributions and supported retrieval.

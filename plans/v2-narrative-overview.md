@@ -535,6 +535,7 @@ live runs never overlap.
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
+| Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit and producer handoff ready, fixture/rubric and budget contracts still pending | -- |
 
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
@@ -545,8 +546,11 @@ not yet judged.
    sketches. Without it S criterion 5 stays unmet.
 
 Done 2026-11-05: ADR-0033 (Firelight) accepted, with its `AGENTS.md` rule;
-sending the memory-pilot producer request to NEQ-world approved (the Overseer
-sends it after the Pilot P0 audit). N and S sessions opened with their s10.5 goals; `config.py`
+sending the memory-pilot producer request to NEQ-world approved and delivered
+as a local document handoff to
+`../NEQ-world/plans/neq-ttrpg-full-seed-request-20261105.md` (receipt in
+`plans/v2-memory-pilot-p0/handoff-receipt.md`; producer acknowledgement still
+pending). N and S sessions opened with their s10.5 goals; `config.py`
 provided in both worktrees; SP0 preregistration reviewed, approved and merged
 (#81), which freezes it and clears the pilot for provider calls under its
 protocol. The superseded `mapping-research-arena-comparison` change is
@@ -670,4 +674,3 @@ platforms, connectivity, credentials, scenarios or assertions are BLOCKED or
 FAIL, never waived. Driver exit codes, builder claims and green unit tests
 alone do not pass a gate.
 ```
-
