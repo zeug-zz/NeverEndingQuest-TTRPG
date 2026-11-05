@@ -13,7 +13,8 @@
     "node_modules",
     "modules",
     "data",
-    "__pycache__"
+    "__pycache__",
+    "tmp"
   ],
   "replacement_map": {
     "\u2018": "'",
