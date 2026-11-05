@@ -879,8 +879,13 @@ def handle_plot_data_request_impl(emit_fn: Callable[..., None], debug_fn: Callab
             emit_fn('plot_data_response', {'data': None, 'error': 'Party tracker not found'})
             return
 
-        with open(party_tracker_path, 'r', encoding='utf-8') as tracker_file:
-            party_tracker = json.load(tracker_file)
+        # TABLETOP MODE: Read canonical party state through the baseline-aware loader.
+        from utils.encoding_utils import safe_json_load
+
+        party_tracker = safe_json_load(party_tracker_path)
+        if not isinstance(party_tracker, dict):
+            emit_fn('plot_data_response', {'data': None, 'error': 'Party tracker is invalid'})
+            return
 
         current_module = party_tracker.get("module", "").replace(" ", "_")
         if not current_module:

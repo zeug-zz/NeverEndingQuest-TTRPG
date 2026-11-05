@@ -61,7 +61,9 @@ import shutil
 import time
 import logging
 import re
-from typing import Any, Dict, Optional
+import threading
+from contextlib import ExitStack
+from typing import Any, Callable, Dict, Optional
 from pathlib import Path
 
 from utils.provider_log_safety import configure_provider_log_safety
@@ -73,6 +75,12 @@ from utils.toolkit_adaptation_output_safety import is_adaptation_output_active
 configure_provider_log_safety()
 logger = logging.getLogger(__name__)
 _legacy_logging_configured = False
+_safe_write_json_guards: list[Callable[[str, Any], Any]] = []
+_safe_write_json_guards_lock = threading.RLock()
+
+
+class SafeWriteRejected(Exception):
+    """A canonical state write was rejected before the file was changed."""
 _ABSOLUTE_PATH = re.compile(
     r"(?:[A-Za-z]:[\\/]|/(?:Users|home|tmp|var|private|opt|etc)/)[^\s]+"
 )
@@ -262,7 +270,10 @@ class AtomicFileWriter:
 
     def write_json(self, filepath: str, data: Any,
                    create_backup: bool = True, acquire_lock: bool = True,
-                   json_kwargs: Optional[Dict[str, Any]] = None) -> bool:
+                   json_kwargs: Optional[Dict[str, Any]] = None,
+                   data_transformer: Optional[Callable[[str, Any, Any, bool], Any]] = None,
+                   data_commit_callback: Optional[Callable[[str, Any, Any], None]] = None,
+                   ) -> bool:
         """
         Atomically write JSON data to file with optional backup and locking.
 
@@ -272,6 +283,7 @@ class AtomicFileWriter:
             create_backup: Whether to create a backup before writing
             acquire_lock: Whether to use file locking
             json_kwargs: Optional kwargs forwarded to json.dump
+            data_commit_callback: Optional callback after atomic replacement
 
         Returns:
             True if successful, False otherwise
@@ -286,6 +298,7 @@ class AtomicFileWriter:
             return False
         _ensure_legacy_logging()
         filepath = str(filepath)  # Handle Path objects
+        submitted_data = data
         temp_path = f"{filepath}.tmp"
         backup_path = None
         lock_acquired = False
@@ -300,6 +313,15 @@ class AtomicFileWriter:
                 lock_acquired = True
                 _file_operation_log(
                     logging.DEBUG, "Lock acquired successfully", "lock_acquire_succeeded"
+                )
+
+            # TABLETOP MODE: Canonical party writes rebase or reject while the
+            # atomic file lock is held, closing the read/merge/write race.
+            if data_transformer is not None:
+                current_exists = os.path.exists(filepath)
+                current_data = self.read_json(filepath) if current_exists else None
+                data = data_transformer(
+                    filepath, data, current_data, current_exists
                 )
             
             # Create backup if requested and file exists
@@ -332,11 +354,29 @@ class AtomicFileWriter:
 
             # Atomic replace with Windows-safe retry behavior.
             self._atomic_replace(temp_path, filepath)
+            if data_commit_callback is not None:
+                # TABLETOP MODE: Publish the exact transformed payload only
+                # after replacement succeeds and before releasing the file lock.
+                data_commit_callback(filepath, submitted_data, data)
             # Suppress success messages - only log errors
             # logger.info(f"Successfully wrote {filepath}")
             
             return True
             
+        except SafeWriteRejected as e:
+            _file_operation_log(
+                logging.WARNING,
+                f"Rejected JSON write for {filepath}: {e}",
+                "write_rejected",
+            )
+
+            if os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+            return False
         except Exception as e:
             _file_operation_log(logging.ERROR, f"Error writing {filepath}: {e}", "write_error")
             
@@ -418,13 +458,97 @@ atomic_writer = AtomicFileWriter()
 # Convenience functions
 def safe_write_json(filepath: str, data: Any,
                    create_backup: bool = True, acquire_lock: bool = True,
-                   json_kwargs: Optional[Dict[str, Any]] = None) -> bool:
-    """Atomically write JSON data to file."""
-    return atomic_writer.write_json(filepath, data, create_backup, acquire_lock, json_kwargs)
+                   json_kwargs: Optional[Dict[str, Any]] = None,
+                   _party_tracker_snapshot_targets: Optional[tuple[Any, ...]] = None,
+                   ) -> bool:
+    """Atomically write JSON data after entering any registered write guards."""
+    # TABLETOP MODE: Load the domain guard even when a legacy standalone writer
+    # reaches this common persistence boundary before the host runtime imports it.
+    data_transformer = None
+    data_commit_callback = None
+    canonical_party_tracker = False
+    try:
+        is_party_tracker_path = (
+            _is_valid_filepath(filepath)
+            and Path(filepath).name == "party_tracker.json"
+        )
+    except (OSError, TypeError, ValueError):
+        is_party_tracker_path = False
+    if is_party_tracker_path:
+        from utils import pc_manager as _pc_manager
+
+        canonical_party_tracker = _pc_manager.is_canonical_party_tracker_path(filepath)
+        if canonical_party_tracker:
+            data_transformer = _pc_manager.prepare_canonical_party_tracker_write
+            # A caller cannot disable serialization for canonical party state.
+            acquire_lock = True
+
+            def refresh_party_snapshots(
+                committed_path: str,
+                submitted_data: Any,
+                committed_data: Any,
+            ) -> None:
+                # TABLETOP MODE: Only tagged reads of this canonical path are
+                # eligible for lifecycle refresh; plain dictionaries stay fail-closed.
+                targets = (submitted_data,) + tuple(
+                    _party_tracker_snapshot_targets or ()
+                )
+                seen_targets = set()
+                for target in targets:
+                    target_id = id(target)
+                    if target_id in seen_targets:
+                        continue
+                    seen_targets.add(target_id)
+                    _pc_manager.refresh_canonical_party_tracker_snapshot(
+                        committed_path, target, committed_data
+                    )
+
+            data_commit_callback = refresh_party_snapshots
+
+    with _safe_write_json_guards_lock:
+        guards = tuple(_safe_write_json_guards)
+    with ExitStack() as guard_stack:
+        for guard in guards:
+            guard_stack.enter_context(guard(filepath, data))
+        return atomic_writer.write_json(
+            filepath,
+            data,
+            create_backup,
+            acquire_lock,
+            json_kwargs,
+            data_transformer=data_transformer,
+            data_commit_callback=data_commit_callback,
+        )
+
+
+def register_safe_write_json_guard(guard: Callable[[str, Any], Any]) -> None:
+    """Register a context-manager guard around atomic JSON writes.
+
+    Guards are injected by domain owners; the party-tracker owner is loaded
+    lazily only when a legacy writer targets a party-tracker filename.
+    """
+    if not callable(guard):
+        raise TypeError("safe_write_json guard must be callable")
+    with _safe_write_json_guards_lock:
+        if guard not in _safe_write_json_guards:
+            _safe_write_json_guards.append(guard)
 
 def safe_read_json(filepath: str, acquire_lock: bool = False) -> Optional[Dict[str, Any]]:
-    """Safely read JSON file"""
-    return atomic_writer.read_json(filepath, acquire_lock)
+    """Safely read JSON; canonical party snapshots retain their read baseline."""
+    data = atomic_writer.read_json(filepath, acquire_lock)
+    try:
+        is_party_tracker_path = (
+            _is_valid_filepath(filepath)
+            and Path(filepath).name == "party_tracker.json"
+        )
+    except (OSError, TypeError, ValueError):
+        is_party_tracker_path = False
+    if is_party_tracker_path:
+        from utils import pc_manager as _pc_manager
+
+        if _pc_manager.is_canonical_party_tracker_path(filepath):
+            return _pc_manager.tag_party_tracker_snapshot(filepath, data)
+    return data
 
 def cleanup_locks():
     """Clean up any remaining lock files"""

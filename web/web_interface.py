@@ -1398,14 +1398,16 @@ def upload_portrait():
             try:
                 party_tracker_path = 'party_tracker.json'
                 if os.path.exists(party_tracker_path):
-                    with open(party_tracker_path, 'r', encoding='utf-8') as f:
-                        party_tracker = json.load(f)
-                        current_module = party_tracker.get('module', '').replace(' ', '_')
-                        if current_module:
-                            from utils.module_path_manager import ModulePathManager
-                            manager = ModulePathManager(current_module)
-                            module_portraits_dir = os.path.join(manager.get_module_dir(), 'portraits')
-                            os.makedirs(module_portraits_dir, exist_ok=True)
+                    # TABLETOP MODE: Keep canonical party reads baseline-aware.
+                    from utils.encoding_utils import safe_json_load
+
+                    party_tracker = safe_json_load(party_tracker_path)
+                    current_module = party_tracker.get('module', '').replace(' ', '_')
+                    if current_module:
+                        from utils.module_path_manager import ModulePathManager
+                        manager = ModulePathManager(current_module)
+                        module_portraits_dir = os.path.join(manager.get_module_dir(), 'portraits')
+                        os.makedirs(module_portraits_dir, exist_ok=True)
             except Exception as module_dir_error:
                 warning(f"PORTRAIT: Could not resolve module portrait directory: {module_dir_error}")
 
@@ -3839,8 +3841,10 @@ def handle_location_data_request():
         # Load party tracker to get current location
         party_tracker_path = 'party_tracker.json'
         if os.path.exists(party_tracker_path):
-            with open(party_tracker_path, 'r', encoding='utf-8') as f:
-                party_tracker = json.load(f)
+            # TABLETOP MODE: Keep canonical party reads baseline-aware.
+            from utils.encoding_utils import safe_json_load
+
+            party_tracker = safe_json_load(party_tracker_path)
             
             world_conditions = party_tracker.get('worldConditions', {})
             location_info = {

@@ -41,12 +41,14 @@ def create_default_party_tracker():
     """Create a default party_tracker.json if it doesn't exist"""
     tracker_path = resolve_repository_path('party_tracker.json', root=INSTALL_ROOT)
     if not tracker_path.exists():
-        default_tracker = {}
-        
         try:
-            import json
-            with open(tracker_path, 'w', encoding='utf-8') as f:
-                json.dump(default_tracker, f, indent=2, ensure_ascii=False)
+            from utils import pc_manager
+
+            if not pc_manager.is_canonical_party_tracker_path(tracker_path):
+                raise ValueError("Resolved tracker path is not the canonical party tracker")
+            # TABLETOP MODE: Bootstrap the canonical party file through its revision-aware writer.
+            if pc_manager.replace_party_tracker_data({}) is None:
+                raise OSError("Canonical party tracker bootstrap failed")
             print("[INFO] Created default party_tracker.json for first-time setup")
             return True
         except Exception as e:

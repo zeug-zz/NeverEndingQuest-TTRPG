@@ -30,6 +30,7 @@ Provides consistent text sanitization and encoding/decoding functions.
 import unicodedata
 import json
 import codecs
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 
@@ -127,6 +128,19 @@ def sanitize_dict(data: Dict[str, Any]) -> Dict[str, Any]:
         return data
 
 
+def _tag_canonical_party_snapshot(filepath: str, data: Any) -> Any:
+    """Use the PC manager's per-read baseline only for canonical party state."""
+    try:
+        if Path(filepath).name != "party_tracker.json":
+            return data
+    except (TypeError, ValueError):
+        return data
+
+    from utils import pc_manager
+
+    return pc_manager.tag_party_tracker_snapshot(filepath, data)
+
+
 def safe_json_load(filepath: str) -> Any:
     """
     Load JSON file with proper encoding and error handling.
@@ -136,14 +150,14 @@ def safe_json_load(filepath: str) -> Any:
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
             # Sanitize the loaded data
-            return sanitize_dict(data)
+            return _tag_canonical_party_snapshot(filepath, sanitize_dict(data))
     except FileNotFoundError:
         return None
     except UnicodeDecodeError:
         # Try with different encoding if UTF-8 fails
         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             data = json.load(f)
-            return sanitize_dict(data)
+            return _tag_canonical_party_snapshot(filepath, sanitize_dict(data))
     except Exception as e:
         print(f"Error loading JSON from {filepath}: {e}")
         raise
@@ -156,8 +170,30 @@ def safe_json_dump(data: Any, filepath: str, **kwargs) -> bool:
     Uses the atomic file operation layer so JSON writes share the same
     cross-platform locking and Windows-safe replace semantics.
     """
-    # Sanitize data before saving
+    # TABLETOP MODE: Carry the trusted read baseline across sanitization; a
+    # plain dict or dict(payload) remains intentionally unversioned.
+    pc_manager = None
+    snapshot_baseline = None
+    try:
+        if isinstance(data, dict) and Path(filepath).name == "party_tracker.json":
+            from utils import pc_manager as _pc_manager
+
+            if _pc_manager.is_canonical_party_tracker_path(filepath):
+                pc_manager = _pc_manager
+                snapshot_baseline = _pc_manager.party_tracker_snapshot_baseline(
+                    filepath, data
+                )
+    except (TypeError, ValueError):
+        pc_manager = None
+
+    # Sanitize data before saving.
     clean_data = sanitize_dict(data) if isinstance(data, (dict, list)) else data
+    if pc_manager is not None and snapshot_baseline is not None:
+        clean_data = pc_manager.tag_party_tracker_snapshot(
+            filepath,
+            clean_data,
+            baseline=sanitize_dict(snapshot_baseline),
+        )
 
     # Default kwargs for consistent JSON formatting
     default_kwargs = {
@@ -168,7 +204,17 @@ def safe_json_dump(data: Any, filepath: str, **kwargs) -> bool:
     default_kwargs.update(kwargs)
 
     from utils.file_operations import safe_write_json
-    return safe_write_json(filepath, clean_data, json_kwargs=default_kwargs)
+    snapshot_targets = (
+        (data,)
+        if pc_manager is not None and snapshot_baseline is not None
+        else None
+    )
+    return safe_write_json(
+        filepath,
+        clean_data,
+        json_kwargs=default_kwargs,
+        _party_tracker_snapshot_targets=snapshot_targets,
+    )
 
 
 def fix_corrupted_location_name(name: str) -> str:
