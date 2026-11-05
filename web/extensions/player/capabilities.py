@@ -230,6 +230,7 @@ _HOST_ONLY_EMISSIONS = (
     "system_message",
     "token_update",
     "unified_generation_complete",
+    "unified_generation_error",
     "unified_generation_progress",
     "update_complete",
     "update_error",
@@ -242,7 +243,7 @@ _HOST_ONLY_EMISSIONS = (
 # become a typed player projection, while the chat wrapper mirrors arbitrary
 # host emissions and therefore remains host-only.
 _DYNAMIC_EVENT_CALLSITES = {
-    "dynamic:emit:web/web_interface.py:emit_compression_event:635": HOST_ONLY,
+    "dynamic:emit:web/web_interface.py:emit_compression_event:641": HOST_ONLY,
     "dynamic:emit:web/extensions/live_chat_monitor.py:setup_live_chat_monitor._tabletop_mode_emit_wrapper:91": HOST_ONLY,
     "dynamic:emit:web/extensions/streaming_events.py:_emit:164": PLAYER_PROJECTION_OR_TYPED_COMMAND,
 }
