@@ -560,6 +560,41 @@ live runs never overlap.
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
 
+#### SP4 handoff to the Module Builder
+
+Owner-directed report clarification: SP4 includes an explicit module-data
+requirements and gap list drawn from D1 and the pilot representation decision.
+This makes the existing S1/S2/SC1/S3/S4 handoff actionable for Builder MB0's
+next contract review; it does not authorize Builder implementation in S.
+
+For each required spatial fact/field, the report records:
+
+- The consuming projection/behavior and why the fact matters to players.
+- The proposed field, units and schematic-versus-metric meaning; unknown or
+  not-applicable values stay explicit. No exhaustive grid requirement is
+  assumed before the representation decision.
+- Authored presence and missing/ambiguous counts with denominators for the
+  D1 sample (about 20 locations across three modules), identifying the sampled
+  module/location versions. Findings are sample coverage, not corpus-wide
+  prevalence. Fields outside D1's scope are marked not assessed.
+- Whether the value is already authored, safely derived by a stated rule,
+  requires new authoring, or remains unknown. LLM cartographer proposals are
+  labelled proposals with audit results, not promoted to source facts.
+- Ownership and follow-up: Spatial S1 schema/query contract, Builder MB1/MB2
+  generation requirements, and S3 backfill feasibility. Preserve the existing
+  D1 precision/zero-invented-exits gate; backfill does not become authorized
+  merely because a field is missing.
+
+The Builder review consumes this list and defines any generation, migration
+or backfill changes through separately approved OpenSpec work. Builder-side
+generation tests and the applicable Spatial live gates must establish that
+generated data works in play; S research alone cannot prove that.
+
+This is a synthesis of existing D1/SP4 evidence, not a new experiment. The
+frozen preregistration, budgets, matrix and scoring thresholds are unchanged;
+no extra calls, module census, production edits or fabricated measurements
+are authorized. Missing evidence is reported explicitly.
+
 ### 10.4 Pending owner actions
 
 1. When N delivers it, run the N0 Linux Docker script outside the sandbox.
