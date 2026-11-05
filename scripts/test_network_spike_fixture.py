@@ -48,6 +48,12 @@ class TestSessionSigner(unittest.TestCase):
         future = fixture_auth.SessionSigner(60, key=b"k" * 32, clock=lambda: 1100)
         self.assertFalse(signer.verify(future.issue()))
 
+    def test_token_part_length_is_bounded_before_decoding(self):
+        oversized = "-" * 100000
+        too_long_valid_alphabet = "A" * (fixture_auth._MAX_TOKEN_PART_CHARS + 4)
+        self.assertIsNone(fixture_auth._decode_token_part(oversized))
+        self.assertIsNone(fixture_auth._decode_token_part(too_long_valid_alphabet))
+
     def test_default_key_is_shared_only_within_process(self):
         first = fixture_auth.SessionSigner(60)
         second = fixture_auth.SessionSigner(60)

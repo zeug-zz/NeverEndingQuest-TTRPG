@@ -20,10 +20,17 @@ from urllib.parse import urlsplit
 
 
 _PROCESS_SESSION_KEY = secrets.token_bytes(32)
-_TOKEN_PART_RE = re.compile(r"[A-Za-z0-9_-]+\Z")
+_TOKEN_PART_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
 _NONCE_RE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 _COOKIE_NAME_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
 _TOKEN_CLOCK_SKEW_SECONDS = 30
+_MAX_TOKEN_CHARS = 1024
+# A SHA-256 signature uses 43 unpadded base64url characters; reserve that and
+# the separator under the existing total-token cap to derive the part limit.
+_TOKEN_SIGNATURE_PART_CHARS = (hashlib.sha256().digest_size * 8 + 5) // 6
+_MAX_TOKEN_PART_CHARS = _MAX_TOKEN_CHARS - 1 - _TOKEN_SIGNATURE_PART_CHARS
 
 
 def check_password(supplied: Optional[str], expected: str) -> bool:
@@ -42,7 +49,11 @@ def _encode_token_part(value: bytes) -> str:
 
 def _decode_token_part(value: str) -> Optional[bytes]:
     """Strictly decode an unpadded URL-safe Base64 token component."""
-    if not value or _TOKEN_PART_RE.fullmatch(value) is None:
+    if (
+        not value
+        or len(value) > _MAX_TOKEN_PART_CHARS
+        or any(character not in _TOKEN_PART_ALPHABET for character in value)
+    ):
         return None
     padded = value + ("=" * (-len(value) % 4))
     try:
@@ -94,7 +105,7 @@ class SessionSigner:
 
     def verify(self, token: Optional[str]) -> bool:
         """Return whether a token is authentic, unexpired, and well-formed."""
-        if not isinstance(token, str) or not token or len(token) > 1024:
+        if not isinstance(token, str) or not token or len(token) > _MAX_TOKEN_CHARS:
             return False
         parts = token.split(".")
         if len(parts) != 2:

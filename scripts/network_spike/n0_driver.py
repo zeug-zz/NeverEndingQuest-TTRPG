@@ -134,6 +134,7 @@ CHILD_ENV_KEYS = (
     "CURL_CA_BUNDLE",
     "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH",
 )
+_FIXTURE_CHILD_ENV_KEYS = frozenset(("N0_FIXTURE_PASSWORD",))
 _URL_RE = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]+)?", re.IGNORECASE)
 _URL_CANDIDATE_RE = re.compile(r"(?i)\bhttps?://[^\s<>\"'`]+")
 _HOST_RE = re.compile(r"\b[A-Za-z0-9.-]+\.opentunnel\.xyz\b", re.IGNORECASE)
@@ -1805,11 +1806,29 @@ class N0Run:
         except (OSError, ValueError):
             self.log("output reader ended")
 
-    def _start_process(self, command: Sequence[str], filename: str) -> subprocess.Popen[bytes]:
+    def _start_process(
+        self,
+        command: Sequence[str],
+        filename: str,
+        extra_environment: Optional[Mapping[str, str]] = None,
+    ) -> subprocess.Popen[bytes]:
+        process_environment: Mapping[str, str] = self.env
+        if extra_environment is not None:
+            if (
+                filename != "fixture.log"
+                or set(extra_environment) != _FIXTURE_CHILD_ENV_KEYS
+                or any(
+                    not isinstance(value, str) or not value
+                    for value in extra_environment.values()
+                )
+            ):
+                raise ValueError("only the fixture child may receive its allowlisted password")
+            process_environment = dict(self.env)
+            process_environment.update(extra_environment)
         process = subprocess.Popen(
             list(command),
             cwd=str(REPO_ROOT),
-            env=self.env,
+            env=process_environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -2550,19 +2569,16 @@ class N0Run:
             return False
         self.fixture_password = "n0-" + hashlib.sha256(os.urandom(32)).hexdigest()
         self.sensitive_values.append(self.fixture_password)
-        password_path = self.run_dir / "password.private"
-        _write_private(password_path, self.fixture_password + "\n")
         fixture_script = Path(__file__).resolve().with_name("fixture_server.py")
         process = self._start_process(
             [
                 sys.executable,
                 str(fixture_script),
-                "--password-file",
-                str(password_path),
                 "--public-host",
                 self.public_host,
             ],
             "fixture.log",
+            extra_environment={"N0_FIXTURE_PASSWORD": self.fixture_password},
         )
         self.fixture_process = process
         local_ready = self._wait_for_http(
@@ -4692,6 +4708,76 @@ def _self_test_impl(scratch_root: Path) -> int:
             and "synthetic-key" not in "\n".join(isolated_child_env.values())
         )
 
+        fixture_environment_probe = test_run("macos", "self-test-fixture-env")
+        fixture_environment_probe.env = {"PATH": "/fixture/child/path"}
+        fixture_environment_probe.public_host = "fixture.example"
+        fixture_process = mock.Mock()
+        fixture_process.pid = 424244
+        fixture_process.poll.return_value = None
+        fixture_process_call: Dict[str, Any] = {}
+
+        def _capture_fixture_popen(
+            command: Sequence[str], **kwargs: Any
+        ) -> mock.Mock:
+            fixture_process_call["command"] = list(command)
+            fixture_process_call["kwargs"] = kwargs
+            return fixture_process
+
+        with (
+            mock.patch.object(
+                sys.modules[__name__], "_is_port_free", return_value=True
+            ),
+            mock.patch.object(
+                fixture_environment_probe, "_wait_for_http", return_value=True
+            ),
+            mock.patch.object(
+                subprocess, "Popen", side_effect=_capture_fixture_popen
+            ),
+            mock.patch.object(threading.Thread, "start", return_value=None),
+        ):
+            fixture_started = fixture_environment_probe.start_fixture()
+
+        fixture_child_env = fixture_process_call.get("kwargs", {}).get("env", {})
+        fixture_password = fixture_environment_probe.fixture_password
+        fixture_environment_ok = (
+            fixture_started
+            and bool(fixture_password)
+            and fixture_child_env.get("N0_FIXTURE_PASSWORD") == fixture_password
+            and fixture_child_env.get("PATH") == "/fixture/child/path"
+            and set(fixture_child_env)
+            == {"PATH"}.union(_FIXTURE_CHILD_ENV_KEYS)
+            and "N0_FIXTURE_PASSWORD" not in fixture_environment_probe.env
+            and all(
+                fixture_password not in value
+                for value in fixture_environment_probe.env.values()
+            )
+            and fixture_password in fixture_environment_probe.sensitive_values
+            and fixture_process_call.get("command")
+            == [
+                sys.executable,
+                str(Path(__file__).resolve().with_name("fixture_server.py")),
+                "--public-host",
+                "fixture.example",
+            ]
+            and all(
+                fixture_password not in path.read_text(encoding="utf-8")
+                for path in fixture_environment_probe.run_dir.iterdir()
+                if path.is_file()
+            )
+        )
+        try:
+            fixture_environment_probe._start_process(
+                ["unused"],
+                "tunnel.log",
+                extra_environment={"N0_FIXTURE_PASSWORD": fixture_password},
+            )
+            fixture_environment_wrong_child_rejected = False
+        except ValueError:
+            fixture_environment_wrong_child_rejected = True
+        fixture_environment_ok = (
+            fixture_environment_ok and fixture_environment_wrong_child_rejected
+        )
+
         failed_start = test_run("macos", "self-test-failed-start")
         failed_start.run_dir = scratch_path / "failed-serve"
         failed_start.run_dir.mkdir(mode=0o700)
@@ -4923,6 +5009,7 @@ def _self_test_impl(scratch_root: Path) -> int:
         )
     )
     outcomes.append(("isolated_home_xdg_and_temp_paths", isolated_environment_ok))
+    outcomes.append(("fixture_password_is_child_only_environment", fixture_environment_ok))
     outcomes.append(("failed_declarative_serve_blocks_and_cleans_profile", startup_failure_blocked))
     outcomes.append(("redaction_precedes_log_truncation", redaction_before_truncation))
     outcomes.append(("identity_status_tunnel_id_and_hostname_redacted", identity_status_redaction_ok))

@@ -25,14 +25,6 @@ export N0_FIXTURE_PASSWORD='choose-a-local-test-password'
 tmp/n0/.venv/bin/python scripts/network_spike/fixture_server.py
 ```
 
-Alternatively, create a private scratch password file and pass its path (the
-file takes precedence over the environment variable):
-
-```sh
-tmp/n0/.venv/bin/python scripts/network_spike/fixture_server.py \
-  --password-file tmp/n0/fixture-password.txt
-```
-
 The server always binds to `127.0.0.1`. `--host` exists only to test refusal of
 non-loopback addresses; any value other than `127.0.0.1` exits before binding.
 `--port` defaults to `8370` and is intended only for local tests. When a public
@@ -40,7 +32,7 @@ tunnel route is active, provide its expected Host authority without a scheme:
 
 ```sh
 tmp/n0/.venv/bin/python scripts/network_spike/fixture_server.py \
-  --password-file tmp/n0/fixture-password.txt --public-host route.example
+  --public-host route.example
 ```
 
 Only the configured loopback Host and optional public Host are accepted. The
