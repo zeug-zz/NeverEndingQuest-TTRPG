@@ -27,6 +27,12 @@ _GRID = {
     "southwest": (2, 0), "south": (2, 1), "southeast": (2, 2),
     "upper_east": (0, 2), "upper-east": (0, 2),
 }
+_POSITION_PREPOSITIONS = frozenset((
+    "at", "on", "in", "inside", "outside", "along", "beside", "near", "by",
+    "above", "below", "under", "behind", "between", "across", "around",
+    "against", "atop", "within", "over", "hovering", "flanking", "standing",
+    "looming",
+))
 
 
 def relationship_statements(projection: Mapping[str, Any]) -> list[str]:
@@ -156,7 +162,7 @@ def render_schematic(projection: Mapping[str, Any]) -> str:
                 if cell is not None:
                     cells.setdefault(cell, []).append(name)
                 else:
-                    unplaced.append("%s at %s" % (name, position.replace("_", " ")))
+                    unplaced.append(_anchor_phrase(name, position))
     for collection in ("occupant_anchors", "npc_anchors"):
         for row in _rows(projection.get(collection)):
             name = _safe_name(row.get("name"))
@@ -170,7 +176,7 @@ def render_schematic(projection: Mapping[str, Any]) -> str:
                 continue
             cell = _position_cell(position)
             if cell is None:
-                unplaced.append("%s at %s" % (name, position.replace("_", " ")))
+                unplaced.append(_anchor_phrase(name, position))
             else:
                 cells.setdefault(cell, []).append(name)
     lines = ["Schematic (not to scale):"]
@@ -245,6 +251,14 @@ def _position_cell(position: str) -> tuple[int, int] | None:
     elif "center" in normalized:
         column = 1
     return (row, column) if any(token in normalized for token in ("north", "south", "west", "east", "center", "upper_")) else None
+
+
+def _anchor_phrase(name: str, position: str) -> str:
+    rendered_position = position.replace("_", " ")
+    first_word = rendered_position.split(maxsplit=1)[0].lower()
+    if first_word in _POSITION_PREPOSITIONS:
+        return "%s %s" % (name, rendered_position)
+    return "%s at %s" % (name, rendered_position)
 
 
 def _is_upper_east(position: str) -> bool:
