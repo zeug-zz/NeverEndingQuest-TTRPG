@@ -534,7 +534,7 @@ live runs never overlap.
 | SP2 offline D1/M1 | S | pending | -- | -- | -- |
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
-| G0 ADR, audit and pin (docs) | main | pending owner ADR acceptance | 2026-11-05 | ADR-0033 (Proposed); `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | this PR |
+| G0 ADR, audit and pin (docs) | main | pending owner ADR acceptance | 2026-11-05 | ADR-0033 (Proposed); `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
