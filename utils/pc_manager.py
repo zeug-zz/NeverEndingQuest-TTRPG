@@ -10,15 +10,20 @@ for future database migration path.
 """
 
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
+from typing import List, Literal, Optional, Dict, Any
 from utils.file_operations import safe_read_json, safe_write_json
-from utils.enhanced_logger import info, error, debug
+from utils.enhanced_logger import info, error, debug, warning
 from utils.character_state_hygiene import normalize_life_state_fields
 from utils.character_creation_prompt_builder import build_dm_creation_prompt_bundle
 
 PARTY_TRACKER_FILE = "party_tracker.json"
+
+# TABLETOP MODE: Serialize canonical active-PC compare-and-set writes.
+_party_tracker_lock = threading.RLock()
 
 # Experience points required for each level (for character creation)
 XP_BY_LEVEL = {
@@ -59,7 +64,6 @@ _character_access_stats = {
 }
 
 # Thread lock for stats to prevent race conditions in multi-threaded web server
-import threading
 _stats_lock = threading.Lock()
 
 # Lock for thread-safe config cache initialization
@@ -403,9 +407,117 @@ def get_party_tracker() -> Dict[str, Any]:
     if "partyNPCs" not in data:
         data["partyNPCs"] = []
     if "active_character" not in data:
-        data["active_character"] = data["partyMembers"][0] if data["partyMembers"] else ""
+        assign_active_character(
+            data, data["partyMembers"][0] if data["partyMembers"] else ""
+        )  # TABLETOP MODE: Hydrate the legacy active-PC fallback through its revision helper.
         
     return data
+
+
+ActivePCWriteStatus = Literal["updated", "unchanged", "stale", "rejected", "write_failed"]
+
+
+@dataclass(frozen=True)
+class ActivePCWriteResult:
+    """Typed outcome of a canonical active-PC write attempt."""
+
+    status: ActivePCWriteStatus
+    active_character: str
+    revision: int
+    changed: bool = False
+    reason: Optional[str] = None
+
+
+def assign_active_character(data: Dict[str, Any], name: str) -> bool:
+    """Assign active PC in place and advance its revision only on change."""
+    if not isinstance(data, dict):
+        raise TypeError("party tracker must be a dictionary")
+    if not isinstance(name, str):
+        raise TypeError("active character must be a string")
+
+    current_name = data.get("active_character")
+    if "active_character" not in data:
+        members = data.get("partyMembers")
+        current_name = members[0] if isinstance(members, list) and members else ""
+    revision = data.get("active_character_revision", 0)
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        warning(
+            "Malformed active character revision; treating it as 0 for host selection.",
+            category="party_state",
+        )  # TABLETOP MODE: Keep host mutations resilient while checked player writes fail closed.
+        revision = 0
+        data["active_character_revision"] = revision
+
+    if current_name == name:
+        data["active_character"] = name  # TABLETOP MODE: Materialize the unchanged effective selection.
+        return False
+
+    data["active_character"] = name  # TABLETOP MODE: Keep active-PC writes revision-aware.
+    data["active_character_revision"] = revision + 1  # TABLETOP MODE: Advance the shared selection revision.
+    return True
+
+
+def read_active_pc_state() -> tuple[str, int]:
+    """Read canonical active-PC state; legacy files without a revision are revision zero."""
+    with _party_tracker_lock:
+        data = get_party_tracker()
+        name = data.get("active_character", "")
+        if not isinstance(name, str):
+            name = ""
+        revision = data.get("active_character_revision", 0)
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("active character revision must be a non-negative integer")
+        return name, revision
+
+
+def set_active_pc_checked(
+    character_name: str,
+    expected_revision: Optional[int] = None,
+) -> ActivePCWriteResult:
+    """Atomically validate membership/revision and persist an active-PC selection."""
+    with _party_tracker_lock:
+        data = get_party_tracker()
+        if not isinstance(data, dict):
+            return ActivePCWriteResult("rejected", "", 0, reason="party_state_unavailable")
+
+        members = data.get("partyMembers")
+        revision = data.get("active_character_revision", 0)
+        active_character = data.get("active_character", "")
+        if not isinstance(active_character, str):
+            active_character = ""
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            return ActivePCWriteResult(
+                "rejected", active_character, 0, reason="invalid_revision"
+            )
+        if expected_revision is not None and (
+            not isinstance(expected_revision, int)
+            or isinstance(expected_revision, bool)
+            or expected_revision < 0
+        ):
+            return ActivePCWriteResult(
+                "rejected", active_character, revision, reason="invalid_expected_revision"
+            )
+        if not isinstance(members, list) or not isinstance(character_name, str) or character_name not in members:
+            return ActivePCWriteResult(
+                "rejected", active_character, revision, reason="not_party_member"
+            )
+        if expected_revision is not None and expected_revision != revision:
+            return ActivePCWriteResult(
+                "stale", active_character, revision, reason="stale_revision"
+            )
+
+        changed = assign_active_character(data, character_name)  # TABLETOP MODE: Use the canonical revision helper.
+        if not safe_write_json(PARTY_TRACKER_FILE, data):
+            return ActivePCWriteResult(
+                "write_failed", active_character, revision, reason="party_write_failed"
+            )
+        return ActivePCWriteResult(
+            "updated" if changed else "unchanged",
+            character_name,
+            revision + (1 if changed else 0),
+            changed=changed,
+        )
+
 
 def save_party_tracker(data: Dict[str, Any]) -> bool:
     """Save the party tracker data."""
@@ -441,7 +553,7 @@ def add_pc(character_name: str) -> bool:
     
     # Set as active character if none is set
     if not data.get("active_character"):
-        data["active_character"] = character_name
+        assign_active_character(data, character_name)  # TABLETOP MODE: Revision-track initial PC selection.
         
     success = save_party_tracker(data)
     if success:
@@ -462,7 +574,9 @@ def remove_pc(character_name: str) -> bool:
     
     # Update active character if necessary
     if data.get("active_character") == character_name:
-        data["active_character"] = data["partyMembers"][0] if data["partyMembers"] else ""
+        assign_active_character(
+            data, data["partyMembers"][0] if data["partyMembers"] else ""
+        )  # TABLETOP MODE: Revision-track active-PC removal fallback.
         
     success = save_party_tracker(data)
     if success:
@@ -471,17 +585,13 @@ def remove_pc(character_name: str) -> bool:
 
 def set_active_pc(character_name: str) -> bool:
     """Set the currently active PC for input context."""
-    data = get_party_tracker()
-    
-    if character_name not in data["partyMembers"]:
-        error(f"Cannot set active character to '{character_name}': Not a party member.")
-        return False
-        
-    data["active_character"] = character_name
-    success = save_party_tracker(data)
-    if success:
+    result = set_active_pc_checked(character_name)
+    if result.status in {"updated", "unchanged"}:
         debug(f"Active character set to '{character_name}'.")
-    return success
+        return True
+    if result.reason == "not_party_member":
+        error(f"Cannot set active character to '{character_name}': Not a party member.")
+    return False
 
 def get_active_pc() -> str:
     """Get the currently active PC name."""
@@ -495,7 +605,9 @@ def sync_pc_list(character_names: List[str]) -> bool:
     
     # Validate active character
     if data.get("active_character") not in character_names:
-        data["active_character"] = character_names[0] if character_names else ""
+        assign_active_character(
+            data, character_names[0] if character_names else ""
+        )  # TABLETOP MODE: Revision-track active-PC list synchronization.
         
     return save_party_tracker(data)
 

@@ -24,6 +24,7 @@ from utils.combat_latency_trace import (
     trace_combat_observation,
     trace_enabled,
 )
+from utils.pc_manager import assign_active_character
 from core.combat.commands import FastCommandResult, is_usage_command_input
 # TABLETOP MODE: Persist combat identity separately from model-visible content.
 from core.combat.turn_commit import (
@@ -1280,7 +1281,9 @@ def run_input_phase_gate(
             )
             if target_pc:
                 multi_pc_manager.set_current_pc(target_pc)
-                party_tracker_data["active_character"] = target_pc
+                assign_active_character(
+                    party_tracker_data, target_pc
+                )  # TABLETOP MODE: Revision-track combat input actor switch.
                 io.save_json("party_tracker.json", party_tracker_data)
                 io.debug(f"SWITCH: Force-switched active PC to {target_pc}", category="combat_events")
 

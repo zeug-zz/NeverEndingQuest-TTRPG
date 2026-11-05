@@ -153,14 +153,34 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
             if not party_tracker:
                 return jsonify({'error': 'Party tracker not found'}), 404
 
-            if character_name not in party_tracker.get('partyMembers', []):
+            expected_revision = (
+                data.get('active_character_revision')
+                if 'active_character_revision' in data
+                else None
+            )
+            selection = pc_manager.set_active_pc_checked(
+                character_name, expected_revision
+            )  # TABLETOP MODE: Serialize host selection through the canonical PC writer.
+            if selection.status == "stale":
+                return jsonify({
+                    'error': 'Stale active character revision',
+                    'status': 'stale',
+                    'active_character': selection.active_character,
+                    'active_character_revision': selection.revision,
+                }), 409
+            if selection.reason == "not_party_member":
                 return jsonify({'error': 'Character not in party'}), 400
-
-            party_tracker['active_character'] = character_name
-            safe_write_json("party_tracker.json", party_tracker)
+            if selection.status == "write_failed":
+                return jsonify({'error': 'Failed to save active character'}), 500
+            if selection.status != "updated" and selection.status != "unchanged":
+                return jsonify({'error': 'Invalid active character selection'}), 400
 
             info(f"TABLETOP: Active character set to {character_name}")
-            return jsonify({'success': True, 'active_character': character_name})
+            return jsonify({
+                'success': True,
+                'active_character': character_name,
+                'active_character_revision': selection.revision,
+            })
         except Exception as route_error:
             error(f"TABLETOP: Failed to set active character: {route_error}")
             return jsonify({'error': str(route_error)}), 500
@@ -965,7 +985,9 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
                 party_tracker.setdefault('partyMembers', []).append(character_name)
 
             # TABLETOP MODE: Promotion apply should not auto-switch active_character.
-            party_tracker['active_character'] = original_active_character
+            pc_manager.assign_active_character(
+                party_tracker, original_active_character
+            )  # TABLETOP MODE: Preserve active PC without bypassing its revision.
 
             if not safe_write_json('party_tracker.json', party_tracker):
                 error(

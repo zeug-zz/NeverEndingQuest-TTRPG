@@ -26,6 +26,7 @@ from core.generators.module_stitcher import ModuleStitcher
 import config
 from utils.encoding_utils import safe_json_load, safe_json_dump
 from utils.file_operations import safe_write_json
+from utils.pc_manager import assign_active_character
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from core.managers.status_manager import (
@@ -1675,10 +1676,14 @@ def update_party_tracker(module_name, character_name, startup_incomplete=None):
 
         existing_active_character = str(party_data.get("active_character", "")).strip()
         if existing_members:
-            if existing_active_character in existing_members:
-                party_data["active_character"] = existing_active_character
-            else:
-                party_data["active_character"] = existing_members[0]
+            selected_active_character = (
+                existing_active_character
+                if existing_active_character in existing_members
+                else existing_members[0]
+            )
+            assign_active_character(
+                party_data, selected_active_character
+            )  # TABLETOP MODE: Preserve or initialize active PC with revision tracking.
 
         # TABLETOP MODE: Optional persisted startup lifecycle metadata.
         # Backward-compatible default is no change for existing callers.

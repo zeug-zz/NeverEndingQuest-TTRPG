@@ -7185,6 +7185,53 @@ def handle_trigger_update():
     except Exception as e:
         emit('update_error', {'error': str(e)})
 
+# TABLETOP MODE: Build the explicit player gateway without starting its listener.
+def create_player_runtime_gateway():
+    """Wire the opt-in player boundary to canonical state and the host queue."""
+    from core.managers.status_manager import status_manager
+    from web.extensions.player.gateway import PlayerSnapshot
+    from web.extensions.player.projections import PlayerProjectionBuilder
+    from web.extensions.player.runtime_gateway import PlayerRuntimeGateway
+
+    def player_runtime_is_busy():
+        return status_manager.get_status()[1]
+
+    def read_party_state():
+        party_tracker = pc_manager.get_party_tracker()
+        active_character, revision = pc_manager.read_active_pc_state()
+        if not isinstance(party_tracker, dict):
+            return party_tracker
+        state = dict(party_tracker)
+        state['active_character'] = active_character
+        state['active_character_revision'] = revision
+        return state
+
+    projection_builder = PlayerProjectionBuilder.from_pc_manager(
+        read_busy_state=player_runtime_is_busy
+    )
+
+    def read_player_snapshot():
+        with pc_manager._party_tracker_lock:
+            projection = projection_builder.build()
+        party_projection = projection.get('party', {})
+        revision = party_projection.get('active_character_revision', 0)
+        return PlayerSnapshot(revision=revision, projection=projection)
+
+    def echo_player_input(message):
+        # TABLETOP MODE: Use the host SocketIO object, not request-context emit.
+        socketio.emit('game_output', message)
+        add_to_message_cache(message)
+
+    return PlayerRuntimeGateway(
+        user_input_queue,
+        read_party_state=read_party_state,
+        canonical_state_lock=pc_manager._party_tracker_lock,
+        busy_probe=player_runtime_is_busy,
+        echo_input=echo_player_input,
+        snapshot_reader=read_player_snapshot,
+    )
+
+
 if __name__ == '__main__':
     # Create templates directory if it doesn't exist
     resolve_repository_path('templates', root=INSTALL_ROOT).mkdir(parents=True, exist_ok=True)

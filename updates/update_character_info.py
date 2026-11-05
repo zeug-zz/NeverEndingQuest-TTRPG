@@ -118,6 +118,7 @@ import re
 # Import model configuration from config.py
 from config import PLAYER_INFO_UPDATE_MODEL, NPC_INFO_UPDATE_MODEL
 from utils.module_path_manager import ModulePathManager
+from utils.pc_manager import assign_active_character
 from utils.file_operations import safe_write_json, safe_read_json
 from utils.encoding_utils import safe_json_load
 from core.validation.character_validator import AICharacterValidator
@@ -3022,7 +3023,9 @@ Please provide the CORRECT currency values:
                                 party_members.append(display_name)
                             party_tracker["partyMembers"] = _dedupe_party_member_names(party_members)
                             if not party_tracker.get("active_character"):
-                                party_tracker["active_character"] = display_name
+                                assign_active_character(
+                                    party_tracker, display_name
+                                )  # TABLETOP MODE: Revision-track auto-registration selection.
                             safe_write_json("party_tracker.json", party_tracker)
                             info(
                                 f"SUCCESS: Auto-registered {display_name} as party member",
