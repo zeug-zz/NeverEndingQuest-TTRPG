@@ -107,6 +107,7 @@ Per ADR-0033, mechanical legality for migrated rule families is decided by the p
 
 - Do not merge upstream branches. Never push to `upstream`; always name `origin` explicitly (`git push origin <branch>`), never use bare `git push`.
 - PRs target this fork (`zeug-zz/NeverEndingQuest-TTRPG`), never upstream, unless the repository owner explicitly requests otherwise.
+- Every `gh` command must name `--repo zeug-zz/NeverEndingQuest-TTRPG`; never rely on `gh`'s default repository resolution, which can select upstream.
 - Use descriptive branch names such as `feature/`, `fix/`, or `chore/`.
 
 ## Module publication Git contract
