@@ -525,7 +525,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | N | `feature/v2-network` | B0 | Opened 2026-11-05 | N0 | N0 |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP1 | SP1 tooling |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP2 review / SP3 preparation (not judged) | SP2 offline D1/M1 |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -550,7 +550,7 @@ live runs never overlap.
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
-| SP1 tooling | S | pending | -- | -- | -- |
+| SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
 | SP2 offline D1/M1 | S | pending | -- | -- | -- |
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
