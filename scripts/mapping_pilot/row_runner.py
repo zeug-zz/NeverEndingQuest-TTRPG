@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -60,10 +61,26 @@ from scripts.mapping_pilot.scoring import (
 )
 
 
+# Keep row bundles outside the strict ledger/runtime scan beneath the SP3 gate.
+DEFAULT_ROW_EVIDENCE_ROOT = DEFAULT_EVIDENCE_ROOT / "row-bundles"
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_ROW_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _RECORD_NAME = re.compile(r"^record-[0-9]{8}\.json$")
 _MOVEMENT_RECORD_NAME = re.compile(r"^record-[0-9]{6}\.json$")
+# Research-only CaptureSession scope: python-engineio exposes this decoder
+# bound on Payload as a process-global class attribute (default 16).
+# The localhost:8360 mapping-pilot client uses the fixed bounded limit 64.
+_SOCKET_PAYLOAD_DECODE_DEFAULT = 16
+_SOCKET_PAYLOAD_DECODE_LIMIT = 64
+_SOCKET_PAYLOAD_DECODE_SOURCE = "engineio.payload.Payload.max_decode_packets"
+_SOCKET_PAYLOAD_DECODE_LOCK = threading.Lock()
+_ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE: Optional["_SocketPayloadDecodeScope"] = None
+_SOCKET_DISCONNECT_REASONS = {
+    "client disconnect": "client_disconnect",
+    "server disconnect": "server_disconnect",
+    "transport error": "transport_error",
+    "ping timeout": "ping_timeout",
+}
 _MAPPING_MODULE = "Mapping_Pilot_Arena"
 _REQUEST_GUARD_BOOTSTRAP = '''\
 import importlib.abc
@@ -204,6 +221,112 @@ class RowExecutionError(RuntimeError):
     """Raised when a row cannot safely enter its booked execution boundary."""
 
 
+class _SocketPayloadDecodeScope:
+    """Own the bounded Engine.IO decoder override for one capture session."""
+
+    def __init__(self, payload_type: Any, original_bound: int) -> None:
+        self._payload_type = payload_type
+        self.original_bound = original_bound
+        self.active_bound = _SOCKET_PAYLOAD_DECODE_LIMIT
+        self.after_bound: Optional[int] = None
+        self.released = False
+
+    @classmethod
+    def acquire(cls) -> "_SocketPayloadDecodeScope":
+        global _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE
+
+        with _SOCKET_PAYLOAD_DECODE_LOCK:
+            if _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE is not None:
+                raise RowExecutionError(
+                    "another mapping-pilot SocketScriptDriver owns the Engine.IO decoder bound"
+                )
+            try:
+                payload_type = importlib.import_module("engineio.payload").Payload
+            except (ImportError, AttributeError) as exc:
+                raise RowExecutionError(
+                    "python-engineio Payload decoder is unavailable"
+                ) from exc
+            original_bound = getattr(payload_type, "max_decode_packets", None)
+            if (
+                type(original_bound) is not int
+                or original_bound != _SOCKET_PAYLOAD_DECODE_DEFAULT
+            ):
+                raise RowExecutionError(
+                    "Engine.IO decoder bound changed; expected the library default of 16"
+                )
+
+            scope = cls(payload_type, original_bound)
+            try:
+                setattr(
+                    payload_type,
+                    "max_decode_packets",
+                    _SOCKET_PAYLOAD_DECODE_LIMIT,
+                )
+            except BaseException as exc:
+                try:
+                    setattr(payload_type, "max_decode_packets", original_bound)
+                finally:
+                    _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE = None
+                raise RowExecutionError(
+                    "could not apply the bounded Engine.IO decoder limit"
+                ) from exc
+            _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE = scope
+            return scope
+
+    def release(self) -> None:
+        """Restore the captured default after the Engine.IO read loop exits."""
+        global _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE
+
+        with _SOCKET_PAYLOAD_DECODE_LOCK:
+            if self.released:
+                return
+            if _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE is not self:
+                raise RowExecutionError(
+                    "mapping-pilot Engine.IO decoder ownership was lost"
+                )
+
+            current_bound = getattr(
+                self._payload_type, "max_decode_packets", None
+            )
+            restore_error: Optional[BaseException] = None
+            try:
+                setattr(
+                    self._payload_type,
+                    "max_decode_packets",
+                    self.original_bound,
+                )
+            except BaseException as exc:
+                restore_error = exc
+            self.after_bound = getattr(
+                self._payload_type, "max_decode_packets", None
+            )
+            if self.after_bound == self.original_bound:
+                self.released = True
+                _ACTIVE_SOCKET_PAYLOAD_DECODE_SCOPE = None
+            if restore_error is not None:
+                raise RowExecutionError(
+                    "could not restore the Engine.IO decoder default"
+                ) from restore_error
+            if not self.released:
+                raise RowExecutionError(
+                    "Engine.IO decoder default was not restored after capture"
+                )
+            if current_bound != self.active_bound:
+                raise RowExecutionError(
+                    "Engine.IO decoder bound changed during the capture session; "
+                    "the original default was restored"
+                )
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "source": _SOCKET_PAYLOAD_DECODE_SOURCE,
+            "before": self.original_bound,
+            "active": self.active_bound,
+            "after": self.after_bound,
+            "restored": self.released and self.after_bound == self.original_bound,
+        }
+
+
 @dataclass(frozen=True)
 class RowRunnerHooks:
     """Injected process, socket, evidence, and scoring boundaries."""
@@ -266,12 +389,102 @@ class SocketScriptDriver:
         )
         self.session = session_factory(args)
         self.transcript_path = transcript_path
+        self._decode_bound_scope: Optional[_SocketPayloadDecodeScope] = None
+        self._start_attempted = False
+        self._closed = False
+        self._driver_close_requested = False
+        self._disconnect_observation = {
+            "observed": False,
+            "reason": "not_observed",
+            "initiator": "none",
+        }
+        self._disconnect_monotonic: Optional[float] = None
+        self._install_disconnect_observer()
+
+    def _install_disconnect_observer(self) -> None:
+        """Retain only an allowlisted Socket.IO disconnect reason category."""
+        original = getattr(self.session, "_on_disconnect", None)
+        if not callable(original):
+            return
+
+        def observe_disconnect(*args: Any, **kwargs: Any) -> Any:
+            if not self._disconnect_observation["observed"]:
+                reason = args[0] if args else None
+                category = (
+                    _SOCKET_DISCONNECT_REASONS.get(reason.strip().casefold(), "other")
+                    if isinstance(reason, str)
+                    else "missing"
+                    if reason is None
+                    else "other"
+                )
+                self._disconnect_observation = {
+                    "observed": True,
+                    "reason": category,
+                    "initiator": (
+                        "driver_close" if self._driver_close_requested else "socket_callback"
+                    ),
+                }
+                self._disconnect_monotonic = time.monotonic()
+            return original(*args, **kwargs)
+
+        self.session._on_disconnect = observe_disconnect
+
+    def socket_lifecycle_metadata(
+        self,
+        *,
+        live_started_monotonic: Optional[float],
+    ) -> dict[str, Any]:
+        """Return bounded Socket.IO disconnect diagnostics."""
+        disconnect_elapsed: Optional[float] = None
+        if (
+            isinstance(live_started_monotonic, (int, float))
+            and not isinstance(live_started_monotonic, bool)
+            and isinstance(self._disconnect_monotonic, (int, float))
+            and self._disconnect_monotonic >= live_started_monotonic
+        ):
+            disconnect_elapsed = round(
+                self._disconnect_monotonic - live_started_monotonic, 3
+            )
+
+        return {
+            "socket_disconnect_observed": self._disconnect_observation["observed"],
+            "socket_disconnect_reason": self._disconnect_observation["reason"],
+            "socket_disconnect_initiator": self._disconnect_observation["initiator"],
+            "socket_disconnect_after_launch_seconds": disconnect_elapsed,
+            "socket_payload_decode_bound": (
+                self._decode_bound_scope.metadata()
+                if self._decode_bound_scope is not None
+                else {
+                    "source": _SOCKET_PAYLOAD_DECODE_SOURCE,
+                    "before": None,
+                    "active": None,
+                    "after": None,
+                    "restored": False,
+                }
+            ),
+        }
 
     def start(self) -> Mapping[str, Any]:
-        self.session.open_transcript()
-        self.session.connect()
-        ready = self.session.start_session(require_ready_quiet=True)
-        return {"ready": ready, "readiness": self.session.start_readiness}
+        if self._start_attempted or self._closed:
+            raise RowExecutionError("SocketScriptDriver sessions are single-use")
+        self._start_attempted = True
+        try:
+            self._decode_bound_scope = _SocketPayloadDecodeScope.acquire()
+            self.session.open_transcript()
+            self.session.connect()
+            ready = self.session.start_session(require_ready_quiet=True)
+            return {"ready": ready, "readiness": self.session.start_readiness}
+        except BaseException as start_error:
+            try:
+                self.close()
+            except BaseException as close_error:
+                add_note = getattr(start_error, "add_note", None)
+                if callable(add_note):
+                    add_note(
+                        "SocketScriptDriver cleanup also failed: %s"
+                        % type(close_error).__name__
+                    )
+            raise
 
     def set_active_character(self, character: str) -> bool:
         return bool(self.session.set_active_character(character))
@@ -299,9 +512,133 @@ class SocketScriptDriver:
             "output_text": response_text,
         }
 
+    def _wait_for_read_loop_exit(self) -> None:
+        """Join the existing Engine.IO reader before restoring its class bound."""
+        socket_client = getattr(self.session, "socket", None)
+        engineio_client = getattr(socket_client, "eio", None)
+        if engineio_client is None:
+            return
+        read_task = getattr(engineio_client, "read_loop_task", None)
+        if read_task is None:
+            if getattr(engineio_client, "state", None) == "connected":
+                raise RowExecutionError(
+                    "Engine.IO is connected but its read-loop task cannot be verified"
+                )
+            return
+
+        is_alive = getattr(read_task, "is_alive", None)
+        if not callable(is_alive):
+            is_alive = getattr(read_task, "isAlive", None)
+        if not callable(is_alive):
+            raise RowExecutionError(
+                "Engine.IO read-loop liveness cannot be verified before decoder restore"
+            )
+        if is_alive():
+            join = getattr(read_task, "join", None)
+            if not callable(join):
+                raise RowExecutionError(
+                    "active Engine.IO read loop cannot be joined before decoder restore"
+                )
+            join()
+        if is_alive():
+            raise RowExecutionError(
+                "Engine.IO read loop remains active; decoder restore is unsafe"
+            )
+
     def close(self) -> None:
-        self.session.disconnect()
-        self.session.close_transcript()
+        if self._closed:
+            return
+        self._driver_close_requested = True
+        errors: list[BaseException] = []
+        try:
+            self.session.disconnect()
+        except BaseException as exc:
+            errors.append(exc)
+
+        read_loop_stopped = False
+        try:
+            self._wait_for_read_loop_exit()
+            read_loop_stopped = True
+        except BaseException as exc:
+            errors.append(exc)
+
+        try:
+            self.session.close_transcript()
+        except BaseException as exc:
+            errors.append(exc)
+
+        scope = self._decode_bound_scope
+        if scope is not None:
+            if read_loop_stopped:
+                try:
+                    scope.release()
+                except BaseException as exc:
+                    errors.append(exc)
+            else:
+                errors.append(
+                    RowExecutionError(
+                        "Engine.IO read loop did not stop; decoder bound remains owned"
+                    )
+                )
+
+        if read_loop_stopped and (
+            scope is None or scope.released
+        ):
+            self._closed = True
+        if errors:
+            primary_error = errors[0]
+            add_note = getattr(primary_error, "add_note", None)
+            if callable(add_note):
+                for extra_error in errors[1:]:
+                    add_note(
+                        "Additional SocketScriptDriver cleanup failure: %s"
+                        % type(extra_error).__name__
+                    )
+            raise primary_error
+
+
+def _socket_worker_lifecycle_snapshot(
+    driver: Any,
+    server: Any,
+    live_started_monotonic: Optional[float],
+) -> dict[str, Any]:
+    """Capture allowlisted transport and worker state before owned teardown."""
+    if isinstance(driver, SocketScriptDriver):
+        result = driver.socket_lifecycle_metadata(
+            live_started_monotonic=live_started_monotonic
+        )
+    else:
+        result = {
+            "socket_disconnect_observed": False,
+            "socket_disconnect_reason": "not_observed",
+            "socket_disconnect_initiator": "none",
+            "socket_disconnect_after_launch_seconds": None,
+            "socket_payload_decode_bound": {
+                "source": _SOCKET_PAYLOAD_DECODE_SOURCE,
+                "before": None,
+                "active": None,
+                "after": None,
+                "restored": False,
+            },
+        }
+
+    worker_state = "unknown"
+    worker_return_code: Optional[int] = None
+    process = getattr(server, "process", None)
+    poll = getattr(process, "poll", None)
+    if callable(poll):
+        try:
+            process_result = poll()
+        except Exception:
+            process_result = "unknown"
+        if process_result is None:
+            worker_state = "running"
+        elif isinstance(process_result, int) and not isinstance(process_result, bool):
+            worker_state = "exited"
+            worker_return_code = process_result
+    result["worker_state_at_capture"] = worker_state
+    result["worker_return_code_at_capture"] = worker_return_code
+    return result
 
 
 def execute_row(
@@ -310,7 +647,7 @@ def execute_row(
     *,
     row_run_id: Optional[str] = None,
     ledger_root: str | Path = DEFAULT_EXECUTION_ROOT,
-    evidence_root: str | Path = DEFAULT_EVIDENCE_ROOT,
+    evidence_root: str | Path = DEFAULT_ROW_EVIDENCE_ROOT,
     prereg_root: Optional[str | Path] = None,
     runtime_root: str = "tmp/combat_capture",
     hooks: Optional[RowRunnerHooks] = None,
@@ -458,6 +795,11 @@ def execute_row(
                 "launch_timestamps": list(start_timestamps),
                 "captured_before_teardown_at": timestamp(),
             },
+            "socket_worker_lifecycle": _socket_worker_lifecycle_snapshot(
+                drivers[-1] if drivers else active_driver,
+                active_server,
+                live_started,
+            ),
             "router_receipts": (
                 dict(receipt_snapshot)
                 if isinstance(receipt_snapshot, Mapping)
@@ -480,15 +822,16 @@ def execute_row(
             return
         raw_live_evidence_path = raw_path.as_posix()
 
-    def reconcile_receipt_attempts() -> None:
+    def reconcile_receipt_attempts() -> bool:
         try:
             snapshot = hooks.load_router_receipts(selected_run_id)
         except Exception as exc:
             error_types.append(type(exc).__name__)
-            return
+            return False
         records = _receipt_snapshot_records(snapshot, selected_run_id, lifecycle_ids)
         if records is None:
-            return
+            error_types.append("RouterReceiptsUnavailableDuringReconciliation")
+            return False
         try:
             reconcile_attempt_count(
                 run_id,
@@ -500,6 +843,8 @@ def execute_row(
             )
         except Exception as exc:
             error_types.append(type(exc).__name__)
+            return False
+        return True
 
     def request_guard() -> dict[str, Any]:
         return check_provider_request(
@@ -682,11 +1027,14 @@ def execute_row(
                 raise _StopDriving
             if not _receipts_have_expected_attribution(
                 startup_records, "lifecycle_control", expected=False
-            ) or _count_unexpected_attempts(startup_records):
+            ):
                 error_types.append("UnexpectedStartupProviderCall")
                 raise _StopDriving
+            if _count_unexpected_attempts(startup_records):
+                error_types.append("UnexpectedStartupProviderCall")
             startup_receipt_cursor = _max_sequence(startup_records)
-            reconcile_receipt_attempts()
+            if not reconcile_receipt_attempts():
+                raise _StopDriving
 
             expected_steps = script["turns"]
             if len(expected_steps) != script["model_bearing_turn_count"]:
@@ -726,18 +1074,19 @@ def execute_row(
                         for record in pre_model_records
                         if record["sequence"] > startup_receipt_cursor
                     ]
-                    if (
-                        not _receipts_have_expected_attribution(
-                            pre_model_lifecycle,
-                            "lifecycle_control",
-                            expected=False,
-                        )
-                        or _count_unexpected_attempts(pre_model_lifecycle)
-                        or pre_model_receipt_write_failed
-                    ):
-                        if pre_model_receipt_write_failed:
-                            error_types.append("RouterReceiptWriteFailed")
+                    pre_model_attribution_valid = _receipts_have_expected_attribution(
+                        pre_model_lifecycle,
+                        "lifecycle_control",
+                        expected=False,
+                    )
+                    if pre_model_receipt_write_failed:
+                        error_types.append("RouterReceiptWriteFailed")
+                    if not pre_model_attribution_valid or pre_model_receipt_write_failed:
                         error_types.append("UnexpectedPreModelProviderCall")
+                        raise _StopDriving
+                    if _count_unexpected_attempts(pre_model_lifecycle):
+                        error_types.append("UnexpectedPreModelProviderCall")
+                    if not reconcile_receipt_attempts():
                         raise _StopDriving
 
                 actor = step.get("actor")
@@ -747,7 +1096,7 @@ def execute_row(
                     raise _StopDriving
                 if step_id == "E4-08":
                     if (
-                        lifecycle_checkpoint.get("status") != "verified"
+                        lifecycle_checkpoint.get("resume_integrity_verified") is not True
                         or restart_receipt_cursor is None
                         or restart_lifecycle_id is None
                     ):
@@ -793,15 +1142,20 @@ def execute_row(
                             "provider_call_expected_false_observed", 0
                         )
                     )
+                    resume_integrity_verified = (
+                        state_matches_before_e4_08 and receipts_valid_before_e4_08
+                    )
                     lifecycle_checkpoint.update(
                         {
                             "status": (
                                 "verified"
-                                if state_matches_before_e4_08
-                                and receipts_valid_before_e4_08
+                                if resume_integrity_verified
                                 and post_restart_unexpected == 0
+                                else "degraded"
+                                if resume_integrity_verified
                                 else "blocked"
                             ),
+                            "resume_integrity_verified": resume_integrity_verified,
                             "resumed_state_sha256": resumed_state_check.get("sha256"),
                             "state_hash_matches": state_matches_before_e4_08,
                             "receipt_evidence_status": _receipt_evidence_status(
@@ -832,9 +1186,15 @@ def execute_row(
                     lifecycle_check["passed"] = (
                         lifecycle_checkpoint["status"] == "verified"
                     )
-                    if lifecycle_checkpoint["status"] != "verified":
+                    if not resume_integrity_verified:
                         lifecycle_ok = False
                         error_types.append("LifecycleResumeVerificationFailed")
+                        raise _StopDriving
+                    if post_restart_unexpected:
+                        lifecycle_ok = False
+                        if "UnexpectedRestartProviderCall" not in error_types:
+                            error_types.append("UnexpectedRestartProviderCall")
+                    if not reconcile_receipt_attempts():
                         raise _StopDriving
                 request_decision = request_guard()
                 if not request_decision.get("allowed"):
@@ -850,7 +1210,8 @@ def execute_row(
                 normalized_turn["character"] = character
                 turn_results.append(normalized_turn)
                 phase_context(step_id, "lifecycle_control", False)
-                reconcile_receipt_attempts()
+                if not reconcile_receipt_attempts():
+                    raise _StopDriving
                 post_turn_guard = request_guard()
                 if not post_turn_guard.get("allowed"):
                     cap_stop = post_turn_guard
@@ -1002,16 +1363,22 @@ def execute_row(
                             "lifecycle_control",
                             expected=False,
                         )
+                        resume_integrity_verified = (
+                            state_matches
+                            and receipts_recorded
+                            and restart_ready
+                            and post_restart_attribution
+                        )
                         lifecycle_checkpoint = {
                             "status": (
                                 "verified"
-                                if state_matches
-                                and receipts_recorded
-                                and restart_ready
-                                and post_restart_attribution
+                                if resume_integrity_verified
                                 and unexpected_post_restart == 0
+                                else "degraded"
+                                if resume_integrity_verified
                                 else "blocked"
                             ),
+                            "resume_integrity_verified": resume_integrity_verified,
                             "saved_state_sha256": saved_state.get("sha256"),
                             "resumed_state_sha256": resumed_state.get("sha256"),
                             "state_hash_matches": state_matches,
@@ -1035,15 +1402,22 @@ def execute_row(
                                 {"event": "resume_saved_state", "step_id": step_id},
                             ]
                         )
-                        if lifecycle_checkpoint.get("status") != "verified":
+                        if not resume_integrity_verified:
                             lifecycle_ok = False
                             error_types.append("LifecycleResumeVerificationFailed")
                             expected_checks.append(
                                 _lifecycle_check(step_id, lifecycle_checkpoint, False)
                             )
                             raise _StopDriving
+                        if unexpected_post_restart:
+                            lifecycle_ok = False
+                            error_types.append("UnexpectedRestartProviderCall")
                         expected_checks.append(
-                            _lifecycle_check(step_id, lifecycle_checkpoint, True)
+                            _lifecycle_check(
+                                step_id,
+                                lifecycle_checkpoint,
+                                unexpected_post_restart == 0,
+                            )
                         )
             driver_exit_code = 0
     except _StopDriving:
@@ -1692,14 +2066,26 @@ def _resolve_frozen_row(
         not isinstance(script, Mapping)
         or not isinstance(script.get("script_id"), str)
         or not isinstance(script.get("fixture_ids"), list)
-        or len(script["fixture_ids"]) != 1
+        or not script["fixture_ids"]
         or not isinstance(script.get("turns"), list)
         or type(script.get("model_bearing_turn_count")) is not int
     ):
         raise RowExecutionError("frozen row script is malformed")
-    fixture_id = script["fixture_ids"][0]
-    if fixture_id not in _FIXTURE_PATHS:
+    fixture_ids = script["fixture_ids"]
+    if (
+        any(not isinstance(item, str) or item not in _FIXTURE_PATHS for item in fixture_ids)
+        or len(set(fixture_ids)) != len(fixture_ids)
+    ):
         raise RowExecutionError("frozen row script names an unsupported fixture")
+    if len(fixture_ids) == 1:
+        fixture_id = fixture_ids[0]
+    elif (
+        script["script_id"] == "landscape_e2_e3"
+        and fixture_ids == ["landscape_village", "transition_tower_approach"]
+    ):
+        fixture_id = "landscape_village"
+    else:
+        raise RowExecutionError("frozen row script has an unsupported fixture layout")
     if (
         type(row.get("party")) is not int
         or row.get("party") not in (1, 4)
