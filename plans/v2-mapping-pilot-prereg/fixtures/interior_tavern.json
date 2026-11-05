@@ -1,0 +1,222 @@
+{
+  "fixture_id": "interior_tavern",
+  "version": "1.0.0",
+  "scope": "sandbox-only spatial truth; not a published module",
+  "location_ids": [
+    "MPV2_LOC_TAVERN"
+  ],
+  "locations": [
+    {
+      "location_id": "MPV2_LOC_TAVERN",
+      "name": "The Lantern and Reed Tavern",
+      "orientation": {
+        "origin_feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+        "north": "toward the back wall",
+        "entry_facing": "north",
+        "position_semantics": "schematic labels only; not metric coordinates"
+      },
+      "features": [
+        {
+          "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+          "name": "Front entrance",
+          "position": "south_center",
+          "state": "open",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_LONG_TABLE",
+          "name": "Long table",
+          "position": "center",
+          "state": "fixed",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_BAR",
+          "name": "Wooden bar",
+          "position": "west_center",
+          "state": "fixed",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_HEARTH",
+          "name": "Stone hearth",
+          "position": "northeast",
+          "state": "lit",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_STAIRS",
+          "name": "Stairs to the balcony",
+          "position": "east_center",
+          "state": "open",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_BALCONY",
+          "name": "Upper balcony and rail",
+          "position": "upper_east",
+          "state": "open_access_from_stairs",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_KITCHEN_DOOR",
+          "name": "Kitchen door",
+          "position": "northwest",
+          "state": "closed",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+          "name": "Back door",
+          "position": "north_center",
+          "state": "closed_unbarred",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TAVERN_TOWER_ROOFLINE",
+          "name": "Distant watchtower roofline",
+          "position": "north_window_view",
+          "state": "visible_distant_landmark",
+          "perceivable": true,
+          "reachable": false
+        }
+      ],
+      "exits": [
+        {
+          "exit_id": "MPV2_EXIT_TAVERN_FRONT",
+          "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+          "side": "south",
+          "state": "open",
+          "known_destination_location_id": "MPV2_LOC_VILLAGE_GREEN",
+          "destination_knowledge": "known"
+        },
+        {
+          "exit_id": "MPV2_EXIT_TAVERN_KITCHEN",
+          "feature_id": "MPV2_F_TAVERN_KITCHEN_DOOR",
+          "side": "northwest",
+          "state": "closed",
+          "known_destination_location_id": null,
+          "destination_knowledge": "unknown"
+        },
+        {
+          "exit_id": "MPV2_EXIT_TAVERN_BACK",
+          "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+          "side": "north",
+          "state": "closed_unbarred",
+          "known_destination_location_id": null,
+          "destination_knowledge": "unknown"
+        }
+      ],
+      "perceivable_facts": [
+        "The front entrance is south; the village green is visible beyond it.",
+        "The long table is near the center, the bar is west, and the hearth is northeast.",
+        "The stairs rise on the east side to an upper balcony.",
+        "The kitchen door is closed northwest; the back door is closed on the north wall.",
+        "The keeper stands behind the bar; a hooded figure sits by the hearth.",
+        "The hearth fire crackles; soft river and wind noise comes through the open front entrance.",
+        "A distant tower roofline is visible through a north window but is not reachable from this room."
+      ],
+      "hidden_facts": [
+        "Contents of the kitchen are not perceived through the closed kitchen door.",
+        "The destination and contents beyond the back door are unknown until discovered.",
+        "The hooded figure's possessions and private intentions are unknown unless disclosed."
+      ]
+    }
+  ],
+  "visible_but_unreachable_landmarks": [
+    {
+      "feature_id": "MPV2_F_TAVERN_TOWER_ROOFLINE",
+      "visible_from_location_id": "MPV2_LOC_TAVERN",
+      "reachability_from_current_location": "not_directly_reachable",
+      "known_route": "no direct in-room path; routes beyond the south entrance are outside this fixture"
+    }
+  ],
+  "npc_anchors": [
+    {
+      "npc_id": "MPV2_NPC_TAVERN_KEEPER",
+      "name": "Tavern keeper",
+      "anchor_feature_id": "MPV2_F_TAVERN_BAR",
+      "position": "behind_bar_west_center",
+      "perceivable": true
+    },
+    {
+      "npc_id": "MPV2_NPC_HOODED_FIGURE",
+      "name": "Hooded figure",
+      "anchor_feature_id": "MPV2_F_TAVERN_HEARTH",
+      "position": "beside_hearth_northeast",
+      "perceivable": true
+    }
+  ],
+  "authored_distances": [],
+  "mutable_features": [
+    {
+      "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+      "initial_state": "closed_unbarred",
+      "scripted_change": {
+        "script_id": "interior_e1_e4",
+        "target_state": "barred",
+        "change_action": "Acheron pushes a heavy bench against the door"
+      },
+      "persistence_check": "state remains barred after leave, save, resume and return"
+    }
+  ],
+  "expected_properties": {
+    "sketch_anchor_ids": [
+      "MPV2_F_TAVERN_FRONT_DOOR",
+      "MPV2_F_TAVERN_LONG_TABLE",
+      "MPV2_F_TAVERN_BAR",
+      "MPV2_F_TAVERN_HEARTH",
+      "MPV2_F_TAVERN_STAIRS",
+      "MPV2_F_TAVERN_BALCONY",
+      "MPV2_F_TAVERN_KITCHEN_DOOR",
+      "MPV2_F_TAVERN_BACK_DOOR"
+    ],
+    "sketch_relations": [
+      {
+        "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+        "relation": "south_of",
+        "other_feature_id": "MPV2_F_TAVERN_LONG_TABLE"
+      },
+      {
+        "feature_id": "MPV2_F_TAVERN_BAR",
+        "relation": "west_of",
+        "other_feature_id": "MPV2_F_TAVERN_LONG_TABLE"
+      },
+      {
+        "feature_id": "MPV2_F_TAVERN_HEARTH",
+        "relation": "northeast_of",
+        "other_feature_id": "MPV2_F_TAVERN_LONG_TABLE"
+      },
+      {
+        "feature_id": "MPV2_F_TAVERN_STAIRS",
+        "relation": "east_of",
+        "other_feature_id": "MPV2_F_TAVERN_LONG_TABLE"
+      },
+      {
+        "feature_id": "MPV2_F_TAVERN_BALCONY",
+        "relation": "above_and_east_of",
+        "other_feature_id": "MPV2_F_TAVERN_STAIRS"
+      },
+      {
+        "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+        "relation": "north_of",
+        "other_feature_id": "MPV2_F_TAVERN_LONG_TABLE"
+      }
+    ],
+    "spatial_checks": [
+      "Front exit remains south and open to the village green.",
+      "Kitchen and back-door destinations remain unknown unless discovered.",
+      "The tower roofline is visible but not a reachable route from this room.",
+      "Keeper and hooded figure remain at their authored anchors unless moved by an observed event.",
+      "The back door changes to barred and stays barred after save/resume."
+    ]
+  }
+}

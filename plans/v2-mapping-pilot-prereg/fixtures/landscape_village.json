@@ -1,0 +1,190 @@
+{
+  "fixture_id": "landscape_village",
+  "version": "1.0.0",
+  "scope": "sandbox-only spatial truth; not a published module",
+  "location_ids": [
+    "MPV2_LOC_VILLAGE_GREEN"
+  ],
+  "locations": [
+    {
+      "location_id": "MPV2_LOC_VILLAGE_GREEN",
+      "name": "Rillford Village Green",
+      "orientation": {
+        "origin_feature_id": "MPV2_F_VILLAGE_WELL",
+        "north": "toward the river and tower",
+        "entry_facing": "north from the southern lane",
+        "position_semantics": "schematic labels only; not metric coordinates"
+      },
+      "features": [
+        {
+          "feature_id": "MPV2_F_VILLAGE_WELL",
+          "name": "Village well",
+          "position": "center",
+          "state": "usable",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_BRIDGE",
+          "name": "Damaged bridge",
+          "position": "northeast_river_edge",
+          "state": "blocked",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_BRIDGE_RAIL",
+          "name": "Bridge rail",
+          "position": "northeast_river_edge",
+          "state": "intact_but_damaged",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_WOODLAND_DETOUR",
+          "name": "Woodland detour trail",
+          "position": "south_east",
+          "state": "open",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_FORD",
+          "name": "Shallow ford",
+          "position": "west_river_edge",
+          "state": "open",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_RIVER",
+          "name": "Rill River",
+          "position": "north_and_east_boundary",
+          "state": "flowing",
+          "perceivable": true,
+          "reachable": false
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_WATCHTOWER",
+          "name": "Watchtower across the river",
+          "position": "east_across_river",
+          "state": "visible_distant_landmark",
+          "perceivable": true,
+          "reachable": false
+        },
+        {
+          "feature_id": "MPV2_F_VILLAGE_SIGNPOST",
+          "name": "Weathered signpost",
+          "position": "southwest_of_well",
+          "state": "fixed",
+          "perceivable": true,
+          "reachable": true
+        }
+      ],
+      "exits": [
+        {
+          "exit_id": "MPV2_EXIT_VILLAGE_BRIDGE",
+          "feature_id": "MPV2_F_VILLAGE_BRIDGE",
+          "side": "northeast",
+          "state": "blocked",
+          "known_destination_location_id": "MPV2_LOC_TOWER_APPROACH",
+          "destination_knowledge": "known"
+        },
+        {
+          "exit_id": "MPV2_EXIT_VILLAGE_DETOUR",
+          "feature_id": "MPV2_F_VILLAGE_WOODLAND_DETOUR",
+          "side": "southeast",
+          "state": "open",
+          "known_destination_location_id": "MPV2_LOC_TOWER_APPROACH",
+          "destination_knowledge": "known"
+        },
+        {
+          "exit_id": "MPV2_EXIT_VILLAGE_FORD",
+          "feature_id": "MPV2_F_VILLAGE_FORD",
+          "side": "west",
+          "state": "open",
+          "known_destination_location_id": "MPV2_LOC_TOWER_APPROACH",
+          "destination_knowledge": "known"
+        }
+      ],
+      "perceivable_facts": [
+        "The village green is centered on the well.",
+        "The bridge lies northeast and is blocked by a damaged span.",
+        "The woodland detour leaves southeast and the ford is at the west river edge.",
+        "The watchtower is visible across the river but cannot be reached by a direct crossing from the green.",
+        "The detour and ford are known indirect routes to the tower approach.",
+        "No authored distance is supplied for the river, bridge, detour or ford."
+      ],
+      "hidden_facts": [
+        "The far-bank ground beyond the tower approach is not visible from the village green.",
+        "The river depth away from the ford is unknown.",
+        "No contents or occupants inside the watchtower are known from the village green."
+      ]
+    }
+  ],
+  "visible_but_unreachable_landmarks": [
+    {
+      "feature_id": "MPV2_F_VILLAGE_WATCHTOWER",
+      "visible_from_location_id": "MPV2_LOC_VILLAGE_GREEN",
+      "reachability_from_current_location": "not_directly_reachable",
+      "known_route": "indirect routes exist by the southeast woodland detour or west ford; the blocked bridge is not traversable"
+    }
+  ],
+  "npc_anchors": [
+    {
+      "npc_id": "MPV2_NPC_VILLAGE_BELLKEEPER",
+      "name": "Village bellkeeper",
+      "anchor_feature_id": "MPV2_F_VILLAGE_WELL",
+      "position": "beside_well_center",
+      "perceivable": true
+    }
+  ],
+  "authored_distances": [],
+  "mutable_features": [
+    {
+      "feature_id": "MPV2_F_VILLAGE_BRIDGE_RAIL",
+      "initial_state": "intact_but_damaged",
+      "optional_e4_change": "smashed",
+      "used_by_registered_script": false,
+      "persistence_check": "if changed in a separately approved extension, the state must persist; current registered landscape script does not mutate it"
+    }
+  ],
+  "expected_properties": {
+    "sketch_anchor_ids": [
+      "MPV2_F_VILLAGE_WELL",
+      "MPV2_F_VILLAGE_BRIDGE",
+      "MPV2_F_VILLAGE_WOODLAND_DETOUR",
+      "MPV2_F_VILLAGE_FORD",
+      "MPV2_F_VILLAGE_RIVER",
+      "MPV2_F_VILLAGE_WATCHTOWER"
+    ],
+    "sketch_relations": [
+      {
+        "feature_id": "MPV2_F_VILLAGE_BRIDGE",
+        "relation": "northeast_of",
+        "other_feature_id": "MPV2_F_VILLAGE_WELL"
+      },
+      {
+        "feature_id": "MPV2_F_VILLAGE_WOODLAND_DETOUR",
+        "relation": "southeast_of",
+        "other_feature_id": "MPV2_F_VILLAGE_WELL"
+      },
+      {
+        "feature_id": "MPV2_F_VILLAGE_FORD",
+        "relation": "west_of",
+        "other_feature_id": "MPV2_F_VILLAGE_WELL"
+      },
+      {
+        "feature_id": "MPV2_F_VILLAGE_WATCHTOWER",
+        "relation": "east_across_river_from",
+        "other_feature_id": "MPV2_F_VILLAGE_WELL"
+      }
+    ],
+    "spatial_checks": [
+      "Do not narrate a direct crossing of the blocked bridge as available.",
+      "Keep the southeast detour and west ford as distinct open routes.",
+      "The tower is visible but not directly reachable from the green.",
+      "Do not infer distances or far-bank facts absent from the fixture."
+    ]
+  }
+}

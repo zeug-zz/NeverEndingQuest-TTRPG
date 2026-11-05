@@ -1,0 +1,138 @@
+{
+  "script_id": "landscape_e2_e3",
+  "version": "1.0.0",
+  "fixture_ids": [
+    "landscape_village",
+    "transition_tower_approach"
+  ],
+  "encounter_id": null,
+  "model_bearing_turn_count": 8,
+  "turns": [
+    {
+      "id": "E2-01",
+      "family": "E2",
+      "utterance": "We are at the village green and want to reach the watchtower. What routes are known from here?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_VILLAGE_WELL", "MPV2_F_VILLAGE_BRIDGE", "MPV2_F_VILLAGE_WOODLAND_DETOUR", "MPV2_F_VILLAGE_FORD"],
+          "assertion": "Orient around the well and distinguish the blocked bridge from the open southeast detour and west ford."
+        }
+      ]
+    },
+    {
+      "id": "E2-02",
+      "family": "E2",
+      "utterance": "We inspect the damaged bridge. Can we cross it now, and what is known on the other side?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_VILLAGE_BRIDGE", "MPV2_F_VILLAGE_BRIDGE_RAIL", "MPV2_F_VILLAGE_RIVER"],
+          "assertion": "State that the bridge is blocked; do not claim a direct crossing or invent unseen far-bank details."
+        }
+      ]
+    },
+    {
+      "id": "E2-03",
+      "family": "E2",
+      "utterance": "We take the open woodland detour to go around the damaged bridge.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_VILLAGE_WOODLAND_DETOUR", "MPV2_F_VILLAGE_BRIDGE"],
+          "assertion": "Use the southeast detour as a distinct open route; the bridge remains blocked."
+        }
+      ]
+    },
+    {
+      "id": "E2-04",
+      "family": "E2",
+      "utterance": "From the river approach, describe the watchtower we can see and whether we can reach it directly from here.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_VILLAGE_WATCHTOWER", "MPV2_F_VILLAGE_RIVER", "MPV2_F_VILLAGE_BRIDGE"],
+          "assertion": "Keep visibility distinct from direct reachability and avoid inventing a metric distance."
+        }
+      ]
+    },
+    {
+      "id": "E3-01",
+      "family": "E3",
+      "utterance": "We follow the detour into the Old Watchtower Approach. What is around us in this second area?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TOWER_APPROACH_PATH", "MPV2_F_TOWER_APPROACH_CAIRN", "MPV2_F_TOWER_APPROACH_GATE"],
+          "assertion": "Update the current location to MPV2_LOC_TOWER_APPROACH and use its reduced local orientation."
+        }
+      ]
+    },
+    {
+      "id": "E3-02",
+      "family": "E3",
+      "utterance": "We ask the approach watcher about the gate and the way back. What does the watcher point out?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TOWER_APPROACH_CAIRN", "MPV2_F_TOWER_APPROACH_GATE", "MPV2_F_TOWER_APPROACH_VILLAGE_SMOKE"],
+          "assertion": "Keep the watcher at the cairn, gate north, and return route southwest by the ford; the gate destination remains unknown."
+        }
+      ]
+    },
+    {
+      "id": "E3-03",
+      "family": "E3",
+      "utterance": "We return to the village green by the west ford.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TOWER_APPROACH_PATH", "MPV2_F_VILLAGE_FORD", "MPV2_F_VILLAGE_WELL"],
+          "assertion": "Transition back to MPV2_LOC_VILLAGE_GREEN via the known ford route; do not relabel the path as the bridge."
+        }
+      ]
+    },
+    {
+      "id": "E3-04",
+      "family": "E3",
+      "utterance": "Back at the green, recap the route we used, the blocked crossing, and the other known way across.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_VILLAGE_BRIDGE", "MPV2_F_VILLAGE_WOODLAND_DETOUR", "MPV2_F_VILLAGE_FORD", "MPV2_F_VILLAGE_WATCHTOWER"],
+          "assertion": "Maintain the bridge blocked, keep detour and ford distinct, and preserve visible-versus-reachable status after the transition."
+        }
+      ]
+    }
+  ]
+}
