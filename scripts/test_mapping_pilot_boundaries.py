@@ -84,14 +84,20 @@ class MappingPilotBoundaryTests(unittest.TestCase):
                                     for size in (1, 4)})
 
     def test_production_boundary_diff(self) -> None:
-        base = "c6ed675b2efa4fafb85d3d9df2a236f91ae850d9"
         try:
+            try:
+                base_result = subprocess.run(["git", "merge-base", "HEAD", "origin/main"],
+                                             cwd=str(ROOT), capture_output=True, text=True, check=True)
+            except subprocess.CalledProcessError:
+                base_result = subprocess.run(["git", "merge-base", "HEAD", "main"],
+                                             cwd=str(ROOT), capture_output=True, text=True, check=True)
+            base = base_result.stdout.strip()
             tracked = subprocess.run(["git", "diff", "--name-only", base, "--"],
                                      cwd=str(ROOT), capture_output=True, text=True, check=True)
             untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
                                        cwd=str(ROOT), capture_output=True, text=True, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-            self.skipTest("git boundary inspection unavailable: %s" % exc)
+            self.skipTest("git boundary inspection unavailable (origin/main and main merge-base lookup failed): %s" % exc)
         paths = set(tracked.stdout.splitlines()) | set(untracked.stdout.splitlines())
         allowed = ("scripts/", "openspec/changes/v2-mapping-pilot-tooling/")
         violations = sorted(path for path in paths if not path.startswith(allowed))
