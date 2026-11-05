@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1057,38 +1058,36 @@ class MappingPilotExecutionTests(unittest.TestCase):
     def test_default_server_launch_injects_guard_bootstrap_without_starting_server(self) -> None:
         from scripts.mapping_pilot import row_runner
 
-        relative_directory = (
-            Path("tmp/router-rollout/mapping-pilot/sp3")
-            / ("guard-" + uuid.uuid4().hex[:8])
-            / "runtime"
-            / "row-guard-test"
-        )
-        test_project_root = PROJECT_ROOT / self.base
-        (test_project_root / relative_directory).mkdir(parents=True)
+        relative_directory = self.base / self.run_id / "runtime" / "row-guard-test"
+        (PROJECT_ROOT / relative_directory).mkdir(parents=True)
         context = {
             "run_id": self.run_id,
             "row_id": "E01",
             "row_run_id": "row-guard-test",
+            "lifecycle_id": "row-guard-test-s1",
             "ledger_root": self.base.as_posix(),
             "live_started_monotonic": 42.0,
         }
-        with mock.patch.object(row_runner, "PROJECT_ROOT", test_project_root):
-            environment = row_runner._request_guard_environment(
-                {
-                    "_request_guard_context": context,
-                    "_request_guard_directory": relative_directory.as_posix(),
-                }
-            )
+        environment = row_runner._request_guard_environment(
+            {
+                "_request_guard_context": context,
+                "_request_guard_directory": relative_directory.as_posix(),
+            }
+        )
         bootstrap = (
-            test_project_root / relative_directory / "sitecustomize.py"
+            PROJECT_ROOT / relative_directory / "sitecustomize.py"
         ).read_text(encoding="ascii")
         self.assertEqual(
             environment["NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT"],
             json.dumps(context, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
         )
-        self.assertEqual(environment["PYTHONPATH"].split(os.pathsep)[0], str((test_project_root / relative_directory).resolve()))
+        self.assertEqual(
+            environment["PYTHONPATH"].split(os.pathsep)[0],
+            str((PROJECT_ROOT / relative_directory).resolve()),
+        )
         self.assertIn("authorize_provider_attempt", bootstrap)
         self.assertIn("check_provider_request", bootstrap)
+        self.assertIn("_load_parent_execution", bootstrap)
 
     def test_request_guard_bootstrap_counts_before_fake_transport(self) -> None:
         from scripts.mapping_pilot import row_runner
@@ -1104,17 +1103,30 @@ class MappingPilotExecutionTests(unittest.TestCase):
             ledger_root=self.base,
             now=self.now,
         )
+        guard_directory = self.base / self.run_id / "runtime" / row_run_id
+        (PROJECT_ROOT / guard_directory).mkdir(parents=True)
         context = {
             "run_id": self.run_id,
             "row_id": "E01",
             "row_run_id": row_run_id,
+            "lifecycle_id": "row-bootstrap-boundary-s1",
             "ledger_root": self.base.as_posix(),
             "live_started_monotonic": 42.0,
         }
+        environment = row_runner._request_guard_environment(
+            {
+                "_request_guard_context": context,
+                "_request_guard_directory": guard_directory.as_posix(),
+            }
+        )
         environment_name = "NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT"
         old_environment = os.environ.get(environment_name)
-        os.environ[environment_name] = json.dumps(context)
-        namespace: dict[str, Any] = {}
+        os.environ[environment_name] = environment[environment_name]
+        namespace: dict[str, Any] = {
+            "__file__": str(
+                PROJECT_ROOT / guard_directory / "sitecustomize.py"
+            )
+        }
 
         class FakeTransport:
             def __init__(self) -> None:
@@ -1156,6 +1168,305 @@ class MappingPilotExecutionTests(unittest.TestCase):
         )["execution"]
         self.assertEqual(execution["attempt_count"], ROW_ATTEMPT_CAP)
         self.assertIn("row_attempt_cap", execution["cap_stop"]["reasons"])
+
+    def test_child_request_guard_uses_parent_ledger_from_copied_sandbox_cwd(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        self._create_ledger()
+        capped_run = "child-cap-row"
+        self._start_live_row("E01", capped_run)
+        reconcile_attempt_count(
+            self.run_id, "E01", capped_run, ROW_ATTEMPT_CAP - 1,
+            ledger_root=self.base, now=self.now,
+        )
+        sandbox = PROJECT_ROOT / self.base / "copied-sandbox-cwd"
+        receipt_runtime = PROJECT_ROOT / self.base / "child-receipt-runtime"
+        (receipt_runtime / "mapping_pilot").mkdir(parents=True)
+        copied_mapping = sandbox / "scripts" / "mapping_pilot"
+        copied_mapping.mkdir(parents=True)
+        for name in ("execution.py", "manifest.py", "scoring.py"):
+            shutil.copyfile(ROOT / "scripts" / "mapping_pilot" / name, copied_mapping / name)
+        fake_utils = sandbox / "utils"
+        fake_utils.mkdir()
+        (fake_utils / "__init__.py").write_text("", encoding="ascii")
+        (fake_utils / "llm_router.py").write_text(
+            """\
+class LLMRouter:
+    def _request_kwargs(self, *args, **kwargs):
+        return {"source": "copied-sandbox"}
+
+    @staticmethod
+    def _disable_sdk_retries(client):
+        return client
+
+class FakeLLM:
+    def call(self, *args, **kwargs):
+        return "fake summary"
+
+llm = FakeLLM()
+""",
+            encoding="ascii",
+        )
+
+        child_code = r'''\
+import importlib
+import json
+from pathlib import Path
+import socket
+import sys
+from types import SimpleNamespace
+import sitecustomize as guard
+
+def deny_network(*args, **kwargs):
+    raise AssertionError("provider-free network tripwire")
+
+socket.socket.connect = deny_network
+socket.create_connection = deny_network
+receipt_runtime = Path(sys.argv[1]).resolve(strict=True)
+guard._SERVER._safe_runtime_root = lambda _value: receipt_runtime
+sandbox = Path.cwd().resolve(strict=True)
+sys.path.insert(0, str(sandbox))
+import scripts.mapping_pilot as mapping_pilot
+mapping_pilot.__path__ = [str(sandbox / "scripts" / "mapping_pilot")]
+for name in ("execution", "manifest", "scoring"):
+    sys.modules.pop("scripts.mapping_pilot." + name, None)
+copied = importlib.import_module("scripts.mapping_pilot.execution")
+copied_root = Path(copied.PROJECT_ROOT).resolve(strict=True)
+guard_root = Path(guard._EXECUTION.PROJECT_ROOT).resolve(strict=True)
+if copied_root != sandbox or copied_root == guard_root:
+    raise AssertionError("copied sandbox import provenance was not exercised")
+import utils
+utils.__path__.append(str(guard_root / "utils"))
+from utils.llm_router import LLMRouter
+
+class FakeTransport:
+    def __init__(self):
+        self.calls = 0
+    def create(self, *args, **kwargs):
+        self.calls += 1
+        return "fake response"
+
+transport = FakeTransport()
+client = SimpleNamespace(chat=SimpleNamespace(completions=transport))
+router = LLMRouter()
+guarded_client = router._disable_sdk_retries(client)
+mode = sys.argv[2]
+denied = False
+try:
+    router._request_kwargs()
+    guarded_client.chat.completions.create("fake request")
+except guard._GuardStop:
+    denied = True
+if mode == "cap" and not denied:
+    try:
+        router._request_kwargs()
+        guarded_client.chat.completions.create("fake retry")
+    except guard._GuardStop:
+        denied = True
+print(json.dumps({
+    "denied": denied,
+    "transport_calls": transport.calls,
+    "copied_root": str(copied_root),
+    "guard_root": str(guard_root),
+    "guard_execution": str(Path(guard._EXECUTION.__file__).resolve()),
+    "caps": guard._EXECUTION.cap_snapshot(
+        guard._CONTEXT["run_id"], guard._CONTEXT["row_id"],
+        ledger_root=guard._CONTEXT["ledger_root"],
+    ),
+}))
+'''
+
+        def run_child(
+            row_id: str,
+            row_run_id: str,
+            mode: str,
+            *,
+            run_id: str | None = None,
+            ledger_root: Path | None = None,
+        ) -> dict[str, Any]:
+            selected_run_id = run_id or self.run_id
+            selected_ledger_root = ledger_root or self.base
+            context = {
+                "run_id": selected_run_id,
+                "row_id": row_id,
+                "row_run_id": row_run_id,
+                "lifecycle_id": "lifecycle-" + row_run_id,
+                "ledger_root": selected_ledger_root.as_posix(),
+                "live_started_monotonic": time.monotonic(),
+            }
+            guard_directory = (
+                selected_ledger_root / selected_run_id / "runtime" / row_run_id
+            )
+            (PROJECT_ROOT / guard_directory).mkdir(parents=True, exist_ok=True)
+            environment = os.environ.copy()
+            environment.update(row_runner._request_guard_environment({
+                "_request_guard_context": context,
+                "_request_guard_directory": guard_directory.as_posix(),
+            }))
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    child_code,
+                    str(receipt_runtime),
+                    mode,
+                ],
+                cwd=str(sandbox), env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            return json.loads(result.stdout)
+
+        capped = run_child("E01", capped_run, "cap")
+        self.assertTrue(capped["denied"])
+        self.assertEqual(capped["transport_calls"], 1)
+        self.assertEqual(capped["copied_root"], str(sandbox))
+        self.assertNotEqual(capped["guard_root"], capped["copied_root"])
+        self.assertEqual(
+            Path(capped["guard_execution"]),
+            ROOT / "scripts" / "mapping_pilot" / "execution.py",
+        )
+        capped_ledger = create_or_resume_ledger(self.run_id, ledger_root=self.base)
+        capped_execution = next(slot for slot in capped_ledger["slots"] if slot["row_id"] == "E01")["execution"]
+        self.assertEqual(capped_execution["attempt_count"], ROW_ATTEMPT_CAP)
+        self.assertIn("row_attempt_cap", capped_execution["cap_stop"]["reasons"])
+        self.assertFalse((sandbox / "tmp").exists())
+
+        unknown_matrix_id = "unknown-run"
+        unknown_ledger_root = self.base / "unknown-ledger"
+        create_or_resume_ledger(
+            unknown_matrix_id, ledger_root=unknown_ledger_root, now=self.now
+        )
+        unknown_run = "child-unknown-row"
+        for event, offset in (
+            ("seed_started", 0),
+            ("seed_completed", 1),
+            ("sandbox_launched", 2),
+        ):
+            event_time = self.now + timedelta(seconds=offset)
+            record_row_event(
+                unknown_matrix_id,
+                "E01",
+                unknown_run,
+                event,
+                event_timestamp=event_time.isoformat().replace("+00:00", "Z"),
+                ledger_root=unknown_ledger_root,
+                now=event_time,
+            )
+        reconcile_attempt_count(
+            unknown_matrix_id,
+            "E01",
+            unknown_run,
+            None,
+            ledger_root=unknown_ledger_root,
+            now=self.now,
+        )
+        unknown = run_child(
+            "E01",
+            unknown_run,
+            "unknown",
+            run_id=unknown_matrix_id,
+            ledger_root=unknown_ledger_root,
+        )
+        self.assertTrue(unknown["denied"])
+        self.assertEqual(unknown["transport_calls"], 0)
+        unknown_ledger = create_or_resume_ledger(
+            unknown_matrix_id, ledger_root=unknown_ledger_root
+        )
+        unknown_execution = next(slot for slot in unknown_ledger["slots"] if slot["row_id"] == "E01")["execution"]
+        self.assertIsNone(unknown_execution["attempt_count"])
+        self.assertIn("attempt_count_unknown", unknown_execution["cap_stop"]["reasons"])
+        self.assertFalse((sandbox / "tmp").exists())
+
+        startup_code = """\
+import os
+from pathlib import Path
+
+Path(os.environ["MAPPING_PILOT_APP_MARKER"]).write_text("started", encoding="ascii")
+
+class FakeTransport:
+    def create(self):
+        Path(os.environ["MAPPING_PILOT_TRANSPORT_MARKER"]).write_text(
+            "called", encoding="ascii"
+        )
+
+FakeTransport().create()
+"""
+
+        def assert_startup_denied(
+            label: str,
+            *,
+            missing_context: bool = False,
+            invalid_context: bool = False,
+            invalid_source: bool = False,
+            unsafe_root: bool = False,
+        ) -> None:
+            row_run_id = "startup-" + label
+            run_id = "startup-denied-" + label
+            ledger_root = self.base / "startup-denials"
+            guard_directory = ledger_root / run_id / "runtime" / row_run_id
+            (PROJECT_ROOT / guard_directory).mkdir(parents=True, exist_ok=True)
+            context = {
+                "run_id": run_id,
+                "row_id": "E03",
+                "row_run_id": row_run_id,
+                "lifecycle_id": "lifecycle-" + row_run_id,
+                "ledger_root": ledger_root.as_posix(),
+                "live_started_monotonic": time.monotonic(),
+            }
+            environment = os.environ.copy()
+            environment.update(row_runner._request_guard_environment({
+                "_request_guard_context": context,
+                "_request_guard_directory": guard_directory.as_posix(),
+            }))
+            if invalid_context:
+                context["row_id"] = "../invalid"
+                environment["NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT"] = json.dumps(
+                    context, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+                )
+            if unsafe_root:
+                context["ledger_root"] = "tmp/../outside"
+                environment["NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT"] = json.dumps(
+                    context, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+                )
+            if missing_context:
+                environment.pop("NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT", None)
+            if invalid_source:
+                invalid_source_directory = sandbox / ("invalid-source-" + label)
+                invalid_source_directory.mkdir()
+                (invalid_source_directory / "sitecustomize.py").write_text(
+                    row_runner._REQUEST_GUARD_BOOTSTRAP, encoding="ascii"
+                )
+                environment["PYTHONPATH"] = os.pathsep.join(
+                    [
+                        str(invalid_source_directory),
+                        environment.get("PYTHONPATH", ""),
+                    ]
+                )
+
+            app_marker = sandbox / (label + "-application.marker")
+            transport_marker = sandbox / (label + "-transport.marker")
+            environment["MAPPING_PILOT_APP_MARKER"] = str(app_marker)
+            environment["MAPPING_PILOT_TRANSPORT_MARKER"] = str(transport_marker)
+            result = subprocess.run(
+                [sys.executable, "-c", startup_code],
+                cwd=str(sandbox),
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0, msg=result.stdout)
+            self.assertFalse(app_marker.exists(), msg=label)
+            self.assertFalse(transport_marker.exists(), msg=label)
+            self.assertFalse((sandbox / "tmp").exists(), msg=label)
+            ledger_path = PROJECT_ROOT / ledger_root / run_id / "matrix_ledger.json"
+            self.assertFalse(ledger_path.exists(), msg=label)
+
+        assert_startup_denied("missing-context", missing_context=True)
+        assert_startup_denied("unsafe-root", unsafe_root=True)
+        assert_startup_denied("invalid-context", invalid_context=True)
+        assert_startup_denied("invalid-source", invalid_source=True)
 
     def _run_injected_row(
         self,

@@ -38,6 +38,16 @@ E05: **BLOCKED**, with 9 attempts, 9 receipts, 32.407824 seconds live elapsed, a
 
 The heavy scoped correction was verified by the primary with 222 tests passing, ASCII 848/0, strict validation valid, and clean diff. `SocketScriptDriver` uses only the existing `CaptureSession`; within its owned scope it temporarily sets the process-global Engine.IO message-packet limit to 64, refuses 65 and overlapping ownership or an unexpected prior bound, and restores 16 after reader stop, close, or startup failure. The class attribute is confined to the dedicated capture-driver process, not the server or product configuration; residual same-process clients would observe 64 during that scope. No dependency, server, prompt, fixture, script, provider cap, reconnect, or retry changes were made. Future captures require an identity amendment; no successful rerun or root-fix live PASS exists.
 
+## E06 primary verdict
+
+**E06: BLOCKED; primary observed runtime FAIL.** The immutable bundle `tmp/router-rollout/mapping-pilot/row-bundles/sp3/E06-20261105-01` records 17 issued attempts and 17 receipts; live elapsed time was 168.426771 seconds. E2-01 and E2-02 produced usable completed turns. E2-03's error output was incorrectly counted as completed by the delivery collector; E2-04 had a real 90-second no-output timeout. No transition/return coverage was obtained. The bundle remains BLOCKED, with the original classification **UNRESOLVED**; no reserve or replay was used.
+
+The runtime failed with `NameError` for `packet_location` at `main.py:7486` in `main_game_loop`, after arrival at MP03/MPA002 in a valid single-location area with empty same-area connectivity. No production fix was authorized or applied. Decoder64 remained connected until owned teardown and restoration; the primary restoration record confirmed 16. This is transport evidence only, not a gameplay PASS.
+
+Diagnostic-only metadata records that the subprocess guard had refused execution because of copied-sandbox `PROJECT_ROOT`; a capture-only heavy correction validated the parent worktree execution source, pinned the parent capledger regardless of child cwd, made invalid bootstrap raise `SystemExit` (ordinary `sitecustomize` errors would otherwise be swallowed), and gave child calls the original non-content receipt observer. Concurrent process sequence allocation uses the canonical atomic lock and `safe_write_json`, with no-overwrite/duplicate-observer behavior. The primary recovery suite passed 225 tests in 12.074 seconds. Earlier context-tool 120-second/30-second timeouts are retained as context-tool failures, not product-failure claims; a native rerun passed after server restart. Source changes remain uncommitted and require a future identity amendment before E07.
+
+Across E01-E06 there is no PASS: original classifications remain **UNRESOLVED**, with no reserves or replays; the matrix remains in progress.
+
 All gate tasks remain unchecked; ADR-0034 remains Proposed and human ratings remain pending. Verification recorded: `git diff --check` and `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate v2-mapping-pilot-execution --strict`. No commits, pushes, or live reruns were performed.
 
 No provider route, prompt, runtime, fixture, or script changes were made. Owner D1/M1/live ratings remain pending; Stage 1 is waived. ADR-0034 remains Proposed.
