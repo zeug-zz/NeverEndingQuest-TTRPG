@@ -66,6 +66,7 @@ from utils.repo_paths import (
     resolve_repository_path,
     validate_graphic_pack_name,
     validate_module_slug,
+    safe_child_name,
 )
 from utils.web_boundary import resolve_socketio_origins, resolve_web_host
 INSTALL_ROOT = repository_root()
@@ -1344,6 +1345,10 @@ def get_character_data():
         character_name = request.args.get('character_name')
         if not character_name:
             return jsonify({'error': 'No character name provided'}), 400
+        # TABLETOP MODE: Authorize the requested character before filesystem access.
+        character_name = safe_child_name(character_name, 'characters')
+        if character_name is None:
+            return jsonify({'error': 'Invalid character name'}), 400
         
         # Look for character file in characters folder
         character_path = f'characters/{character_name}.json'
@@ -5727,6 +5732,13 @@ def export_npcs_to_pack():
 
         if not pack_name or not npc_ids:
             return jsonify({'success': False, 'error': 'Missing pack name or NPC IDs.'}), 400
+        # TABLETOP MODE: Validate every path segment before creating or copying files.
+        pack_name = validate_graphic_pack_name(pack_name)
+        if pack_name is None or not isinstance(npc_ids, list):
+            return jsonify({'success': False, 'error': 'Invalid pack or NPC IDs'}), 400
+        npc_ids = [safe_child_name(npc_id, 'graphic_packs') for npc_id in npc_ids]
+        if any(npc_id is None for npc_id in npc_ids):
+            return jsonify({'success': False, 'error': 'Invalid pack or NPC IDs'}), 400
 
         source_dir = os.path.join('web', 'static', 'media', 'npcs')  # Correct NPC location
         dest_dir = os.path.join('graphic_packs', pack_name, 'npcs')

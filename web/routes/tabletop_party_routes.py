@@ -101,6 +101,10 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
         party_tracker["partyNPCs"] = filtered
 
     def _load_character_data(character_name: str) -> Dict[str, Any]:
+        # TABLETOP MODE: Reject path-bearing names before either canonical or fallback reads.
+        character_name = safe_child_name(character_name, 'characters')
+        if character_name is None:
+            return {}
         char_data = pc_manager.get_character_state(character_name)
         if isinstance(char_data, dict) and char_data:
             return char_data
@@ -1172,6 +1176,10 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
             character_name = data.get('character_name')
             if not character_name:
                 return jsonify({'error': 'Character name is required'}), 400
+            # TABLETOP MODE: Reject path-bearing names before character lookup or update.
+            character_name = safe_child_name(character_name, 'characters')
+            if character_name is None:
+                return jsonify({'error': 'Invalid character name'}), 400
 
             # Load existing character
             existing_char = pc_manager.get_character_state(character_name)
