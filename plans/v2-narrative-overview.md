@@ -524,7 +524,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network` | B0 | Opened 2026-11-05 | N1 proposal (not judged) | N1 player security and sync contract |
+| N | `feature/v2-network-n1` | B0 | Opened 2026-11-05 | N1 review remediation | N1 player security and sync contract |
 | S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP2 review / SP3 preparation (not judged) | SP2 offline D1/M1 |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
@@ -545,7 +545,7 @@ live runs never overlap.
 | Gate | Worktree | Verdict | Date | Evidence | PR |
 | --- | --- | --- | --- | --- | --- |
 | N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
-| N1 player boundary and contract | N | pending | -- | -- | -- |
+| N1 player boundary and contract | N | BLOCKED | 2026-11-06 | Overseer reproduced an unmet synchronization contract on `196fd98d` despite 76 focused tests and all ten CI checks passing; private local review: `plans/security/pr93-n1-review.md`; fix and independent re-verification required before integration | #93 (not merged) |
 | N2 React vertical slice | N | pending | -- | -- | -- |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
