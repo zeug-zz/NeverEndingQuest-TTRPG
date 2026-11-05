@@ -30,6 +30,7 @@ _FIXTURE_IDS = (
 _LIFECYCLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
 _RECEIPT_NAME = re.compile(r"^record-[0-9]{8}\.json$")
+_RECEIPT_OBSERVER_IDENTITY_ATTRIBUTE = "_mapping_pilot_receipt_observer_identity"
 
 
 def _safe_runtime_root(value: str | Path) -> Path:
@@ -270,30 +271,51 @@ def install_router_receipt_observer(
     _reject_symlink_components(root, receipt_root)
     receipt_root.mkdir(parents=True, exist_ok=True)
     _reject_symlink_components(root, receipt_root)
-    sequence = 0
     for entry in receipt_root.iterdir():
         if _RECEIPT_NAME.fullmatch(entry.name):
             if entry.is_symlink() or not entry.is_file():
                 raise ValueError("mapping-pilot router receipt path is unsafe")
-            sequence = max(sequence, int(entry.name[7:15]))
+    identity = (str(root), row_run_id, lifecycle_id)
+    existing_identity = getattr(
+        original_call, _RECEIPT_OBSERVER_IDENTITY_ATTRIBUTE, None
+    )
+    if existing_identity is not None:
+        if existing_identity != identity:
+            raise ValueError("mapping-pilot receipt observer identity changed")
+        return lambda: None
     lock = threading.RLock()
 
     def record(receipt: Any) -> None:
-        from utils.file_operations import safe_write_json
+        from utils.file_operations import atomic_writer, safe_write_json
 
-        nonlocal sequence
         with lock:
-            sequence += 1
-            target = receipt_root / ("record-%08d.json" % sequence)
-            _reject_symlink_components(root, target)
-            payload = _router_receipt_record(
-                receipt,
-                runtime_root=root,
-                row_run_id=row_run_id,
-                lifecycle_id=lifecycle_id,
-                sequence=sequence,
-            )
+            sequence_lock_key = str(receipt_root / ".sequence")
+            sequence_lock_acquired = False
             try:
+                if atomic_writer.acquire_lock(sequence_lock_key) is None:
+                    raise OSError("router receipt sequence lock was unavailable")
+                sequence_lock_acquired = True
+                sequence = 0
+                for entry in receipt_root.iterdir():
+                    if not _RECEIPT_NAME.fullmatch(entry.name):
+                        continue
+                    if entry.is_symlink() or not entry.is_file():
+                        raise ValueError("mapping-pilot router receipt path is unsafe")
+                    sequence = max(sequence, int(entry.name[7:15]))
+                sequence += 1
+                if sequence > 99999999:
+                    raise OverflowError("mapping-pilot router receipt sequence is exhausted")
+                target = receipt_root / ("record-%08d.json" % sequence)
+                _reject_symlink_components(root, target)
+                if target.exists() or target.is_symlink():
+                    raise FileExistsError("router receipt record path already exists")
+                payload = _router_receipt_record(
+                    receipt,
+                    runtime_root=root,
+                    row_run_id=row_run_id,
+                    lifecycle_id=lifecycle_id,
+                    sequence=sequence,
+                )
                 wrote = safe_write_json(
                     str(target),
                     payload,
@@ -301,6 +323,8 @@ def install_router_receipt_observer(
                     acquire_lock=True,
                     json_kwargs={"ensure_ascii": True, "sort_keys": True, "allow_nan": False},
                 )
+                if not wrote:
+                    raise OSError("router receipt write failed")
             except Exception as exc:
                 print(
                     "[FAIL] mapping_pilot_router_receipt_write_failed error_type=%s"
@@ -309,13 +333,9 @@ def install_router_receipt_observer(
                     flush=True,
                 )
                 raise
-            if not wrote:
-                print(
-                    "[FAIL] mapping_pilot_router_receipt_write_failed error_type=WriteFailed",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                raise OSError("router receipt write failed")
+            finally:
+                if sequence_lock_acquired:
+                    atomic_writer.release_lock(sequence_lock_key)
 
     def wrapped_call(*args: Any, **kwargs: Any) -> Any:
         original_observer = kwargs.get("observer")
@@ -343,6 +363,7 @@ def install_router_receipt_observer(
         kwargs["observer"] = observed
         return original_call(*args, **kwargs)
 
+    setattr(wrapped_call, _RECEIPT_OBSERVER_IDENTITY_ATTRIBUTE, identity)
     router.call = wrapped_call
     cleaned = False
 

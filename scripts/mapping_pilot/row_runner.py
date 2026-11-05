@@ -65,6 +65,7 @@ from scripts.mapping_pilot.scoring import (
 DEFAULT_ROW_EVIDENCE_ROOT = DEFAULT_EVIDENCE_ROOT / "row-bundles"
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_ROW_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SAFE_LIFECYCLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _RECORD_NAME = re.compile(r"^record-[0-9]{8}\.json$")
 _MOVEMENT_RECORD_NAME = re.compile(r"^record-[0-9]{6}\.json$")
 # Research-only CaptureSession scope: python-engineio exposes this decoder
@@ -83,10 +84,14 @@ _SOCKET_DISCONNECT_REASONS = {
 }
 _MAPPING_MODULE = "Mapping_Pilot_Arena"
 _REQUEST_GUARD_BOOTSTRAP = '''\
+import importlib
 import importlib.abc
 import importlib.machinery
 import json
+import math
 import os
+from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -97,6 +102,153 @@ try:
 except (TypeError, ValueError):
     _CONTEXT = None
 _REQUEST_LOCK = threading.RLock()
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SAFE_ROW_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SAFE_LIFECYCLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def _reject_source_symlinks(path):
+    if not path.is_absolute() or ".." in path.parts:
+        raise RuntimeError("mapping-pilot request guard source path is unsafe")
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError("mapping-pilot request guard source path is unsafe")
+
+
+def _validated_context():
+    required = {
+        "run_id",
+        "row_id",
+        "row_run_id",
+        "lifecycle_id",
+        "ledger_root",
+        "live_started_monotonic",
+    }
+    if not isinstance(_CONTEXT, dict) or set(_CONTEXT) != required:
+        raise RuntimeError("mapping-pilot request guard context is unavailable")
+    for key in ("run_id", "row_id"):
+        if not isinstance(_CONTEXT[key], str) or not _SAFE_TOKEN.fullmatch(_CONTEXT[key]):
+            raise RuntimeError("mapping-pilot request guard identity is invalid")
+    if (
+        not isinstance(_CONTEXT["row_run_id"], str)
+        or not _SAFE_ROW_RUN_ID.fullmatch(_CONTEXT["row_run_id"])
+    ):
+        raise RuntimeError("mapping-pilot request guard identity is invalid")
+    if (
+        not isinstance(_CONTEXT["lifecycle_id"], str)
+        or not _SAFE_LIFECYCLE_ID.fullmatch(_CONTEXT["lifecycle_id"])
+    ):
+        raise RuntimeError("mapping-pilot request guard lifecycle identity is invalid")
+
+    ledger_text = _CONTEXT["ledger_root"]
+    ledger_parts = ledger_text.split("/") if isinstance(ledger_text, str) else []
+    if (
+        not ledger_parts
+        or "\\\\" in ledger_text
+        or ledger_parts[0] != "tmp"
+        or any(part in ("", ".", "..") for part in ledger_parts)
+    ):
+        raise RuntimeError("mapping-pilot request guard ledger root is unsafe")
+
+    started = _CONTEXT["live_started_monotonic"]
+    if (
+        isinstance(started, bool)
+        or not isinstance(started, (int, float))
+        or started < 0
+        or not math.isfinite(float(started))
+    ):
+        raise RuntimeError("mapping-pilot request guard live start is invalid")
+    return ledger_parts
+
+
+def _load_parent_execution():
+    ledger_parts = _validated_context()
+    source_path = Path(__file__)
+    _reject_source_symlinks(source_path)
+    try:
+        source_path = source_path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError("mapping-pilot request guard source is unavailable") from exc
+
+    suffix = tuple(
+        ledger_parts
+        + [
+            _CONTEXT["run_id"],
+            "runtime",
+            _CONTEXT["row_run_id"],
+            "sitecustomize.py",
+        ]
+    )
+    if source_path.parts[-len(suffix):] != suffix:
+        raise RuntimeError("mapping-pilot request guard source identity is invalid")
+    project_root = source_path
+    for _part in suffix:
+        project_root = project_root.parent
+    try:
+        project_root = project_root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError("mapping-pilot owning repository is unavailable") from exc
+    if not project_root.is_dir():
+        raise RuntimeError("mapping-pilot owning repository is unavailable")
+
+    execution_path = project_root / "scripts" / "mapping_pilot" / "execution.py"
+    manifest_path = project_root / "scripts" / "mapping_pilot" / "manifest.py"
+    for source in (execution_path, manifest_path):
+        _reject_source_symlinks(source)
+        try:
+            if source.resolve(strict=True) != source or not source.is_file():
+                raise RuntimeError("mapping-pilot parent guard source is unavailable")
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError("mapping-pilot parent guard source is unavailable") from exc
+
+    root_text = str(project_root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    try:
+        execution = importlib.import_module("scripts.mapping_pilot.execution")
+        manifest = importlib.import_module("scripts.mapping_pilot.manifest")
+        loaded_execution = Path(execution.__file__).resolve(strict=True)
+        loaded_manifest = Path(manifest.__file__).resolve(strict=True)
+        loaded_project_root = Path(execution.PROJECT_ROOT).resolve(strict=True)
+        manifest_project_root = Path(manifest.PROJECT_ROOT).resolve(strict=True)
+        prereg_root = Path(execution.DEFAULT_PREREG_ROOT).resolve(strict=True)
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError) as exc:
+        raise RuntimeError("mapping-pilot parent execution guard is unavailable") from exc
+    if (
+        loaded_execution != execution_path
+        or loaded_manifest != manifest_path
+        or loaded_project_root != project_root
+        or manifest_project_root != project_root
+        or prereg_root != project_root / "plans" / "v2-mapping-pilot-prereg"
+    ):
+        raise RuntimeError("mapping-pilot execution guard did not load from its owning repository")
+    return execution
+
+
+def _load_parent_server(execution):
+    project_root = Path(execution.PROJECT_ROOT).resolve(strict=True)
+    server_path = project_root / "scripts" / "mapping_pilot" / "server.py"
+    _reject_source_symlinks(server_path)
+    try:
+        if server_path.resolve(strict=True) != server_path or not server_path.is_file():
+            raise RuntimeError("mapping-pilot parent receipt observer is unavailable")
+        server = importlib.import_module("scripts.mapping_pilot.server")
+        loaded_server = Path(server.__file__).resolve(strict=True)
+        server_project_root = Path(server.PROJECT_ROOT).resolve(strict=True)
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError) as exc:
+        raise RuntimeError("mapping-pilot parent receipt observer is unavailable") from exc
+    if loaded_server != server_path or server_project_root != project_root:
+        raise RuntimeError("mapping-pilot receipt observer did not load from its owning repository")
+    return server
+
+
+try:
+    _EXECUTION = _load_parent_execution()
+    _SERVER = _load_parent_server(_EXECUTION)
+except Exception as exc:
+    raise SystemExit("mapping-pilot request guard initialization failed") from exc
 
 
 class _GuardStop(BaseException):
@@ -112,10 +264,8 @@ class _GuardedCompletions:
         return self._create if name == "create" else value
 
     def _create(self, *args, **kwargs):
-        from scripts.mapping_pilot.execution import authorize_provider_attempt
-
         with _REQUEST_LOCK:
-            result = authorize_provider_attempt(
+            result = _EXECUTION.authorize_provider_attempt(
                 _CONTEXT["run_id"],
                 _CONTEXT["row_id"],
                 _CONTEXT["row_run_id"],
@@ -158,7 +308,14 @@ class _RouterLoader:
         self._loader.exec_module(module)
         if not isinstance(_CONTEXT, dict):
             raise RuntimeError("mapping-pilot request guard context is unavailable")
-        required = ("run_id", "row_id", "row_run_id", "ledger_root", "live_started_monotonic")
+        required = (
+            "run_id",
+            "row_id",
+            "row_run_id",
+            "lifecycle_id",
+            "ledger_root",
+            "live_started_monotonic",
+        )
         if any(key not in _CONTEXT for key in required):
             raise RuntimeError("mapping-pilot request guard context is incomplete")
         router_type = getattr(module, "LLMRouter", None)
@@ -173,9 +330,7 @@ class _RouterLoader:
 
         def guarded_kwargs(instance, *args, **kwargs):
             result = original_kwargs(instance, *args, **kwargs)
-            from scripts.mapping_pilot.execution import check_provider_request
-
-            decision = check_provider_request(
+            decision = _EXECUTION.check_provider_request(
                 _CONTEXT["run_id"],
                 _CONTEXT["row_id"],
                 _CONTEXT["row_run_id"],
@@ -192,6 +347,17 @@ class _RouterLoader:
 
         router_type._request_kwargs = guarded_kwargs
         router_type._disable_sdk_retries = staticmethod(guarded_disable)
+        try:
+            _SERVER.install_router_receipt_observer(
+                "tmp/combat_capture",
+                _CONTEXT["row_run_id"],
+                _CONTEXT["lifecycle_id"],
+                router_module=module,
+            )
+        except Exception as exc:
+            raise SystemExit(
+                "mapping-pilot child receipt observer initialization failed"
+            ) from exc
 
 
 class _RouterFinder(importlib.abc.MetaPathFinder):
@@ -974,6 +1140,7 @@ def execute_row(
                 run_id=run_id,
                 row_id=row_id,
                 row_run_id=selected_run_id,
+                lifecycle_id=lifecycle_id,
                 ledger_root=ledger_root,
                 runtime_directory=runtime_directory,
                 live_started_monotonic=launch_monotonic,
@@ -1279,6 +1446,7 @@ def execute_row(
                             run_id=run_id,
                             row_id=row_id,
                             row_run_id=selected_run_id,
+                            lifecycle_id=lifecycle_id,
                             ledger_root=ledger_root,
                             runtime_directory=runtime_directory,
                             live_started_monotonic=live_started,
@@ -2167,20 +2335,40 @@ def _request_guard_environment(row: Mapping[str, Any]) -> dict[str, str]:
     directory_value = row.get("_request_guard_directory")
     if not isinstance(context, Mapping) or not isinstance(directory_value, str):
         raise RowExecutionError("mapping-pilot request guard context is unavailable")
-    required = ("run_id", "row_id", "row_run_id", "ledger_root", "live_started_monotonic")
-    if any(key not in context for key in required):
+    required = (
+        "run_id",
+        "row_id",
+        "row_run_id",
+        "lifecycle_id",
+        "ledger_root",
+        "live_started_monotonic",
+    )
+    if set(context) != set(required):
         raise RowExecutionError("mapping-pilot request guard context is incomplete")
     for key in ("run_id", "row_id", "row_run_id"):
         if not isinstance(context[key], str) or not _SAFE_TOKEN.fullmatch(context[key]):
             raise RowExecutionError("mapping-pilot request guard identity is invalid")
-    ledger_root = Path(context["ledger_root"])
+    if not _SAFE_ROW_RUN_ID.fullmatch(context["row_run_id"]):
+        raise RowExecutionError("mapping-pilot request guard row-run identity is invalid")
     if (
-        ledger_root.is_absolute()
-        or not ledger_root.parts
-        or ledger_root.parts[0] != "tmp"
-        or ".." in ledger_root.parts
+        not isinstance(context["lifecycle_id"], str)
+        or not _SAFE_LIFECYCLE_ID.fullmatch(context["lifecycle_id"])
+    ):
+        raise RowExecutionError("mapping-pilot request guard lifecycle identity is invalid")
+    ledger_root_text = context["ledger_root"]
+    ledger_parts = (
+        ledger_root_text.split("/")
+        if isinstance(ledger_root_text, str)
+        else []
+    )
+    if (
+        not ledger_parts
+        or "\\" in ledger_root_text
+        or ledger_parts[0] != "tmp"
+        or any(part in ("", ".", "..") for part in ledger_parts)
     ):
         raise RowExecutionError("mapping-pilot request guard ledger path is invalid")
+    ledger_root = Path(*ledger_parts)
     started = context["live_started_monotonic"]
     if (
         isinstance(started, bool)
@@ -2190,26 +2378,41 @@ def _request_guard_environment(row: Mapping[str, Any]) -> dict[str, str]:
     ):
         raise RowExecutionError("mapping-pilot live start measurement is invalid")
 
+    expected_directory = (
+        ledger_root
+        / context["run_id"]
+        / "runtime"
+        / context["row_run_id"]
+    )
     relative_directory = Path(directory_value)
     if (
-        relative_directory.is_absolute()
-        or ".." in relative_directory.parts
-        or relative_directory.parts[:4]
-        != ("tmp", "router-rollout", "mapping-pilot", "sp3")
+        "\\" in directory_value
+        or relative_directory.is_absolute()
+        or any(part in ("", ".", "..") for part in directory_value.split("/"))
+        or relative_directory.as_posix() != directory_value
+        or relative_directory != expected_directory
     ):
         raise RowExecutionError("mapping-pilot request guard directory is invalid")
-    absolute_directory = PROJECT_ROOT / relative_directory
-    _reject_symlink_components(PROJECT_ROOT, absolute_directory)
+
+    try:
+        source_project_root = Path(__file__).resolve(strict=True).parents[2]
+        configured_project_root = Path(PROJECT_ROOT).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RowExecutionError("mapping-pilot owning repository is unavailable") from exc
+    if configured_project_root != source_project_root:
+        raise RowExecutionError("mapping-pilot owning repository identity is invalid")
+    absolute_directory = source_project_root / relative_directory
+    _reject_symlink_components(source_project_root, absolute_directory)
     try:
         absolute_directory.resolve(strict=True).relative_to(
-            (PROJECT_ROOT / "tmp").resolve(strict=True)
+            (source_project_root / "tmp").resolve(strict=True)
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise RowExecutionError("mapping-pilot request guard directory escaped tmp") from exc
     if not absolute_directory.is_dir():
         raise RowExecutionError("mapping-pilot request guard directory is unavailable")
     bootstrap_path = absolute_directory / "sitecustomize.py"
-    _reject_symlink_components(PROJECT_ROOT, bootstrap_path)
+    _reject_symlink_components(source_project_root, bootstrap_path)
     if bootstrap_path.exists():
         if not bootstrap_path.is_file() or bootstrap_path.read_text(encoding="ascii") != _REQUEST_GUARD_BOOTSTRAP:
             raise RowExecutionError("mapping-pilot request guard bootstrap was modified")
@@ -3047,6 +3250,7 @@ def _server_identity(
     run_id: str,
     row_id: str,
     row_run_id: str,
+    lifecycle_id: str,
     ledger_root: str | Path,
     runtime_directory: Path,
     live_started_monotonic: Optional[float],
@@ -3058,11 +3262,14 @@ def _server_identity(
         or live_started_monotonic < 0
     ):
         raise RowExecutionError("mapping-pilot live start measurement is unknown")
+    if not isinstance(lifecycle_id, str) or not _SAFE_LIFECYCLE_ID.fullmatch(lifecycle_id):
+        raise RowExecutionError("mapping-pilot lifecycle ID is invalid")
     identity = dict(row)
     identity["_request_guard_context"] = {
         "run_id": run_id,
         "row_id": row_id,
         "row_run_id": row_run_id,
+        "lifecycle_id": lifecycle_id,
         "ledger_root": Path(ledger_root).as_posix(),
         "live_started_monotonic": float(live_started_monotonic),
     }
