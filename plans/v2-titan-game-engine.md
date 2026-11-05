@@ -113,6 +113,13 @@ The delivered alignment schema lacks the historical `source` column. Full
 consumer validation, semantic quality and publication clearance remain open;
 240 enriched pilot cells do not establish full-corpus enrichment.
 
+Owner clarification (2026-11-05): those 240 fragments are deliberately the
+evaluation bundle. TITAN-shaped substrate scenarios and the Module Builder
+pilot inform schema/retrieval/composition refinements with NEQ-world before
+the optimized schema is signed off. Full-corpus production work is a large,
+separately authorized job after that sign-off, not an immediate prerequisite
+for pilot evaluation. Keep full-seed release verification separate.
+
 P0 must verify the actual export, integrity, foreign keys, schema/version,
 representative fragment quality, alignment distributions and supported retrieval.
 The reference seed itself may legitimately have no atom-relation rows; absence

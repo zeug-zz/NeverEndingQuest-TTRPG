@@ -1,11 +1,16 @@
-# NEQ-world Producer Request: Full Public Seed Export
+# Deferred Production Seed Checklist (Request Withdrawn)
 
-Status: Owner approved 2026-11-05; delivered as a local document handoff to
-`../NEQ-world/plans/neq-ttrpg-full-seed-request-20261105.md`.
-Delivery means a document was placed in the producer checkout, not that a
-producer session received it or agreed to perform the work.
-Audience: NEQ-world seed producer.
-Subject: Request for a reproducible, hash-bound full public world-seed export
+Status: WITHDRAWN by owner clarification, 2026-11-05. The producer-side
+document was deleted with owner approval. This consumer copy is retained
+only as a deferred checklist; it is not an active request or authorization.
+
+Evaluate the delivered 240-fragment bundle with TITAN- and Module
+Builder-shaped scenarios first. Feed evidence-backed schema and retrieval
+gaps to NEQ-world, iterate bounded pilot changes, and obtain owner sign-off
+on the optimized schema/consumer contract. Only then may the owner separately
+authorize full-corpus enrichment/export of roughly 40k fragments. The
+original wording below is historical/future acceptance material, not work
+to begin now.
 
 Hello NEQ-world team,
 
@@ -39,7 +44,7 @@ has no `source` columns on the specified alignment/conflict/deity bridge tables.
 Do not rely on the superseded appendix's contradictory schema descriptions or
 invent source identities to fill that gap.
 
-## Requested bundle and evidence
+## Future bundle and evidence checklist (not currently requested)
 
 Please provide one self-contained public bundle, tied together by exact hashes:
 
@@ -101,7 +106,8 @@ first use disposable, consistent copies; an installed-campaign operation would
 require separate owner authorization after copy-based tests and a proven
 backup/rollback path.
 
-Please return the bundle manifest, files and validation report through the
-agreed public handoff location, and identify unresolved producer decisions
-explicitly. The owner approved this request; producer implementation and
-publication still follow NEQ-world's own approval and audit requirements.
+When production execution is separately authorized after schema sign-off,
+agree the bundle handoff and validation evidence with NEQ-world. The earlier
+delivery approval does not authorize this job; the owner withdrew the
+premature request. Producer implementation and publication retain their
+own approval and audit requirements.

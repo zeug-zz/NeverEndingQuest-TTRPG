@@ -6,6 +6,14 @@ Status: PRODUCER PILOT DELIVERED to the consumer seed path; consumer integration
 is pending. This is not publication approval or a claim that runtime integration
 has been tested.
 
+Owner sequencing clarification (2026-11-05): this is the 240-fragment
+evaluation bundle, not an instruction to start production processing of the
+full roughly 40k-fragment corpus. Consumer TITAN/Module Builder pilot evidence
+must inform schema iteration with NEQ-world and explicit optimized-schema
+sign-off first. Full-corpus execution then requires separate authorization.
+Export requirements here are contract/acceptance considerations, not an
+active production job. See `plans/v2-memory-pilot.md` section 7.
+
 This document supersedes the pre-pilot export request retained in Appendix A.
 The old document's statements that delivery is BLOCKED and the installed seed is
 empty describe a pre-handoff snapshot, not the current artifact. The current

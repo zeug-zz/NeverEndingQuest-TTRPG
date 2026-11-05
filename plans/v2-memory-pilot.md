@@ -3,6 +3,14 @@
 Status: Proposed planning and review reference; not implementation authorization.
 Date: 2026-10-28
 
+Owner clarification, 2026-11-05: evaluate the delivered 240-fragment pilot
+with TITAN- and Module Builder-shaped scenarios first. Use the results to
+iterate with NEQ-world and sign off the optimized schema/consumer contract.
+Only then may the owner separately authorize enrichment and production export
+of the full roughly 40k-fragment corpus. No current request starts that job.
+The full-seed verification gate remains a later release dependency, not a
+prerequisite for running or evaluating the bounded pilot.
+
 ## 1. Executive decision
 
 The delivered world-seed pilot can, in principle, be installed into a copy of the
@@ -112,9 +120,11 @@ finishing one OpenSpec change or a green unit suite does not finish the goal.
 5. The selected structures are justified against predeclared functional, quality,
    latency, token, size and recovery measures; documented benchmarks include both
    successful and failed alternatives and representative one-PC and multi-PC cases.
-6. A producer-facing full-export contract documents versioning, stable IDs,
-   reference resolution, coverage, derivation, validation and publication limits;
-   actual full-seed delivery is independently verified against that contract.
+6. Pilot and Builder evidence inform a producer-facing optimized schema and
+   full-export contract covering versioning, stable IDs, reference resolution,
+   coverage, derivation, validation and publication limits. Explicit schema
+   sign-off precedes separately authorized full-corpus execution; actual
+   full-seed delivery is then independently verified against that contract.
 7. Documentation, migrations, tests, recovery instructions and a TITAN-facing
    integration map are reviewed. Applicable validation and live evidence have
    recorded commands, expected/observed results and artifact paths.
@@ -219,7 +229,15 @@ known-neutral remain distinct; symbolic affinity does not grant moral alignment,
 control or Titan reward. Basic bounded retrieval must not require a provider,
 network access, embeddings or Hindsight.
 
-### Request before full public export
+### Deferred production-export checklist (after pilot schema sign-off)
+
+The following is a future acceptance checklist, not a request to begin the
+full-corpus job. First evaluate the 240-fragment bundle through Pilot P1-P5
+and Builder MB2's pilot consumer, record retrieval/composition/schema gaps,
+iterate bounded pilot changes with NEQ-world, and obtain explicit owner
+sign-off on the optimized producer/consumer schema. Full-corpus execution
+then needs separate owner authorization. No TITAN runtime build is required
+to run TITAN-shaped substrate fixtures.
 
 Ask NEQ-world to provide a reproducible, hash-bound, self-contained public export
 and manifest with:
@@ -264,7 +282,7 @@ dependencies, numeric budgets, failure/rollback behavior and verification.
 | P3: `memory-campaign-evidence-and-knowledge` | Compare candidate structures; implement selected scope, event/evidence, knowledge and seed-instantiation substrate or explicitly owned existing extensions. Design safe legacy backfill and corrections. | Scenario-based comparison, chosen DDL/migrations and evidence of isolation, uncertainty, dedupe and restoration. Depends on P0-P2 and coordination with Narrator ownership. |
 | P4: `memory-titan-continuity-seams` | Exercise world fronts, actor continuity, conditional agendas, proposal/receipt and independent-ledger interfaces with bounded test fixtures; implement only substrate contracts needed for them. | Demonstrated TITAN-shaped use, no mechanical authority transfer, one-PC/multi-PC and cross-module continuity. Depends on P3; not a TITAN engine release. |
 | P5: `memory-seed-portability-and-evaluation` | Reproducible clean-environment build, backup/restore, generation fencing, resource benchmarks, schema decision record and consumer documentation. | Repeated tests, measured quality/cost/latency, recovery and portability evidence; documented tradeoffs. Depends on P1-P4. |
-| P6: `memory-full-public-seed-verification` | Agree producer contract and independently test delivered full public seed, content coverage, references, versioning and privacy/publication requirements. | Hash-bound full-export acceptance report or explicit blocker. Pilot and producer claims cannot substitute. May proceed alongside P3-P5 after P0, but final completion requires its gate. |
+| P6: `memory-full-public-seed-verification` | Independently test the production seed against the optimized, signed-off producer contract: content coverage, references, versioning and privacy/publication requirements. | After bounded pilot evaluation (P1-P5 and MB2 pilot evidence), schema iteration/sign-off and separately authorized producer execution. Hash-bound full-export acceptance report or explicit blocker; final completion retains this gate. Pilot and producer claims cannot substitute. |
 
 No phase implicitly authorizes the installed-campaign import or producer-side edits.
 If an active Narrator or TITAN change already owns a shared capability, coordinate

@@ -370,6 +370,13 @@ Dependencies: MB1. Blueprint/presentation work can use labelled fixtures; real
 enrichment integration consumes accepted Pilot P1/P2 APIs. Release claims require
 Pilot P6's independently verified, permitted full seed, not merely pilot success.
 
+Owner clarification (2026-11-05): MB2 uses the delivered 240-fragment pilot
+to evaluate retrieval and blueprint composition and feeds schema gaps back to
+the Memory Pilot/NEQ-world review. This evaluation does not wait for P6.
+The optimized producer/consumer schema must be signed off before separately
+authorizing the roughly 40k-fragment production job; only production-seed
+release claims wait for P6.
+
 Tasks:
 1. Implement section 5 meanings through compatible existing schemas/adapters.
    Preserve Python topology and SRD mechanics; model conditional trajectories,
