@@ -11,6 +11,7 @@ import copy
 import ast
 import builtins
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -97,7 +98,7 @@ def _mock_main_module(
     on_startup,
     on_player_input,
 ) -> types.ModuleType:
-    """Compile safe callsite probes at the copied main.py AST input lines."""
+    """Load safe callsite probes at the copied main.py AST input lines."""
     source_path = runtime_root / "main.py"
     source_path.write_bytes((ROOT / "main.py").read_bytes())
     player_lines, nested_lines = _verified_input_lines(source_path)
@@ -129,11 +130,17 @@ def _mock_main_module(
     source_lines[nested_lines[1]] = "        iteration += 1\n"
     source_lines[nested_lines[1] + 1] = "    return iteration\n"
 
-    module = types.ModuleType("mapping_pilot_test_main")
-    module.__file__ = str(source_path)
+    source_bytes = "".join(source_lines).encode("utf-8")
+    source_path.write_bytes(source_bytes)
+    spec = importlib.util.spec_from_file_location(
+        "mapping_pilot_test_main", source_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("could not load mapping pilot main seam probe")
+    module = importlib.util.module_from_spec(spec)
     module.on_startup = on_startup
     module.on_player_input = on_player_input
-    exec(compile("".join(source_lines), str(source_path), "exec"), module.__dict__)
+    spec.loader.exec_module(module)
     return module
 
 
