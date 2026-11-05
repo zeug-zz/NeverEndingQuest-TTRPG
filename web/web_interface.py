@@ -61,7 +61,12 @@ from contextlib import redirect_stdout, redirect_stderr
 from PIL import Image
 from pathlib import Path  # TABLETOP MODE: Import Path for module preflight validation
 from utils.media_paths import is_safe_media_request, resolve_media_file
-from utils.repo_paths import repository_root, resolve_repository_path
+from utils.repo_paths import (
+    repository_root,
+    resolve_repository_path,
+    validate_graphic_pack_name,
+    validate_module_slug,
+)
 from utils.web_boundary import resolve_socketio_origins, resolve_web_host
 INSTALL_ROOT = repository_root()
 
@@ -2353,6 +2358,10 @@ def add_to_bestiary():
         
         if not module_name or not monster_ids:
             return jsonify({'success': False, 'error': 'Missing module_name or monster_ids'})
+        # TABLETOP MODE: Module names must name a direct child of modules/.
+        module_name = validate_module_slug(module_name)
+        if module_name is None:
+            return jsonify({'success': False, 'error': 'Invalid module name'}), 400
         
         info(f"TOOLKIT: Request to add {len(monster_ids)} monsters to bestiary from module: {module_name}")
         
@@ -2737,6 +2746,10 @@ def get_module_monsters_api(module_name):
     """Get list of monster IDs found in a specific module."""
     if not TOOLKIT_AVAILABLE:
         return jsonify([]), 503
+    # TABLETOP MODE: Module names from the URL must name a direct child of modules/.
+    module_name = validate_module_slug(module_name)
+    if module_name is None:
+        return jsonify({'error': 'Invalid module name'}), 400
     
     try:
         from utils.module_path_manager import ModulePathManager
@@ -2801,6 +2814,10 @@ def get_module_unified_assets(module_name):
     """
     if not TOOLKIT_AVAILABLE:
         return jsonify({'success': False, 'error': 'Toolkit not available'}), 503
+    # TABLETOP MODE: Module names from the URL must name a direct child of modules/.
+    module_name = validate_module_slug(module_name)
+    if module_name is None:
+        return jsonify({'success': False, 'error': 'Invalid module name'}), 400
     
     try:
         from utils.file_operations import safe_read_json
@@ -4859,6 +4876,11 @@ def get_module_npcs(module_name):
 
     if not pack_name:
         return jsonify({'error': 'A target pack must be specified.'}), 400
+    # TABLETOP MODE: Module and pack names must name direct children of their roots.
+    module_name = validate_module_slug(module_name)
+    pack_name = validate_graphic_pack_name(pack_name)
+    if module_name is None or pack_name is None:
+        return jsonify({'error': 'Invalid module or pack name'}), 400
         
     try:
         import os
@@ -4944,6 +4966,10 @@ def fetch_npc_descriptions():
 
     if not module_name or not npcs:
         return jsonify({'success': False, 'error': 'Missing module name or NPC list'}), 400
+    # TABLETOP MODE: Module names must name a direct child of modules/.
+    module_name = validate_module_slug(module_name)
+    if module_name is None:
+        return jsonify({'success': False, 'error': 'Invalid module name'}), 400
 
     # Start background thread for description generation
     def generate_descriptions():
@@ -5145,6 +5171,10 @@ def handle_npc_description():
         
         if not module_name or not npc_id:
             return jsonify({'error': 'Missing module or NPC ID'}), 400
+        # TABLETOP MODE: Module names must name a direct child of modules/.
+        module_name = validate_module_slug(module_name)
+        if module_name is None:
+            return jsonify({'error': 'Invalid module name'}), 400
         
         try:
             from utils.file_operations import safe_read_json
@@ -5186,6 +5216,10 @@ def handle_npc_description():
         
         if not all([module_name, npc_id, description]):
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        # TABLETOP MODE: Module names must name a direct child of modules/.
+        module_name = validate_module_slug(module_name)
+        if module_name is None:
+            return jsonify({'success': False, 'error': 'Invalid module name'}), 400
         
         try:
             from utils.file_operations import safe_read_json, safe_write_json
@@ -5252,6 +5286,11 @@ def generate_npc_portraits():
     
     if not all([module_name, pack_name, npcs]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+    # TABLETOP MODE: Module and pack names must name direct children of their roots.
+    module_name = validate_module_slug(module_name)
+    pack_name = validate_graphic_pack_name(pack_name)
+    if module_name is None or pack_name is None:
+        return jsonify({'success': False, 'error': 'Invalid module or pack name'}), 400
     
     # Start background thread for portrait generation
     def generate_portraits():
@@ -6326,7 +6365,11 @@ def _generate_toolkit_npc_description(
 @socketio.on('generate_unified_assets')
 def handle_generate_unified_assets(data):
     """Generate missing descriptions and images for module assets"""
-    module_name = data.get('module_name')
+    # TABLETOP MODE: Module names must name a direct child of modules/.
+    module_name = validate_module_slug(data.get('module_name'))
+    if module_name is None:
+        emit('unified_generation_error', {'error': 'Invalid module name'})
+        return
     assets = data.get('assets', [])
     options = data.get('options', {})
     

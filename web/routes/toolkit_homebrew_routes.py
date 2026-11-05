@@ -21,6 +21,7 @@ from flask import Flask, jsonify, request
 
 from utils.enhanced_logger import error, info, warning
 from utils.file_operations import safe_write_json
+from utils.repo_paths import validate_module_slug
 from utils.toolkit_homebrew_pdf_adapter import (
     PdfConversionError,
     convert_pdf_upload_to_markdown,
@@ -3724,6 +3725,10 @@ def register_toolkit_homebrew_routes(app: Flask) -> None:
         module_slug = request_payload.get("module_slug") or job_copy.get("result", {}).get("module_slug") or ""
         if not module_slug:
             return jsonify({"status": "error", "reason": "module_slug_missing"}), 400
+        # TABLETOP MODE: Reject slugs that do not name a direct child of modules/.
+        module_slug = validate_module_slug(module_slug)
+        if module_slug is None:
+            return jsonify({"status": "error", "reason": "module_slug_invalid"}), 400
 
         module_dir = f"modules/{module_slug}"
         if not Path(module_dir).is_dir():
