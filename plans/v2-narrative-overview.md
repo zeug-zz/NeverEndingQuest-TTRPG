@@ -490,8 +490,8 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network` | B0 | Prompt ready (s10.5); not opened | N0 | N0 |
-| S | `feature/v2-mapping-pilot` | B0 | Prompt ready (s10.5); not opened | SP0 | SP0 review |
+| N | `feature/v2-network` | B0 | Opened 2026-11-05 | N0 | N0 |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP1 | SP1 tooling |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -513,7 +513,7 @@ live runs never overlap.
 | N2 React vertical slice | N | pending | -- | -- | -- |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
-| SP0 preregistration reviewed | S | pending | -- | -- | -- |
+| SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | pending | -- | -- | -- |
 | SP2 offline D1/M1 | S | pending | -- | -- | -- |
 | SP3 live matrix | S | pending | -- | -- | -- |
@@ -524,12 +524,18 @@ not yet judged.
 
 ### 10.4 Pending owner actions
 
-1. Open the N and S sessions in their worktrees and start each goal with its
-   s10.5 prompt.
-2. Provide `config.py` in each worktree. Agents never copy secrets.
-3. Rate the 36 Stage 1 packets, in parallel with SP0 and SP1 (S criterion 5).
-4. Review the SP0 preregistration before the pilot makes any provider call.
-5. Review and merge phase PRs as they arrive.
+1. Rate the 36 Stage 1 packets, in parallel with SP1 (S criterion 5).
+2. Cancel or clear the superseded mapping-research goal (session
+   `ses_e85200d2...`, paused) so it cannot be resumed.
+3. Install the updated nono wrapper if OpenCode's built-in worktree root is
+   wanted (optional; N and S do not need it).
+4. Review and merge phase PRs as they arrive.
+
+Done 2026-11-05: N and S sessions opened with their s10.5 goals; `config.py`
+provided in both worktrees; SP0 preregistration reviewed, approved and merged
+(#81), which freezes it and clears the pilot for provider calls under its
+protocol. The superseded `mapping-research-arena-comparison` change is
+archived, so `main` has no active OpenSpec change.
 
 ### 10.5 Goal prompts
 
