@@ -67,6 +67,15 @@ TACTICAL_GATE_LITERAL = "COMBAT_TACTICAL_BRAIN_ENABLED = True"
 ALLY_CONTROLLER_GATE_LITERAL = "COMBAT_ALLY_CONTROLLER_ENABLED = True"
 ALLY_PREFETCH_GATE_LITERAL = "COMBAT_ALLY_PREFETCH_ENABLED = True"
 MODULE_DIR_NAME = "Capture_Arena"
+MAPPING_PILOT_MODULE_DIR_NAME = "Mapping_Pilot_Arena"
+MAPPING_PILOT_PREREG_ROOT = PROJECT_ROOT / "plans" / "v2-mapping-pilot-prereg"
+MAPPING_PILOT_FIXTURE_CHOICES = (
+    "interior_tavern",
+    "landscape_village",
+    "transition_tower_approach",
+    "combat_stage_tavern_zones",
+)
+MAPPING_PILOT_ARM_CHOICES = ("A", "B", "D")
 PARTY_SIZE_FOUR = 4
 PARTY_SIZE_ONE = 1
 SEED_TIMESTAMP = "2026-01-01T00:00:00"
@@ -948,6 +957,330 @@ def _seed_party(
     return encounter_id
 
 
+def _build_mapping_pilot_seed_plan(
+    fixture_id: str, arm: str, party_size: int, seed: int
+) -> Dict[str, Any]:
+    """Validate the complete pilot row against the frozen fixture and schedule."""
+    from scripts.mapping_pilot.fixtures import (
+        FIXTURE_FILES,
+        LOCATION_ID_MAP,
+        load_verified_fixtures,
+    )
+
+    if fixture_id not in MAPPING_PILOT_FIXTURE_CHOICES:
+        raise ValueError("unknown mapping-pilot fixture: %s" % fixture_id)
+    if arm not in MAPPING_PILOT_ARM_CHOICES:
+        raise ValueError("mapping-pilot arm must be A, B, or D")
+    if party_size not in (PARTY_SIZE_ONE, PARTY_SIZE_FOUR):
+        raise ValueError("mapping-pilot party must be 1 or 4")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("mapping-pilot seed must be an integer")
+
+    prereg_root = Path(MAPPING_PILOT_PREREG_ROOT)
+    if not prereg_root.is_absolute():
+        prereg_root = PROJECT_ROOT / prereg_root
+    fixtures, source_hashes = load_verified_fixtures(prereg_root)
+    if fixture_id not in fixtures or fixture_id not in FIXTURE_FILES:
+        raise ValueError("mapping-pilot fixture is not in the verified fixture set")
+    if "counterbalance.json" not in source_hashes:
+        raise ValueError("counterbalance.json is not listed in the frozen manifest")
+
+    try:
+        counterbalance = json.loads(
+            (prereg_root / "counterbalance.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("cannot read verified counterbalance.json") from exc
+    rows = counterbalance.get("rows") if isinstance(counterbalance, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("verified counterbalance.json has no rows list")
+
+    scripts: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("counterbalance row must be an object")
+        script_path = row.get("script")
+        if not isinstance(script_path, str) or script_path == "inherit":
+            continue
+        if script_path not in source_hashes:
+            raise ValueError("counterbalance script is not listed in manifest: %s" % script_path)
+        if script_path not in scripts:
+            try:
+                script_payload = json.loads(
+                    (prereg_root / script_path).read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError("cannot read verified counterbalance script: %s" % script_path) from exc
+            if not isinstance(script_payload, dict) or not isinstance(
+                script_payload.get("fixture_ids"), list
+            ):
+                raise ValueError("verified counterbalance script has invalid fixture_ids: %s" % script_path)
+            scripts[script_path] = script_payload
+
+    fixture_scripts = [
+        script_path
+        for script_path, script_payload in scripts.items()
+        if fixture_id in script_payload["fixture_ids"]
+    ]
+    if len(fixture_scripts) != 1:
+        raise ValueError("fixture has no unique preregistered script: %s" % fixture_id)
+    fixture_script = fixture_scripts[0]
+    is_combat_fixture = fixture_script == "scripts/combat.json"
+    if is_combat_fixture and arm == "B":
+        raise ValueError("mapping-pilot arm B is not registered for combat")
+
+    planned_rows = [
+        row
+        for row in rows
+        if row.get("row_type") == "planned"
+        and row.get("fixed_seed") == seed
+        and row.get("party") == party_size
+        and row.get("arm") == arm
+        and row.get("script") == fixture_script
+    ]
+    if len(planned_rows) > 1:
+        raise ValueError("counterbalance row is ambiguous for the requested pilot seed")
+    if planned_rows:
+        selected_row = planned_rows[0]
+        row_metadata = {
+            "row_id": selected_row.get("row_id"),
+            "row_type": selected_row.get("row_type"),
+            "block": selected_row.get("block"),
+            "script": selected_row.get("script"),
+            "fixed_seed": seed,
+        }
+    else:
+        reserve_rows = [
+            row
+            for row in rows
+            if row.get("row_type") == "replacement_only"
+            and row.get("fixed_seed") == seed
+            and row.get("party") == "inherit"
+            and row.get("arm") == "inherit"
+            and row.get("script") == "inherit"
+        ]
+        if not reserve_rows:
+            listed_seed = any(row.get("fixed_seed") == seed for row in rows)
+            if listed_seed:
+                raise ValueError(
+                    "mapping-pilot fixture, arm, party, and seed do not match a planned counterbalance row"
+                )
+            raise ValueError("mapping-pilot seed is not listed in counterbalance.json")
+        if len(reserve_rows) != 1:
+            raise ValueError("counterbalance reserve seed is ambiguous")
+        selected_row = reserve_rows[0]
+        row_metadata = {
+            "row_id": selected_row.get("row_id"),
+            "row_type": selected_row.get("row_type"),
+            "block": selected_row.get("block"),
+            "script": "inherit",
+            "fixed_seed": seed,
+            "inherited_fixture_id": fixture_id,
+            "inherited_arm": arm,
+            "inherited_party": party_size,
+            "inherited_script": fixture_script,
+        }
+
+    fixture = fixtures[fixture_id]
+    location_ids = fixture.get("location_ids")
+    if not isinstance(location_ids, list) or len(location_ids) != 1:
+        raise ValueError("mapping-pilot fixture must identify exactly one start location")
+    source_location_id = location_ids[0]
+    runtime_location_id = LOCATION_ID_MAP.get(source_location_id)
+    if not isinstance(runtime_location_id, str):
+        raise ValueError("mapping-pilot source location has no runtime ID mapping")
+    return {
+        "fixture_id": fixture_id,
+        "arm": arm,
+        "party_size": party_size,
+        "effective_seed": seed,
+        "prereg_root": prereg_root,
+        "fixture": fixture,
+        "fixtures": fixtures,
+        "source_hashes": source_hashes,
+        "source_location_id": source_location_id,
+        "runtime_location_id": runtime_location_id,
+        "counterbalance": row_metadata,
+    }
+
+
+def _read_mapping_pilot_reference(plan: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Resolve the selected frozen location through the generated sandbox ID map."""
+    module_dir = _assert_sandbox_path(
+        SANDBOX_ROOT / "modules" / MAPPING_PILOT_MODULE_DIR_NAME
+    )
+    id_map_path = _assert_sandbox_path(module_dir / "location_id_map.json")
+    id_map = json.loads(id_map_path.read_text(encoding="utf-8"))
+    source_location_id = str(plan["source_location_id"])
+    runtime_location_id = str(
+        id_map.get("runtime_location_ids", {}).get(source_location_id, "")
+    )
+    if runtime_location_id != plan["runtime_location_id"]:
+        raise RuntimeError("generated mapping-pilot location ID map does not match the frozen fixture")
+
+    area_matches = []
+    for area_path in sorted((module_dir / "areas").glob("*.json")):
+        if area_path.name.endswith("_BU.json"):
+            continue
+        area_payload = json.loads(area_path.read_text(encoding="utf-8"))
+        for location in area_payload.get("locations", []):
+            if str(location.get("locationId") or "") == runtime_location_id:
+                area_matches.append((area_path, area_payload, location))
+    if len(area_matches) != 1:
+        raise RuntimeError("generated mapping-pilot location must resolve to exactly one area")
+
+    area_path, area_payload, location = area_matches[0]
+    area_id = str(area_payload.get("areaId") or "")
+    map_path = _assert_sandbox_path(module_dir / ("map_%s.json" % area_id))
+    if not area_id or not map_path.is_file():
+        raise RuntimeError("generated mapping-pilot area has no matching map")
+    map_payload = json.loads(map_path.read_text(encoding="utf-8"))
+    room_ids = {
+        str(room.get("id") or "") for room in map_payload.get("rooms", [])
+    }
+    if runtime_location_id not in room_ids:
+        raise RuntimeError("selected mapping-pilot location is absent from its map")
+    if map_payload.get("startRoom") != runtime_location_id:
+        map_payload["startRoom"] = runtime_location_id
+        _write_json(
+            "modules/%s/map_%s.json" % (MAPPING_PILOT_MODULE_DIR_NAME, area_id),
+            map_payload,
+        )
+
+    reference = {
+        "module": MAPPING_PILOT_MODULE_DIR_NAME,
+        "area_id": area_id,
+        "area_name": str(area_payload.get("areaName") or ""),
+        "start_location_id": runtime_location_id,
+        "start_location_name": str(location.get("name") or ""),
+    }
+    mapping = {
+        "module": MAPPING_PILOT_MODULE_DIR_NAME,
+        "source_location_id": source_location_id,
+        "runtime_location_id": runtime_location_id,
+        "area_id": area_id,
+        "area_name": reference["area_name"],
+        "location_name": reference["start_location_name"],
+        "id_map_file": "modules/%s/location_id_map.json" % MAPPING_PILOT_MODULE_DIR_NAME,
+    }
+    return reference, mapping
+
+
+def _build_mapping_pilot_combat_encounter(
+    party_names: List[str], party_size: int, fixture: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Create a real encounter roster and a metadata-only map to frozen roles."""
+    placement_key = "party_1" if party_size == PARTY_SIZE_ONE else "party_4"
+    placement_rules = fixture.get("initial_placement_rules", {}).get(placement_key)
+    occupant_roles = fixture.get("occupant_roles")
+    if not isinstance(placement_rules, dict) or not isinstance(occupant_roles, list):
+        raise ValueError("combat fixture has no party-size placement contract")
+    pc_zones = placement_rules.get("pcs")
+    enemy_zones = placement_rules.get("enemies")
+    if not isinstance(pc_zones, dict) or set(pc_zones) != set(party_names):
+        raise ValueError("combat fixture PC placements do not match the seeded roster")
+    if not isinstance(enemy_zones, dict):
+        raise ValueError("combat fixture enemy placements are malformed")
+
+    encounter, _legacy_encounter_id = _build_encounter(party_names, party_size)
+    encounter_id = "mapping_pilot_combat"
+    encounter["id"] = encounter_id
+    encounter["encounterId"] = encounter_id
+    encounter["encounterSummary"] = "Mapping Pilot Arena tavern combat fixture."
+    encounter["creatures"] = [
+        creature for creature in encounter.get("creatures", [])
+        if creature.get("type") != "enemy"
+    ]
+    enemy_templates = capture_fixtures._encounter_payload().get("creatures", [])
+    if not enemy_templates:
+        raise ValueError("Capture_Arena fixture has no reusable enemy template")
+
+    enemy_mappings = []
+    for index, role in enumerate(occupant_roles):
+        if not isinstance(role, dict):
+            raise ValueError("combat fixture occupant role must be an object")
+        actor_id = str(role.get("actor_id") or "")
+        role_name = str(role.get("name") or "")
+        zone_id = str(enemy_zones.get(actor_id) or role.get("initial_zone_id") or "")
+        if not actor_id or not role_name or not zone_id:
+            raise ValueError("combat fixture occupant role is incomplete")
+        if enemy_zones.get(actor_id) != zone_id:
+            raise ValueError("combat fixture role and party-size enemy placement disagree")
+        template = enemy_templates[min(index, len(enemy_templates) - 1)]
+        enemy = json.loads(json.dumps(template))
+        enemy["name"] = role_name
+        encounter["creatures"].append(enemy)
+        enemy_mappings.append({
+            "actor_id": actor_id,
+            "name": role_name,
+            "monster_type": str(enemy.get("monsterType") or ""),
+            "initial_zone_id": zone_id,
+        })
+    _apply_capture_goblin_attack_count(encounter)
+
+    party_mappings = [
+        {"actor_id": name, "name": name, "initial_zone_id": str(pc_zones[name])}
+        for name in party_names
+    ]
+    combat_mapping = {
+        "placement_scope": "shadow_only",
+        "movement_enforced": False,
+        "party_actors": party_mappings,
+        "enemy_roles": enemy_mappings,
+        "engagement_groups": json.loads(
+            json.dumps(placement_rules.get("engagement_groups", []))
+        ),
+    }
+    return encounter, combat_mapping
+
+
+def _seed_mapping_pilot(
+    plan: Dict[str, Any], party_names: List[str]
+) -> Tuple[Dict[str, str], str, Dict[str, Any]]:
+    """Write a frozen pilot module and seed its canonical party/combat state."""
+    from scripts.mapping_pilot.fixtures import write_fixture_outputs
+
+    module_target = (
+        SANDBOX_ROOT.relative_to(PROJECT_ROOT)
+        / "modules"
+        / MAPPING_PILOT_MODULE_DIR_NAME
+    )
+    write_fixture_outputs(module_target, plan["prereg_root"])
+    reference, mapping = _read_mapping_pilot_reference(plan)
+
+    for name in party_names:
+        payload = capture_fixtures.build_capture_character_payload(
+            name, _party_initiative(name, int(plan["party_size"]))
+        )
+        _write_json(_capture_character_path(name), payload)
+
+    encounter_id = ""
+    if plan["fixture_id"] == "combat_stage_tavern_zones":
+        encounter, combat_mapping = _build_mapping_pilot_combat_encounter(
+            party_names, int(plan["party_size"]), plan["fixture"]
+        )
+        encounter_id = str(encounter["encounterId"])
+        _write_json(
+            "modules/encounters/encounter_%s.json" % encounter_id,
+            encounter,
+        )
+        mapping["combat_actors"] = combat_mapping
+
+    tracker = _build_party_tracker(reference, party_names, encounter_id)
+    _write_json("party_tracker.json", tracker)
+    metadata = {
+        "format_version": 1,
+        "effective_seed": int(plan["effective_seed"]),
+        "arm": str(plan["arm"]),
+        "fixture_id": str(plan["fixture_id"]),
+        "party": {"size": int(plan["party_size"]), "members": list(party_names)},
+        "counterbalance": dict(plan["counterbalance"]),
+        "mapping": mapping,
+    }
+    _write_json("mapping_pilot/seed_metadata.json", metadata)
+    return reference, encounter_id, metadata
+
+
 def _hash_installed_sentinels() -> Dict[str, str]:
     hashes: Dict[str, str] = {}
     for relative_path in _INSTALLED_SENTINELS:
@@ -989,6 +1322,7 @@ def prepare(
     party_size: int, scenario_id: str = "", branch: str = "", phase: str = "",
     gate: Optional[str] = None,
     path: str = "", boundary: str = "", run_dir: str = "", chain_id: str = "",
+    mapping_pilot_plan: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Rebuild the sandbox from scratch and seed it for the capture run."""
     logging.getLogger("utils.file_operations").setLevel(logging.WARNING)
@@ -1043,10 +1377,17 @@ def prepare(
         transform_g5t_commander_fixtures(SANDBOX_ROOT / "modules" / MODULE_DIR_NAME)
     if profile and profile.get("gate") == "g5a":
         transform_g5a_ally_fixtures(SANDBOX_ROOT / "modules" / MODULE_DIR_NAME)
-    reference = _read_capture_arena_reference()
-    party_names = _party_names(party_size)
-    _create_sandbox_dirs()
-    encounter_id = _seed_party(reference, party_names, party_size, profile)
+    if mapping_pilot_plan is None:
+        reference = _read_capture_arena_reference()
+        party_names = _party_names(party_size)
+        _create_sandbox_dirs()
+        encounter_id = _seed_party(reference, party_names, party_size, profile)
+    else:
+        _create_sandbox_dirs()
+        party_names = _party_names(party_size)
+        reference, encounter_id, _seed_metadata = _seed_mapping_pilot(
+            mapping_pilot_plan, party_names
+        )
 
     if gate == "g10" and profile is not None and g10_run_dir is not None:
         seed_profile = dict(profile.get("seed", {}))
@@ -1092,10 +1433,16 @@ def prepare(
     )
 
     print("[SEED] mode=prepare party=%d sandbox=%s" % (party_size, SANDBOX_DISPLAY))
-    print(
-        "[COPY] sources=%d module=%s (excluded .venv .git tmp debug graphic_packs "
-        "modules/* except %s)" % (copied, MODULE_DIR_NAME, MODULE_DIR_NAME)
-    )
+    if mapping_pilot_plan is None:
+        print(
+            "[COPY] sources=%d module=%s (excluded .venv .git tmp debug graphic_packs "
+            "modules/* except %s)" % (copied, MODULE_DIR_NAME, MODULE_DIR_NAME)
+        )
+    else:
+        print(
+            "[COPY] sources=%d modules=%s,%s (pilot module generated in sandbox)"
+            % (copied, MODULE_DIR_NAME, MAPPING_PILOT_MODULE_DIR_NAME)
+        )
     model_patches = [TRACE_GATE_LITERAL]
     if gate in ("g5r", "g7"):
         model_patches.append(RESOLVER_GATE_LITERAL)
@@ -1132,10 +1479,29 @@ def prepare(
         "[SEED] partyMembers=%s active_character=%s"
         % (",".join(party_names), party_names[0])
     )
-    print(
-        "[SEED] encounter=%s file=modules/encounters/encounter_%s.json"
-        % (encounter_id, encounter_id)
-    )
+    if mapping_pilot_plan is None:
+        print(
+            "[SEED] encounter=%s file=modules/encounters/encounter_%s.json"
+            % (encounter_id, encounter_id)
+        )
+    elif encounter_id:
+        print(
+            "[SEED] encounter=%s file=modules/encounters/encounter_%s.json"
+            % (encounter_id, encounter_id)
+        )
+    else:
+        print("[SEED] encounter=none")
+    if mapping_pilot_plan is not None:
+        print(
+            "[SEED] mapping-pilot fixture=%s arm=%s party=%d seed=%d row=%s"
+            % (
+                mapping_pilot_plan["fixture_id"],
+                mapping_pilot_plan["arm"],
+                party_size,
+                mapping_pilot_plan["effective_seed"],
+                mapping_pilot_plan["counterbalance"]["row_id"],
+            )
+        )
     if profile is not None:
         if gate == "g9":
             print(
@@ -1229,11 +1595,63 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--chain-id", default=None,
                         help="G10 identity shared by the complete and resume phase bundles")
+    parser.add_argument(
+        "--mapping-pilot-fixture",
+        choices=MAPPING_PILOT_FIXTURE_CHOICES,
+        help="opt-in frozen mapping-pilot fixture ID (requires arm and seed)",
+    )
+    parser.add_argument(
+        "--mapping-pilot-arm",
+        choices=MAPPING_PILOT_ARM_CHOICES,
+        help="opt-in preregistered mapping-pilot arm A, B, or D",
+    )
+    parser.add_argument(
+        "--mapping-pilot-seed",
+        type=int,
+        help="opt-in fixed seed from the mapping-pilot counterbalance",
+    )
     args = parser.parse_args(argv)
     gate = args.gate or capture_fixtures.infer_capture_gate(args.scenario) or "g3"
+    mapping_pilot_values = (
+        args.mapping_pilot_fixture,
+        args.mapping_pilot_arm,
+        args.mapping_pilot_seed,
+    )
+    mapping_pilot_requested = any(value is not None for value in mapping_pilot_values)
+    if mapping_pilot_requested and not args.prepare:
+        parser.error("mapping-pilot options apply only with --prepare")
     if args.prepare:
         if args.party is None:
             parser.error("--party 1|4 is required with --prepare")
+        mapping_pilot_plan: Optional[Dict[str, Any]] = None
+        if mapping_pilot_requested:
+            if any(value is None for value in mapping_pilot_values):
+                parser.error(
+                    "--mapping-pilot-fixture, --mapping-pilot-arm, and "
+                    "--mapping-pilot-seed are required together"
+                )
+            if any((
+                args.scenario,
+                args.gate,
+                args.branch,
+                args.phase,
+                args.path,
+                args.boundary,
+                args.run_dir,
+                args.chain_id,
+            )):
+                parser.error(
+                    "mapping-pilot options cannot be combined with Capture_Arena scenario options"
+                )
+            try:
+                mapping_pilot_plan = _build_mapping_pilot_seed_plan(
+                    str(args.mapping_pilot_fixture),
+                    str(args.mapping_pilot_arm),
+                    args.party,
+                    int(args.mapping_pilot_seed),
+                )
+            except ValueError as exc:
+                parser.error(str(exc))
         try:
             if gate == "g4" and not args.scenario:
                 parser.error("--gate g4 requires --scenario narrator-dialogue-travel|combat-smoke")
@@ -1274,6 +1692,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 parser.error("--branch/--phase/--path/--boundary require --scenario")
         except ValueError as exc:
             parser.error(str(exc))
+        if mapping_pilot_plan is not None:
+            return prepare(
+                args.party,
+                args.scenario or "",
+                args.branch or "",
+                args.phase or "",
+                gate,
+                args.path or "",
+                args.boundary or "",
+                args.run_dir or "",
+                args.chain_id or "",
+                mapping_pilot_plan,
+            )
         return prepare(args.party, args.scenario or "", args.branch or "", args.phase or "", gate,
                        args.path or "", args.boundary or "", args.run_dir or "", args.chain_id or "")
     if args.rollback_openai:
