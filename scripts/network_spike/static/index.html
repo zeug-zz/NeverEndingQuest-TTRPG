@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N0 Network Fixture</title>
+</head>
+<body>
+  <main>
+    <h1>N0 Network Fixture</h1>
+    <p>This inert fixture exposes no game or campaign data.</p>
+    <form action="/login" method="post" enctype="application/x-www-form-urlencoded">
+      <label for="password">Fixture password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+    <section aria-labelledby="status-heading">
+      <h2 id="status-heading">Authenticated status</h2>
+      <p>A successful sign-in returns a server confirmation. The provider-free driver checks the authenticated /n0 Socket.IO events.</p>
+    </section>
+  </main>
+</body>
+</html>
