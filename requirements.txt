@@ -7,7 +7,9 @@ openai>=1.0.0,<3
 # Web interface framework
 Flask>=2.3.0
 Flask-SocketIO>=5.7.0
-python-socketio>=5.9.0
+python-socketio>=5.18.1
+uvicorn>=0.54.0
+websockets>=17.4
 
 # JSON schema validation for game data
 jsonschema>=4.17.0

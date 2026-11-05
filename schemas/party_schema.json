@@ -13,6 +13,15 @@
       },
       "description": "An array of strings representing the names of the player characters"
     },
+    "active_character": {
+      "type": "string",
+      "description": "The currently selected player character"
+    },
+    "active_character_revision": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Revision of the shared active player-character selection"
+    },
     "partyNPCs": {
       "type": "array",
       "items": {

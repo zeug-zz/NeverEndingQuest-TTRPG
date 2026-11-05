@@ -29,6 +29,7 @@ import json
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from utils.combat_latency_trace import trace_combat_observation, trace_enabled
+from utils.pc_manager import assign_active_character
 
 
 @dataclass(frozen=True)
@@ -391,7 +392,9 @@ def process_combat_action_batch(
                     dependencies.log_debug(f"[COMBAT_MANAGER] Auto-advancing turn for NPC {current_actor.name}", category="combat_events")
                     next_actor = dependencies.advance_turn(multi_pc_manager)
                     if next_actor.type == dependencies.pc_combatant_type:
-                        party_tracker_data["active_character"] = next_actor.name
+                        assign_active_character(
+                            party_tracker_data, next_actor.name
+                        )  # TABLETOP MODE: Revision-track combat turn selection.
                         dependencies.save_json("party_tracker.json", party_tracker_data)
                         if dependencies.active_character_update_available:
                             dependencies.emit_combat_event("active_character_update", {"character": next_actor.name})
@@ -406,7 +409,9 @@ def process_combat_action_batch(
                     dependencies.log_debug(f"[COMBAT_MANAGER] Detected ACTED status for {active_pc_name}, advancing turn queue", category="combat_events")
                     next_actor = dependencies.advance_turn(multi_pc_manager)
                     if next_actor.type == dependencies.pc_combatant_type:
-                        party_tracker_data["active_character"] = next_actor.name
+                        assign_active_character(
+                            party_tracker_data, next_actor.name
+                        )  # TABLETOP MODE: Revision-track combat turn selection.
                         dependencies.save_json("party_tracker.json", party_tracker_data)
                         if dependencies.active_character_update_available:
                             dependencies.emit_combat_event("active_character_update", {"character": next_actor.name})
