@@ -56,40 +56,83 @@ def extract_sources(
         if len(set(requested)) != len(requested):
             raise ValueError("duplicate selected location for %s" % slug)
         module_dir = _contained(root / slug, root)
-        context_path = _contained(module_dir / "module_context.json", root)
-        context_bytes = context_path.read_bytes()
-        context = _decode(context_bytes, context_path)
-        if not isinstance(context, dict) or not isinstance(context.get("locations"), dict):
-            raise ValueError("module context has no locations object: %s" % slug)
+        context_candidate = module_dir / "module_context.json"
+        context_path: Optional[Path] = None
+        context_bytes: Optional[bytes] = None
+        context: dict[str, Any] = {}
+        if context_candidate.exists() or context_candidate.is_symlink():
+            context_path = _contained(context_candidate, root)
+            context_bytes = context_path.read_bytes()
+            decoded_context = _decode(context_bytes, context_path)
+            if not isinstance(decoded_context, dict):
+                raise ValueError("module context must be an object: %s" % slug)
+            context = decoded_context
+        context_locations = context.get("locations", {})
+        if not isinstance(context_locations, dict):
+            raise ValueError("module context locations must be an object: %s" % slug)
         areas_dir = _contained(module_dir / "areas", root)
         area_files = sorted(areas_dir.glob("*_BU.json"))
-        area_data: dict[str, tuple[Path, bytes, dict[str, Any]]] = {}
+        area_index: dict[str, tuple[str, Path, bytes, dict[str, Any]]] = {}
+        area_data_by_path: dict[Path, dict[str, Any]] = {}
         for area_path in area_files:
             safe_path = _contained(area_path, root)
             raw = safe_path.read_bytes()
             area = _decode(raw, safe_path)
-            if isinstance(area, dict):
-                area_data[str(area.get("areaId", ""))] = (safe_path, raw, area)
-        module_graph = _authored_graph(slug, context, area_data)
+            if not isinstance(area, dict):
+                raise ValueError("authored area must be an object: %s" % safe_path)
+            area_id = area.get("areaId")
+            if not isinstance(area_id, str) or not area_id:
+                raise ValueError("authored area has no areaId: %s" % safe_path)
+            area_data_by_path[safe_path] = area
+            rows = area.get("locations", [])
+            if not isinstance(rows, list):
+                raise ValueError("authored area locations must be an array: %s" % safe_path)
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("authored location must be an object: %s" % safe_path)
+                location_id = row.get("locationId")
+                if not isinstance(location_id, str) or not location_id:
+                    raise ValueError("authored location has no locationId: %s" % safe_path)
+                if location_id in area_index:
+                    previous_path = area_index[location_id][1]
+                    raise ValueError(
+                        "duplicate authored location ID %s across area files in %s: %s and %s"
+                        % (location_id, slug, previous_path.name, safe_path.name)
+                    )
+                area_index[location_id] = (area_id, safe_path, raw, row)
+        for location_id, metadata in context_locations.items():
+            indexed = area_index.get(location_id) if isinstance(location_id, str) else None
+            if indexed is not None and isinstance(metadata, Mapping) and "area" in metadata:
+                if metadata["area"] != indexed[0]:
+                    raise ValueError(
+                        "module context area disagrees with authored area for %s in %s"
+                        % (location_id, slug)
+                    )
+        module_graph = _authored_graph(slug, context, area_index)
         for location_id in requested:
             if not isinstance(location_id, str) or not location_id or "/" in location_id or "\\" in location_id:
                 raise ValueError("invalid location ID")
-            meta = context["locations"].get(location_id)
-            if not isinstance(meta, dict):
+            indexed = area_index.get(location_id)
+            if indexed is None:
                 raise ValueError("unknown authored location %s in %s" % (location_id, slug))
-            area_id = meta.get("area")
-            if area_id not in area_data:
-                raise ValueError("authored area not found for %s in %s" % (location_id, slug))
-            area_path, area_bytes, area = area_data[area_id]
-            location = next((row for row in area.get("locations", []) if row.get("locationId") == location_id), None)
-            if not isinstance(location, dict):
-                raise ValueError("selected location missing from authored area: %s" % location_id)
+            area_id, area_path, area_bytes, location = indexed
+            area = area_data_by_path[area_path]
+            meta = context_locations.get(location_id, {})
+            if not isinstance(meta, Mapping):
+                raise ValueError("module context location metadata must be an object: %s" % location_id)
             total += 1
+            area_reference = str(area_path.relative_to(root))
+            source_references = [area_reference]
+            source_sha256 = {area_reference: hashlib.sha256(area_bytes).hexdigest()}
+            if context_path is not None and context_bytes is not None:
+                context_reference = str(context_path.relative_to(root))
+                source_references.append(context_reference)
+                source_sha256[context_reference] = hashlib.sha256(context_bytes).hexdigest()
             records.append({
                 "module_slug": slug,
                 "location_id": location_id,
-                "source_references": [str(area_path.relative_to(root)), str(context_path.relative_to(root))],
-                "source_sha256": {str(area_path.relative_to(root)): hashlib.sha256(area_bytes).hexdigest(), str(context_path.relative_to(root)): hashlib.sha256(context_bytes).hexdigest()},
+                "source_references": source_references,
+                "source_sha256": source_sha256,
                 "area": {"area_id": area_id, "name": area.get("areaName"), "description": area.get("areaDescription")},
                 "context": copy.deepcopy(meta),
                 "location": _authored_location(location),
@@ -387,30 +430,21 @@ def run_cartographer(
 def _authored_graph(
     module_slug: str,
     context: Mapping[str, Any],
-    area_data: Mapping[str, tuple[Path, bytes, dict[str, Any]]],
+    area_index: Mapping[str, tuple[str, Path, bytes, dict[str, Any]]],
 ) -> dict[str, Any]:
     """Build a module-namespaced graph from structured authored dictionaries."""
     context_locations = context.get("locations", {})
-    location_ids = sorted(
-        key for key in context_locations if isinstance(key, str) and key
+    context_ids = (
+        {key for key in context_locations if isinstance(key, str) and key}
+        if isinstance(context_locations, Mapping)
+        else set()
     )
+    location_ids = sorted(set(area_index) | context_ids)
     edges: set[tuple[str, str, str]] = set()
     for location_id in location_ids:
-        metadata = context_locations.get(location_id)
-        if not isinstance(metadata, Mapping):
-            continue
-        area_record = area_data.get(metadata.get("area"))
-        authored_location: Optional[Mapping[str, Any]] = None
-        if area_record is not None:
-            area = area_record[2]
-            rows = area.get("locations", [])
-            if isinstance(rows, list):
-                matches = [
-                    row for row in rows
-                    if isinstance(row, Mapping) and row.get("locationId") == location_id
-                ]
-                if len(matches) == 1:
-                    authored_location = matches[0]
+        metadata = context_locations.get(location_id) if isinstance(context_locations, Mapping) else None
+        indexed = area_index.get(location_id)
+        authored_location = indexed[3] if indexed is not None else None
         for owner, source_name in ((metadata, "module_context"), (authored_location, "area")):
             if not isinstance(owner, Mapping):
                 continue
