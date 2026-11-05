@@ -525,7 +525,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | N | `feature/v2-network-n1` | B0 | Opened 2026-11-05 | N1 review remediation | N1 player security and sync contract |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP2 review / SP3 preparation (not judged) | SP2 offline D1/M1 |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 scheduled; SP2 human review pending | SP3 live evidence, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -534,11 +534,41 @@ nono-sandboxed OpenCode wrapper starts only inside its approved roots:
 built-in worktree root `~/.local/share/opencode/worktree`, with the main
 repository's shared git dir granted for linked worktrees.
 
-Live window: FREE. N0 macOS and Linux tunnels are torn down; the booking is
-released following independent evidence review and PR #89 integration.
-S books port 8360 before SP3. A session books it through the Overseer
-before a live run and releases it after teardown. The SP3 matrix and Network
-live runs never overlap.
+Live window: RESERVED exclusively for worktree S, SP3. Booking identity and
+UTC interval (record in the execution ledger before any preparation):
+
+- Booking ID: `sp3-s-20261105t200000z`.
+- Holder: `Worktree S primary orchestrator`; approved by the Overseer.
+- Start: `2026-11-05T20:00:00Z`.
+- End: `2026-11-06T04:00:00Z`.
+- `network_non_overlap_confirmed`: `true`. N0 is torn down, and N1 is
+  provider-free review remediation with no Network live booking. No Network
+  live work is authorized during this reservation; any new request must wait
+  for S's teardown and explicit release.
+- Port 8360 loopback bind preflight succeeded before booking; no listener
+  was started. S must recheck port availability/ownership before each run.
+- The eight-hour reservation includes seeding, evidence handling and teardown;
+  it does not enlarge the frozen six-hour live-time or 800-attempt matrix
+  caps. Each row remains capped at 35 attempts and 25 minutes. Record live
+  intervals from sandbox launch through teardown completion; their sum is
+  capped at six hours, with between-row pauses excluded. Never reset totals
+  on resume or on a later booking.
+- Do not start a row with less than 25 minutes remaining in the reservation.
+  Stop further work and tear down by the booking end; unfinished coverage
+  remains explicitly missing/blocked. Report release after teardown. If the
+  window is missed, obtain another booking rather than running outside it.
+
+SP3 collection is authorized within the existing frozen protocol after S
+preserves its local execution commit, reconciles with `origin/main`, records
+the booking, and reruns focused provider-free checks and strict validation.
+S may publish its separate SP3/SP4 tooling PR; this does not accept ADR-0034
+or pre-judge any live row. Freeze and record source/dependency/model-routing
+identity before the first row; do not rebase, install dependencies or change
+that baseline between arms. The primary owns execution and each verdict;
+builders do not run captures. Use only the real `tmp/combat_capture/` copy,
+repository venv, port 8360 and `NEQ_OPEN_BROWSER=0`. Preserve unique bundles
+and the frozen reserve/stop rules. No production behavior or paid work beyond
+the existing matrix caps is authorized.
 
 ### 10.3 Gate record
 
@@ -551,7 +581,7 @@ live runs never overlap.
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
-| SP2 offline D1/M1 | S | pending | -- | -- | -- |
+| SP2 offline D1/M1 | S | pending owner audit/ratings | 2026-11-06 | Tooling/evidence integrated; D1 20 attempts (11 validated, 9 invalid layouts), selected-source hashes 20/20; M1 16 sketches, artifact hashes 17/17; 1,048 D1 claim rows and M1 ratings remain blank. Integration is not an audited precision/backfill or usefulness PASS. | #94 (`e40e4899`) |
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
