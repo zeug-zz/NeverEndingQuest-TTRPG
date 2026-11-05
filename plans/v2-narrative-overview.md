@@ -524,7 +524,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network` | B0 | Opened 2026-11-05 | N0 | N0 |
+| N | `feature/v2-network` | B0 | Opened 2026-11-05 | N1 proposal (not judged) | N1 player security and sync contract |
 | S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP2 review / SP3 preparation (not judged) | SP2 offline D1/M1 |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
@@ -534,9 +534,9 @@ nono-sandboxed OpenCode wrapper starts only inside its approved roots:
 built-in worktree root `~/.local/share/opencode/worktree`, with the main
 repository's shared git dir granted for linked worktrees.
 
-Live window: BOOKED 2026-11-05 for N's N0 macOS leg (public tunnel open only
-for the run); released when N reports teardown. S does not need port 8360
-until SP3. A session books it through the Overseer
+Live window: FREE. N0 macOS and Linux tunnels are torn down; the booking is
+released following independent evidence review and PR #89 integration.
+S books port 8360 before SP3. A session books it through the Overseer
 before a live run and releases it after teardown. The SP3 matrix and Network
 live runs never overlap.
 
@@ -544,7 +544,7 @@ live runs never overlap.
 
 | Gate | Worktree | Verdict | Date | Evidence | PR |
 | --- | --- | --- | --- | --- | --- |
-| N0 transport feasibility | N | BLOCKED | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md` (`feature/v2-network`); offline checks only; macOS leg awaits the live window (now booked), Linux leg awaits the owner-run Docker script | -- |
+| N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
 | N1 player boundary and contract | N | pending | -- | -- | -- |
 | N2 React vertical slice | N | pending | -- | -- | -- |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
@@ -597,11 +597,17 @@ are authorized. Missing evidence is reported explicitly.
 
 ### 10.4 Pending owner actions
 
-1. When N delivers it, run the N0 Linux Docker script outside the sandbox.
-2. Only if nono denies listening on 8370: add `"listen_port": [8370]` to the
-   `opencode-local` profile.
-3. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
+1. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
    sketches. Without it S criterion 5 stays unmet.
+
+N0 closeout: the owner-run Linux leg completed and both tunnels are down.
+The guarded identity bootstrap (`up` -> `status` -> `down` with isolated
+paths and service-manager commands unavailable, then foreground `serve`)
+is approved for the spike; production startup/packaging remains N3-owned.
+N0 proves macOS arm64 and Linux arm64-container transport feasibility, not
+native Linux installation, x64 qualification, browser or gameplay acceptance.
+No Docker/Semgrep sandbox grant or speculative listener-profile edit is
+required for this completed gate.
 
 Owner correction, 2026-11-05: the earlier full-public-seed request was
 premature and is withdrawn; its unmodified local copy in NEQ-world was
