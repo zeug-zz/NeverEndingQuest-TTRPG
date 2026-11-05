@@ -270,6 +270,7 @@ def launch(
     known_ids: Optional[set[str]] = None,
     perceived_ids: Optional[set[str]] = None,
     movement_hint_observer: Optional[Callable[[Any], Any]] = None,
+    lifecycle_id: Optional[str] = None,
     module_importer: Optional[Callable[[str], Any]] = None,
     server_runner: Optional[Callable[[Any], Any]] = None,
     adapter_installer: Optional[Callable[..., Any]] = None,
@@ -346,6 +347,7 @@ def launch(
             ),
             fixture_id=fixture_id,
             runtime_root=validated.root,
+            lifecycle_id=lifecycle_id,
         )
         if getattr(web_interface, "INSTALL_ROOT", None) is None or Path(
             web_interface.INSTALL_ROOT

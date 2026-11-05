@@ -152,6 +152,20 @@ class MappingPilotEvidenceTests(unittest.TestCase):
                 },
             },
             "logs": "Capture row completed without server errors.\n",
+            "router_receipts": {
+                "evidence_status": "recorded",
+                "records": [
+                    {
+                        "call_id": "turn-01",
+                        "attempt_id": "attempt-01",
+                        "attribution": "model_bearing_turn",
+                        "provider_call_expected": True,
+                    }
+                ],
+                "attempt_count": 1,
+                "provider_call_expected_false_observed": 0,
+            },
+            "scoring": {"schema": "mapping-pilot-scoring-test"},
         }
 
     def _write_turn_record(self, record: dict[str, Any]) -> Path:
@@ -216,6 +230,8 @@ class MappingPilotEvidenceTests(unittest.TestCase):
             "checks.json",
             "cap_counts.json",
             "server_logs.txt",
+            "router_receipts.json",
+            "scoring.json",
             "verdict.json",
         }
         self.assertEqual(set(manifest["files"]), expected_files)
