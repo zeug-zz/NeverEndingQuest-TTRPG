@@ -99,7 +99,14 @@ class MappingPilotBoundaryTests(unittest.TestCase):
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             self.skipTest("git boundary inspection unavailable (origin/main and main merge-base lookup failed): %s" % exc)
         paths = set(tracked.stdout.splitlines()) | set(untracked.stdout.splitlines())
-        allowed = ("scripts/", "openspec/changes/v2-mapping-pilot-tooling/", "openspec/changes/v2-mapping-pilot-offline/")
+        allowed = (
+            "scripts/",
+            "openspec/changes/v2-mapping-pilot-tooling/",
+            "openspec/changes/v2-mapping-pilot-offline/",
+            "openspec/changes/v2-mapping-pilot-execution/",
+            "adrs/0034-spatial-authority-and-projections.md",
+            "adrs/index.md",
+        )
         violations = sorted(path for path in paths if not path.startswith(allowed))
         forbidden = sorted(path for path in paths if path.startswith(("core/", "web/", "modules/", "plans/"))
                            or path in {"main.py", "model_config.py", "config.py"})

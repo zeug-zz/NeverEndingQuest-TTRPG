@@ -221,16 +221,29 @@ def observe_movement_hint(
     the response-shape contract. Missing, malformed, or illegal hints are logged
     as observations and never reject the response or its other fields.
     """
+    parsed = parse_movement_hint(response)
+    return observe_parsed_movement_hint(ledger, actor_id, parsed, movement_mode)
+
+
+def observe_parsed_movement_hint(
+    ledger: ZoneLedger,
+    actor_id: str,
+    observation: MovementHintObservation,
+    movement_mode: str = "standard",
+) -> MovementHintValidation:
+    """Apply one already-parsed adapter observation to the shadow ledger."""
     if movement_mode not in ("standard", "extended"):
         raise ValueError("movement_mode must be 'standard' or 'extended'")
-    parsed = parse_movement_hint(response)
+    if not isinstance(observation, MovementHintObservation):
+        raise ValueError("observation must use the adapter MovementHintObservation type")
+
     result: MovementHintValidation
-    hint = parsed.hint
-    if parsed.status != "valid" or hint is None:
+    hint = observation.hint
+    if observation.status != "valid" or hint is None:
         result = MovementHintValidation(
             actor_id=actor_id,
-            status=parsed.status,
-            reason=parsed.reason,
+            status=observation.status,
+            reason=observation.reason,
             movement_mode=movement_mode,
             from_zone=None,
             to_zone=None,

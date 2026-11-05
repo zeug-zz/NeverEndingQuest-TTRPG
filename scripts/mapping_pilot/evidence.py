@@ -42,6 +42,18 @@ _SECRET_TEXT = re.compile(
     r"\bbearer\s+[A-Za-z0-9._~+/-]+=*|config\.py",
     re.IGNORECASE,
 )
+_SAFE_SCORING_FIELDS = frozenset(
+    (
+        "input_tokens_total",
+        "output_tokens_total",
+        "input_tokens_per_model_turn",
+        "output_tokens_per_model_turn",
+        "input_tokens_by_model_turn",
+        "output_tokens_by_model_turn",
+        "input_tokens_per_turn_at_most_115_percent_of_a",
+        "input_tokens_per_turn",
+    )
+)
 _RECORD_NAME = re.compile(r"^record-[0-9]{8}\.json$")
 
 _REQUIRED_ROW_FIELDS = (
@@ -61,6 +73,8 @@ _REQUIRED_ARTIFACTS = (
     "expected_observed_checks",
     "cap_counts",
     "logs",
+    "router_receipts",
+    "scoring",
 )
 _FIXTURE_PATHS = {
     "interior_tavern": "fixtures/interior_tavern.json",
@@ -78,6 +92,8 @@ _ARTIFACT_FILENAMES = {
     "expected_observed_checks": "checks.json",
     "cap_counts": "cap_counts.json",
     "logs": "server_logs.txt",
+    "router_receipts": "router_receipts.json",
+    "scoring": "scoring.json",
     "verdict": "verdict.json",
 }
 
@@ -178,10 +194,21 @@ def create_evidence_bundle(
         provenance, normalized_row, prereg_root
     )
     normalized_artifacts = _validate_artifacts(artifacts)
-    packet_status = _turn_evidence_status(normalized_artifacts["exact_packets"]["records"])
+    packet_status = _turn_evidence_status(
+        normalized_artifacts["exact_packets"]["records"],
+        arm=normalized_row["arm"],
+        declared_status=normalized_artifacts["exact_packets"].get("evidence_status"),
+    )
     declared_packet_status = normalized_artifacts["exact_packets"].get("evidence_status")
     if declared_packet_status == "degraded":
         packet_status = "degraded"
+    elif declared_packet_status == "not_applicable":
+        if normalized_row["arm"] != "A" or not _valid_arm_a_noop_record(
+            normalized_artifacts["exact_packets"]["records"]
+        ):
+            packet_status = "missing"
+        else:
+            packet_status = "not_applicable"
     elif declared_packet_status not in (None, "recorded"):
         packet_status = "missing"
     normalized_artifacts["exact_packets"]["evidence_status"] = packet_status
@@ -190,6 +217,7 @@ def create_evidence_bundle(
         normalized_provenance,
         normalized_artifacts,
         packet_status,
+        normalized_row,
     )
 
     relative_root = _normalize_base_root(base_root)
@@ -233,6 +261,8 @@ def create_evidence_bundle(
             "expected_observed_checks",
             "cap_counts",
             "logs",
+            "router_receipts",
+            "scoring",
             "verdict",
         ):
             filename = _ARTIFACT_FILENAMES[name]
@@ -425,6 +455,48 @@ def _validate_artifacts(artifacts: Mapping[str, Any]) -> dict[str, Any]:
         raise EvidenceBundleError("cap_counts must be an object")
     _validate_cap_counts(normalized["cap_counts"])
 
+    receipts = normalized["router_receipts"]
+    if not isinstance(receipts, Mapping):
+        raise EvidenceBundleError("router_receipts must be an object")
+    receipt_records = receipts.get("records")
+    if not isinstance(receipt_records, list) or any(
+        not isinstance(record, Mapping) for record in receipt_records
+    ):
+        raise EvidenceBundleError("router_receipts.records must be a list of objects")
+    receipt_status = receipts.get("evidence_status")
+    if receipt_status not in ("recorded", "degraded", "missing"):
+        raise EvidenceBundleError("router_receipts evidence_status is invalid")
+    for count_name in ("attempt_count", "provider_call_expected_false_observed"):
+        count = receipts.get(count_name)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise EvidenceBundleError("router_receipts counts must be non-negative integers")
+    attempt_ids = {
+        record.get("attempt_id")
+        for record in receipt_records
+        if isinstance(record.get("attempt_id"), str) and record.get("attempt_id")
+    }
+    if receipts["attempt_count"] != len(attempt_ids):
+        raise EvidenceBundleError("router_receipts attempt_count does not match its records")
+    unexpected_receipts: set[tuple[str, Any]] = set()
+    for index, record in enumerate(receipt_records):
+        if record.get("provider_call_expected") is not False:
+            continue
+        attempt_id = record.get("attempt_id")
+        sequence = record.get("sequence")
+        if isinstance(attempt_id, str) and attempt_id:
+            identity = ("attempt", attempt_id)
+        elif isinstance(sequence, int) and not isinstance(sequence, bool):
+            identity = ("sequence", sequence)
+        else:
+            identity = ("record", index)
+        unexpected_receipts.add(identity)
+    if receipts["provider_call_expected_false_observed"] != len(unexpected_receipts):
+        raise EvidenceBundleError(
+            "router_receipts unexpected-call count does not match its records"
+        )
+    if not isinstance(normalized["scoring"], Mapping):
+        raise EvidenceBundleError("scoring must contain the scorer output")
+
     for name in ("state_snapshots", "zone_trace"):
         value = normalized[name]
         if value is None or (
@@ -436,6 +508,8 @@ def _validate_artifacts(artifacts: Mapping[str, Any]) -> dict[str, Any]:
     _ensure_json_value(normalized["zone_trace"], "zone_trace")
     _ensure_json_value(normalized["expected_observed_checks"], "expected_observed_checks")
     _ensure_json_value(normalized["cap_counts"], "cap_counts")
+    _ensure_json_value(normalized["router_receipts"], "router_receipts")
+    _ensure_json_value(normalized["scoring"], "scoring")
     return normalized
 
 
@@ -479,10 +553,19 @@ def _validate_verdict(
     provenance: Mapping[str, Any],
     artifacts: Mapping[str, Any],
     packet_status: str,
+    row: Mapping[str, Any],
 ) -> None:
     if verdict != "PASS":
         return
-    if packet_status != "recorded":
+    router_receipts = artifacts["router_receipts"]
+    if router_receipts.get("evidence_status") != "recorded":
+        raise EvidenceBundleError("PASS requires recorded router receipt evidence")
+    if router_receipts.get("provider_call_expected_false_observed") != 0:
+        raise EvidenceBundleError("PASS is forbidden after an unexpected lifecycle provider call")
+    if packet_status == "not_applicable" and row.get("arm") == "A":
+        if not _valid_arm_a_noop_record(artifacts["exact_packets"]["records"]):
+            raise EvidenceBundleError("arm A requires an explicit no-op observation")
+    elif packet_status != "recorded":
         raise EvidenceBundleError("PASS is forbidden when turn evidence is degraded or missing")
     route_identity = provenance["route_identity"]
     requested = route_identity["requested"]
@@ -524,7 +607,18 @@ def _validate_verdict(
             raise EvidenceBundleError("PASS is forbidden when required evidence is marked missing")
 
 
-def _turn_evidence_status(records: Sequence[Mapping[str, Any]]) -> str:
+def _turn_evidence_status(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    arm: Optional[str] = None,
+    declared_status: Any = None,
+) -> str:
+    if (
+        arm == "A"
+        and declared_status == "not_applicable"
+        and _valid_arm_a_noop_record(records)
+    ):
+        return "not_applicable"
     if any(record.get("evidence_status") == "degraded" for record in records):
         return "degraded"
     if not records:
@@ -537,6 +631,15 @@ def _turn_evidence_status(records: Sequence[Mapping[str, Any]]) -> str:
     if any(record.get("evidence_status") != "recorded" for record in records):
         return "missing"
     return "recorded"
+
+
+def _valid_arm_a_noop_record(records: Sequence[Mapping[str, Any]]) -> bool:
+    return (
+        len(records) == 1
+        and records[0].get("event_type") == "arm_a_noop"
+        and records[0].get("adapter_installed") is False
+        and records[0].get("evidence_status") == "recorded"
+    )
 
 
 def _packet_record_is_complete(record: Mapping[str, Any]) -> bool:
@@ -726,7 +829,8 @@ def _ensure_json_value(value: Any, label: str) -> None:
 def _reject_secret_payload(value: Any) -> None:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            if _SECRET_FIELD.search(str(key)):
+            normalized_key = str(key).lower()
+            if _SECRET_FIELD.search(str(key)) and normalized_key not in _SAFE_SCORING_FIELDS:
                 raise EvidenceBundleError("secret-like fields are not allowed in evidence")
             _reject_secret_payload(child)
         return
