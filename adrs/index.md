@@ -3,6 +3,7 @@
 This directory captures durable Tabletop NeverEndingQuest architecture decisions.
 
 Status legend:
+- Proposed: drafted and awaiting owner acceptance; not yet guiding implementation
 - Accepted: active decision currently guiding implementation
 - Planned: approved direction not fully implemented
 - Superseded: replaced by a later accepted ADR
@@ -43,6 +44,7 @@ Status legend:
 - 0030 Selective Upstream Patch Porting (Superseded)
 - 0031 Independent Development Fork (Accepted)
 - 0032 Single Tabletop Runtime (Minimum Party Is One PC) (Accepted)
+- 0033 Firelight Rules Engine Under Python Host Authority (Proposed)
 
 ## Supersession Map
 

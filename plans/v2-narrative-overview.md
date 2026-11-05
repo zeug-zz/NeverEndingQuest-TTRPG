@@ -481,8 +481,24 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
     Pilot P0; the producer request; TITAN s3 seed reconciliation) starts in the
     main checkout after N and S launch.
 - An open goal authorizes proposing and building its owning plan's listed
-  OpenSpec changes in phase order. The owner reviews and merges each phase PR.
-  Scope beyond the owning plan needs a plan review first.
+  OpenSpec changes in phase order. Scope beyond the owning plan needs a plan
+  review first.
+- Standing owner instruction, 2026-11-05: the build proceeds without waiting
+  for routine owner approvals. The Overseer merges phase and ledger PRs once
+  required CI passes and the evidence supports the gate, and records each as
+  "assumed (standing instruction)". It stops for the owner only on IMPORTANT
+  items or blockers: ADR acceptance, scope changes to an owning plan, secrets,
+  sandbox or installed-campaign operations, outward requests to other
+  projects, and human judgement the plans reserve to the owner. Assumed
+  approvals never create evidence: no rating, review verdict or live-gate
+  observation is invented.
+- Stage 1 packet ratings (owner decision 2026-11-05): the owner will not rate
+  the 36 Stage 1 packets individually. They are recorded as waived, not as
+  ratings. No rating values are entered; Stage 1 stays unrated prompt-only
+  evidence and the SP4 report says so. This waiver covers the "(and Stage 1
+  packets)" part of S criterion 5. Owner ratings of the SP3 live transcripts
+  and M1 sketches are still required (S criterion 5, pilot s7.2); they are
+  batched into one owner sitting at SP4.
 - Not yet approved: worktrees R, SB, SC, M, T, B and G, and any
   installed-campaign operation.
 
@@ -518,24 +534,27 @@ live runs never overlap.
 | SP2 offline D1/M1 | S | pending | -- | -- | -- |
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
+| G0 ADR, audit and pin (docs) | main | pending owner ADR acceptance | 2026-11-05 | ADR-0033 (Proposed); `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | this PR |
 
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
 
 ### 10.4 Pending owner actions
 
-1. Rate the 36 Stage 1 packets, in parallel with SP1 (S criterion 5).
-2. Cancel or clear the superseded mapping-research goal (session
-   `ses_e85200d2...`, paused) so it cannot be resumed.
-3. Install the updated nono wrapper if OpenCode's built-in worktree root is
-   wanted (optional; N and S do not need it).
-4. Review and merge phase PRs as they arrive.
+1. IMPORTANT: accept or revise ADR-0033 (Firelight) before Narrator P0
+   ratifies the event envelope (week 2-3).
+2. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
+   sketches. Without it S criterion 5 stays unmet.
+3. IMPORTANT: approve sending the memory-pilot producer request to NEQ-world
+   (outward request to another project).
 
 Done 2026-11-05: N and S sessions opened with their s10.5 goals; `config.py`
 provided in both worktrees; SP0 preregistration reviewed, approved and merged
 (#81), which freezes it and clears the pilot for provider calls under its
 protocol. The superseded `mapping-research-arena-comparison` change is
-archived, so `main` has no active OpenSpec change.
+archived, so `main` has no active OpenSpec change. The superseded
+mapping-research goal is closed. The updated nono wrapper is installed.
+Stage 1 packet ratings waived (s10.1).
 
 ### 10.5 Goal prompts
 
