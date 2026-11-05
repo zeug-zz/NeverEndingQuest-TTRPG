@@ -47,6 +47,7 @@ from utils.encoding_utils import safe_json_load
 from utils.enhanced_logger import error, info, warning
 from utils.file_operations import safe_read_json, safe_write_json
 from utils.module_path_manager import ModulePathManager
+from utils.repo_paths import safe_child_name
 
 # TABLETOP MODE: Party transition memory for retirement/return lifecycle
 from core.memory.party_transition_memory import (
@@ -280,7 +281,10 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
             if not name:
                 return jsonify({'error': 'Character name is required'}), 400
 
-            char_filename = name.lower().replace(' ', '_') + ".json"
+            # TABLETOP MODE: The requested name must map to a file directly in characters/.
+            char_filename = safe_child_name(name.lower().replace(' ', '_') + ".json", 'characters')
+            if char_filename is None:
+                return jsonify({'error': 'Invalid character name'}), 400
             char_path = os.path.join('characters', char_filename)
             if os.path.exists(char_path):
                 return jsonify({'error': f'Character file {char_filename} already exists!'}), 400
@@ -1136,7 +1140,10 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
 
             new_char = audit_result.normalized_data
 
-            char_filename = name.lower().replace(' ', '_') + ".json"
+            # TABLETOP MODE: The requested name must map to a file directly in characters/.
+            char_filename = safe_child_name(name.lower().replace(' ', '_') + ".json", 'characters')
+            if char_filename is None:
+                return jsonify({'error': 'Invalid character name'}), 400
             char_path = os.path.join('characters', char_filename)
 
             if os.path.exists(char_path):
