@@ -1,0 +1,142 @@
+{
+  "script_id": "interior_e1_e4",
+  "version": "1.0.0",
+  "fixture_ids": [
+    "interior_tavern"
+  ],
+  "encounter_id": null,
+  "model_bearing_turn_count": 8,
+  "turns": [
+    {
+      "id": "E1-01",
+      "family": "E1",
+      "utterance": "We enter the tavern from the village green. What landmarks are immediately apparent, and what can we hear?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_FRONT_DOOR", "MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_HEARTH"],
+          "assertion": "Establish the south entrance and stable interior anchors; use only the authored hearth and entrance sound cues without reciting coordinates or adding unsupported features."
+        }
+      ]
+    },
+    {
+      "id": "E1-02",
+      "family": "E1",
+      "utterance": "We cross toward the bar. Where is the keeper, and which other visible anchors and exits are around the room?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_KITCHEN_DOOR", "MPV2_F_TAVERN_BACK_DOOR"],
+          "assertion": "Keep the keeper behind the west bar; report kitchen and back-door sides/states, with unknown destinations labelled unknown."
+        }
+      ]
+    },
+    {
+      "id": "E1-03",
+      "family": "E1",
+      "utterance": "I call across the room to the hooded figure by the hearth. What do I see from here, and where is the figure?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_HEARTH", "MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_LONG_TABLE"],
+          "assertion": "Place the hooded figure by the northeast hearth and keep the bar and table stable; do not invent hidden possessions or intentions."
+        }
+      ]
+    },
+    {
+      "id": "E1-04",
+      "family": "E1",
+      "utterance": "Merisiel takes the lead and walks to the stairs. From that viewpoint, what can she see across the room?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_STAIRS", "MPV2_F_TAVERN_BALCONY", "MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_HEARTH"],
+          "assertion": "Recognize the active-PC switch and stair viewpoint without teleporting other actors or changing stable anchors."
+        }
+      ]
+    },
+    {
+      "id": "E1-05",
+      "family": "E1",
+      "utterance": "We return to the front doorway. Which routes can we use from this room, and what is known beyond each door?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_FRONT_DOOR", "MPV2_F_TAVERN_KITCHEN_DOOR", "MPV2_F_TAVERN_BACK_DOOR"],
+          "assertion": "Keep the south front exit open to the village green; do not turn closed doors or unknown destinations into routes."
+        }
+      ]
+    },
+    {
+      "id": "E4-06",
+      "family": "E4",
+      "utterance": "Acheron pushes the heavy bench against the back door to bar it. Describe what changes and what stays where it was.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_BACK_DOOR", "MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_FRONT_DOOR"],
+          "assertion": "Commit only the back door state to barred; keep the front exit and unrelated anchors unchanged."
+        }
+      ]
+    },
+    {
+      "id": "E4-07",
+      "family": "E4",
+      "utterance": "We leave through the open front entrance into the village green.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_FRONT_DOOR", "MPV2_F_TAVERN_BACK_DOOR"],
+          "assertion": "Leave by the south open exit; the barred back door remains a committed change."
+        }
+      ],
+      "after_turn_control": {
+        "lifecycle": ["save_sandbox_state", "stop_only_owned_8360_server", "restart_same_sandbox_without_reseed", "resume_saved_state"],
+        "reseed": false,
+        "provider_call": false
+      }
+    },
+    {
+      "id": "E4-08",
+      "family": "E4",
+      "utterance": "We return through the front entrance after resuming. What has changed, and where are the doors and landmarks now?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_BACK_DOOR", "MPV2_F_TAVERN_FRONT_DOOR", "MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_HEARTH"],
+          "assertion": "The back door is still barred after save/resume; the front entrance and interior anchor positions remain stable."
+        }
+      ]
+    }
+  ]
+}

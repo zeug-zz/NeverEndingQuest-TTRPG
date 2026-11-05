@@ -1,0 +1,150 @@
+{
+  "fixture_id": "transition_tower_approach",
+  "version": "1.0.0",
+  "scope": "sandbox-only spatial truth; second area in the village route",
+  "location_ids": [
+    "MPV2_LOC_TOWER_APPROACH"
+  ],
+  "locations": [
+    {
+      "location_id": "MPV2_LOC_TOWER_APPROACH",
+      "name": "Old Watchtower Approach",
+      "orientation": {
+        "origin_feature_id": "MPV2_F_TOWER_APPROACH_CAIRN",
+        "north": "toward the watchtower gate",
+        "entry_facing": "north from the woodland trail or west ford",
+        "position_semantics": "schematic labels only; not metric coordinates"
+      },
+      "features": [
+        {
+          "feature_id": "MPV2_F_TOWER_APPROACH_CAIRN",
+          "name": "Mossy cairn",
+          "position": "west_center",
+          "state": "fixed",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TOWER_APPROACH_PATH",
+          "name": "Tower approach path",
+          "position": "center",
+          "state": "open",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TOWER_APPROACH_GATE",
+          "name": "Watchtower outer gate",
+          "position": "north_center",
+          "state": "closed",
+          "perceivable": true,
+          "reachable": true
+        },
+        {
+          "feature_id": "MPV2_F_TOWER_APPROACH_VILLAGE_SMOKE",
+          "name": "Village chimney smoke",
+          "position": "west_horizon",
+          "state": "visible_distant_landmark",
+          "perceivable": true,
+          "reachable": false
+        },
+        {
+          "feature_id": "MPV2_F_TOWER_APPROACH_LANTERN",
+          "name": "Faint lantern glow beyond the gate",
+          "position": "north_through_gate_gap",
+          "state": "visible_but_unreachable",
+          "perceivable": true,
+          "reachable": false
+        }
+      ],
+      "exits": [
+        {
+          "exit_id": "MPV2_EXIT_TOWER_APPROACH_FORD_RETURN",
+          "feature_id": "MPV2_F_TOWER_APPROACH_PATH",
+          "side": "southwest",
+          "state": "open",
+          "known_destination_location_id": "MPV2_LOC_VILLAGE_GREEN",
+          "destination_knowledge": "known",
+          "route_label": "return by the west ford"
+        },
+        {
+          "exit_id": "MPV2_EXIT_TOWER_APPROACH_OUTER_GATE",
+          "feature_id": "MPV2_F_TOWER_APPROACH_GATE",
+          "side": "north",
+          "state": "closed",
+          "known_destination_location_id": null,
+          "destination_knowledge": "unknown"
+        }
+      ],
+      "perceivable_facts": [
+        "The party has entered a second area, the Old Watchtower Approach.",
+        "The mossy cairn is west of the central approach path.",
+        "The closed outer gate is north; the space beyond it is not a known destination.",
+        "A faint lantern glow is visible through the gate gap but cannot be reached from outside.",
+        "The village smoke is visible to the west; the known return route is southwest by the ford."
+      ],
+      "hidden_facts": [
+        "The lantern's source and any occupants beyond the gate are unknown.",
+        "The tower interior and any further exits are unknown until entered.",
+        "No exact distance between the approach, village or tower is authored."
+      ]
+    }
+  ],
+  "visible_but_unreachable_landmarks": [
+    {
+      "feature_id": "MPV2_F_TOWER_APPROACH_VILLAGE_SMOKE",
+      "visible_from_location_id": "MPV2_LOC_TOWER_APPROACH",
+      "reachability_from_current_location": "not_directly_reachable",
+      "known_route": "known return route leaves southwest by the ford"
+    },
+    {
+      "feature_id": "MPV2_F_TOWER_APPROACH_LANTERN",
+      "visible_from_location_id": "MPV2_LOC_TOWER_APPROACH",
+      "reachability_from_current_location": "unreachable while the gate remains closed",
+      "known_route": "none"
+    }
+  ],
+  "npc_anchors": [
+    {
+      "npc_id": "MPV2_NPC_TOWER_WATCHER",
+      "name": "Approach watcher",
+      "anchor_feature_id": "MPV2_F_TOWER_APPROACH_CAIRN",
+      "position": "beside_cairn_west_center",
+      "perceivable": true
+    }
+  ],
+  "authored_distances": [],
+  "mutable_features": [],
+  "expected_properties": {
+    "sketch_anchor_ids": [
+      "MPV2_F_TOWER_APPROACH_CAIRN",
+      "MPV2_F_TOWER_APPROACH_PATH",
+      "MPV2_F_TOWER_APPROACH_GATE",
+      "MPV2_F_TOWER_APPROACH_VILLAGE_SMOKE",
+      "MPV2_F_TOWER_APPROACH_LANTERN"
+    ],
+    "sketch_relations": [
+      {
+        "feature_id": "MPV2_F_TOWER_APPROACH_GATE",
+        "relation": "north_of",
+        "other_feature_id": "MPV2_F_TOWER_APPROACH_PATH"
+      },
+      {
+        "feature_id": "MPV2_F_TOWER_APPROACH_CAIRN",
+        "relation": "west_of",
+        "other_feature_id": "MPV2_F_TOWER_APPROACH_PATH"
+      },
+      {
+        "feature_id": "MPV2_F_TOWER_APPROACH_VILLAGE_SMOKE",
+        "relation": "west_horizon_from",
+        "other_feature_id": "MPV2_F_TOWER_APPROACH_PATH"
+      }
+    ],
+    "spatial_checks": [
+      "A transition changes current location to MPV2_LOC_TOWER_APPROACH.",
+      "The known return is southwest by the ford to MPV2_LOC_VILLAGE_GREEN.",
+      "Do not reveal a destination or contents beyond the closed gate.",
+      "The distant village smoke and the lantern glow are visible but not reachable from the current position."
+    ]
+  }
+}

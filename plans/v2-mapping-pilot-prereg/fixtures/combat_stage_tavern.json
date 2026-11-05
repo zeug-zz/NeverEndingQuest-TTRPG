@@ -1,0 +1,328 @@
+{
+  "fixture_id": "combat_stage_tavern_zones",
+  "version": "1.0.0",
+  "scope": "sandbox-only shadow ledger truth; not production combat state",
+  "location_ids": [
+    "MPV2_LOC_TAVERN"
+  ],
+  "feature_anchors": [
+    {
+      "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+      "name": "Front entrance",
+      "position": "south_center"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_KITCHEN_DOOR",
+      "name": "Kitchen door",
+      "position": "northwest"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+      "name": "Back door",
+      "position": "north_center"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_LONG_TABLE",
+      "name": "Long table",
+      "position": "center"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_BAR",
+      "name": "Wooden bar",
+      "position": "west_center"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_HEARTH",
+      "name": "Stone hearth",
+      "position": "northeast"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_STAIRS",
+      "name": "Stairs to the balcony",
+      "position": "east_center"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_BALCONY",
+      "name": "Upper balcony and rail",
+      "position": "upper_east"
+    },
+    {
+      "feature_id": "MPV2_F_TAVERN_TOWER_ROOFLINE",
+      "name": "Distant watchtower roofline",
+      "position": "north_window_view"
+    }
+  ],
+  "orientation": {
+    "north": "toward the back wall",
+    "position_semantics": "schematic zone labels, not metric coordinates"
+  },
+  "exits": [
+    {
+      "exit_id": "MPV2_EXIT_TAVERN_FRONT",
+      "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+      "side": "south",
+      "state": "open",
+      "known_destination_location_id": "MPV2_LOC_VILLAGE_GREEN",
+      "destination_knowledge": "known"
+    },
+    {
+      "exit_id": "MPV2_EXIT_TAVERN_KITCHEN",
+      "feature_id": "MPV2_F_TAVERN_KITCHEN_DOOR",
+      "side": "northwest",
+      "state": "closed",
+      "known_destination_location_id": null,
+      "destination_knowledge": "unknown"
+    },
+    {
+      "exit_id": "MPV2_EXIT_TAVERN_BACK",
+      "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+      "side": "north",
+      "state": "closed_unbarred",
+      "known_destination_location_id": null,
+      "destination_knowledge": "unknown"
+    }
+  ],
+  "perceivable_facts": [
+    "The party can perceive the bar, long table, hearth, stairs, balcony rail and two melee groups plus the balcony archer.",
+    "The front exit is south and open; the kitchen and back-door destinations are unknown.",
+    "The watchtower roofline is visible through a window but is not a route from the combat stage.",
+    "All zone positions and elevations are schematic labels; no authored distances exist."
+  ],
+  "hidden_facts": [
+    "Contents beyond the closed kitchen door and back door are unknown.",
+    "No unseen combatants or exits may be inferred from the visible zone sketch."
+  ],
+  "zones": [
+    {
+      "zone_id": "MPV2_Z_ENTRY",
+      "name": "Entry threshold",
+      "feature_id": "MPV2_F_TAVERN_FRONT_DOOR",
+      "position": "south_center",
+      "elevation_level": "ground",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_FLOOR",
+      "name": "Taproom floor",
+      "feature_id": "MPV2_F_TAVERN_LONG_TABLE",
+      "position": "center",
+      "elevation_level": "ground",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_TABLE",
+      "name": "Long-table zone",
+      "feature_id": "MPV2_F_TAVERN_LONG_TABLE",
+      "position": "center_west",
+      "elevation_level": "ground",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_BAR",
+      "name": "Bar zone",
+      "feature_id": "MPV2_F_TAVERN_BAR",
+      "position": "west_center",
+      "elevation_level": "ground",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_HEARTH",
+      "name": "Hearth zone",
+      "feature_id": "MPV2_F_TAVERN_HEARTH",
+      "position": "northeast",
+      "elevation_level": "ground",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_STAIRS",
+      "name": "Stair zone",
+      "feature_id": "MPV2_F_TAVERN_STAIRS",
+      "position": "east_center",
+      "elevation_level": "transition_ground_to_upper",
+      "relative_levels_above_ground": 0
+    },
+    {
+      "zone_id": "MPV2_Z_BALCONY",
+      "name": "Balcony zone",
+      "feature_id": "MPV2_F_TAVERN_BALCONY",
+      "position": "upper_east",
+      "elevation_level": "upper",
+      "relative_levels_above_ground": 1
+    }
+  ],
+  "adjacency": [
+    ["MPV2_Z_ENTRY", "MPV2_Z_FLOOR"],
+    ["MPV2_Z_ENTRY", "MPV2_Z_BAR"],
+    ["MPV2_Z_ENTRY", "MPV2_Z_STAIRS"],
+    ["MPV2_Z_FLOOR", "MPV2_Z_TABLE"],
+    ["MPV2_Z_FLOOR", "MPV2_Z_BAR"],
+    ["MPV2_Z_FLOOR", "MPV2_Z_HEARTH"],
+    ["MPV2_Z_FLOOR", "MPV2_Z_STAIRS"],
+    ["MPV2_Z_TABLE", "MPV2_Z_BAR"],
+    ["MPV2_Z_TABLE", "MPV2_Z_HEARTH"],
+    ["MPV2_Z_HEARTH", "MPV2_Z_STAIRS"],
+    ["MPV2_Z_STAIRS", "MPV2_Z_BALCONY"]
+  ],
+  "pairwise_cover": [
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_FLOOR", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_TABLE", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_BAR", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_HEARTH", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_STAIRS", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_ENTRY", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_FLOOR", "zone_b": "MPV2_Z_TABLE", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_FLOOR", "zone_b": "MPV2_Z_BAR", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_FLOOR", "zone_b": "MPV2_Z_HEARTH", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_FLOOR", "zone_b": "MPV2_Z_STAIRS", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_FLOOR", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_TABLE", "zone_b": "MPV2_Z_BAR", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_TABLE", "zone_b": "MPV2_Z_HEARTH", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_TABLE", "zone_b": "MPV2_Z_STAIRS", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_TABLE", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_BAR", "zone_b": "MPV2_Z_HEARTH", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_BAR", "zone_b": "MPV2_Z_STAIRS", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_BAR", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_HEARTH", "zone_b": "MPV2_Z_STAIRS", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_HEARTH", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "half", "cover_for_target_b_from_a": "half", "line_of_sight": "clear"},
+    {"zone_a": "MPV2_Z_STAIRS", "zone_b": "MPV2_Z_BALCONY", "cover_for_target_a_from_b": "none", "cover_for_target_b_from_a": "none", "line_of_sight": "clear"}
+  ],
+  "bands": {
+    "Engaged": "same fixture melee group; melee possible; leaving provokes",
+    "Near": "not Engaged and one adjacency edge away; reachable with standard movement",
+    "Far": "not Engaged and more than one adjacency edge away; ranged or extended movement only",
+    "Out of sight": "pairwise line of sight is blocked; existence known only if previously perceived; overrides the other band labels",
+    "distance_policy": "schematic graph only; do not infer feet or other metric distance"
+  },
+  "occupant_roles": [
+    {
+      "actor_id": "MPV2_ENEMY_MELEE_ALPHA",
+      "name": "Melee group Alpha",
+      "kind": "enemy_group",
+      "initial_zone_id": "MPV2_Z_FLOOR"
+    },
+    {
+      "actor_id": "MPV2_ENEMY_MELEE_BETA",
+      "name": "Melee group Beta",
+      "kind": "enemy_group",
+      "initial_zone_id": "MPV2_Z_HEARTH"
+    },
+    {
+      "actor_id": "MPV2_ENEMY_BALCONY_ARCHER",
+      "name": "Balcony archer",
+      "kind": "enemy",
+      "initial_zone_id": "MPV2_Z_BALCONY"
+    }
+  ],
+  "initial_placement_rules": {
+    "placement_time": "at initiative from this fixture; shadow ledger only",
+    "party_1": {
+      "pcs": {
+        "Acheron": "MPV2_Z_FLOOR"
+      },
+      "enemies": {
+        "MPV2_ENEMY_MELEE_ALPHA": "MPV2_Z_FLOOR",
+        "MPV2_ENEMY_MELEE_BETA": "MPV2_Z_HEARTH",
+        "MPV2_ENEMY_BALCONY_ARCHER": "MPV2_Z_BALCONY"
+      },
+      "engagement_groups": [
+        {"group_id": "MPV2_ENGAGEMENT_ALPHA", "actors": ["Acheron", "MPV2_ENEMY_MELEE_ALPHA"]},
+        {"group_id": "MPV2_ENGAGEMENT_BETA", "actors": ["MPV2_ENEMY_MELEE_BETA"]}
+      ]
+    },
+    "party_4": {
+      "pcs": {
+        "Acheron": "MPV2_Z_FLOOR",
+        "Merisiel": "MPV2_Z_FLOOR",
+        "Kira": "MPV2_Z_HEARTH",
+        "Vitreol": "MPV2_Z_HEARTH"
+      },
+      "enemies": {
+        "MPV2_ENEMY_MELEE_ALPHA": "MPV2_Z_FLOOR",
+        "MPV2_ENEMY_MELEE_BETA": "MPV2_Z_HEARTH",
+        "MPV2_ENEMY_BALCONY_ARCHER": "MPV2_Z_BALCONY"
+      },
+      "engagement_groups": [
+        {"group_id": "MPV2_ENGAGEMENT_ALPHA", "actors": ["Acheron", "Merisiel", "MPV2_ENEMY_MELEE_ALPHA"]},
+        {"group_id": "MPV2_ENGAGEMENT_BETA", "actors": ["Kira", "Vitreol", "MPV2_ENEMY_MELEE_BETA"]}
+      ]
+    }
+  },
+  "movement_allowance_zone_steps": {
+    "pc_standard_move": 1,
+    "pc_extended_move": 2,
+    "enemy_melee_group_per_enemy_phase": 1,
+    "balcony_archer_per_enemy_phase": 0,
+    "adjacency_is_required": true,
+    "invalid_hint_effect": "record as invalid; no mechanical effect; never veto narration"
+  },
+  "enemy_movement_policy": {
+    "melee_groups": "At each enemy phase, each melee group selects the nearest reachable PC by shortest adjacency path. If already in a zone occupied by a PC in its engagement group, hold position. Otherwise advance exactly one adjacent zone step along a shortest path. If the group enters a PC-occupied zone, it joins that PC's engagement group for subsequent band calculations. Do not move through a non-adjacent zone.",
+    "target_tie_break_order": ["Acheron", "Merisiel", "Kira", "Vitreol"],
+    "path_tie_break_order": ["MPV2_Z_ENTRY", "MPV2_Z_FLOOR", "MPV2_Z_TABLE", "MPV2_Z_BAR", "MPV2_Z_HEARTH", "MPV2_Z_STAIRS", "MPV2_Z_BALCONY"],
+    "balcony_archer": "Hold MPV2_Z_BALCONY and its authored half-cover relation; do not relocate unless a separately scripted event changes it.",
+    "policy_boundary": "This is deterministic fixture truth for scoring, not a claim about current enemy resolver behavior."
+  },
+  "npc_anchors": [
+    {
+      "npc_id": "MPV2_NPC_TAVERN_KEEPER",
+      "name": "Tavern keeper",
+      "anchor_feature_id": "MPV2_F_TAVERN_BAR",
+      "position": "behind_bar_west_center"
+    },
+    {
+      "npc_id": "MPV2_NPC_HOODED_FIGURE",
+      "name": "Hooded figure",
+      "anchor_feature_id": "MPV2_F_TAVERN_HEARTH",
+      "position": "beside_hearth_northeast"
+    }
+  ],
+  "visible_but_unreachable_landmarks": [
+    {
+      "feature_id": "MPV2_F_TAVERN_TOWER_ROOFLINE",
+      "visible_from_location_id": "MPV2_LOC_TAVERN",
+      "reachability_from_current_location": "unreachable_from_the_combat_stage",
+      "known_route": "none from the tavern combat zones"
+    }
+  ],
+  "authored_distances": [],
+  "mutable_features": [
+    {
+      "feature_id": "MPV2_F_TAVERN_BACK_DOOR",
+      "initial_state": "closed_unbarred",
+      "scripted_change_in_combat": false,
+      "expected_state_during_combat": "closed_unbarred"
+    }
+  ],
+  "expected_properties": {
+    "spatial_checks": [
+      "Exactly one zone is recorded per actor at a time.",
+      "The balcony archer begins and remains in MPV2_Z_BALCONY under the fixed enemy policy.",
+      "The two melee groups begin in their party-size-specific authored zones.",
+      "The bar provides half cover in the pairwise relations specified above.",
+      "Standard PC movement is at most one adjacent zone step; extended movement is at most two.",
+      "All combat narration remains observed and is never vetoed by the ledger."
+    ],
+    "intent_hints": [
+      {
+        "utterance_id": "K2-01",
+        "party_1": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_BAR", "disengage": false, "cover_sought": "half"},
+        "party_4": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_BAR", "disengage": false, "cover_sought": "half"}
+      },
+      {
+        "utterance_id": "K2-02",
+        "party_1": {"from": "MPV2_Z_BAR", "to": "MPV2_Z_ENTRY", "disengage": true, "cover_sought": "none"},
+        "party_4": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_ENTRY", "disengage": true, "cover_sought": "none"}
+      },
+      {
+        "utterance_id": "K2-03",
+        "party_1": {"from": "MPV2_Z_ENTRY", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none"},
+        "party_4": {"from": "MPV2_Z_HEARTH", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none"}
+      },
+      {
+        "utterance_id": "K2-04",
+        "party_1": {"from": "MPV2_Z_STAIRS", "to": "MPV2_Z_BALCONY", "disengage": false, "cover_sought": "half", "zone_steps": 1},
+        "party_4": {"from": "MPV2_Z_HEARTH", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none", "zone_steps": 1}
+      }
+    ]
+  }
+}

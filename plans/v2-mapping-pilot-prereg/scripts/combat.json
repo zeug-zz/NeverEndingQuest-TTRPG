@@ -1,0 +1,167 @@
+{
+  "script_id": "combat_k1_k3",
+  "version": "1.0.0",
+  "fixture_ids": [
+    "combat_stage_tavern_zones"
+  ],
+  "encounter_id": "MPV2_ENCOUNTER_TAVERN",
+  "model_bearing_turn_count": 7,
+  "turns": [
+    {
+      "id": "K1-01",
+      "family": "K1",
+      "round": 1,
+      "utterance": "We hold our places for round one. Where are the two melee groups and the balcony archer relative to the party?",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_HEARTH", "MPV2_F_TAVERN_BALCONY"],
+          "zone_ids": ["MPV2_Z_FLOOR", "MPV2_Z_HEARTH", "MPV2_Z_BALCONY"],
+          "assertion": "Use the party-size-specific initial placements; name both melee groups and the archer without relocating them."
+        }
+      ],
+      "after_turn_control": {
+        "fixture_event": "resolve_one_deterministic_enemy_phase_before_round_2",
+        "provider_call": false
+      }
+    },
+    {
+      "id": "K1-02",
+      "family": "K1",
+      "round": 2,
+      "utterance": "Round two: keep the party positions and describe the two melee groups and the balcony archer using the same zone and cover relationships.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_HEARTH", "MPV2_F_TAVERN_BALCONY"],
+          "zone_ids": ["MPV2_Z_FLOOR", "MPV2_Z_TABLE", "MPV2_Z_BAR", "MPV2_Z_HEARTH", "MPV2_Z_BALCONY"],
+          "assertion": "Keep the bar's authored cover, both group identities and the archer's elevated balcony position coherent across rounds."
+        }
+      ]
+    },
+    {
+      "id": "K2-01",
+      "family": "K2",
+      "utterance": "Dive behind the bar.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Acheron"
+      },
+      "fixture_control_before_turn": {
+        "event": "resolve_one_deterministic_enemy_phase_for_K3",
+        "provider_call": false
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_BAR", "MPV2_F_TAVERN_LONG_TABLE"],
+          "zone_ids": ["MPV2_Z_FLOOR", "MPV2_Z_BAR"],
+          "assertion": "Expected hint: from MPV2_Z_FLOOR to adjacent MPV2_Z_BAR; cover_sought=half; disengage=false."
+        }
+      ],
+      "expected_hint": {
+        "party_1": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_BAR", "disengage": false, "cover_sought": "half"},
+        "party_4": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_BAR", "disengage": false, "cover_sought": "half"}
+      }
+    },
+    {
+      "id": "K2-02",
+      "family": "K2",
+      "utterance": "Disengage from melee.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Merisiel"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Merisiel"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_FRONT_DOOR", "MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_BAR"],
+          "zone_ids": ["MPV2_Z_BAR", "MPV2_Z_FLOOR", "MPV2_Z_ENTRY"],
+          "assertion": "Expected hint leaves the engaged area for MPV2_Z_ENTRY and sets disengage=true; do not invent a non-adjacent shortcut."
+        }
+      ],
+      "expected_hint": {
+        "party_1": {"from": "MPV2_Z_BAR", "to": "MPV2_Z_ENTRY", "disengage": true, "cover_sought": "none"},
+        "party_4": {"from": "MPV2_Z_FLOOR", "to": "MPV2_Z_ENTRY", "disengage": true, "cover_sought": "none"}
+      }
+    },
+    {
+      "id": "K2-03",
+      "family": "K2",
+      "utterance": "Climb the stairs.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Kira"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Kira"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_STAIRS", "MPV2_F_TAVERN_HEARTH"],
+          "zone_ids": ["MPV2_Z_ENTRY", "MPV2_Z_HEARTH", "MPV2_Z_STAIRS"],
+          "assertion": "Expected hint reaches MPV2_Z_STAIRS by an adjacent route and preserves the ground-to-upper transition."
+        }
+      ],
+      "expected_hint": {
+        "party_1": {"from": "MPV2_Z_ENTRY", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none"},
+        "party_4": {"from": "MPV2_Z_HEARTH", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none"}
+      }
+    },
+    {
+      "id": "K2-04",
+      "family": "K2",
+      "utterance": "Push toward the archer.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Vitreol"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Vitreol"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_STAIRS", "MPV2_F_TAVERN_BALCONY"],
+          "zone_ids": ["MPV2_Z_STAIRS", "MPV2_Z_HEARTH", "MPV2_Z_BALCONY"],
+          "assertion": "Expected hint advances toward the balcony archer over adjacent zones; any two-step extended movement is explicit and within allowance."
+        }
+      ],
+      "expected_hint": {
+        "party_1": {"from": "MPV2_Z_STAIRS", "to": "MPV2_Z_BALCONY", "disengage": false, "cover_sought": "half", "zone_steps": 1},
+        "party_4": {"from": "MPV2_Z_HEARTH", "to": "MPV2_Z_STAIRS", "disengage": false, "cover_sought": "none", "zone_steps": 1}
+      }
+    },
+    {
+      "id": "K3-01",
+      "family": "K3",
+      "utterance": "End the party turn. Describe the two melee groups' next positions under the fixture policy and keep the balcony archer in place.",
+      "actor": {
+        "party_1": "Acheron",
+        "party_4": "Acheron"
+      },
+      "pre_turn_control": {
+        "party_4": "set_active_pc:Acheron"
+      },
+      "expected_checks": [
+        {
+          "feature_ids": ["MPV2_F_TAVERN_LONG_TABLE", "MPV2_F_TAVERN_HEARTH", "MPV2_F_TAVERN_BALCONY", "MPV2_F_TAVERN_BAR"],
+          "zone_ids": ["MPV2_Z_FLOOR", "MPV2_Z_HEARTH", "MPV2_Z_BALCONY", "MPV2_Z_STAIRS"],
+          "assertion": "Narrate the deterministic melee-group policy without moving the archer from MPV2_Z_BALCONY or assigning an actor two zones."
+        }
+      ]
+    }
+  ]
+}
