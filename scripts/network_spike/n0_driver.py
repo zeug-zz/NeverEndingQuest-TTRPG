@@ -4824,15 +4824,15 @@ def _self_test_impl(scratch_root: Path) -> int:
         log_run = test_run("macos", "self-test")
         log_run.run_dir = scratch_path / "bounded-logs"
         log_run.run_dir.mkdir(mode=0o700)
-        log_secret = "n0-secret-prefix-" + "z" * 64
-        log_run.sensitive_values.append(log_secret)
+        redaction_sentinel = "n0-sentinel-prefix-" + "z" * 64
+        log_run.sensitive_values.append(redaction_sentinel)
         log_run.append_log(
-            "redaction.log", "x" * (MAX_LOG_ENTRY_CHARS - 5) + log_secret
+            "redaction.log", "x" * (MAX_LOG_ENTRY_CHARS - 5) + redaction_sentinel
         )
         redaction_log_text = (log_run.run_dir / "redaction.log").read_text(encoding="utf-8")
         redaction_before_truncation = (
-            log_secret not in redaction_log_text
-            and log_secret[:12] not in redaction_log_text
+            redaction_sentinel not in redaction_log_text
+            and redaction_sentinel[:12] not in redaction_log_text
         )
 
         identity_status_run = test_run("macos", "self-test-status-redaction")
