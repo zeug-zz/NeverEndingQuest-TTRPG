@@ -279,8 +279,8 @@ unchanged.
 
 - Each worktree has its own `.venv`; the owner provides `config.py`. Never copy secrets.
 - Ports never collide: the network dev player listener uses port 8370 (owner
-  decision 2026-11-05; never 8357 or 8360); Hindsight/PostgreSQL namespaces are
-  per worktree; live captures are serialized on port 8360 regardless of
+  decision 2026-11-05; never 8357 or 8360); worktrees share the main repo's
+  Hindsight bank by design (plugin `resolveWorktrees`); live captures are serialized on port 8360 regardless of
   worktree, booked through the ledger (s10.2).
 - Small PRs per phase; rebase the other worktree after each merge. The narrator
   branch stays out of `web/` until Network N2 merges. Expect
@@ -505,6 +505,18 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
   packets)" part of S criterion 5. Owner ratings of the SP3 live transcripts
   and M1 sketches are still required (S criterion 5, pilot s7.2); they are
   batched into one owner sitting at SP4.
+- Overseer rulings on N0, 2026-11-05:
+  - N0's inert transport fixture runs on port 8370. The Capture Arena/8360
+    procedure applies from N4, or whenever N drives real gameplay on a
+    campaign copy.
+  - No sandbox grant for `~/.docker` or `~/.semgrep`. Both hold credentials,
+    and Docker socket access would escape the sandbox. The N0 Linux leg runs
+    as a reviewed, non-mutating script that the owner executes outside the
+    sandbox; N reviews the evidence.
+  - CI Semgrep is authoritative. Local runs redirect settings, log and cache
+    under `tmp/` with metrics off.
+  - Worktrees share the `coding-agent::NeverEndingQuest` Hindsight bank by
+    design; this is not a defect.
 - Not yet approved: worktrees R, SB, SC, M, T, B and G, and any
   installed-campaign operation.
 
@@ -522,7 +534,9 @@ nono-sandboxed OpenCode wrapper starts only inside its approved roots:
 built-in worktree root `~/.local/share/opencode/worktree`, with the main
 repository's shared git dir granted for linked worktrees.
 
-Port 8360 live-capture window: free. A session books it through the Overseer
+Live window: BOOKED 2026-11-05 for N's N0 macOS leg (public tunnel open only
+for the run); released when N reports teardown. S does not need port 8360
+until SP3. A session books it through the Overseer
 before a live run and releases it after teardown. The SP3 matrix and Network
 live runs never overlap.
 
@@ -530,7 +544,7 @@ live runs never overlap.
 
 | Gate | Worktree | Verdict | Date | Evidence | PR |
 | --- | --- | --- | --- | --- | --- |
-| N0 transport feasibility | N | pending | -- | -- | -- |
+| N0 transport feasibility | N | BLOCKED | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md` (`feature/v2-network`); offline checks only; macOS leg awaits the live window (now booked), Linux leg awaits the owner-run Docker script | -- |
 | N1 player boundary and contract | N | pending | -- | -- | -- |
 | N2 React vertical slice | N | pending | -- | -- | -- |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
@@ -548,7 +562,10 @@ not yet judged.
 
 ### 10.4 Pending owner actions
 
-1. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
+1. When N delivers it, run the N0 Linux Docker script outside the sandbox.
+2. Only if nono denies listening on 8370: add `"listen_port": [8370]` to the
+   `opencode-local` profile.
+3. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
    sketches. Without it S criterion 5 stays unmet.
 
 Owner correction, 2026-11-05: the earlier full-public-seed request was
@@ -620,6 +637,10 @@ Immutable completion criteria:
 The goal may close unmet only with a concrete blocker and evidence. An
 *inconclusive* verdict with complete evidence satisfies criteria 3 and 6.
 ```
+
+Correction, 2026-11-05: both prompts say "per-worktree Hindsight namespace".
+The prompts are kept as pasted, but that clause is superseded: worktrees share
+the main repo's Hindsight bank by design (s10.1 rulings).
 
 **Worktree N** (`feature/v2-network`). The criteria restate the plan's s9 gates
 and s11 checklist; the plan wins on any difference.
