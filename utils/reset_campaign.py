@@ -20,6 +20,7 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
+from utils.pc_manager import replace_party_tracker_data
 
 # ANSI colors for output
 GREEN = "\033[32m"
@@ -229,9 +230,9 @@ def reset_global_state():
     """Phase 3: Create fresh game state"""
     print(f"\n{CYAN}PHASE 3: Creating fresh game state...{RESET}")
     
-    # Reset party tracker to empty object (matches installer behavior)
-    with open("party_tracker.json", 'w') as f:
-        f.write("{}")
+    # TABLETOP MODE: Reset canonical party state through its monotonic replacement transaction.
+    if replace_party_tracker_data({}) is None:
+        raise OSError("Could not reset canonical party tracker")
     print("  [OK] Reset party_tracker.json to {}")
     
     # Delete existing player storage - let game create fresh one

@@ -147,9 +147,7 @@ def update_party_tracker(plot_point_id, new_status, plot_impact, plot_filename):
     party_tracker["activeQuests"] = [q for q in party_tracker.get("activeQuests", []) if q.get("status") != "completed"]
     """
 
-    # Still save party_tracker in case other parts were modified
-    if not safe_write_json("party_tracker.json", party_tracker):
-        error("FAILURE: Failed to save party_tracker.json", category="file_operations")
+    # TABLETOP MODE: The deprecated activeQuests projection is a no-op; do not rewrite stale party state.
 
     debug(f"STATE_CHANGE: Party tracker updated for plot point {plot_point_id}", category="plot_updates")
 

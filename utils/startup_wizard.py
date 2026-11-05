@@ -25,8 +25,7 @@ from core.generators.module_stitcher import ModuleStitcher
 
 import config
 from utils.encoding_utils import safe_json_load, safe_json_dump
-from utils.file_operations import safe_write_json
-from utils.pc_manager import assign_active_character
+from utils.pc_manager import update_party_tracker as update_canonical_party_tracker
 from utils.module_path_manager import ModulePathManager
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
 from core.managers.status_manager import (
@@ -1657,48 +1656,17 @@ def save_character_to_module(character_data, module_name):
 def update_party_tracker(module_name, character_name, startup_incomplete=None):
     """Update party_tracker.json with module/character selections and optional startup state."""
     try:
-        # Load existing party tracker or create new one
-        party_data = safe_json_load("party_tracker.json") or {}
-        
-        # Update module
-        party_data["module"] = module_name
-        
         if isinstance(character_name, list):
-            new_members = character_name
+            new_members = list(character_name)
         else:
             new_members = [character_name]
 
-        existing_members = party_data.get("partyMembers", [])
-        for member in new_members:
-            if member and member not in existing_members:
-                existing_members.append(member)
-        party_data["partyMembers"] = existing_members
-
-        existing_active_character = str(party_data.get("active_character", "")).strip()
-        if existing_members:
-            selected_active_character = (
-                existing_active_character
-                if existing_active_character in existing_members
-                else existing_members[0]
-            )
-            assign_active_character(
-                party_data, selected_active_character
-            )  # TABLETOP MODE: Preserve or initialize active PC with revision tracking.
-
-        # TABLETOP MODE: Optional persisted startup lifecycle metadata.
-        # Backward-compatible default is no change for existing callers.
-        if startup_incomplete is not None:
-            party_data[STARTUP_INCOMPLETE_STATE_KEY] = bool(startup_incomplete)
-        
-        # Initialize other required fields if they don't exist
-        if "partyNPCs" not in party_data:
-            party_data["partyNPCs"] = []
-        
-        if "worldConditions" not in party_data:
+        initial_party = safe_json_load("party_tracker.json") or {}
+        default_world_conditions = None
+        if "worldConditions" not in initial_party:
             # Get AI-determined starting location for the selected module
             starting_location = get_ai_starting_location({'moduleName': module_name})
-            
-            party_data["worldConditions"] = {
+            default_world_conditions = {
                 "year": 1492,
                 "month": "Springmonth", 
                 "day": 1,
@@ -1716,14 +1684,33 @@ def update_party_tracker(module_name, character_name, startup_incomplete=None):
                 "activeEncounter": "",
                 "activeCombatEncounter": ""
             }
-        
-        # DEPRECATED: activeQuests is no longer used - module_plot.json is the single source of truth for quest data
-        # if "activeQuests" not in party_data:
-        #     party_data["activeQuests"] = []
-        
-        # Save updated party tracker
-        success = safe_write_json("party_tracker.json", party_data)
-        return bool(success)
+
+        def update_fresh_party(party_data):
+            # TABLETOP MODE: Apply startup fields to the current canonical party snapshot.
+            party_data["module"] = module_name
+            existing_members = party_data.get("partyMembers", [])
+            if not isinstance(existing_members, list):
+                existing_members = []
+            for member in new_members:
+                if member and member not in existing_members:
+                    existing_members.append(member)
+            party_data["partyMembers"] = existing_members
+
+            if existing_members:
+                existing_active_character = str(
+                    party_data.get("active_character", "")
+                ).strip()
+                if existing_active_character not in existing_members:
+                    party_data["active_character"] = existing_members[0]
+
+            if startup_incomplete is not None:
+                party_data[STARTUP_INCOMPLETE_STATE_KEY] = bool(startup_incomplete)
+            party_data.setdefault("partyNPCs", [])
+            if "worldConditions" not in party_data and default_world_conditions is not None:
+                party_data["worldConditions"] = default_world_conditions
+
+        # TABLETOP MODE: Startup selection and metadata commit through the fresh-state writer.
+        return update_canonical_party_tracker(update_fresh_party) is not None
         
     except Exception as e:
         print(f"Error: Error updating party tracker: {e}")

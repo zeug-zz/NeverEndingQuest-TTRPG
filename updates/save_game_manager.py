@@ -71,6 +71,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 # Import our existing utilities
 from utils.file_operations import safe_write_json, safe_read_json
+from utils.pc_manager import (
+    is_canonical_party_tracker_path,
+    replace_party_tracker_data,
+)
 from utils.module_path_manager import ModulePathManager
 from utils.encoding_utils import safe_json_load
 from utils.enhanced_logger import debug, info, warning, error, set_script_name
@@ -1698,7 +1702,15 @@ class SaveGameManager:
                         if dest_dir:
                             os.makedirs(dest_dir, exist_ok=True)
 
-                        shutil.copy2(source_file, dest_file)
+                        if is_canonical_party_tracker_path(dest_file):
+                            # TABLETOP MODE: Restore canonical party state through revision-aware replacement.
+                            restored_party = safe_read_json(source_file)
+                            if not isinstance(restored_party, dict):
+                                raise ValueError("Restored party tracker must be a JSON object")
+                            if replace_party_tracker_data(restored_party) is None:
+                                raise OSError("Canonical party tracker restore failed")
+                        else:
+                            shutil.copy2(source_file, dest_file)
                         restored_files.append(dest_file)
                         debug(f"FILE_OP: Restored: {dest_file}", category="save_game")
                     except Exception as e:

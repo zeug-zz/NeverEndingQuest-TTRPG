@@ -29,7 +29,11 @@ import json
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from utils.combat_latency_trace import trace_combat_observation, trace_enabled
-from utils.pc_manager import assign_active_character
+from utils.pc_manager import (
+    ActivePCWriteResult,
+    commit_active_character,
+    sync_active_pc_fields,
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,7 @@ class CombatActionDependencies:
     pc_combatant_type: Any
     check_all_monsters_defeated: Callable[[Dict[str, Any]], bool]
     calculate_xp_for_encounter: Optional[Callable[[Dict[str, Any]], Any]] = None
+    commit_active_character: Optional[Callable[[str], ActivePCWriteResult]] = None
 
 
 @dataclass
@@ -191,6 +196,24 @@ def _calculate_staged_xp(
     if dependencies.calculate_xp_for_encounter is not None:
         return dependencies.calculate_xp_for_encounter(encounter_data)
     return dependencies.calculate_xp()
+
+
+def _commit_combat_active_pc(
+    dependencies: CombatActionDependencies,
+    party_tracker_data: Dict[str, Any],
+    character_name: str,
+) -> bool:
+    """Commit a host-authoritative combat switch and sync only selection fields."""
+    writer = dependencies.commit_active_character or commit_active_character
+    result = writer(character_name)
+    if getattr(result, "status", None) not in {"updated", "unchanged"}:
+        dependencies.log_error(
+            f"TABLETOP MODE: Combat active-PC selection failed for {character_name}.",
+            category="party_state",
+        )
+        return False
+    sync_active_pc_fields(party_tracker_data, result)
+    return True
 
 
 def queue_final_character_update(
@@ -392,13 +415,14 @@ def process_combat_action_batch(
                     dependencies.log_debug(f"[COMBAT_MANAGER] Auto-advancing turn for NPC {current_actor.name}", category="combat_events")
                     next_actor = dependencies.advance_turn(multi_pc_manager)
                     if next_actor.type == dependencies.pc_combatant_type:
-                        assign_active_character(
-                            party_tracker_data, next_actor.name
-                        )  # TABLETOP MODE: Revision-track combat turn selection.
-                        dependencies.save_json("party_tracker.json", party_tracker_data)
-                        if dependencies.active_character_update_available:
+                        # TABLETOP MODE: Combat authority advances from current persisted selection.
+                        selection_committed = _commit_combat_active_pc(
+                            dependencies, party_tracker_data, next_actor.name
+                        )
+                        if selection_committed and dependencies.active_character_update_available:
                             dependencies.emit_combat_event("active_character_update", {"character": next_actor.name})
-                        dependencies.log_debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
+                        if selection_committed:
+                            dependencies.log_debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
                     else:
                         dependencies.log_debug(f"[COMBAT_MANAGER] Advanced turn to next enemy/NPC: {next_actor.name}", category="combat_events")
 
@@ -409,13 +433,14 @@ def process_combat_action_batch(
                     dependencies.log_debug(f"[COMBAT_MANAGER] Detected ACTED status for {active_pc_name}, advancing turn queue", category="combat_events")
                     next_actor = dependencies.advance_turn(multi_pc_manager)
                     if next_actor.type == dependencies.pc_combatant_type:
-                        assign_active_character(
-                            party_tracker_data, next_actor.name
-                        )  # TABLETOP MODE: Revision-track combat turn selection.
-                        dependencies.save_json("party_tracker.json", party_tracker_data)
-                        if dependencies.active_character_update_available:
+                        # TABLETOP MODE: Commit the turn switch without stale party persistence.
+                        selection_committed = _commit_combat_active_pc(
+                            dependencies, party_tracker_data, next_actor.name
+                        )
+                        if selection_committed and dependencies.active_character_update_available:
                             dependencies.emit_combat_event("active_character_update", {"character": next_actor.name})
-                        dependencies.log_debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
+                        if selection_committed:
+                            dependencies.log_debug(f"[COMBAT_MANAGER] Advanced active character to {next_actor.name}", category="combat_events")
                     else:
                         dependencies.log_debug(f"[COMBAT_MANAGER] Advanced turn to enemy/NPC: {next_actor.name}", category="combat_events")
 

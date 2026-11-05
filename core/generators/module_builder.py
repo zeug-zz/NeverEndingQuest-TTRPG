@@ -123,8 +123,19 @@ class ModuleBuilder:
     def save_json(self, data: Dict[str, Any], filename: str):
         """Save JSON data to the output directory"""
         filepath = os.path.join(self.config.output_directory, filename)
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        if filename == "party_tracker.json":
+            from utils import pc_manager
+
+            if pc_manager.is_canonical_party_tracker_path(filepath):
+                # TABLETOP MODE: New-party replacement preserves revision monotonicity.
+                if pc_manager.replace_party_tracker_data(data) is None:
+                    raise OSError("Canonical party tracker write failed")
+            else:
+                with open(filepath, "w") as f:
+                    json.dump(data, f, indent=2)
+        else:
+            with open(filepath, "w") as f:
+                json.dump(data, f, indent=2)
         self.log(f"Saved: {filename}")
     
     def create_context_header(self, party_members: List[str]) -> str:

@@ -902,7 +902,6 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
 
         try:
             party_tracker = pc_manager.get_party_tracker()
-            original_active_character = party_tracker.get('active_character', '')
 
             npc_names = _party_npc_names(party_tracker)
             normalized_npc_names = {_normalize_lookup_name(name) for name in npc_names}
@@ -979,17 +978,20 @@ def register_tabletop_party_routes(app: Flask, user_input_queue: Any) -> None:
                 )
                 return jsonify({'error': 'Failed to save promoted character data'}), 500
 
-            _remove_npc_entry_by_name(party_tracker, character_name)
+            def apply_promotion_to_fresh_party(fresh_party):
+                _remove_npc_entry_by_name(fresh_party, character_name)
+                members = fresh_party.get('partyMembers')
+                if not isinstance(members, list):
+                    members = []
+                    fresh_party['partyMembers'] = members
+                if character_name not in members:
+                    members.append(character_name)
 
-            if character_name not in party_tracker.get('partyMembers', []):
-                party_tracker.setdefault('partyMembers', []).append(character_name)
-
-            # TABLETOP MODE: Promotion apply should not auto-switch active_character.
-            pc_manager.assign_active_character(
-                party_tracker, original_active_character
-            )  # TABLETOP MODE: Preserve active PC without bypassing its revision.
-
-            if not safe_write_json('party_tracker.json', party_tracker):
+            # TABLETOP MODE: Promotion preserves the current selection on a fresh party snapshot.
+            party_tracker = pc_manager.update_party_tracker(
+                apply_promotion_to_fresh_party
+            )
+            if party_tracker is None:
                 error(
                     f"TABLETOP_PROMOTION action=apply character={character_name} status=failed reason=party_tracker_write_failed",
                     category="tabletop_mode"

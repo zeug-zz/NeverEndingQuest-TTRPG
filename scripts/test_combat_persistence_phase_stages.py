@@ -34,6 +34,7 @@ from core.combat.turn import (
     sync_committed_combat_turn,
 )
 from scripts.test_llm_router import ProviderTripwire
+from utils.pc_manager import ActivePCWriteResult
 
 
 class GuardDenied(BaseException):
@@ -299,6 +300,10 @@ class CombatPersistencePhaseStageTests(unittest.TestCase):
                     log_info=Mock(), log_debug=Mock(), log_error=Mock(), log_warning=Mock(),
                     calculate_xp=lambda: ("Acheron gains XP", 10), save_json=save,
                     active_character_update_available=False, emit_combat_event=Mock(),
+                    commit_active_character=lambda name: (
+                        events.append("commit:active:" + name)
+                        or ActivePCWriteResult("updated", name, 1, True)
+                    ),
                     get_current_actor=lambda current: current.get_current_actor(),
                     advance_turn=lambda current: current.advance_turn(),
                     get_pc_state=lambda current, name: current.pc_states.get(name),
@@ -326,7 +331,8 @@ class CombatPersistencePhaseStageTests(unittest.TestCase):
                 self.assertIn("Acheron", result.final_character_updates)
                 if party_size == 4:
                     self.assertEqual(events.count("manager:advance_turn"), 1)
-                    self.assertIn("save:party_tracker.json", events)
+                    self.assertIn("commit:active:PC-2", events)
+                    self.assertEqual(party["active_character"], "PC-2")
                 else:
                     self.assertNotIn("manager:advance_turn", events)
 
@@ -361,6 +367,10 @@ class CombatPersistencePhaseStageTests(unittest.TestCase):
                 sync_non_pc_queue_state=Mock(), log_info=Mock(), log_debug=Mock(), log_error=Mock(), log_warning=Mock(),
                 calculate_xp=lambda: ("", 0), save_json=lambda path, value: events.append("save:" + path),
                 active_character_update_available=False, emit_combat_event=Mock(),
+                commit_active_character=lambda name: (
+                    events.append("commit:active:" + name)
+                    or ActivePCWriteResult("updated", name, 1, True)
+                ),
                 get_current_actor=lambda current: current.get_current_actor(),
                 advance_turn=lambda current: current.advance_turn(),
                 get_pc_state=lambda current, name: current.pc_states.get(name),
@@ -373,7 +383,7 @@ class CombatPersistencePhaseStageTests(unittest.TestCase):
                 conversation_history_file="history.json", multi_pc_manager=manager,
                 party_tracker_data={"active_character": "Acheron"}, is_combat_ending=False, dependencies=deps,
             )
-            self.assertEqual(events, ["manager:advance_turn", "save:party_tracker.json"])
+            self.assertEqual(events, ["manager:advance_turn", "commit:active:PC-2"])
             tripwire.assert_untouched(self)
 
     def test_failed_immediate_enemy_apply_logs_and_later_character_action_still_runs(self):

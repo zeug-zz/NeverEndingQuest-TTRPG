@@ -24,7 +24,11 @@ from utils.combat_latency_trace import (
     trace_combat_observation,
     trace_enabled,
 )
-from utils.pc_manager import assign_active_character
+from utils.pc_manager import (
+    ActivePCWriteResult,
+    commit_active_character,
+    sync_active_pc_fields,
+)
 from core.combat.commands import FastCommandResult, is_usage_command_input
 # TABLETOP MODE: Persist combat identity separately from model-visible content.
 from core.combat.turn_commit import (
@@ -208,6 +212,7 @@ class PhaseGateIO:
     debug: Callable[..., None]
     save_json: Callable[[str, Any], Any]
     parse_death_save_roll: Callable[[str, bool], Any]
+    commit_active_character: Optional[Callable[[str], ActivePCWriteResult]] = None
 
 
 @dataclass(frozen=True)
@@ -1280,12 +1285,18 @@ def run_input_phase_gate(
                 None,
             )
             if target_pc:
-                multi_pc_manager.set_current_pc(target_pc)
-                assign_active_character(
-                    party_tracker_data, target_pc
-                )  # TABLETOP MODE: Revision-track combat input actor switch.
-                io.save_json("party_tracker.json", party_tracker_data)
-                io.debug(f"SWITCH: Force-switched active PC to {target_pc}", category="combat_events")
+                # TABLETOP MODE: The combat host commits against current persisted state.
+                writer = io.commit_active_character or commit_active_character
+                selection = writer(target_pc)
+                if getattr(selection, "status", None) in {"updated", "unchanged"}:
+                    sync_active_pc_fields(party_tracker_data, selection)
+                    multi_pc_manager.set_current_pc(target_pc)
+                    io.debug(f"SWITCH: Force-switched active PC to {target_pc}", category="combat_events")
+                else:
+                    io.debug(
+                        f"SWITCH: Could not commit active PC {target_pc}",
+                        category="party_state",
+                    )
 
     cmd = clean_input.lower()
     if multi_pc_manager and encounter_data.get("awaitingPcGroupRoll", False):

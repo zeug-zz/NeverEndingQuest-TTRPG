@@ -118,7 +118,7 @@ import re
 # Import model configuration from config.py
 from config import PLAYER_INFO_UPDATE_MODEL, NPC_INFO_UPDATE_MODEL
 from utils.module_path_manager import ModulePathManager
-from utils.pc_manager import assign_active_character
+from utils.pc_manager import update_party_tracker
 from utils.file_operations import safe_write_json, safe_read_json
 from utils.encoding_utils import safe_json_load
 from core.validation.character_validator import AICharacterValidator
@@ -3008,12 +3008,12 @@ Please provide the CORRECT currency values:
                 # CRITICAL FIX: Ensure players are added to partyMembers without mixed-name duplicates
                 if character_role == 'player':
                     try:
-                        party_tracker = safe_read_json("party_tracker.json")
-                        if party_tracker:
+                        display_name = str(updated_data.get("name") or character_name).strip()
+
+                        def register_fresh_party_member(party_tracker):
                             party_members = _dedupe_party_member_names(
                                 party_tracker.get("partyMembers", [])
                             )
-                            display_name = str(updated_data.get("name") or character_name).strip()
                             normalized_display = normalize_character_name(display_name)
                             existing_normalized = {
                                 normalize_character_name(member) for member in party_members
@@ -3022,11 +3022,12 @@ Please provide the CORRECT currency values:
                                 print(f"DEBUG: [Auto-Register] Adding {display_name} to partyMembers list")
                                 party_members.append(display_name)
                             party_tracker["partyMembers"] = _dedupe_party_member_names(party_members)
-                            if not party_tracker.get("active_character"):
-                                assign_active_character(
-                                    party_tracker, display_name
-                                )  # TABLETOP MODE: Revision-track auto-registration selection.
-                            safe_write_json("party_tracker.json", party_tracker)
+                            if not party_tracker.get("active_character") and display_name:
+                                party_tracker["active_character"] = display_name
+
+                        # TABLETOP MODE: Autoregistration updates only a freshly read party snapshot.
+                        updated_party = update_party_tracker(register_fresh_party_member)
+                        if updated_party is not None:
                             info(
                                 f"SUCCESS: Auto-registered {display_name} as party member",
                                 category="character_updates",

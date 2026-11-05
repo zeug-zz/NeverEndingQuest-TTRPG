@@ -25,7 +25,7 @@ import httpx
 import openai
 import requests
 
-from utils import pc_manager
+from utils import file_operations, pc_manager
 from web.extensions.player.contracts import PROTOCOL_VERSION
 from web.extensions.player.gateway import PlayerInputCommand, PlayerSnapshot
 from web.extensions.player.limiters import PlayerLimiters
@@ -110,7 +110,10 @@ class PlayerRuntimeIntegrationTests(unittest.TestCase):
             "active_character_revision": revision,
             "startup_incomplete": startup_incomplete,
         }
-        self.assertTrue(pc_manager.safe_write_json(str(self.party_path), state))
+        # Seed exact canonical fixtures without production selection protection.
+        self.assertTrue(
+            file_operations.atomic_writer.write_json(str(self.party_path), state)
+        )
         return state
 
     def _new_queue(self) -> _RecordingQueue:

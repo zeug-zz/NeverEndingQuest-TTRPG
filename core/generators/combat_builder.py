@@ -79,8 +79,10 @@ def save_json(file_name, data):
         return False
 
 def get_current_area_id():
-    with open("party_tracker.json", "r", encoding="utf-8") as file:
-        party_tracker = json.load(file)
+    # TABLETOP MODE: Read canonical party state through the shared loader.
+    from utils.encoding_utils import safe_json_load
+
+    party_tracker = safe_json_load("party_tracker.json")
     return party_tracker["worldConditions"]["currentAreaId"]
 
 def get_current_location():
@@ -123,12 +125,15 @@ def get_next_encounter_number(location):
         return 1
 
 def update_party_tracker(encounter_id):
-    party_tracker = load_json("party_tracker.json")
-    if not party_tracker:
-        return False
-    
-    party_tracker["worldConditions"]["activeCombatEncounter"] = encounter_id
-    if save_json("party_tracker.json", party_tracker):
+    from utils.pc_manager import update_party_tracker as update_fresh_party_tracker
+
+    def update_combat_encounter(party_tracker):
+        party_tracker.setdefault("worldConditions", {})[
+            "activeCombatEncounter"
+        ] = encounter_id
+
+    # TABLETOP MODE: Combat-builder updates only its field on fresh canonical state.
+    if update_fresh_party_tracker(update_combat_encounter) is not None:
         return encounter_id
     return False
 

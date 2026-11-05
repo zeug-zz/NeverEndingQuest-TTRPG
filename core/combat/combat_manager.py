@@ -159,6 +159,7 @@ from config import (
     DM_MINI_MODEL
 )
 from updates.update_character_info import update_character_info, normalize_character_name
+from utils.pc_manager import commit_active_character
 from utils.character_state_hygiene import normalize_life_state_fields, get_supernatural_state_summary
 import updates.update_encounter as update_encounter
 import updates.update_party_tracker as update_party_tracker
@@ -1687,6 +1688,7 @@ def _build_normal_turn_dependencies(
                 (lambda text, gate: type(manager).parse_death_save_roll_input(text, gate))
                 if manager else (lambda text, gate: (False, None, None))
             ),
+            commit_active_character=commit_active_character,
         )
 
     def fast_command_io():
@@ -3550,6 +3552,7 @@ def _run_combat_simulation_internal(encounter_id, party_tracker_data, location_i
             npc_combatant_type=CombatantType.NPC,
             pc_combatant_type=CombatantType.PC,
             check_all_monsters_defeated=check_all_monsters_defeated,
+            commit_active_character=commit_active_character,
             calculate_xp_for_encounter=lambda projection: calculate_xp(
                 projection, party_tracker_data
             ),
