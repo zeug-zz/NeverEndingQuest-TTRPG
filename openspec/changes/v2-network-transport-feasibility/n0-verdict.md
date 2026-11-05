@@ -55,3 +55,10 @@ Linux evidence demonstrates container feasibility only, not native clean-install
 - D1 guarded startup (empty-PATH `up` -> `status` -> `down`, isolated XDG profile, declarative route plus foreground `serve`, `delete --yes` at teardown) APPROVED for N0 and N1 spike use. Production startup/packaging remains an N3 decision; the empty-PATH guard and stable LuLu binary path are test mechanisms, not shipped facilitator UX.
 - Live window released after both teardowns.
 - N1 owns the dependency decision, the lock file and pip-audit.
+
+## Post-gate CI remediation (PR #89)
+- CodeQL on PR #89 raised three high alerts in the spike code: py/polynomial-redos (fixture_auth token-part regex), py/clear-text-storage-sensitive-data for the fixture password file (`password.private`), and py/clear-text-storage-sensitive-data at the driver `append_log` sink.
+- Fixes: token parts are now length-bounded (980 characters, derived from the 1024-character token cap less the 43-character signature and separator) and checked against a fixed alphabet without a regex; the driver no longer writes the fixture password to disk and passes it only to the fixture child via `N0_FIXTURE_PASSWORD` in a fixture-only environment allowlist, keeping it in redaction values.
+- The `append_log` alert was traced to a synthetic self-test sentinel that is redacted before writing; no code change was made for it, and its disposition depends on the CodeQL rescan.
+- Verification after remediation: fixture unittest 12 tests OK; driver self-test 63 PASS, 0 FAIL; local fixture smoke on 127.0.0.1:8370 (healthz 200, correct login 200, wrong login 401, port freed); ASCII 0 violations; Bandit hook passed.
+- The live macOS and Linux gate runs predate this change and were not repeated; the remediation changes only the in-process password handoff and token-part validation, which the offline checks cover.
