@@ -534,21 +534,19 @@ live runs never overlap.
 | SP2 offline D1/M1 | S | pending | -- | -- | -- |
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
-| G0 ADR, audit and pin (docs) | main | pending owner ADR acceptance | 2026-11-05 | ADR-0033 (Proposed); `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
+| G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
 
 ### 10.4 Pending owner actions
 
-1. IMPORTANT: accept or revise ADR-0033 (Firelight) before Narrator P0
-   ratifies the event envelope (week 2-3).
-2. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
+1. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
    sketches. Without it S criterion 5 stays unmet.
-3. IMPORTANT: approve sending the memory-pilot producer request to NEQ-world
-   (outward request to another project).
 
-Done 2026-11-05: N and S sessions opened with their s10.5 goals; `config.py`
+Done 2026-11-05: ADR-0033 (Firelight) accepted, with its `AGENTS.md` rule;
+sending the memory-pilot producer request to NEQ-world approved (the Overseer
+sends it after the Pilot P0 audit). N and S sessions opened with their s10.5 goals; `config.py`
 provided in both worktrees; SP0 preregistration reviewed, approved and merged
 (#81), which freezes it and clears the pilot for provider calls under its
 protocol. The superseded `mapping-research-arena-comparison` change is

@@ -96,6 +96,8 @@ The unification roadmap and current decision are linked at [`docs/architecture/p
 
 Combat prompt/state and phase contracts are recorded in the relevant ADRs (including ADR-0008 and ADR-0010) and active OpenSpec changes; preserve deterministic Python authority over mechanical state.
 
+Per ADR-0033, mechanical legality for migrated rule families is decided by the pinned Firelight engine through the Python bridge; Python stays host and canonical store. Families not yet migrated keep their Python guards.
+
 - Canonical state owners: character JSON files for character state, `party_tracker.json` for party state, and encounter files for combat state. Managers/caches are not primary storage.
 - Use `update_character_info()` for character mutations and `safe_write_json()` for persisted JSON. Preserve PC/NPC role authority: filter party members out of AI-generated NPC rosters before encounter creation. Encounter initialization must preserve enemy AC, including required legacy backfill.
 - `ModuleBuilder` orchestrates module generation; generation workers own content-generation behavior. Follow the current component boundary rather than patching symptoms in the orchestrator.

@@ -1,8 +1,7 @@
 # ADR-0033: Firelight Rules Engine Under Python Host Authority
 
 - Date: 2026-11-05
-- Status: Proposed (owner acceptance required before Narrator P0 ratifies the
-  committed event envelope; `plans/v2-firelight.md` s7 G0)
+- Status: Accepted (owner, 2026-11-05)
 - Supersedes: None
 - Superseded by: None
 - Amends: None. Relates to ADR-0027, ADR-0031 and ADR-0032.
@@ -130,9 +129,9 @@ pattern from `examples/python/firelight_host.py`) keeps upstream attribution.
 
 ## Consequences
 
-- On acceptance, `AGENTS.md` gains one durable rule: mechanical legality for
-  migrated rule families is decided by the pinned Firelight engine through the
-  Python bridge. No `AGENTS.md` edit before acceptance.
+- `AGENTS.md` carries one durable rule: mechanical legality for migrated rule
+  families is decided by the pinned Firelight engine through the Python
+  bridge.
 - Narrator P0 adopts the receipt-to-envelope seam (revision, request id, typed
   events with before/after values) when it ratifies the event envelope; the
   live-state document joins the Narrator P2 save manifest.

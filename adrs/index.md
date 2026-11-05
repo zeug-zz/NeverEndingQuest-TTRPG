@@ -44,7 +44,7 @@ Status legend:
 - 0030 Selective Upstream Patch Porting (Superseded)
 - 0031 Independent Development Fork (Accepted)
 - 0032 Single Tabletop Runtime (Minimum Party Is One PC) (Accepted)
-- 0033 Firelight Rules Engine Under Python Host Authority (Proposed)
+- 0033 Firelight Rules Engine Under Python Host Authority (Accepted)
 
 ## Supersession Map
 
