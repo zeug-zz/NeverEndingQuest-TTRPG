@@ -137,8 +137,8 @@ revive those old column assumptions or infer a producer defect from them.
 `plans/v2-memory-draft.md` section 7 already says the pilot is delivered and
 supersedes the empty-seed observation. `plans/v2-narrative-overview.md` index
 health check 4 calls for reconciling the TITAN hash; this report records that
-reconciliation. The overview's schedule says to prepare/send the producer
-request early; that schedule is not permission to send this draft. Archived
+reconciliation. The owner later clarified that the early coordination is
+pilot feedback/schema iteration, not a production export request. Archived
 Titan/memory plans and the handover appendix remain historical references.
 No other planning file was changed under this task's two-file limit.
 
@@ -222,8 +222,10 @@ these contracts rather than creating a duplicate event store or migration chain.
 The narrative overview assigns campaign/effective-generation fencing and save
 manifest ownership to Narrator P2; Pilot P1-P2 wait for Narrator P1's migration
 chain, Pilot P3 waits for Narrator P2, and TITAN consumes those shared contracts.
-The overview says the pilot producer request is to be sent early; this audit
-creates a ready-to-send draft only. No producer response, full seed export,
+The early production request was withdrawn after owner clarification.
+The existing 240-fragment bundle is for TITAN/Builder-shaped evaluation and
+schema iteration before sign-off and separately authorized full-corpus work.
+No producer response, full seed export,
 consumer import, gameplay integration, or runtime test is claimed.
 
 ## 8. P1 blockers and proposed acceptance matrix
@@ -295,7 +297,9 @@ measurements; no measured performance PASS is claimed here.
 
 The copy-only evidence, schema delta, seed timeline, retrieval/scope risks,
 save/restore risks, active-spec ownership and producer questions are recorded.
-The producer request is documented separately and approved for local handoff.
+The premature producer request is withdrawn; the consumer copy retains a
+deferred production checklist. Pilot evaluation and optimized schema
+sign-off must precede separately authorized full-corpus execution.
 This closes the
 read-only audit artifact task; it does not approve implementation, seed
 publication, existing-campaign import, or a full-seed release. P1 remains gated

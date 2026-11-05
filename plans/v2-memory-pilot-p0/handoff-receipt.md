@@ -2,6 +2,17 @@
 
 Date: 2026-11-05. Owner approved delivery in this Overseer session.
 
+Disposition: WITHDRAWN later on 2026-11-05 after owner clarification.
+The original, unchanged producer-side request was deleted with explicit
+owner approval (its hash matched the value recorded below). The consumer
+copy now states the withdrawal and retains only deferred acceptance
+considerations. No producer acknowledgement or work is claimed.
+
+The 240-fragment consumer evaluation must inform optimized schema sign-off
+before separately authorizing the full roughly 40k-fragment production job.
+The following receipt records the earlier handoff historically, not a
+currently actionable request.
+
 - Consumer source: `plans/v2-memory-pilot-p0/producer-request.md`.
 - Producer destination:
   `../NEQ-world/plans/neq-ttrpg-full-seed-request-20261105.md`.
@@ -11,8 +22,8 @@ Date: 2026-11-05. Owner approved delivery in this Overseer session.
 
 This is a local document handoff, not a message delivered to a running
 producer session. No receipt, acceptance, export work or delivery date from
-the producer is claimed. The producer maintainer can pick up the request
-from this path in their next session.
+the producer is claimed. The destination no longer exists; do not recreate
+or act on that request as a current production task.
 
 Only this new request document was added in NEQ-world. Existing dirty files,
 producer databases and source materials were not changed. No commit, push,

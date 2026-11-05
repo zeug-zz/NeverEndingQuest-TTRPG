@@ -217,7 +217,8 @@ B0: router + combat refactor committed (incl. llm-router-cleanup,
  |-- Track B  Narrator P0 (docs in main) ; worktree R opens after the pilot gate
  |     P0..P6
  |     P1 merged  -> Track C Pilot P1-P2  (Pilot P0 is docs/audit; may start before B0)
- |     P2 passed  -> Pilot P3 -> P4 -> P5 ; Pilot P6 waits on producer full export
+ |     P2 passed  -> Pilot P3 -> P4 -> P5 ; pilot + MB2 evidence -> schema sign-off
+ |     signed-off schema + separate producer authorization -> full export -> Pilot P6
  |-- Track D  TITAN P0 contracts + superseding ADR (after Pilot P0, alongside Narrator P2)
  |     TITAN P1 = delivered by Pilot P2-P4 ; TITAN P2 ledger after Pilot P3
  |     TITAN P3+ after Narrator P5 and Pilot P4 ; TITAN P6 live may use Track A clients
@@ -249,7 +250,7 @@ unchanged.
 
 | Weeks | Main checkout | Worktree N `feature/v2-network` | Worktree S (Spatial) | Worktree R `feature/v2-narrator` | Worktree G `feature/v2-firelight` | Memory / TITAN |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0-2 | Stage 0 (B0) recorded 2026-11-05 (s10.1). After N and S launch: Firelight G0 ADR, pin and gap inventory (docs) | Opens 2026-11-05: N0 feasibility | `feature/v2-mapping-pilot` opens 2026-11-05: SP0 preregistration (docs PR); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); send producer request early; reconcile TITAN s3 seed facts |
+| 0-2 | Stage 0 (B0) recorded 2026-11-05 (s10.1). After N and S launch: Firelight G0 ADR, pin and gap inventory (docs) | Opens 2026-11-05: N0 feasibility | `feature/v2-mapping-pilot` opens 2026-11-05: SP0 preregistration (docs PR); supersede `mapping-research-arena-comparison`; owner rates the 36 Stage 1 packets | -- | -- | Pilot P0 (docs + read-only audit of `tmp/` copies); prepare pilot feedback/schema review, not a full-corpus request; reconcile TITAN s3 seed facts |
 | 2-3 | Narrator P0 contracts and budgets (docs); draft event envelope jointly with network; G0 ADR accepted before the envelope is ratified; G1 offline spike in `scripts/`/`tmp/` | N0 feasibility | `feature/v2-mapping-pilot`: SP1 tooling | -- | -- | Pilot P0 complete |
 | 3-5 | Narrator P0 complete (with C7 block/cache logging baseline); index/ADR upkeep; G1 gate | N1 security and protocol | SP2 offline (D1 layouts, M1 sketches); SP3 live matrix, serialized on port 8360 | -- | -- | -- |
 | 5-8 | Pilot decision gate (about week 5-6); spatial ADR; `plans/v2-spatial.md` moved from provisional to decided; `v2-context-views` after SP3 and the P0 baseline | N2 React vertical slice | SP4 report, then `feature/v2-spatial`: S1 foundation | Opens after the pilot gate: P1 events -> merge PR (rebase N and S) | Opens after SP3: G2 bridge and shadow | -- |
@@ -257,7 +258,7 @@ unchanged.
 | 10-13 | Tester feedback fixes; retire worktree N | -- | S2 live gate -> S4 shared player map (Network N2 merged); SC0 combat contracts (docs) | P2 continues | G4 inventory, coins, equipment, AC cutover | Pilot P1-P2 continue |
 | 13-16 | Second tester cohort with the shared map | -- | S3 authored layouts with Builder; worktree SC `feature/v2-spatial-combat`: SC1-SC2 (combat bookkeeping via the G bridge) | P3 retrieval | G5 resources, slots, rests, conditions, ammunition, clock cutover | Pilot P3 (after Narrator P2) |
 | 16-19 | | | SC3-SC4 intent, combat map, live gates | P4 Archivist (consumes the S2 packet) | G6 progression, quests, occupants cutover | Pilot P4-P5; TITAN P2 ledger |
-| 19-22 | | | Regional (S5) plan | P5 agendas, P6 live; human testers on thin clients cover multi-session continuity scenarios | Retire worktree G; GU upgrades as small changes in main | Pilot P6 when the producer delivers |
+| 19-22 | | | Regional (S5) plan | P5 agendas, P6 live; human testers on thin clients cover multi-session continuity scenarios | Retire worktree G; GU upgrades as small changes in main | Schema sign-off after pilot/MB2 evidence; Pilot P6 only after separately authorized producer delivery |
 | 22+ | | | S5 build alongside TITAN | -- | -- | TITAN P3-P6 in worktree T |
 
 ### Goals (one per worktree)
@@ -319,7 +320,12 @@ foundations:
 
 - The pilot is effectively TITAN's seed/P0 verification plus P1 substrate. Track
   it that way rather than building it twice.
-- Pilot P0 (docs/audit, producer request) starts immediately.
+- Pilot P0 (docs/audit, pilot feedback and schema-review preparation) starts
+  immediately. The existing 240-fragment bundle is the evaluation input.
+- Pilot P1-P5 and Builder MB2 supply evidence for bounded schema iteration
+  with NEQ-world. Optimized schema sign-off precedes separate authorization
+  of the roughly 40k-fragment production job. Pilot P6 verifies that later
+  export; it does not block the pilot evaluation that informs its contract.
 - Pilot P1-P2 wait for Narrator P1 so the `memory.db` migration chain has one
   merge order.
 - Pilot P3 waits for Narrator P2 and extends the Narrator event envelope and
@@ -478,7 +484,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
     replaces the s7 entry that placed it in the main checkout);
   - the Network dev player listener uses port 8370;
   - the remaining Stage 0 docs work (Firelight G0 ADR, pin and gap inventory;
-    Pilot P0; the producer request; TITAN s3 seed reconciliation) starts in the
+    Pilot P0; pilot schema-review preparation; TITAN s3 seed reconciliation) starts in the
     main checkout after N and S launch.
 - An open goal authorizes proposing and building its owning plan's listed
   OpenSpec changes in phase order. Scope beyond the owning plan needs a plan
@@ -535,7 +541,7 @@ live runs never overlap.
 | SP3 live matrix | S | pending | -- | -- | -- |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
-| Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit and producer handoff ready, fixture/rubric and budget contracts still pending | -- |
+| Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit ready, premature production request withdrawn; fixture/rubric and budget contracts still pending | #84 (audit); scope correction follows |
 
 Verdicts are PASS, FAIL or BLOCKED, each with an evidence path. Pending means
 not yet judged.
@@ -545,12 +551,16 @@ not yet judged.
 1. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
    sketches. Without it S criterion 5 stays unmet.
 
-Done 2026-11-05: ADR-0033 (Firelight) accepted, with its `AGENTS.md` rule;
-sending the memory-pilot producer request to NEQ-world approved and delivered
-as a local document handoff to
-`../NEQ-world/plans/neq-ttrpg-full-seed-request-20261105.md` (receipt in
-`plans/v2-memory-pilot-p0/handoff-receipt.md`; producer acknowledgement still
-pending). N and S sessions opened with their s10.5 goals; `config.py`
+Owner correction, 2026-11-05: the earlier full-public-seed request was
+premature and is withdrawn; its unmodified local copy in NEQ-world was
+deleted with owner approval. The consumer checklist remains a deferred
+reference (`plans/v2-memory-pilot-p0/producer-request.md`), not a live request.
+First evaluate the delivered 240 fragments with TITAN/Builder scenarios,
+iterate and sign off the optimized schema, then separately authorize the
+large production job. P6 remains a later release gate.
+
+Done 2026-11-05: ADR-0033 (Firelight) accepted, with its `AGENTS.md` rule.
+N and S sessions opened with their s10.5 goals; `config.py`
 provided in both worktrees; SP0 preregistration reviewed, approved and merged
 (#81), which freezes it and clears the pilot for provider calls under its
 protocol. The superseded `mapping-research-arena-comparison` change is
