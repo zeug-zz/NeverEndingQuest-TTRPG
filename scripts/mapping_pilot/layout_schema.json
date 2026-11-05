@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neverendingquest.invalid/mapping-pilot/layout.schema.json",
+  "title": "Mapping Pilot Prototype Layout",
+  "oneOf": [
+    { "$ref": "#/$defs/locationLayout" },
+    { "$ref": "#/$defs/combatLayout" }
+  ],
+  "$defs": {
+    "orientation": {
+      "type": "object",
+      "required": ["position_semantics"],
+      "properties": {
+        "origin_feature_id": { "type": "string", "minLength": 1 },
+        "north": { "type": "string" },
+        "entry_facing": { "type": "string" },
+        "position_semantics": { "type": "string", "pattern": "schematic" }
+      },
+      "additionalProperties": true
+    },
+    "feature": {
+      "type": "object",
+      "required": ["feature_id", "name", "position"],
+      "properties": {
+        "feature_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "position": { "type": "string", "minLength": 1 },
+        "state": { "type": "string" },
+        "perceivable": { "type": "boolean" },
+        "reachable": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "exit": {
+      "type": "object",
+      "required": ["exit_id", "feature_id", "side", "state", "known_destination_location_id"],
+      "properties": {
+        "exit_id": { "type": "string", "minLength": 1 },
+        "feature_id": { "type": "string", "minLength": 1 },
+        "side": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "known_destination_location_id": { "type": ["string", "null"] },
+        "destination_knowledge": { "enum": ["known", "unknown"] }
+      },
+      "additionalProperties": true
+    },
+    "npc": {
+      "type": "object",
+      "required": ["npc_id", "anchor_feature_id"],
+      "properties": {
+        "npc_id": { "type": "string", "minLength": 1 },
+        "anchor_feature_id": { "type": "string", "minLength": 1 },
+        "perceivable": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "distance": { "type": "object", "minProperties": 1 },
+    "locationLayout": {
+      "type": "object",
+      "required": ["layout_type", "fixture_id", "locations", "authored_distances"],
+      "properties": {
+        "layout_type": { "const": "locations" },
+        "fixture_id": { "type": "string", "minLength": 1 },
+        "locations": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["location_id", "name", "orientation", "features", "exits", "perceivable_facts", "hidden_facts"],
+            "properties": {
+              "location_id": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "minLength": 1 },
+              "orientation": { "$ref": "#/$defs/orientation" },
+              "features": { "type": "array", "items": { "$ref": "#/$defs/feature" } },
+              "exits": { "type": "array", "items": { "$ref": "#/$defs/exit" } },
+              "npc_anchors": { "type": "array", "items": { "$ref": "#/$defs/npc" } },
+              "perceivable_facts": { "type": "array", "items": { "type": "string" } },
+              "hidden_facts": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "authored_distances": { "type": "array", "items": { "$ref": "#/$defs/distance" } }
+      },
+      "additionalProperties": true
+    },
+    "combatLayout": {
+      "type": "object",
+      "required": ["layout_type", "fixture_id", "location_id", "orientation", "feature_anchors", "exits", "zones", "adjacency", "pairwise_cover", "bands", "occupant_roles", "initial_placement_rules", "movement_allowance_zone_steps", "enemy_movement_policy", "npc_anchors", "perceivable_facts", "hidden_facts", "authored_distances"],
+      "properties": {
+        "layout_type": { "const": "combat_zones" },
+        "fixture_id": { "type": "string", "minLength": 1 },
+        "location_id": { "type": "string", "minLength": 1 },
+        "orientation": { "$ref": "#/$defs/orientation" },
+        "feature_anchors": { "type": "array", "items": { "$ref": "#/$defs/feature" } },
+        "exits": { "type": "array", "items": { "$ref": "#/$defs/exit" } },
+        "zones": { "type": "array", "items": { "type": "object" } },
+        "adjacency": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } },
+        "pairwise_cover": { "type": "array", "items": { "type": "object" } },
+        "bands": { "type": "object" },
+        "occupant_roles": { "type": "array", "items": { "type": "object" } },
+        "initial_placement_rules": { "type": "object" },
+        "movement_allowance_zone_steps": { "type": "object" },
+        "enemy_movement_policy": { "type": "object" },
+        "npc_anchors": { "type": "array", "items": { "$ref": "#/$defs/npc" } },
+        "perceivable_facts": { "type": "array", "items": { "type": "string" } },
+        "hidden_facts": { "type": "array", "items": { "type": "string" } },
+        "authored_distances": { "type": "array", "items": { "$ref": "#/$defs/distance" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}
