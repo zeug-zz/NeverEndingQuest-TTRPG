@@ -119,6 +119,13 @@ class TabletopCharacterRouteTests(_IsolatedCwd):
         self.assertEqual(response.get_json()["error"], "Invalid character name")
         self.assert_no_escape()
 
+    def test_manual_update_rejects_traversal_before_lookup(self) -> None:
+        with mock.patch.object(self.routes.pc_manager, 'get_character_state') as read:
+            response = self.client.post('/api/party/update_manual',
+                                        json={'character_name': '../escape'})
+        self.assertEqual(response.status_code, 400)
+        read.assert_not_called()
+
     def test_create_manual_rejects_traversal_name_before_write(self) -> None:
         audit = SimpleNamespace(
             result_type=self.routes.AUDIT_RESULT_SUCCESS,
@@ -211,6 +218,28 @@ class ToolkitWebInterfaceRouteTests(_IsolatedCwd):
             self.web.handle_generate_unified_assets({"module_name": "../escape", "assets": []})
         emit.assert_called_once_with("unified_generation_error", {"error": "Invalid module name"})
         thread.assert_not_called()
+
+    def test_character_lookup_rejects_traversal(self) -> None:
+        with mock.patch('utils.file_operations.safe_read_json') as read:
+            response = self.client.get('/get_character_data',
+                                       query_string={'character_name': '../escape'})
+        self.assertEqual(response.status_code, 400)
+        read.assert_not_called()
+
+    def test_export_rejects_unsafe_pack_and_ids_before_copy(self) -> None:
+        for payload in [
+            {'pack_name': '../escape', 'npc_ids': ['kira']},
+            {'pack_name': 'photorealistic', 'npc_ids': ['../escape']},
+            {'pack_name': 'photorealistic', 'npc_ids': 'kira'},
+            {'pack_name': 'photorealistic', 'npc_ids': [None]},
+        ]:
+            with self.subTest(payload=payload), mock.patch('os.makedirs') as mkdir, \
+                    mock.patch('shutil.copy2') as copy:
+                response = self.client.post('/api/toolkit/npcs/export-to-pack', json=payload)
+                self.assertEqual(response.status_code, 400)
+                mkdir.assert_not_called()
+                copy.assert_not_called()
+        self.assert_no_escape()
 
 
 if __name__ == "__main__":
