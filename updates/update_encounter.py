@@ -382,6 +382,11 @@ def _finalize_encounter_update(
     if persist:
         with open(f"modules/encounters/encounter_{encounter_id}.json", "w") as file:
             json.dump(encounter_info, file, indent=2)
+        # TABLETOP MODE: Notify players after the encounter JSON is committed;
+        # never forward the update action or its host-side payload.
+        from utils.player_host_publication import submit_player_host_change
+
+        submit_player_host_change("combat")
 
     return encounter_info
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from os import PathLike
 from typing import Any, Awaitable, Callable, Iterable, Mapping
@@ -62,13 +63,19 @@ from .contracts import (
     validate_active_pc_selection_envelope,
     validate_snapshot_request_envelope,
 )
-from .sync import PlayerSyncCoordinator
+from .sync import PlayerSyncCoordinator, PublishedPlayerEvent
+from utils.player_host_publication import (
+    PlayerHostChangeNotice,
+    register_player_host_listener,
+    unregister_player_host_listener,
+)
 
 CLIENT_BUILD_HEADER = "x-neq-client-build"
 PROTOCOL_VERSION_HEADER = "x-neq-protocol-version"
 _CLIENT_BUILD_ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
 _CLIENT_PROTOCOL_VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]{0,8})\Z")
 _SOCKET_CONNECT_AUTH_FIELDS = frozenset({"client_build_id", "protocol_version"})
+_LOGGER = logging.getLogger(__name__)
 
 _PLAYER_CONTENT_SECURITY_POLICY = (
     b"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
@@ -492,6 +499,9 @@ class PlayerApplication:
         self.media_registry = media_registry if media_registry is not None else MediaRegistry()
         self._build_root = build_root
         self._client_assets: VerifiedPlayerClientAssets | None = None
+        self._host_publication_token: object | None = None
+        self._host_publication_loop: asyncio.AbstractEventLoop | None = None
+        self._host_publication_tail: asyncio.Task[None] | None = None
         self.sync = PlayerSyncCoordinator(self.security.server_instance_id)
         self.socket_server = socketio.AsyncServer(
             async_mode="asgi",
@@ -699,10 +709,9 @@ class PlayerApplication:
         self,
         selection: PlayerActivePCSelection,
     ) -> None:
-        """Single post-change seam for task 3.3 ordered player publication."""
-        # TABLETOP MODE: Task 3.3 will connect this committed selection to the
-        # ordered PlayerSyncCoordinator publication path. Task 3.1 deliberately
-        # sends no selection event to other player sockets.
+        """Retain the checked-writer seam after an active-PC commit."""
+        # TABLETOP MODE: The canonical active-PC writer submits the typed host
+        # notice only after its persisted revision is confirmed.
         del selection
 
     def _authorized_socket_identity(
@@ -831,6 +840,13 @@ class PlayerApplication:
         self.preflight_client_assets()
         self.security.start_listener()
         self.sync.reset_for_instance(self.security.server_instance_id)
+        loop = asyncio.get_running_loop()
+        self._host_publication_loop = loop
+        self._host_publication_token = register_player_host_listener(
+            loop,
+            self._queue_host_change,
+            self._mark_authoritative_resync_required,
+        )
 
     def preflight_client_assets(self) -> VerifiedPlayerClientAssets:
         """Load and retain the complete verified bundle before readiness."""
@@ -850,8 +866,140 @@ class PlayerApplication:
 
     async def _shutdown(self) -> None:
         """Invalidate sessions and close their namespace sockets on stop."""
+        token = self._host_publication_token
+        self._host_publication_token = None
+        self._host_publication_loop = None
+        if token is not None:
+            unregister_player_host_listener(token)
         socket_ids = self.security.stop_listener()
         await self._disconnect_sockets(socket_ids)
+
+    def _queue_host_change(self, notice: PlayerHostChangeNotice) -> None:
+        """Append listener-loop work in enqueue order without a host-thread wait."""
+        if self._host_publication_token is None:
+            return
+        previous = self._host_publication_tail
+        self._host_publication_tail = asyncio.create_task(
+            self._publish_host_change_after(previous, notice)
+        )
+
+    def _mark_authoritative_resync_required(self) -> None:
+        """Mark replay unsafe and queue a listener-owned snapshot when possible."""
+        self.sync.require_authoritative_resync()
+        loop = self._host_publication_loop
+        if loop is None or not loop.is_running():
+            return
+        try:
+            loop.call_soon_threadsafe(self._queue_authoritative_resync)
+        except Exception:
+            return
+
+    def _queue_authoritative_resync(self) -> None:
+        """Serialize a forced snapshot behind already-enqueued host notices."""
+        if self._host_publication_token is None:
+            return
+        previous = self._host_publication_tail
+        self._host_publication_tail = asyncio.create_task(
+            self._force_authoritative_resync_after(previous)
+        )
+
+    async def _force_authoritative_resync_after(
+        self,
+        previous: asyncio.Task[None] | None,
+    ) -> None:
+        if previous is not None:
+            try:
+                await previous
+            except asyncio.CancelledError:
+                pass
+        if self._host_publication_token is not None:
+            await self._force_authoritative_resync()
+
+    async def _publish_host_change_after(
+        self,
+        previous: asyncio.Task[None] | None,
+        notice: PlayerHostChangeNotice,
+    ) -> None:
+        """Read and publish one latest canonical projection in queue order."""
+        if previous is not None:
+            try:
+                await previous
+            except asyncio.CancelledError:
+                pass
+        if self._host_publication_token is None:
+            return
+        try:
+            published = await asyncio.to_thread(
+                self.sync.publish_snapshot_event,
+                self.gateway.read_snapshot,
+            )
+            await self._emit_published_player_event(published)
+        except Exception:
+            self.sync.require_authoritative_resync()
+            _LOGGER.warning(
+                "Player host publication failed (kind=%s)",
+                notice.kind,
+            )
+            await self._force_authoritative_resync()
+
+    async def _emit_published_player_event(
+        self,
+        published: PublishedPlayerEvent,
+    ) -> None:
+        """Deliver one retained event only to currently authenticated sockets."""
+        for sid in self.security.authorized_socket_ids():
+            if not self.security.authorize_socket_event(sid):
+                continue
+            identity = self.security.session_context_for_socket(sid)
+            if identity is None:
+                continue
+            event = published.for_session(identity.instance_id, identity.session_epoch)
+            if not self.security.limiters.event_payload_allowed(event):
+                raise ValueError("player event exceeds the configured size limit")
+            await self.socket_server.emit(
+                "player.event",
+                event,
+                namespace=PLAYER_NAMESPACE,
+                to=sid,
+            )
+
+    async def _force_authoritative_resync(self) -> None:
+        """Send current canonical snapshots after a failed event publication."""
+        self.sync.require_authoritative_resync()
+        for sid in self.security.authorized_socket_ids():
+            try:
+                if not self.security.authorize_socket_event(sid):
+                    continue
+                identity = self.security.session_context_for_socket(sid)
+                if identity is None:
+                    continue
+                self.sync.reset_for_instance(identity.instance_id)
+                snapshot = await asyncio.to_thread(
+                    _capture_player_snapshot,
+                    self.sync,
+                    self.gateway,
+                    identity.session_epoch,
+                )
+                encoded = canonical_json_bytes(snapshot, MAX_SNAPSHOT_BYTES)
+                if not self.security.limiters.snapshot_allowed(encoded):
+                    raise EnvelopeTooLargeError("snapshot exceeds the configured size limit")
+                if (
+                    not self.security.authorize_socket_event(sid)
+                    or self.security.session_context_for_socket(sid) != identity
+                ):
+                    continue
+                await self.socket_server.emit(
+                    "player.snapshot",
+                    snapshot,
+                    namespace=PLAYER_NAMESPACE,
+                    to=sid,
+                )
+            except Exception:
+                _LOGGER.warning("Player host authoritative resync failed")
+                try:
+                    await self._emit_player_error(sid, "snapshot_unavailable")
+                except Exception:
+                    pass
 
     async def publish_player_event(
         self,

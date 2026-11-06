@@ -1049,6 +1049,12 @@ def _commit_active_character(
         new_revision = persisted_revision if _valid_revision(persisted_revision) else 0
         if "active_character_revision" in persisted:
             _remember_active_pc_state(persisted_active, new_revision)
+        if changed:
+            # TABLETOP MODE: Publish only the committed revision, never the host
+            # selection payload; the player listener rereads canonical state.
+            from utils.player_host_publication import submit_player_host_change
+
+            submit_player_host_change("active_pc", new_revision)
         return ActivePCWriteResult(
             "updated" if changed else "unchanged",
             persisted_active,

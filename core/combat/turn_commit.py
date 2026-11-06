@@ -823,6 +823,11 @@ def commit_combat_turn(
         raise TurnCommitError("encounter_write", encounter_path) from exc
     if not succeeded:
         raise TurnCommitError("encounter_write", encounter_path)
+    # TABLETOP MODE: The encounter commit is the combat transaction boundary;
+    # enqueue a typed notice only after the canonical writer confirms success.
+    from utils.player_host_publication import submit_player_host_change
+
+    submit_player_host_change("combat")
     maybe_inject_combat_turn_fault("after_encounter_write")
     if encounter_write_observer is not None:
         try:
