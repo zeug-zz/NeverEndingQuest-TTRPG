@@ -1,0 +1,273 @@
+// SPDX-FileCopyrightText: 2024 MoonlightByte
+// SPDX-License-Identifier: Fair-Source-1.0
+
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+
+export const N2_HOST_PORT = 8360;
+export const N2_PLAYER_PORT = 8370;
+export const N2_GATE_PORTS = Object.freeze([N2_HOST_PORT, N2_PLAYER_PORT]);
+
+const HOST_URL = `http://127.0.0.1:${N2_HOST_PORT}`;
+const PLAYER_URL = `http://127.0.0.1:${N2_PLAYER_PORT}`;
+const START_TIMEOUT_MS = 30_000;
+const STOP_TIMEOUT_MS = 8_000;
+const POLL_INTERVAL_MS = 200;
+
+function isContainedPath(parent, candidate) {
+  const path = relative(parent, candidate);
+  return path !== "" && path !== "." && path !== ".." &&
+    !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+function lstatIfExists(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertNoSymlinkPath(parent, candidate) {
+  if (!isContainedPath(parent, candidate)) {
+    throw new Error("Managed path is not contained by its expected root.");
+  }
+  let current = parent;
+  if (lstatIfExists(current)?.isSymbolicLink()) {
+    throw new Error("Managed paths must not traverse symlinks.");
+  }
+  for (const component of relative(parent, candidate).split(sep)) {
+    current = join(current, component);
+    if (lstatIfExists(current)?.isSymbolicLink()) {
+      throw new Error("Managed paths must not traverse symlinks.");
+    }
+  }
+}
+
+export function validateManagedSandboxRoot(repositoryRoot, candidateRoot = join(repositoryRoot, "tmp", "combat_capture")) {
+  const root = resolve(repositoryRoot);
+  const expected = resolve(root, "tmp", "combat_capture");
+  const candidate = resolve(candidateRoot);
+  if (candidate !== expected) {
+    throw new Error("Managed host may use only this repository's tmp/combat_capture sandbox.");
+  }
+  assertNoSymlinkPath(root, expected);
+  if (!existsSync(expected) || !lstatSync(expected).isDirectory()) {
+    throw new Error("The prepared tmp/combat_capture sandbox is missing or invalid.");
+  }
+  if (realpathSync(expected) !== expected) {
+    throw new Error("The managed sandbox must resolve to its exact project-local path.");
+  }
+
+  const requiredFiles = ["run_web.py", "config.py"];
+  for (const name of requiredFiles) {
+    const path = join(expected, name);
+    if (!existsSync(path) || !lstatSync(path).isFile()) {
+      throw new Error(`The prepared sandbox is missing ${name}.`);
+    }
+  }
+  const config = readFileSync(join(expected, "config.py"), "utf8");
+  const portAssignments = config.match(/^\s*WEB_PORT\s*=\s*8360\s*$/gm) ?? [];
+  if (portAssignments.length !== 1) {
+    throw new Error("The sandbox config must contain exactly one WEB_PORT = 8360 assignment.");
+  }
+
+  const frontendRoot = join(expected, "web", "frontend");
+  assertNoSymlinkPath(expected, frontendRoot);
+  if (!existsSync(frontendRoot) || !statSync(frontendRoot).isDirectory()) {
+    throw new Error("The sandbox player frontend directory is missing.");
+  }
+  return expected;
+}
+
+export function validateSandboxPython(repositoryRoot) {
+  const python = resolve(repositoryRoot, ".venv", "bin", "python");
+  if (!existsSync(python) || !statSync(python).isFile()) {
+    throw new Error("The repository .venv/bin/python interpreter is required for managed mode.");
+  }
+  return python;
+}
+
+export function isLoopbackPortFree(port) {
+  return new Promise((resolveResult) => {
+    const server = createServer();
+    let settled = false;
+    const finish = (isFree) => {
+      if (settled) return;
+      settled = true;
+      resolveResult(isFree);
+    };
+    server.once("error", () => finish(false));
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close((error) => finish(!error));
+    });
+  });
+}
+
+export async function assertGatePortsFree(checkPortFree = isLoopbackPortFree) {
+  const occupied = [];
+  for (const port of N2_GATE_PORTS) {
+    if (!(await checkPortFree(port))) occupied.push(port);
+  }
+  if (occupied.length > 0) {
+    throw new Error(`Managed mode requires free loopback ports ${N2_GATE_PORTS.join(" and ")}; occupied: ${occupied.join(", ")}.`);
+  }
+  return N2_GATE_PORTS;
+}
+
+async function sleep(milliseconds) {
+  await new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+}
+
+async function endpointAvailable(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return Boolean(await predicate());
+}
+
+function signalOwnedProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+export class SandboxHostManager {
+  constructor({ repositoryRoot, sandboxRoot, pythonPath, environment = process.env }) {
+    this.repositoryRoot = resolve(repositoryRoot);
+    this.sandboxRoot = validateManagedSandboxRoot(this.repositoryRoot, sandboxRoot);
+    this.pythonPath = pythonPath ?? validateSandboxPython(this.repositoryRoot);
+    this.environment = environment;
+    this.child = null;
+    this.spawnError = null;
+  }
+
+  get processInfo() {
+    if (!this.child?.pid) return null;
+    return {
+      pid: this.child.pid,
+      process_group_id: this.child.pid,
+      cwd: "tmp/combat_capture",
+      command: ".venv/bin/python -c 'import run_web; run_web.main()'",
+    };
+  }
+
+  async start({ playerExpected = true, signal } = {}) {
+    if (process.platform === "win32") {
+      throw new Error("Managed sandbox process-group lifecycle is supported on macOS and Linux only.");
+    }
+    if (this.child !== null) {
+      throw new Error("The managed sandbox host is already owned by this gate run.");
+    }
+    if (!this.environment.NEQ_PLAYER_PASSWORD_VERIFIER) {
+      throw new Error("NEQ_PLAYER_PASSWORD_VERIFIER must be injected for managed host startup.");
+    }
+
+    validateManagedSandboxRoot(this.repositoryRoot, this.sandboxRoot);
+    if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
+    await assertGatePortsFree();
+    if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
+    const childEnvironment = { ...this.environment };
+    delete childEnvironment.NEQ_N2_PLAYER_PASSWORD;
+    delete childEnvironment.NEQ_N2_EVIDENCE_DIR;
+    delete childEnvironment.NEQ_N2_HOST_URL;
+    delete childEnvironment.NEQ_N2_PLAYER_URL;
+    childEnvironment.NEQ_OPEN_BROWSER = "0";
+    childEnvironment.NEQ_PLAYER_DEV_LISTENER = "1";
+    childEnvironment.PYTHONPATH = this.sandboxRoot;
+
+    this.spawnError = null;
+    const child = spawn(this.pythonPath, ["-c", "import run_web; run_web.main()"], {
+      cwd: this.sandboxRoot,
+      detached: true,
+      env: childEnvironment,
+      stdio: "ignore",
+    });
+    this.child = child;
+    child.once("error", (error) => {
+      this.spawnError = error;
+    });
+    if (!child.pid) {
+      this.child = null;
+      throw new Error("The managed sandbox host process could not be created.");
+    }
+
+    let ready;
+    try {
+      ready = await waitFor(async () => {
+        if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
+        if (this.spawnError) throw new Error("The managed sandbox host process failed to spawn.");
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error("The managed sandbox host process exited before readiness.");
+        }
+        const hostReady = await endpointAvailable(HOST_URL);
+        if (!hostReady) return false;
+        if (playerExpected) return endpointAvailable(PLAYER_URL);
+        return isLoopbackPortFree(N2_PLAYER_PORT);
+      }, START_TIMEOUT_MS);
+    } catch (error) {
+      await this.stop().catch(() => {});
+      throw error;
+    }
+    if (!ready) {
+      const spawnFailed = this.spawnError !== null;
+      await this.stop().catch(() => {});
+      throw new Error(spawnFailed
+        ? "The managed sandbox host process failed to start."
+        : "The managed sandbox host did not reach the expected host/player readiness state.");
+    }
+    return this.processInfo;
+  }
+
+  async stop() {
+    const child = this.child;
+    if (child === null) return;
+    const pid = child.pid;
+    if (!pid) {
+      this.child = null;
+      return;
+    }
+
+    signalOwnedProcessGroup(pid, "SIGTERM");
+    let stopped = await waitFor(async () => {
+      const processExited = child.exitCode !== null || child.signalCode !== null;
+      if (!processExited) return false;
+      return (await isLoopbackPortFree(N2_HOST_PORT)) && (await isLoopbackPortFree(N2_PLAYER_PORT));
+    }, STOP_TIMEOUT_MS);
+    if (!stopped) {
+      signalOwnedProcessGroup(pid, "SIGKILL");
+      stopped = await waitFor(async () => {
+        const processExited = child.exitCode !== null || child.signalCode !== null;
+        if (!processExited) return false;
+        return (await isLoopbackPortFree(N2_HOST_PORT)) && (await isLoopbackPortFree(N2_PLAYER_PORT));
+      }, STOP_TIMEOUT_MS);
+    }
+    if (!stopped) {
+      throw new Error("The owned sandbox process group did not stop with both gate ports released.");
+    }
+    this.child = null;
+    this.spawnError = null;
+  }
+}
