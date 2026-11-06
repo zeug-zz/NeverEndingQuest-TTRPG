@@ -17,6 +17,7 @@ from typing import Any
 from unittest import mock
 
 from web.extensions.player import PLAYER_HOST, PLAYER_NAMESPACE, PLAYER_PORT, PlayerSnapshot, create_app
+from web.extensions.player.assets import VerifiedPlayerClientAssets
 from web.extensions.player.auth import PLAYER_SESSION_COOKIE, PlayerSecurity
 from web.extensions.player.contracts import EVENT_FIELDS, PROTOCOL_VERSION
 from web.extensions.player.limits import (
@@ -39,6 +40,7 @@ from web.extensions.player.rendering import render_safe_markdown
 
 SCRATCH_ROOT = Path("tmp/n1")
 PC_NAMES = ("Acheron", "Merisiel", "Kira", "Vitreol")
+TEST_CLIENT_BUILD_ID = "0123456789abcdef0123456789abcdef"
 
 
 class _FixtureGateway:
@@ -198,6 +200,23 @@ def _dispatch_http(
     headers = [(b"host", f"{PLAYER_HOST}:{PLAYER_PORT}".encode("ascii"))]
     if cookie is not None:
         headers.append((b"cookie", cookie.encode("ascii")))
+    if path == "/api/player/snapshot" and cookie is not None:
+        assets = app._client_assets
+        if assets is None:
+            assets = VerifiedPlayerClientAssets(
+                shell_document=b"",
+                shell_content_type=b"text/html; charset=utf-8",
+                client_build_id=TEST_CLIENT_BUILD_ID,
+                protocol_version=1,
+                assets={},
+            )
+            app._client_assets = assets
+        headers.extend(
+            [
+                (b"x-neq-client-build", assets.client_build_id.encode("ascii")),
+                (b"x-neq-protocol-version", str(assets.protocol_version).encode("ascii")),
+            ]
+        )
     if origin is not None:
         headers.append((b"origin", origin.encode("ascii")))
     if body:
