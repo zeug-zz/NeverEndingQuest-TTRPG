@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Fair-Source-1.0
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -161,8 +162,8 @@ function utcNow() {
 }
 
 function makeRunId() {
-  const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace(/Z$/, "Z");
-  const suffix = Math.random().toString(36).slice(2, 8);
+  const timestamp = new Date().toISOString().replace(/[-:.]/g, "");
+  const suffix = randomBytes(4).toString("hex");
   return `n2-${timestamp}-${suffix}`;
 }
 
