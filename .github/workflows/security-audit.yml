@@ -106,3 +106,15 @@ jobs:
             --ignore-vuln CVE-2026-115927 \
             --ignore-vuln CVE-2026-116577 \
             --ignore-vuln CVE-2026-116578
+
+  # setup-node v7.1.0 = 949feb2413d6458794dcd2491c4babbbce0c15c1 and checkout v6.1.0 = d23441a48e516b6c34aea4fa41551a30e30af803, resolved via git ls-remote --tags on 2026-11-06
+  frontend-dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Audit frontend lockfile
+        working-directory: web/frontend
+        run: npm audit --package-lock-only --audit-level=low
