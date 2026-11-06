@@ -98,4 +98,66 @@ describe("PlayerStore ordered cache", () => {
     expect(store.acceptError({ schema_version: 1, code: "session_epoch_changed" })).toBe(true);
     expect(requestSnapshot).toHaveBeenCalledTimes(2);
   });
+
+  it("binds receipts only to the in-flight request ID and resyncs stale outcomes", () => {
+    const store = hydratedStore();
+    const requestSnapshot = vi.fn();
+    store.setSnapshotRequester(requestSnapshot);
+    store.markConnected();
+    expect(store.beginInput("request-1", "Acheron", 0)).toBe(true);
+    expect(store.getSnapshot().pendingInput).toEqual({
+      requestId: "request-1",
+      characterName: "Acheron",
+      activeCharacterRevision: 0,
+      status: "pending",
+    });
+    expect(store.beginInput("request-2", "Acheron", 0)).toBe(false);
+
+    expect(store.acceptReceipt({
+      schema_version: 1,
+      instance_id: INSTANCE_ID,
+      session_epoch: SESSION_EPOCH,
+      request_id: "unknown-request",
+      status: "accepted",
+    })).toBe(false);
+    expect(store.getSnapshot().pendingInput?.requestId).toBe("request-1");
+    expect(store.getSnapshot().lastReceipt).toBeNull();
+
+    expect(store.acceptReceipt({
+      schema_version: 1,
+      instance_id: INSTANCE_ID,
+      session_epoch: SESSION_EPOCH,
+      request_id: "request-1",
+      status: "stale",
+    })).toBe(true);
+    expect(store.getSnapshot().pendingInput).toBeNull();
+    expect(store.getSnapshot().lastReceipt?.status).toBe("stale");
+    expect(store.getSnapshot().requiresResync).toBe(true);
+    expect(requestSnapshot).toHaveBeenCalledTimes(2);
+    expect(store.beginInput("request-2", "Acheron", 0)).toBe(false);
+
+    expect(store.acceptSnapshot(snapshot())).toBe(true);
+    expect(store.getSnapshot().requiresResync).toBe(false);
+  });
+
+  it("marks a disconnected in-flight input uncertain and allows new work only after a snapshot", () => {
+    const store = hydratedStore();
+    const requestSnapshot = vi.fn();
+    store.setSnapshotRequester(requestSnapshot);
+    store.markConnected();
+    expect(store.beginInput("request-1", "Acheron", 0)).toBe(true);
+
+    store.markDisconnected();
+    expect(store.getSnapshot().pendingInput?.status).toBe("uncertain");
+    expect(store.getSnapshot().requiresResync).toBe(true);
+    expect(store.beginInput("request-2", "Acheron", 0)).toBe(false);
+
+    store.markConnected();
+    expect(store.getSnapshot().pendingInput?.requestId).toBe("request-1");
+    expect(requestSnapshot).toHaveBeenCalledTimes(2);
+    store.acceptSnapshot(snapshot());
+    expect(store.getSnapshot().requiresResync).toBe(false);
+    expect(store.beginInput("request-2", "Acheron", 0)).toBe(true);
+    expect(store.getSnapshot().pendingInput?.requestId).toBe("request-2");
+  });
 });

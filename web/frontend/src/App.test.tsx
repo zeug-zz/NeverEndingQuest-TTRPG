@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { PlayerSnapshot } from "./player-protocol";
+import type { PlayerMember, PlayerReceipt, PlayerSnapshot } from "./player-protocol";
 
 const mocks = vi.hoisted(() => ({ io: vi.fn() }));
 
@@ -31,30 +31,62 @@ function makeSnapshot(
     available: true,
     messages: [],
   },
+  options: Readonly<{
+    members?: readonly PlayerMember[];
+    activeCharacter?: string | null;
+    activeRevision?: number;
+    busy?: boolean;
+    includeBusy?: boolean;
+    combat?: NonNullable<PlayerSnapshot["projection"]["combat"]>;
+  }> = {},
 ): PlayerSnapshot {
+  const members = options.members ?? [makeMember("Acheron"), makeMember("Merisiel")];
+  const activeCharacter = options.activeCharacter === undefined
+    ? members[0]?.name ?? null
+    : options.activeCharacter;
+  const projection: PlayerSnapshot["projection"] = {
+    party: {
+      members,
+      active_character: activeCharacter,
+      active_character_revision: options.activeRevision ?? 3,
+      world: {},
+    },
+    transcript,
+    combat: options.combat ?? {
+      available: true,
+      active: true,
+      round: 2,
+      phase: "PC_PHASE",
+      turn_order: [
+        { name: "Acheron", kind: "pc", initiative: 18, status: "alive" },
+        { name: "Merisiel", kind: "pc", initiative: 11, status: "alive" },
+        { name: "Goblin", kind: "monster", initiative: 7, status: "alive" },
+      ],
+    },
+    ...(options.includeBusy === false ? {} : { busy: options.busy ?? false }),
+  };
   return {
     schema_version: 1,
     instance_id: "I".repeat(32),
     session_epoch: "E".repeat(32),
     revision: 4,
     event_cursor: 0,
-    projection: {
-      party: {
-        members: [{ name: "Acheron" }, { name: "Merisiel" }],
-        active_character: "Acheron",
-        active_character_revision: 3,
-        world: {},
-      },
-      transcript,
-      combat: {
-        available: true,
-        active: false,
-        round: null,
-        phase: null,
-        turn_order: [],
-      },
-      busy: false,
-    },
+    projection,
+  };
+}
+
+function makeMember(name: string, overrides: Partial<PlayerMember> = {}): PlayerMember {
+  return {
+    name,
+    level: 4,
+    race: "Human",
+    class: "Ranger",
+    hitPoints: 24,
+    maxHitPoints: 30,
+    armorClass: 16,
+    abilities: { strength: 12, dexterity: 16 },
+    portrait_media_id: `pc-${name.toLowerCase()}`,
+    ...overrides,
   };
 }
 
@@ -94,6 +126,7 @@ function makeSocketHarness() {
 
   return {
     socket: socket as unknown as Socket,
+    emit: socket.emit,
     fire(event: string, ...args: unknown[]) {
       for (const handler of handlers.get(event) ?? []) handler(...args);
     },
@@ -128,6 +161,67 @@ async function submitLogin(password = "never-persist-this") {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     for (let step = 0; step < 12; step += 1) await Promise.resolve();
   });
+}
+
+async function hydrateGameplay(
+  snapshot = makeSnapshot(),
+  socket = makeSocketHarness(),
+) {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(jsonResponse(200, { csrf_token: SESSION_CSRF, expires_at: 1000 }))
+    .mockResolvedValueOnce(jsonResponse(200, snapshot));
+  renderApp(fetcher, socket);
+  await submitLogin();
+  act(() => socket.fire("connect"));
+  return socket;
+}
+
+function changeGameplayInput(value: string): void {
+  const textarea = container?.querySelector<HTMLTextAreaElement>("#gameplay-input");
+  if (textarea === null || textarea === undefined) throw new Error("gameplay input is not rendered");
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  act(() => {
+    setter?.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function submitGameplayInput(): void {
+  const form = container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.form;
+  if (form === null || form === undefined) throw new Error("gameplay input form is not rendered");
+  act(() => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
+
+function inputCommand(socket: ReturnType<typeof makeSocketHarness>) {
+  const call = socket.emit.mock.calls.find(([event]) => event === "player.input.submit");
+  if (call === undefined) throw new Error("player input was not emitted");
+  return call[1] as {
+    request_id: string;
+    character_name: string;
+    active_character_revision: number;
+    text: string;
+  };
+}
+
+function makeReceipt(
+  requestId: string,
+  status: PlayerReceipt["status"],
+  code?: string,
+): PlayerReceipt {
+  return {
+    schema_version: 1,
+    instance_id: "I".repeat(32),
+    session_epoch: "E".repeat(32),
+    request_id: requestId,
+    status,
+    ...(code === undefined ? {} : { code }),
+  };
 }
 
 afterEach(() => {
@@ -196,7 +290,7 @@ describe("player login and session bootstrap", () => {
     expect(container?.textContent).toContain("Acheron");
     expect(container?.textContent).toContain("Merisiel");
     expect(container?.textContent).toContain("Active PC: Acheron");
-    expect(container?.textContent).toContain("Transcript: 1 messages");
+    expect(container?.textContent).toContain("Welcome to the table.");
     expect(mocks.io).toHaveBeenCalledWith(
       "/player",
       expect.objectContaining({
@@ -315,5 +409,231 @@ describe("player login and session bootstrap", () => {
     expect(JSON.parse(String(fetcher.mock.calls[2]?.[1]?.body))).toEqual({ csrf_token: SESSION_CSRF });
     expect(container?.textContent).toContain("You are logged out");
     expect(container?.textContent).toContain("Reload the page to sign in again");
+  });
+});
+
+describe("player gameplay projection and interactions", () => {
+  it.each([
+    {
+      label: "1-PC",
+      members: [makeMember("Acheron")],
+      activeCharacter: "Acheron",
+      order: ["Acheron", "Goblin"],
+    },
+    {
+      label: "4-PC",
+      members: [
+        makeMember("Acheron"),
+        makeMember("Merisiel"),
+        makeMember("Taldor"),
+        makeMember("Selene"),
+      ],
+      activeCharacter: "Merisiel",
+      order: ["Acheron", "Merisiel", "Taldor", "Selene", "Goblin"],
+    },
+  ])("renders $label selector, selected read-only sheet, portrait, and initiative order", async ({
+    members,
+    activeCharacter,
+    order,
+  }) => {
+    const turnOrder = order.map((name, index) => ({
+      name,
+      kind: name === "Goblin" ? "monster" as const : "pc" as const,
+      initiative: 20 - index,
+      status: "alive" as const,
+    }));
+    const snapshot = makeSnapshot(undefined, {
+      members,
+      activeCharacter,
+      combat: {
+        available: true,
+        active: true,
+        round: 1,
+        phase: "PC_PHASE",
+        turn_order: turnOrder,
+      },
+    });
+    await hydrateGameplay(snapshot);
+
+    const selector = container?.querySelector<HTMLSelectElement>("#active-pc");
+    expect([...((selector?.options ?? []) as HTMLOptionsCollection)].map((option) => option.value))
+      .toEqual(members.map((member) => member.name));
+    expect(selector?.value).toBe(activeCharacter);
+    expect(container?.querySelector("article[aria-label*='read-only sheet']")?.getAttribute("aria-label"))
+      .toBe(`${activeCharacter} read-only sheet`);
+    expect(container?.textContent).toContain("Ranger");
+    expect(container?.querySelector("img")?.getAttribute("src"))
+      .toBe(`/api/player/media/pc-${activeCharacter.toLowerCase()}`);
+    expect([...((container?.querySelectorAll("[data-combatant]") ?? []) as NodeListOf<HTMLElement>)]
+      .map((item) => item.getAttribute("data-combatant")))
+      .toEqual(order);
+  });
+
+  it("emits active-PC selection with the observed revision and resynchronizes stale errors", async () => {
+    const socket = await hydrateGameplay(makeSnapshot());
+    const selector = container?.querySelector<HTMLSelectElement>("#active-pc");
+    if (selector === null || selector === undefined) throw new Error("active-PC selector is missing");
+    act(() => {
+      selector.value = "Merisiel";
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(socket.emit).toHaveBeenCalledWith("player.active_pc.select", {
+      schema_version: 1,
+      instance_id: "I".repeat(32),
+      session_epoch: "E".repeat(32),
+      character_name: "Merisiel",
+      expected_revision: 3,
+    });
+
+    act(() => socket.fire("player.error", { schema_version: 1, code: "stale_context" }));
+    expect(socket.emit).toHaveBeenCalledWith("player.snapshot.request", {
+      schema_version: 1,
+      instance_id: "I".repeat(32),
+      session_epoch: "E".repeat(32),
+    });
+    expect(container?.textContent).toContain("selection was stale");
+  });
+
+  it.each([
+    ["accepted", "Input accepted for queue admission", true],
+    ["busy", "The game is busy", false],
+    ["stale", "Input rejected as stale", false],
+    ["rejected", "Input rejected (runtime_admission_rejected)", false],
+    ["uncertain", "The action may or may not have applied", false],
+    ["duplicate", "This request was already received", false],
+  ] as const)("shows the %s receipt distinctly", async (status, message, clearsText) => {
+    const socket = await hydrateGameplay(makeSnapshot());
+    changeGameplayInput("I look around.");
+    submitGameplayInput();
+    const command = inputCommand(socket);
+    expect(command.request_id).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+    expect(command.character_name).toBe("Acheron");
+    expect(command.active_character_revision).toBe(3);
+    expect(command.text).toBe("I look around.");
+
+    act(() => socket.fire(
+      "player.input.receipt",
+      makeReceipt(command.request_id, status, status === "rejected" ? "runtime_admission_rejected" : undefined),
+    ));
+    expect(container?.textContent).toContain(message);
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.value)
+      .toBe(clearsText ? "" : "I look around.");
+    if (status === "stale" || status === "uncertain") {
+      expect(socket.emit).toHaveBeenCalledWith("player.snapshot.request", {
+        schema_version: 1,
+        instance_id: "I".repeat(32),
+        session_epoch: "E".repeat(32),
+      });
+    }
+  });
+
+  it("ignores receipts for unknown request IDs and keeps one submission in flight", async () => {
+    const socket = await hydrateGameplay(makeSnapshot());
+    changeGameplayInput("Check the door.");
+    submitGameplayInput();
+    const command = inputCommand(socket);
+    expect(container?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+
+    act(() => socket.fire("player.input.receipt", makeReceipt("unknown-request", "accepted")));
+    expect(container?.textContent).toContain("Sending input for Acheron at revision 3");
+    expect(container?.textContent).not.toContain("Input accepted for queue admission");
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.value)
+      .toBe("Check the door.");
+    expect(command.request_id).not.toBe("unknown-request");
+  });
+
+  it("marks a disconnected pending input uncertain and never resubmits it", async () => {
+    const socket = await hydrateGameplay(makeSnapshot());
+    changeGameplayInput("Talk to the guard.");
+    submitGameplayInput();
+    const inputEmitsBeforeDisconnect = socket.emit.mock.calls
+      .filter(([event]) => event === "player.input.submit").length;
+    expect(inputEmitsBeforeDisconnect).toBe(1);
+
+    act(() => socket.fire("disconnect", "transport close"));
+    expect(container?.textContent).toContain("The action may or may not have applied");
+    expect(container?.textContent).toContain("it will not be resubmitted");
+    act(() => socket.fire("connect"));
+    expect(socket.emit.mock.calls.filter(([event]) => event === "player.input.submit")).toHaveLength(1);
+
+    act(() => socket.fire("player.snapshot", makeSnapshot()));
+    expect(container?.textContent).toContain("The connection ended while this input was pending");
+    expect(socket.emit.mock.calls.filter(([event]) => event === "player.input.submit")).toHaveLength(1);
+  });
+
+  it("disables input while the server projection is busy", async () => {
+    await hydrateGameplay(makeSnapshot(undefined, { busy: true }));
+    expect(container?.textContent).toContain("The game is busy");
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.disabled).toBe(true);
+    expect(container?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+  });
+
+  it("requires confirmation when the active PC changes while composing", async () => {
+    const initial = makeSnapshot();
+    const socket = await hydrateGameplay(initial);
+    changeGameplayInput("I open the chest.");
+    const refreshed = makeSnapshot(undefined, {
+      members: initial.projection.party.members,
+      activeCharacter: "Merisiel",
+      activeRevision: 4,
+    });
+    act(() => socket.fire("player.event", {
+      schema_version: 1,
+      instance_id: "I".repeat(32),
+      session_epoch: "E".repeat(32),
+      event_id: 1,
+      revision: 5,
+      type: "projection.updated",
+      projection: refreshed.projection,
+    }));
+    expect(container?.textContent).toContain("changed while you were composing");
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.disabled).toBe(true);
+
+    const confirm = [...(container?.querySelectorAll("button") ?? [])]
+      .find((button) => button.textContent?.includes("Confirm refreshed state"));
+    act(() => confirm?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.disabled).toBe(false);
+    submitGameplayInput();
+    const command = inputCommand(socket);
+    expect(command.character_name).toBe("Merisiel");
+    expect(command.active_character_revision).toBe(4);
+  });
+
+  it("renders markup-like transcript and input content only as text", async () => {
+    const hostileText = '<script>alert("x")</script>\n<a href="javascript:alert(1)">open</a>';
+    await hydrateGameplay(makeSnapshot({
+      available: true,
+      messages: [{
+        id: `transcript-${"a".repeat(32)}`,
+        sequence: 1,
+        role: "assistant",
+        text: hostileText,
+      }],
+    }));
+    changeGameplayInput('<a href="javascript:alert(2)">input</a>');
+    expect(container?.querySelector("script")).toBeNull();
+    expect(container?.querySelector("a")).toBeNull();
+    expect(container?.textContent).toContain(hostileText);
+    expect(container?.querySelector<HTMLTextAreaElement>("#gameplay-input")?.value)
+      .toBe('<a href="javascript:alert(2)">input</a>');
+  });
+
+  it("shows neutral unavailable states for transcript, combat, and busy projections", async () => {
+    await hydrateGameplay(makeSnapshot(
+      { available: false, messages: [] },
+      {
+        includeBusy: false,
+        combat: {
+          available: false,
+          active: true,
+          round: null,
+          phase: null,
+          turn_order: [],
+        },
+      },
+    ));
+    expect(container?.textContent).toContain("Transcript unavailable.");
+    expect(container?.textContent).toContain("Combat information unavailable.");
+    expect(container?.textContent).toContain("Busy status unavailable.");
   });
 });
