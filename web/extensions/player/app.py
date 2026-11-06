@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from os import PathLike
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 from urllib.parse import parse_qs
 
@@ -19,7 +20,12 @@ from .capabilities import (
     PLAYER_SOCKET_EVENT_ALLOWLIST,
     PLAYER_SOCKET_LIFECYCLE_EVENTS,
 )
-from .assets import PUBLIC_LOGIN_ASSETS
+from .assets import (
+    PRELOGIN_CSRF_PLACEHOLDER,
+    PlayerClientAssetsError,
+    VerifiedPlayerClientAssets,
+    load_player_client_assets,
+)
 from .auth import (
     PLAYER_SESSION_COOKIE,
     PRELOGIN_CSRF_COOKIE,
@@ -52,6 +58,12 @@ from .contracts import (
 )
 from .sync import PlayerSyncCoordinator
 
+_PLAYER_CONTENT_SECURITY_POLICY = (
+    b"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+    b"font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; "
+    b"frame-ancestors 'none'; object-src 'none'"
+)
+
 class PlayerHTTPRouter:
     """Serve the unauthenticated shell and the two authentication mutations."""
 
@@ -62,12 +74,14 @@ class PlayerHTTPRouter:
         gateway: PlayerGateway,
         media_registry: MediaRegistry,
         sync: PlayerSyncCoordinator,
+        get_client_assets: Callable[[], VerifiedPlayerClientAssets],
     ) -> None:
         self.security = security
         self._disconnect_sockets = disconnect_sockets
         self._gateway = gateway
         self._media_registry = media_registry
         self._sync = sync
+        self._get_client_assets = get_client_assets
         self._route_handlers = {
             ("GET", "/"): "login_shell",
             ("GET", "/static/player/<asset-id>"): "public_asset",
@@ -91,7 +105,11 @@ class PlayerHTTPRouter:
 
         method = scope.get("method")
         path = scope.get("path")
-        route_handler, route_parameter = self._match_route(method, path)
+        route_handler, route_parameter = self._match_route(
+            method,
+            path,
+            scope.get("raw_path"),
+        )
         is_mutation = route_handler in ("login", "logout")
         try:
             host, origin, unique_identity = extract_host_origin(scope.get("headers", ()))
@@ -167,14 +185,31 @@ class PlayerHTTPRouter:
             return
         await _send_json(send, 404, {"error": "not_found"})
 
-    def _match_route(self, method: object, path: object) -> tuple[str | None, str | None]:
+    def _match_route(
+        self,
+        method: object,
+        path: object,
+        raw_path: object = None,
+    ) -> tuple[str | None, str | None]:
         if not isinstance(method, str) or not isinstance(path, str):
             return None, None
         exact_handler = self._route_handlers.get((method, path))
         if exact_handler is not None:
             return exact_handler, None
+        asset_prefix = "/static/player/"
+        if method == "GET" and path.startswith(asset_prefix):
+            if raw_path is not None:
+                try:
+                    expected_raw_path = path.encode("ascii")
+                except UnicodeEncodeError:
+                    return None, None
+                if not isinstance(raw_path, bytes) or raw_path != expected_raw_path:
+                    return None, None
+            identifier = path[len(asset_prefix):]
+            if not identifier or len(identifier) > 128 or "/" in identifier:
+                return None, None
+            return self._route_handlers[("GET", "/static/player/<asset-id>")], identifier
         for prefix, template in (
-            ("/static/player/", ("GET", "/static/player/<asset-id>")),
             ("/api/player/media/", ("GET", "/api/player/media/<media-id>")),
         ):
             if method != template[0] or not path.startswith(prefix):
@@ -192,28 +227,27 @@ class PlayerHTTPRouter:
         return frozenset(self._route_handlers)
 
     async def _serve_login_shell(self, send: Callable[[Mapping[str, Any]], Awaitable[None]]) -> None:
+        try:
+            assets = self._get_client_assets()
+        except PlayerClientAssetsError:
+            await _send_json(send, 503, {"error": "client_assets_unavailable"})
+            return
         challenge = self.security.issue_prelogin_challenge()
         if challenge is None:
             await _send_json(send, 503, {"error": "temporarily_unavailable"})
             return
-        body = (
-            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Player</title>"
-            "<link rel=\"stylesheet\" href=\"/static/player/shell.css\"></head>"
-            "<body><main><h1>Player login</h1>"
-            "<form method=\"post\" action=\"/api/player/login\">"
-            f"<input type=\"hidden\" name=\"csrf_token\" value=\"{challenge.csrf_nonce}\">"
-            "<label>Password <input type=\"password\" name=\"password\" "
-            "autocomplete=\"current-password\" maxlength=\"1024\" required></label>"
-            "<button type=\"submit\">Log in</button></form></main></body></html>"
-        ).encode("ascii")
-        headers = _base_headers(b"text/html; charset=utf-8", len(body))
+        body = assets.shell_document.replace(
+            PRELOGIN_CSRF_PLACEHOLDER,
+            challenge.csrf_nonce.encode("ascii"),
+        )
+        headers = _base_headers(assets.shell_content_type, len(body))
         headers.extend(
             [
                 (
                     b"content-security-policy",
-                    b"default-src 'none'; style-src 'self'; form-action 'self'; "
-                    b"base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+                    _PLAYER_CONTENT_SECURITY_POLICY,
                 ),
+                (b"cross-origin-resource-policy", b"same-origin"),
                 (
                     b"set-cookie",
                     build_cookie(
@@ -231,19 +265,27 @@ class PlayerHTTPRouter:
         asset_id: str | None,
         send: Callable[[Mapping[str, Any]], Awaitable[None]],
     ) -> None:
-        asset = PUBLIC_LOGIN_ASSETS.get(asset_id or "")
+        try:
+            assets = self._get_client_assets()
+        except PlayerClientAssetsError:
+            await _send_json(send, 503, {"error": "client_assets_unavailable"})
+            return
+        asset = assets.assets.get(asset_id or "")
         if asset is None:
             await _send_json(send, 404, {"error": "not_found"})
             return
-        content_type, body = asset
-        headers = _base_headers(content_type, len(body))
+        headers = _base_headers(
+            asset.content_type,
+            len(asset.body),
+            cache_control=b"public, max-age=31536000, immutable",
+        )
         headers.extend(
             [
-                (b"content-security-policy", b"default-src 'none'; sandbox"),
+                (b"content-security-policy", _PLAYER_CONTENT_SECURITY_POLICY),
                 (b"cross-origin-resource-policy", b"same-origin"),
             ]
         )
-        await _send_response(send, 200, body, headers)
+        await _send_response(send, 200, asset.body, headers)
 
     async def _serve_snapshot(
         self,
@@ -406,10 +448,13 @@ class PlayerApplication:
         port: int = PLAYER_PORT,
         security: PlayerSecurity | None = None,
         media_registry: MediaRegistry | None = None,
+        build_root: str | PathLike[str] | None = None,
     ) -> None:
         self.gateway = gateway if gateway is not None else UnavailablePlayerGateway()
         self.security = security if security is not None else PlayerSecurity(port=port)
         self.media_registry = media_registry if media_registry is not None else MediaRegistry()
+        self._build_root = build_root
+        self._client_assets: VerifiedPlayerClientAssets | None = None
         self.sync = PlayerSyncCoordinator(self.security.server_instance_id)
         self.socket_server = socketio.AsyncServer(
             async_mode="asgi",
@@ -434,6 +479,7 @@ class PlayerApplication:
             self.gateway,
             self.media_registry,
             self.sync,
+            self.preflight_client_assets,
         )
         self.asgi_app = socketio.ASGIApp(
             self.socket_server,
@@ -565,8 +611,25 @@ class PlayerApplication:
 
     async def _startup(self) -> None:
         """Rotate security identities at each explicit listener start."""
+        self.preflight_client_assets()
         self.security.start_listener()
         self.sync.reset_for_instance(self.security.server_instance_id)
+
+    def preflight_client_assets(self) -> VerifiedPlayerClientAssets:
+        """Load and retain the complete verified bundle before readiness."""
+        if self._client_assets is not None:
+            return self._client_assets
+        try:
+            self._client_assets = load_player_client_assets(self._build_root)
+        except PlayerClientAssetsError as exc:
+            from utils.enhanced_logger import error
+
+            error(
+                f"Player client assets failed preflight ({exc.code})",
+                category="player",
+            )
+            raise
+        return self._client_assets
 
     async def _shutdown(self) -> None:
         """Invalidate sessions and close their namespace sockets on stop."""
@@ -607,6 +670,7 @@ def create_app(
     port: int = PLAYER_PORT,
     security: PlayerSecurity | None = None,
     media_registry: MediaRegistry | None = None,
+    build_root: str | PathLike[str] | None = None,
 ) -> PlayerApplication:
     """Construct the separate player app without opening a listener."""
     return PlayerApplication(
@@ -614,6 +678,7 @@ def create_app(
         port=port,
         security=security,
         media_registry=media_registry,
+        build_root=build_root,
     )
 
 
@@ -767,11 +832,16 @@ async def _send_response(
     await send({"type": "http.response.body", "body": body})
 
 
-def _base_headers(content_type: bytes, content_length: int) -> list[tuple[bytes, bytes]]:
+def _base_headers(
+    content_type: bytes,
+    content_length: int,
+    *,
+    cache_control: bytes = b"no-store",
+) -> list[tuple[bytes, bytes]]:
     return [
         (b"content-type", content_type),
         (b"content-length", str(content_length).encode("ascii")),
-        (b"cache-control", b"no-store"),
+        (b"cache-control", cache_control),
         (b"x-content-type-options", b"nosniff"),
     ]
 

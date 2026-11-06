@@ -59,8 +59,9 @@ export function hasContentHashedName(fileName) {
   }
   const extension = extname(fileName);
   const baseName = fileName.slice(0, -extension.length);
-  const lastDash = baseName.lastIndexOf("-");
-  return lastDash > 0 && CONTENT_HASH_PATTERN.test(baseName.slice(lastDash + 1));
+  const hashSeparator = baseName.indexOf("-");
+  return hashSeparator > 0
+    && CONTENT_HASH_PATTERN.test(baseName.slice(hashSeparator + 1));
 }
 
 export function isPathWithinRoot(rootPath, candidatePath) {

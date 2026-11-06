@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+from os import PathLike
 import threading
 import time
 
@@ -35,6 +36,7 @@ class PlayerListener:
         gateway: PlayerGateway | None = None,
         *,
         test_only_port: int | None = None,
+        build_root: str | PathLike[str] | None = None,
     ) -> None:
         if test_only_port is not None and (
             not isinstance(test_only_port, int)
@@ -44,7 +46,11 @@ class PlayerListener:
             raise ValueError("test_only_port must be an integer between 1 and 65535")
 
         self._port = PLAYER_PORT if test_only_port is None else test_only_port
-        self.app: PlayerApplication = create_app(gateway=gateway, port=self._port)
+        self.app: PlayerApplication = create_app(
+            gateway=gateway,
+            port=self._port,
+            build_root=build_root,
+        )
         self._state_lock = threading.Lock()
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -75,6 +81,8 @@ class PlayerListener:
             or selected_port != self._port
         ):
             raise ValueError("player listener port must match its configured port")
+
+        self.app.preflight_client_assets()
 
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():

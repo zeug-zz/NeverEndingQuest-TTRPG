@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -357,18 +358,27 @@ class PlayerCapabilitiesTests(unittest.TestCase):
         shell_status, shell_headers, shell_body = _dispatch_http(app, "GET", "/")
         self.assertEqual(shell_status, 200)
         self.assertIn(b"Player login", shell_body)
-        self.assertIn(b"/static/player/shell.css", shell_body)
+        stylesheet = re.search(
+            rb'href="/static/player/([A-Za-z0-9._-]{1,128}\.css)"',
+            shell_body,
+        )
+        self.assertIsNotNone(stylesheet)
         self.assertEqual(_header_map(shell_headers)[b"cache-control"], b"no-store")
         self.assertEqual(len([name for name, _value in shell_headers if name == b"set-cookie"]), 1)
 
+        self.assertIsNotNone(stylesheet)
+        stylesheet_id = stylesheet.group(1).decode("ascii") if stylesheet else ""
         asset_status, asset_headers, asset_body = _dispatch_http(
             app,
             "GET",
-            "/static/player/shell.css",
+            f"/static/player/{stylesheet_id}",
         )
         self.assertEqual(asset_status, 200)
         self.assertEqual(_header_map(asset_headers)[b"content-type"], b"text/css; charset=utf-8")
-        self.assertEqual(_header_map(asset_headers)[b"cache-control"], b"no-store")
+        self.assertEqual(
+            _header_map(asset_headers)[b"cache-control"],
+            b"public, max-age=31536000, immutable",
+        )
         self.assertNotIn(b"party", shell_body.lower())
         self.assertNotIn(b"game_interface.html", shell_body)
         for canary in canaries:

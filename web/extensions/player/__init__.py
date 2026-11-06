@@ -6,6 +6,7 @@
 """Isolated player-facing ASGI application and explicit listener lifecycle."""
 
 from .app import PlayerApplication, create_app
+from .assets import PlayerClientAssetsError
 from .active_pc import PlayerActivePCSelection, select_player_active_pc
 from .constants import PLAYER_HOST, PLAYER_NAMESPACE, PLAYER_PORT
 from .gateway import (
@@ -23,6 +24,7 @@ __all__ = [
     "PLAYER_PORT",
     "PlayerActivePCSelection",
     "PlayerApplication",
+    "PlayerClientAssetsError",
     "PlayerGateway",
     "PlayerInputAdmission",
     "PlayerInputCommand",

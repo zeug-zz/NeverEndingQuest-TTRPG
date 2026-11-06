@@ -40,6 +40,7 @@ test("accepts only the fixed MIME extension map and content-hashed names", () =>
   assert.equal(contentTypeForFile("portrait-AbCdEf12.png"), "image/png");
   assert.equal(contentTypeForFile("font-AbCdEf12.woff2"), "font/woff2");
   assert.equal(hasContentHashedName("bundle-AbCdEf12.js"), true);
+  assert.equal(hasContentHashedName("index-BWPy-UGx.css"), true);
   assert.equal(hasContentHashedName("bundle.js"), false);
   assert.throws(() => contentTypeForFile("bundle-AbCdEf12.map"), /Unsupported/);
   assert.throws(() => contentTypeForFile("nested/bundle-AbCdEf12.js"), /flat/);
