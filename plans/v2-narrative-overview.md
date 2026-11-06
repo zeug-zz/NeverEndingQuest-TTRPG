@@ -662,6 +662,24 @@ recommendations):
   one source/dependency/routing identity for the whole SP3b run; any
   mid-run change stops the run. The Overseer reviews and freezes the
   amendment, then books port 8360 separately; no SP3b live work before both.
+  Booking superseded by s10.2: after the specific freeze S self-books via the
+  live-window lock.
+- SP3b amendment ruling (2026-11-06): PR #109 merged (`d2f70d4b`) as
+  `plans/v2-mapping-pilot-prereg/SP3b-amendment.md`, SHA-256 `ce49bead...0313`,
+  status DRAFT / NOT FROZEN. Overseer verified the 19 source-cell bindings and
+  filtered order against `counterbalance.json`, frozen preregistration 10/10,
+  and the 287-attempt / 18,146.6-second remaining ceiling. Scope APPROVED
+  (E01, E03-E06, E13-E18, C01-C08; C02-C08 as startup-invalidated samples
+  whose content findings stand). Implementation of amendment s2 harness
+  corrections 1-6 and `scripts/test_mapping_pilot_sp3b_execution.py` is
+  AUTHORIZED, provider-free, under s10.1 self-merge rules: no host/core, fixture,
+  script, rubric or tripwire changes. Host regression evidence for #105 runs in
+  its own process (`PYTHONPATH=. .venv/bin/python -m unittest
+  scripts.test_main_location_connectivity_note_fix`, Overseer: 6 OK);
+  co-loading it with tripwire-armed suites is a known isolation limitation,
+  not a host defect. The freeze is a separate stop point: S submits passing
+  test evidence, lifecycle/startup profiles and a draft `execution-freeze.json`
+  identity; only a specific Overseer freeze ruling permits booking or live work.
 - SP4 may start now for inputs independent of SP3: the 1,048-row D1 claim
   audit and the 16 M1 sketch ratings. Live-transcript ratings and the
   ADR-0034 decision wait for SP3b evidence.
