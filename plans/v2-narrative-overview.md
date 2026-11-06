@@ -524,7 +524,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network-n1` | B0 | Opened 2026-11-05 | N1 review remediation | N1 player security and sync contract |
+| N | `feature/v2-network-n1` | B0 | Opened 2026-11-05 | N1 integrated; paused | N2 React vertical slice (not yet authorized) |
 | S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 scheduled; SP2 human review pending | SP3 live evidence, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
@@ -575,7 +575,7 @@ the existing matrix caps is authorized.
 | Gate | Worktree | Verdict | Date | Evidence | PR |
 | --- | --- | --- | --- | --- | --- |
 | N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
-| N1 player boundary and contract | N | BLOCKED | 2026-11-06 | Overseer reproduced an unmet synchronization contract on `196fd98d` despite 76 focused tests and all ten CI checks passing; private local review: `plans/security/pr93-n1-review.md`; fix and independent re-verification required before integration | #93 (not merged) |
+| N1 player boundary and contract | N | PASS | 2026-11-06 | Initial head `196fd98d` held after the Overseer reproduced a stale active-PC revision rollback; one bounded correction plus verification-only continuation; Overseer independently re-verified the final head `a7abddcd`: focused N1 99 OK, rollback reproducer and lifecycle probes 0 failures (1-PC/4-PC), host/combat suites 75/26/13/13/7/15 OK, ASCII/Bandit/Semgrep clean, CI 10/10. Pre-existing request-path gaps surfaced by CodeQL fixed separately in #98/#99; remaining character-name alerts dismissed as false positive with owner approval (private review `plans/security/pr93-n1-review.md`). N2 requires separate authorization | #93 (`0b12f44f` integrated head) |
 | N2 React vertical slice | N | pending | -- | -- | -- |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
