@@ -6026,6 +6026,43 @@ class _tts_block_scope:
         _emit_tts_scope(False)
 
 
+def _string_ids(raw_ids: object) -> list[str]:
+    """Return the non-empty string IDs from a list payload."""
+    if not isinstance(raw_ids, list):
+        return []
+    return [loc_id for loc_id in raw_ids if isinstance(loc_id, str) and loc_id]
+
+
+def _resolve_dm_note_connected_ids(
+    location_record: object,
+    party_tracker_data: object,
+    area_data: object,
+) -> list[str]:
+    """Resolve same-area connections for the DM Note connectivity section.
+
+    TABLETOP MODE: Authored ``connectivity`` wins. When it is empty, fall back
+    to the authoritative state packet's adjacency, built here from the same
+    party tracker and area data. The main loop previously referenced a
+    ``packet_location`` that only exists in the validator scope, which raised
+    NameError for every location without same-area connectivity.
+    """
+    connected_ids = []
+    if isinstance(location_record, dict):
+        connected_ids = _string_ids(location_record.get("connectivity", []))
+    if connected_ids:
+        return connected_ids
+
+    packet = build_authoritative_state_packet(
+        party_tracker_data if isinstance(party_tracker_data, dict) else {},
+        area_data=area_data if isinstance(area_data, dict) else None,
+        location_data=location_record if isinstance(location_record, dict) and location_record else None,
+    )
+    packet_location = packet.get("location", {}) if isinstance(packet, dict) else {}
+    if not isinstance(packet_location, dict):
+        return []
+    return _string_ids(packet_location.get("adjacent_location_ids", []))
+
+
 def main_game_loop():
     global needs_conversation_history_update, should_inject_creation_prompt
 
@@ -7471,26 +7508,11 @@ def main_game_loop():
             ):
                 location_record_for_connectivity = fallback_location
 
-            connected_ids_current_area = []
-            if isinstance(location_record_for_connectivity, dict):
-                raw_connectivity = location_record_for_connectivity.get(
-                    "connectivity", []
-                )
-                if isinstance(raw_connectivity, list):
-                    connected_ids_current_area = [
-                        loc_id
-                        for loc_id in raw_connectivity
-                        if isinstance(loc_id, str) and loc_id
-                    ]
-
-            if not connected_ids_current_area and isinstance(packet_location, dict):
-                raw_packet_adjacency = packet_location.get("adjacent_location_ids", [])
-                if isinstance(raw_packet_adjacency, list):
-                    connected_ids_current_area = [
-                        loc_id
-                        for loc_id in raw_packet_adjacency
-                        if isinstance(loc_id, str) and loc_id
-                    ]
+            connected_ids_current_area = _resolve_dm_note_connected_ids(
+                location_record_for_connectivity,
+                party_tracker_data,
+                current_area_full_data,
+            )
 
             if connected_ids_current_area:
                 connected_names_current_area = []
