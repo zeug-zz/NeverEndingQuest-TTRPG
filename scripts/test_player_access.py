@@ -33,9 +33,13 @@ from web.extensions.player import (
     PlayerSnapshot,
     create_app,
 )
-from web.extensions.player.assets import VerifiedPlayerClientAssets
+from web.extensions.player.assets import (
+    PlayerClientAssetsError,
+    VerifiedPlayerClientAssets,
+)
 from web.extensions.player.auth import (
     PLAYER_SESSION_COOKIE,
+    PLAYER_PASSWORD_VERIFIER_ENV,
     PRELOGIN_CSRF_COOKIE,
     PRELOGIN_CSRF_TTL_SECONDS,
     SESSION_TTL_SECONDS,
@@ -43,6 +47,10 @@ from web.extensions.player.auth import (
     _cli,
     make_verifier,
     parse_verifier,
+)
+from web.extensions.player.dev_listener import (
+    PLAYER_DEV_LISTENER_ENV,
+    start_player_dev_listener,
 )
 from web.extensions.player.limiters import PlayerLimiters
 from web.extensions.player.limits import (
@@ -947,7 +955,8 @@ class PlayerAccessTests(unittest.TestCase):
                     script
                     + "import socket\n"
                     + "probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-                    + f"probe.bind(({PLAYER_HOST!r}, {PLAYER_PORT}))\n"
+                    + "probe.settimeout(0.25)\n"
+                    + f"assert probe.connect_ex(({PLAYER_HOST!r}, {PLAYER_PORT})) != 0\n"
                     + "probe.close()\n"
                 )
                 completed = subprocess.run(
@@ -984,6 +993,139 @@ class PlayerAccessTests(unittest.TestCase):
         self.assertEqual(EXPENSIVE_READS_PER_SESSION_PER_WINDOW, 60)
         self.assertEqual(MEDIA_READS_PER_SESSION_PER_WINDOW, 30)
         self.assertEqual(MAX_RETAINED_INPUT_RECEIPTS_PER_SESSION, 1024)
+
+
+class PlayerDevListenerStartupTests(unittest.TestCase):
+    def _valid_verifier(self) -> str:
+        return make_verifier("dev-listener-test-password", salt=b"d" * 16)
+
+    def test_listener_is_not_constructed_without_exact_opt_in(self) -> None:
+        for flag in (None, "true", "0", " 1"):
+            with self.subTest(flag=flag):
+                environment = {}
+                if flag is not None:
+                    environment[PLAYER_DEV_LISTENER_ENV] = flag
+                environment[PLAYER_PASSWORD_VERIFIER_ENV] = self._valid_verifier()
+                with (
+                    mock.patch.dict(os.environ, environment, clear=True),
+                    mock.patch(
+                        "web.extensions.player.dev_listener.PlayerListener"
+                    ) as listener_factory,
+                ):
+                    gateway_factory = mock.Mock()
+                    self.assertIsNone(start_player_dev_listener(gateway_factory))
+                    listener_factory.assert_not_called()
+                    gateway_factory.assert_not_called()
+
+    def test_missing_or_invalid_verifier_leaves_listener_stopped(self) -> None:
+        for verifier in (None, "not-a-valid-verifier"):
+            with self.subTest(verifier_present=verifier is not None):
+                environment = {PLAYER_DEV_LISTENER_ENV: "1"}
+                if verifier is not None:
+                    environment[PLAYER_PASSWORD_VERIFIER_ENV] = verifier
+                with (
+                    mock.patch.dict(os.environ, environment, clear=True),
+                    mock.patch(
+                        "web.extensions.player.dev_listener.PlayerListener"
+                    ) as listener_factory,
+                    mock.patch("web.extensions.player.dev_listener.warning") as log_warning,
+                ):
+                    gateway_factory = mock.Mock()
+                    self.assertIsNone(start_player_dev_listener(gateway_factory))
+                    listener_factory.assert_not_called()
+                    gateway_factory.assert_not_called()
+                    log_warning.assert_called_once()
+                    if verifier is not None:
+                        self.assertNotIn(verifier, str(log_warning.call_args))
+
+    def test_valid_opt_in_starts_fixed_loopback_listener_in_same_process(self) -> None:
+        verifier = self._valid_verifier()
+        gateway = _FakeGateway()
+        listener = mock.Mock()
+        environment = {
+            PLAYER_DEV_LISTENER_ENV: "1",
+            PLAYER_PASSWORD_VERIFIER_ENV: verifier,
+            "NEQ_PLAYER_DEV_HOST": "0.0.0.0",
+            "NEQ_PLAYER_DEV_PORT": "9000",
+            "NEQ_PLAYER_HOST": "0.0.0.0",
+            "NEQ_PLAYER_PORT": "9000",
+        }
+        with (
+            mock.patch.dict(os.environ, environment, clear=True),
+            mock.patch(
+                "web.extensions.player.dev_listener.PlayerListener",
+                return_value=listener,
+            ) as listener_factory,
+            mock.patch("web.extensions.player.dev_listener.warning") as log_warning,
+        ):
+            gateway_factory = mock.Mock(return_value=gateway)
+            result = start_player_dev_listener(gateway_factory)
+
+        self.assertIs(result, listener)
+        gateway_factory.assert_called_once_with()
+        listener_factory.assert_called_once_with(gateway=gateway)
+        listener.start.assert_called_once_with(host=PLAYER_HOST, port=PLAYER_PORT)
+        self.assertEqual(PLAYER_HOST, "127.0.0.1")
+        self.assertEqual(PLAYER_PORT, 8370)
+        log_warning.assert_not_called()
+
+    def test_invalid_assets_leave_listener_stopped_and_host_startup_continues(self) -> None:
+        listener = mock.Mock()
+        listener.start.side_effect = PlayerClientAssetsError("invalid_asset")
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    PLAYER_DEV_LISTENER_ENV: "1",
+                    PLAYER_PASSWORD_VERIFIER_ENV: self._valid_verifier(),
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "web.extensions.player.dev_listener.PlayerListener",
+                return_value=listener,
+            ),
+            mock.patch("web.extensions.player.dev_listener.warning") as log_warning,
+        ):
+            result = start_player_dev_listener(_FakeGateway)
+            host_continued = True
+
+        self.assertIsNone(result)
+        self.assertTrue(host_continued)
+        listener.start.assert_called_once_with(host=PLAYER_HOST, port=PLAYER_PORT)
+        listener.stop.assert_called_once_with()
+        log_warning.assert_called_once()
+        self.assertIn("assets_invalid_asset", log_warning.call_args.args[0])
+
+    def test_listener_start_exception_is_bounded_and_does_not_abort_host(self) -> None:
+        secret_diagnostic = "bind failure with private verifier text"
+        listener = mock.Mock()
+        listener.start.side_effect = OSError(secret_diagnostic)
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    PLAYER_DEV_LISTENER_ENV: "1",
+                    PLAYER_PASSWORD_VERIFIER_ENV: self._valid_verifier(),
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "web.extensions.player.dev_listener.PlayerListener",
+                return_value=listener,
+            ),
+            mock.patch("web.extensions.player.dev_listener.warning") as log_warning,
+        ):
+            result = start_player_dev_listener(_FakeGateway)
+            host_continued = True
+
+        self.assertIsNone(result)
+        self.assertTrue(host_continued)
+        listener.stop.assert_called_once_with()
+        log_warning.assert_called_once()
+        message = log_warning.call_args.args[0]
+        self.assertIn("startup_error", message)
+        self.assertNotIn(secret_diagnostic, message)
 
 
 if __name__ == "__main__":
