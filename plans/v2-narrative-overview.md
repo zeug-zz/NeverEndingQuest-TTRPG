@@ -524,7 +524,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network-n1` | B0 | Opened 2026-11-05 | N1 integrated; paused | N2 React vertical slice (not yet authorized) |
+| N | detached at `e2279f42` (N2 branch from current main) | B0 | Opened 2026-11-05 | N1 integrated; N2 provider-free planning/build authorized 2026-11-06, Overseer proposal review before build; no listener or live work until S releases 8360 | N2 React vertical slice |
 | S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 scheduled; SP2 human review pending | SP3 live evidence, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
