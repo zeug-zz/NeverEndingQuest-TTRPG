@@ -8,15 +8,16 @@
     <title>NeverEndingQuest player</title>
   </head>
   <body>
-    <main>
-      <h1>Player login</h1>
-      <form method="post" action="/api/player/login">
-        <input type="hidden" name="csrf_token" value="__NEQ_PRELOGIN_CSRF_NONCE__" />
-        <label>Password <input type="password" name="password" autocomplete="current-password" maxlength="1024" required /></label>
-        <button type="submit">Log in</button>
-      </form>
-    </main>
-    <div id="root"></div>
+    <div id="root">
+      <main>
+        <h1>Player login</h1>
+        <form method="post" action="/api/player/login">
+          <input type="hidden" name="csrf_token" value="__NEQ_PRELOGIN_CSRF_NONCE__" />
+          <label>Password <input type="password" name="password" autocomplete="current-password" maxlength="1024" required /></label>
+          <button type="submit">Log in</button>
+        </form>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

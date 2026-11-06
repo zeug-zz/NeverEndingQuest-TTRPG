@@ -42,7 +42,13 @@ FIXED_MARKERS = (
 ROUTE_PARAMETER = re.compile(r"<")
 OPEN_QUOTES = "\"'`"
 BARE_EVENT = re.compile(r"^[a-z]+$")
-SOCKET_CALL_PREFIX = re.compile(r"\.(?:emit|on|once|off)\(\s*$")
+# Socket.IO/Engine.IO reserves these names; their client transport uses them internally.
+SOCKETIO_RESERVED_EVENT_NAMES = frozenset({
+    "connect", "connect_error", "disconnect", "disconnecting", "error", "message",
+    "open", "close", "ping", "pong", "packet", "upgrade", "upgradeError", "drain",
+    "flush", "reconnect", "reconnect_attempt", "reconnect_error", "reconnect_failed",
+    "newListener", "removeListener",
+})
 
 
 def _host_markers() -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -104,6 +110,8 @@ def scan_bundle(root: Path) -> list[tuple[str, str]]:
             pattern = re.compile(rf"(?P<match>(?P<quote>[\"'`]){re.escape(marker)}(?P=quote))")
         patterns.append((marker, pattern))
     for event in events:
+        if event in SOCKETIO_RESERVED_EVENT_NAMES:
+            continue
         literal = rf"(?P<quote>[\"'`]){re.escape(event)}(?P=quote)"
         if BARE_EVENT.fullmatch(event):
             # Bare words like action/error also occur in React DOM internals;
@@ -136,6 +144,7 @@ class PlayerBundleScanTests(unittest.TestCase):
         routes, events = _host_markers()
         self.assertTrue(routes, "host-only route extraction returned no markers")
         self.assertTrue(events, "host-only event extraction returned no markers")
+        self.assertTrue(set(events) - SOCKETIO_RESERVED_EVENT_NAMES, "no non-reserved host event markers remain")
 
     def test_built_bundle_has_no_host_capability_markers(self) -> None:
         manifest_path = DIST_ROOT / "player-manifest.json"
@@ -170,25 +179,29 @@ class PlayerBundleScanTests(unittest.TestCase):
             plain_marker = plain[0]
             parameterized_route = next(route for route in parameterized if route.startswith("/static/"))
             route_prefix = parameterized_route.split("<", 1)[0]
-            bare_events = [event for event in events if BARE_EVENT.fullmatch(event)]
+            non_reserved = sorted(set(events) - SOCKETIO_RESERVED_EVENT_NAMES)
+            self.assertTrue(non_reserved, "host inventory has no non-reserved event marker")
+            event = non_reserved[0]
+            bare_events = [name for name in non_reserved if BARE_EVENT.fullmatch(name)]
             self.assertTrue(bare_events, "host inventory has no bare-word event for call-context control")
-            event = bare_events[0]
+            bare_event = bare_events[0]
             injected = (
                 f'"{plain_marker}"',
                 f"'{event}'",
                 f"`{route_prefix}foo.css`",
                 FIXED_MARKERS[0],
-                f".emit(`{event}`)",
+                f".emit(`{bare_event}`)",
                 "'/static/foo.css'",
             )
             asset.write_text("\n".join(injected), encoding="ascii")
             negative = bundle / "negative.js"
-            negative.write_text(f"`{event}` '/static/player/x.js'", encoding="ascii")
+            negative.write_text(f".on(`error`, `action`) '/static/player/x.js'", encoding="ascii")
             hits = scan_bundle(bundle)
             detected = {marker.split(" [", 1)[0] for _file, marker in hits}
             self.assertTrue({plain_marker, event, route_prefix, FIXED_MARKERS[0], "/static/"} <= detected)
             negative_hits = [marker for file_name, marker in hits if file_name == "negative.js"]
             self.assertEqual(negative_hits, [])
+            self.assertIn(bare_event, detected)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 

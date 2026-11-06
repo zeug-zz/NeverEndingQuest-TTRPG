@@ -1,7 +1,7 @@
 body {
   font-family: system-ui, sans-serif;
   margin: 2rem auto;
-  max-width: 36rem;
+  max-width: 44rem;
   padding: 0 1rem;
 }
 
@@ -11,14 +11,24 @@ main {
   padding: 1.5rem;
 }
 
+header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
 label,
 input,
 button {
   display: block;
   margin: 0.75rem 0;
+  font: inherit;
 }
 
-input,
-button {
-  font: inherit;
+section {
+  border-top: 1px solid #bbb;
+  margin-top: 1.5rem;
+  padding-top: 0.75rem;
 }

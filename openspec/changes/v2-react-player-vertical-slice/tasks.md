@@ -24,7 +24,7 @@ Each numbered task is assigned to one builder at a time; do not split a task acr
 
 ## 4. React player gameplay slice
 
-- [ ] 4.1 Implement the same-origin login, snapshot hydration, socket subscription, and client-version handshake using the existing typed player protocol; keep browser state as a disposable cache and never add host/admin routes or events. Add component/store tests for login, initial snapshot, empty transcript, and disconnect. Verify `npm --prefix web/frontend run typecheck` and `npm --prefix web/frontend test -- --run`.
+- [x] 4.1 Implement the same-origin login, snapshot hydration, socket subscription, and client-version handshake using the existing typed player protocol; keep browser state as a disposable cache and never add host/admin routes or events. Add component/store tests for login, initial snapshot, empty transcript, and disconnect. Verify `npm --prefix web/frontend run typecheck` and `npm --prefix web/frontend test -- --run`.
 - [ ] 4.2 Implement the shared transcript, active-PC selector, read-only sheets/portraits, initiative/combat view, gameplay input, busy state, and every typed receipt status; bind pending state to request ID and submitted PC/revision, show stale/uncertain feedback, and render all narrative/input as React text nodes without unsafe HTML or arbitrary links. Add 1-PC/4-PC and interaction tests. Verify `npm --prefix web/frontend run typecheck` and `npm --prefix web/frontend test -- --run`.
 
 ## 5. Explicit listener lifecycle and supply-chain checks

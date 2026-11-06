@@ -3,6 +3,7 @@
 
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { readPlayerClientVersion } from "./client-version";
 import "./player.css";
 
 const rootElement = document.getElementById("root");
@@ -11,4 +12,12 @@ if (!rootElement) {
   throw new Error("Missing root element");
 }
 
-createRoot(rootElement).render(<App />);
+const csrfInput = rootElement.querySelector<HTMLInputElement>('input[name="csrf_token"]');
+const preloginCsrfToken = csrfInput?.value ?? "";
+
+createRoot(rootElement).render(
+  <App
+    clientVersion={readPlayerClientVersion()}
+    preloginCsrfToken={preloginCsrfToken}
+  />,
+);
