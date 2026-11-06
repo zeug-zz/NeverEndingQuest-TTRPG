@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import stat
@@ -25,6 +26,28 @@ _MEDIA_TYPES = {
     ".png": "image/png",
     ".webp": "image/webp",
 }
+
+
+def player_portrait_media_id(character_name: object) -> str | None:
+    """Return a stable opaque portrait ID; MediaRegistry still controls access."""
+    if not isinstance(character_name, str):
+        return None
+    name = character_name.strip()
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or not name.isprintable()
+    ):
+        return None
+    try:
+        if len(name.encode("utf-8")) > 128:
+            return None
+        digest = hashlib.sha256(name.casefold().encode("utf-8")).hexdigest()[:32]
+    except UnicodeEncodeError:
+        return None
+    return f"pc-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
