@@ -567,7 +567,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | N | `feature/v2-network-n2` | B0 | Opened 2026-11-05 | N1 archived (#102); N2 proposal #103 approved 2026-11-06; provider-free build authorized | N2 React vertical slice (live gate needs its own booking) |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 adjudicated inconclusive; SP3b amendment drafting; SP4 D1/M1 review open | SP3b amendment review and booking, then SP4 owner gate |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 INCONCLUSIVE; SP3b closed BLOCKED; paused for owner | SP4 owner gate (owner inputs) |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -680,9 +680,31 @@ recommendations):
   not a host defect. The freeze is a separate stop point: S submits passing
   test evidence, lifecycle/startup profiles and a draft `execution-freeze.json`
   identity; only a specific Overseer freeze ruling permits booking or live work.
-- SP4 may start now for inputs independent of SP3: the 1,048-row D1 claim
-  audit and the 16 M1 sketch ratings. Live-transcript ratings and the
-  ADR-0034 decision wait for SP3b evidence.
+- SP3b lifecycle-profile ruling (2026-11-06T18:55Z): static source reading
+  could not establish per-fixture startup/resume provider-call profiles; one
+  provider-free stubbed-router profiling attempt was authorized, with a
+  pre-declared fallback: rows without a verified profile are BLOCKED, and if
+  none can be profiled SP3b closes BLOCKED.
+- SP3b CLOSED BLOCKED (2026-11-06, Overseer, applying that fallback): the
+  single attempt aborted before any path ran (`ModuleNotFoundError:
+  scripts`, an invocation defect) and its harness also stopped after the
+  first path; 0 of 8 fixture-party profiles accepted, so all 19 rows
+  (SP3B-001..019) lack a verified profile and none may run. Overseer verified
+  evidence hashes (`primary-review.json` `31d646f6...1643`,
+  `profile-report.json` `75f4e930...02db`). No seeding, server, listener,
+  booking, provider call or new gameplay evidence occurred; the 287-attempt /
+  18,146.6-second balance is unspent. This is an implementation/coverage
+  failure, not proof that profiling is impossible; reopening SP3b requires a
+  new owner-level authorization, not a retry. The amendment stays DRAFT / NOT
+  FROZEN. Main SP3 remains INCONCLUSIVE with its content findings and
+  recorded deviations. SP3b harness/report PR #111 may merge as unexecuted
+  research tooling under s10.1.
+- SP4 OWNER GATE OPEN on existing evidence: the 1,048-row D1 claim audit,
+  16 M1 sketch ratings, 25 SP3 transcript review packets (7 rateable, 18
+  not rateable; all scores blank), the format, combat-granularity and
+  data-pipeline choices, and the ADR-0034 decision (Proposed). None may be
+  imputed. With no arm comparison available, ADR-0034 should be expected to
+  need revision rather than acceptance as drafted.
 
 N2 proposal rulings (2026-11-06; change `v2-react-player-vertical-slice`,
 draft PR #103; N1 archived in #102 at `77bb3f1a`). Approved under the
@@ -727,7 +749,7 @@ standing owner instruction:
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
 | SP2 offline D1/M1 | S | pending owner audit/ratings | 2026-11-06 | Tooling/evidence integrated; D1 20 attempts (11 validated, 9 invalid layouts), selected-source hashes 20/20; M1 16 sketches, artifact hashes 17/17; 1,048 D1 claim rows and M1 ratings remain blank. Integration is not an audited precision/backfill or usefulness PASS. | #94 (`e40e4899`) |
-| SP3 live matrix | S | INCONCLUSIVE (main run); SP3b authorized pending amendment | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
+| SP3 live matrix | S | INCONCLUSIVE (main run); SP3b BLOCKED (no verified lifecycle profiles) | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 | Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit ready, premature production request withdrawn; fixture/rubric and budget contracts still pending | #84 (audit); scope correction follows |
