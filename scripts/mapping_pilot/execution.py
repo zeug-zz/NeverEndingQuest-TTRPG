@@ -307,10 +307,17 @@ def release_booking(
         else _parse_timestamp(release_timestamp, "release_timestamp")
     )
     release_value = _format_timestamp(release_instant)
+    persisted_release_instant = _parse_timestamp(release_value, "release_timestamp")
     started_at = active[0].get("actual_start_timestamp")
     active[0]["release_timestamp"] = release_value
     active[0]["booked_window_elapsed_seconds"] = (
-        max(0.0, (release_instant - _parse_timestamp(started_at, "actual_start_timestamp")).total_seconds())
+        max(
+            0.0,
+            (
+                persisted_release_instant
+                - _parse_timestamp(started_at, "actual_start_timestamp")
+            ).total_seconds(),
+        )
         if started_at is not None
         else None
     )

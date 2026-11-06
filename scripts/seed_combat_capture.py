@@ -1234,12 +1234,93 @@ def _build_mapping_pilot_combat_encounter(
     return encounter, combat_mapping
 
 
+def _reject_duplicate_template_keys(
+    pairs: List[Tuple[str, Any]],
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("duplicate JSON field: %s" % key)
+        payload[key] = value
+    return payload
+
+
+def _reject_template_json_constant(value: str) -> Any:
+    raise ValueError("non-standard JSON value: %s" % value)
+
+
+def _load_capture_goblin_template() -> Dict[str, Any]:
+    """Read and validate the copied Capture_Arena Goblin template."""
+    sandbox_root = _assert_sandbox_root()
+    relative_path = Path("modules") / MODULE_DIR_NAME / "monsters" / "goblin.json"
+    source = sandbox_root / relative_path
+    current = sandbox_root
+    for part in relative_path.parts:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError("Capture_Arena Goblin template path is unsafe")
+
+    source = _assert_sandbox_path(source)
+    if not source.is_file():
+        raise RuntimeError("Capture_Arena Goblin template is unavailable")
+    try:
+        payload = json.loads(
+            source.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_template_keys,
+            parse_constant=_reject_template_json_constant,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RuntimeError("Capture_Arena Goblin template is malformed") from exc
+
+    if (
+        not isinstance(payload, dict)
+        or payload.get("name") != "Goblin"
+        or any(
+            not isinstance(payload.get(field), str) or not payload[field]
+            for field in ("size", "type", "alignment")
+        )
+        or any(
+            type(payload.get(field)) is not int
+            for field in ("armorClass", "hitPoints", "maxHitPoints", "speed")
+        )
+    ):
+        raise RuntimeError("Capture_Arena Goblin template is malformed")
+    abilities = payload.get("abilities")
+    ability_names = {
+        "strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"
+    }
+    if (
+        not isinstance(abilities, dict)
+        or not ability_names.issubset(abilities)
+        or any(type(abilities[name]) is not int for name in ability_names)
+    ):
+        raise RuntimeError("Capture_Arena Goblin template is malformed")
+    actions = payload.get("actions")
+    if (
+        not isinstance(actions, list)
+        or not actions
+        or any(
+            not isinstance(action, dict)
+            or not isinstance(action.get("name"), str)
+            or not action["name"]
+            for action in actions
+        )
+    ):
+        raise RuntimeError("Capture_Arena Goblin template is malformed")
+    return payload
+
+
 def _seed_mapping_pilot(
     plan: Dict[str, Any], party_names: List[str]
 ) -> Tuple[Dict[str, str], str, Dict[str, Any]]:
     """Write a frozen pilot module and seed its canonical party/combat state."""
     from scripts.mapping_pilot.fixtures import write_fixture_outputs
 
+    goblin_template = (
+        _load_capture_goblin_template()
+        if plan["fixture_id"] == "combat_stage_tavern_zones"
+        else None
+    )
     module_target = (
         SANDBOX_ROOT.relative_to(PROJECT_ROOT)
         / "modules"
@@ -1247,6 +1328,11 @@ def _seed_mapping_pilot(
     )
     write_fixture_outputs(module_target, plan["prereg_root"])
     reference, mapping = _read_mapping_pilot_reference(plan)
+    if goblin_template is not None:
+        _write_json(
+            "modules/%s/monsters/goblin.json" % MAPPING_PILOT_MODULE_DIR_NAME,
+            goblin_template,
+        )
 
     for name in party_names:
         payload = capture_fixtures.build_capture_character_payload(

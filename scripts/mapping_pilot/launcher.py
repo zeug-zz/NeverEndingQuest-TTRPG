@@ -657,13 +657,16 @@ def _canonical_state_sha256(root: Path) -> str:
     module_plot = root / "modules" / MAPPING_PILOT_MODULE / "module_plot.json"
     if module_plot.exists() or module_plot.is_symlink():
         candidates.append(_safe_file(root, "modules/%s/module_plot.json" % MAPPING_PILOT_MODULE))
-    encounters = root / "encounters"
-    if encounters.exists() or encounters.is_symlink():
-        _safe_directory(root, "encounters")
-        candidates.extend(
-            _safe_file(root, path.relative_to(root).as_posix())
-            for path in sorted(encounters.glob("*.json"), key=lambda item: item.name)
-        )
+    for relative_directory in ("modules/encounters", "encounters"):
+        encounters = root / relative_directory
+        if encounters.exists() or encounters.is_symlink():
+            _safe_directory(root, relative_directory)
+            candidates.extend(
+                _safe_file(root, path.relative_to(root).as_posix())
+                for path in sorted(
+                    encounters.glob("*.json"), key=lambda item: item.name
+                )
+            )
     for path in sorted(set(candidates), key=lambda item: item.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix()
         files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()

@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -525,6 +526,56 @@ class MappingPilotReviewTests(unittest.TestCase):
             )
             self.assertEqual(unit["turn"]["expected_ordinals"], list(range(1, 9)))
             self.assertEqual(unit["turn"]["observed_ordinals"], list(range(1, 9)))
+
+    def test_opaque_response_id_may_contain_seed_and_row_fragments(self) -> None:
+        row_id = "E01"
+        slot = self._slot(row_id)
+        seed_fragment = str(slot["fixed_seed"])
+        opaque_id = (seed_fragment + row_id.lower() + "a" * 32)[:32]
+        self.assertRegex(opaque_id, re.compile(r"^[0-9a-f]{32}$"))
+
+        review_run_id = "opaque-fragments-" + uuid.uuid4().hex[:8]
+        with patch(
+            "scripts.mapping_pilot.review.secrets.token_hex", return_value=opaque_id
+        ):
+            packet_dir = self._build(review_run_id, (row_id,))
+
+        packet_path = packet_dir / (opaque_id + ".txt")
+        packet_text = packet_path.read_text(encoding="ascii")
+        header, transcript = packet_text.split("Transcript:\n", 1)
+        self.assertIn("Response ID: " + opaque_id, header)
+        self.assertNotIn(seed_fragment, transcript)
+        self.assertNotIn(row_id, transcript)
+
+    def test_genuine_seed_leak_in_scrubbed_transcript_is_rejected(self) -> None:
+        row_id = "E01"
+        seed = self._slot(row_id)["fixed_seed"]
+        review_run_id = "seed-leak-" + uuid.uuid4().hex[:8]
+        with (
+            patch(
+                "scripts.mapping_pilot.review.secrets.token_hex",
+                return_value="a" * 32,
+            ),
+            patch(
+                "scripts.mapping_pilot.review._scrub_transcript",
+                return_value="Narrator: seed=%s" % seed,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ReviewPacketError, "transcript could not be safely blinded"
+            ):
+                self._build(review_run_id, (row_id,))
+
+    def test_generated_response_id_must_be_opaque_32_hex(self) -> None:
+        review_run_id = "invalid-response-id-" + uuid.uuid4().hex[:8]
+        error_message = "generated response ID is not an opaque 32-hex token"
+        with patch(
+            "scripts.mapping_pilot.review.secrets.token_hex", return_value="not-opaque"
+        ):
+            with self.assertRaisesRegex(
+                ReviewPacketError, error_message
+            ):
+                self._build(review_run_id, ("E01",))
 
     def test_missing_truncated_and_degraded_responses_are_not_rateable(self) -> None:
         row_states = (("E01", "missing"), ("E02", "truncated"), ("E03", "degraded"))

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import runpy
 import shutil
 import socket
 import subprocess
@@ -52,9 +53,11 @@ from scripts.mapping_pilot.manifest import DEFAULT_PREREG_ROOT, PROJECT_ROOT
 from scripts.mapping_pilot.evidence import create_evidence_bundle
 from scripts.mapping_pilot.row_runner import (
     DEFAULT_ROW_EVIDENCE_ROOT,
+    RowExecutionError,
     RowRunnerHooks,
     _resolve_frozen_row,
     execute_row,
+    hash_canonical_sandbox_state,
 )
 from scripts.mapping_pilot.scoring import (
     MATRIX_ATTEMPT_CAP,
@@ -114,6 +117,64 @@ class MappingPilotExecutionTests(unittest.TestCase):
         return create_or_resume_ledger(
             self.run_id, ledger_root=self.base, now=self.now
         )
+
+    def _make_hash_sandbox(self, name: str) -> tuple[Path, Path, Path]:
+        owner = PROJECT_ROOT / self.base / name
+        root = owner / "tmp" / "combat_capture"
+        (root / "characters").mkdir(parents=True)
+        (root / "modules" / "Mapping_Pilot_Arena" / "areas").mkdir(parents=True)
+        (root / "modules" / "encounters").mkdir(parents=True)
+        (root / "encounters").mkdir(parents=True)
+        (root / "party_tracker.json").write_text("{}", encoding="ascii")
+        (root / "characters" / "acheron.json").write_text(
+            '{"name":"Acheron"}', encoding="ascii"
+        )
+        (root / "modules" / "Mapping_Pilot_Arena" / "areas" / "MPA001.json").write_text(
+            '{"areaId":"MPA001"}', encoding="ascii"
+        )
+        actual_encounter = root / "modules" / "encounters" / "encounter_mapping_pilot_combat.json"
+        actual_encounter.write_text('{"round":1}', encoding="ascii")
+        (root / "encounters" / "legacy.json").write_text(
+            '{"legacy":true}', encoding="ascii"
+        )
+        return owner, root, actual_encounter
+
+    def test_canonical_hash_tracks_module_encounter_and_rejects_encounter_symlinks(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        owner, root, encounter = self._make_hash_sandbox("hash-positive")
+        with mock.patch.object(row_runner, "PROJECT_ROOT", owner):
+            before = hash_canonical_sandbox_state()
+            self.assertIn(
+                "modules/encounters/encounter_mapping_pilot_combat.json",
+                before["files"],
+            )
+            self.assertIn("encounters/legacy.json", before["files"])
+            encounter.write_text('{"round":2}', encoding="ascii")
+            after = hash_canonical_sandbox_state()
+            self.assertNotEqual(before["sha256"], after["sha256"])
+
+        for name, symlink_kind in (
+            ("hash-dir-symlink", "directory"),
+            ("hash-file-symlink", "file"),
+        ):
+            with self.subTest(symlink_kind=symlink_kind):
+                link_owner, link_root, link_encounter = self._make_hash_sandbox(name)
+                external = PROJECT_ROOT / self.base / (name + "-outside")
+                if symlink_kind == "directory":
+                    shutil.rmtree(link_root / "modules" / "encounters")
+                    external.mkdir(parents=True)
+                    (link_root / "modules" / "encounters").symlink_to(
+                        external, target_is_directory=True
+                    )
+                else:
+                    external.parent.mkdir(parents=True, exist_ok=True)
+                    external.write_text('{"round":1}', encoding="ascii")
+                    link_encounter.unlink()
+                    link_encounter.symlink_to(external)
+                with mock.patch.object(row_runner, "PROJECT_ROOT", link_owner):
+                    with self.assertRaises(RowExecutionError):
+                        hash_canonical_sandbox_state()
 
     def test_resolves_all_planned_frozen_rows_without_runtime_side_effects(self) -> None:
         counterbalance = json.loads(
@@ -363,6 +424,34 @@ class MappingPilotExecutionTests(unittest.TestCase):
                 now=self.now,
             )
         self.assertEqual(len(effects), 2)
+
+    def test_default_booking_release_uses_persisted_second_precision(self) -> None:
+        self._create_ledger()
+        self._record_booking()
+        start = self.now + timedelta(seconds=1)
+        execute_booked_operation(
+            self.run_id,
+            "seed",
+            lambda _booking: None,
+            ledger_root=self.base,
+            now=start,
+        )
+        release_at = start + timedelta(seconds=5, microseconds=987654)
+
+        released = release_booking(
+            self.run_id,
+            "overseer-booking-1",
+            ledger_root=self.base,
+            now=release_at,
+        )
+
+        booking = released["bookings"][0]
+        self.assertEqual(booking["release_timestamp"], "2026-11-05T12:00:06Z")
+        self.assertEqual(booking["booked_window_elapsed_seconds"], 5.0)
+        reloaded = create_or_resume_ledger(
+            self.run_id, ledger_root=self.base, now=release_at
+        )
+        self.assertEqual(reloaded["bookings"][0], booking)
 
     def test_booking_windows_cannot_overlap_and_must_be_current(self) -> None:
         self._create_ledger()
@@ -1122,11 +1211,8 @@ class MappingPilotExecutionTests(unittest.TestCase):
         environment_name = "NEQ_MAPPING_PILOT_REQUEST_GUARD_CONTEXT"
         old_environment = os.environ.get(environment_name)
         os.environ[environment_name] = environment[environment_name]
-        namespace: dict[str, Any] = {
-            "__file__": str(
-                PROJECT_ROOT / guard_directory / "sitecustomize.py"
-            )
-        }
+        bootstrap_path = PROJECT_ROOT / guard_directory / "sitecustomize.py"
+        namespace: dict[str, Any] = {}
 
         class FakeTransport:
             def __init__(self) -> None:
@@ -1142,7 +1228,7 @@ class MappingPilotExecutionTests(unittest.TestCase):
 
         try:
             with mock.patch.object(row_runner.time, "monotonic", return_value=42.0):
-                exec(row_runner._REQUEST_GUARD_BOOTSTRAP, namespace)
+                namespace = runpy.run_path(str(bootstrap_path))
                 client = FakeClient()
                 guarded_client = namespace["_GuardedClient"](client)
                 guarded_create = guarded_client.chat.completions.create

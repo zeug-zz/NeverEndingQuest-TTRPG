@@ -125,7 +125,11 @@ def _write_capture_template(module: types.ModuleType) -> int:
     map_path.write_text(
         json.dumps({"startRoom": "CA01"}, sort_keys=True), encoding="ascii"
     )
-    return 2
+    monster_source = ROOT / "modules" / "Capture_Arena" / "monsters" / "goblin.json"
+    monster_target = module_root / "monsters" / "goblin.json"
+    monster_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(monster_source, monster_target)
+    return 3
 
 
 @contextlib.contextmanager
@@ -279,6 +283,25 @@ class MappingPilotSeedTests(unittest.TestCase):
                         {row["name"] for row in enemy_rows},
                         {row["name"] for row in combat_fixture["occupant_roles"]},
                     )
+                    capture_goblin = _read_json(
+                        capture_root / "monsters" / "goblin.json"
+                    )
+                    authored_goblin = _read_json(
+                        ROOT / "modules" / "Capture_Arena" / "monsters" / "goblin.json"
+                    )
+                    pilot_goblin_path = module_root / "monsters" / "goblin.json"
+                    self.assertEqual(capture_goblin, authored_goblin)
+                    self.assertEqual(_read_json(pilot_goblin_path), authored_goblin)
+                    for enemy in enemy_rows:
+                        monster_type = enemy.get("monsterType")
+                        self.assertIsInstance(monster_type, str)
+                        resolved_template = (
+                            module_root / "monsters" / (monster_type.lower() + ".json")
+                        )
+                        self.assertTrue(resolved_template.is_file())
+                        template = _read_json(resolved_template)
+                        self.assertEqual(template["name"], monster_type)
+                        self.assertEqual(template, authored_goblin)
                     combat_mapping = metadata["mapping"]["combat_actors"]
                     self.assertFalse(combat_mapping["movement_enforced"])
                     placement = combat_fixture["initial_placement_rules"][
@@ -301,6 +324,32 @@ class MappingPilotSeedTests(unittest.TestCase):
                 else:
                     self.assertEqual(conditions["activeCombatEncounter"], "")
                     self.assertNotIn("combat_actors", metadata["mapping"])
+
+    def test_combat_seed_fails_closed_when_copied_goblin_template_is_bad(self) -> None:
+        fixtures = __import__("scripts.mapping_pilot.fixtures", fromlist=["fixtures"])
+        plan = {"fixture_id": "combat_stage_tavern_zones", "prereg_root": PREREG_ROOT}
+        for source_kind, source_bytes in (
+            ("missing", None),
+            ("invalid_json", b"{not-json"),
+            ("malformed_shape", b'{"name":"Goblin"}'),
+        ):
+            with self.subTest(source_kind=source_kind):
+                sandbox = ROOT / self.scratch / source_kind / "combat_capture"
+                source = (
+                    sandbox / "modules" / "Capture_Arena" / "monsters" / "goblin.json"
+                )
+                source.parent.mkdir(parents=True, exist_ok=True)
+                if source_bytes is not None:
+                    source.write_bytes(source_bytes)
+                with patch.object(seeder, "SANDBOX_ROOT", sandbox), \
+                        patch.object(seeder, "_assert_sandbox_root", return_value=sandbox), \
+                        patch.object(fixtures, "write_fixture_outputs") as write_outputs:
+                    with self.assertRaisesRegex(RuntimeError, "Goblin template"):
+                        seeder._seed_mapping_pilot(plan, ["Acheron"])
+                write_outputs.assert_not_called()
+                self.assertFalse(
+                    (sandbox / "modules" / "Mapping_Pilot_Arena").exists()
+                )
 
     def test_every_planned_row_and_reserve_seed_is_counterbalance_bound(self) -> None:
         counterbalance = _read_json(PREREG_ROOT / "counterbalance.json")
