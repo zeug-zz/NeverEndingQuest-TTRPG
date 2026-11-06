@@ -203,6 +203,13 @@ def create_review_packet(
             source["transcript"],
         )
         response_id = secrets.token_hex(16)
+        if (
+            not isinstance(response_id, str)
+            or not _RESPONSE_ID.fullmatch(response_id)
+        ):
+            raise ReviewPacketError(
+                "generated response ID is not an opaque 32-hex token"
+            )
         source_order.append(
             {
                 "response_id": response_id,
@@ -254,11 +261,11 @@ def create_review_packet(
             expected_steps,
         )
         packet_name = response_id + ".txt"
+        if _has_blinding_leak(scrubbed, item, hidden_row_ids):
+            raise ReviewPacketError("transcript could not be safely blinded")
         packet_body = (
             "Response ID: %s\n\nTranscript:\n%s\n" % (response_id, scrubbed)
         ).encode("ascii")
-        if _has_blinding_leak(packet_body.decode("ascii"), item, hidden_row_ids):
-            raise ReviewPacketError("transcript could not be safely blinded")
         packet_files[packet_name] = packet_body
 
         rating_row = {"response_id": response_id}

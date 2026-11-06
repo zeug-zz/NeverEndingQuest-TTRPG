@@ -2177,12 +2177,14 @@ def hash_canonical_sandbox_state(
     module_plot = root / "modules" / _MAPPING_MODULE / "module_plot.json"
     if module_plot.exists() or module_plot.is_symlink():
         candidates.append(module_plot)
-    encounters = root / "encounters"
-    if encounters.exists() or encounters.is_symlink():
-        _reject_symlink_components(root, encounters)
-        if not encounters.is_dir():
-            raise RowExecutionError("canonical sandbox encounter state is unsafe")
-        candidates.extend(sorted(encounters.glob("*.json"), key=lambda path: path.name))
+    for encounters in (root / "modules" / "encounters", root / "encounters"):
+        if encounters.exists() or encounters.is_symlink():
+            _reject_symlink_components(root, encounters)
+            if not encounters.is_dir():
+                raise RowExecutionError("canonical sandbox encounter state is unsafe")
+            candidates.extend(
+                sorted(encounters.glob("*.json"), key=lambda path: path.name)
+            )
     if not any(path.parent == characters for path in candidates):
         raise RowExecutionError("canonical sandbox character state is missing")
     if not any(path.parent == areas for path in candidates):
