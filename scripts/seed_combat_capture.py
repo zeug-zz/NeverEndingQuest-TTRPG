@@ -111,7 +111,7 @@ _DATA_FILES = (
     "data/style_templates.json",
 )
 _COMMON_IGNORES = ("__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".DS_Store")
-_WEB_IGNORES = ("monsters_backup", "videos", "*_video.mp4")
+_WEB_IGNORES = ("monsters_backup", "videos", "*_video.mp4", "node_modules")
 _SCRIPTS_IGNORES = ("tmp", "test_*.py")
 _SANDBOX_DIRS = (
     "characters",

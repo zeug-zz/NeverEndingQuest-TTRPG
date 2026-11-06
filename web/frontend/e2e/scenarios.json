@@ -1,0 +1,46 @@
+[
+  {
+    "id": "party-coherence",
+    "description": "Player A in a Chrome browser instance and Player B in a Firefox browser instance, plus a separate Chrome host UI context, agree on the seeded one-PC or four-PC party."
+  },
+  {
+    "id": "host-transcript-ordering",
+    "description": "A host UI user_input commit appears once and in strictly increasing sequence order in both player projections."
+  },
+  {
+    "id": "active-pc-sync-switch-race",
+    "description": "Player active-PC changes synchronize, and competing stale-revision selections converge without a lost revision."
+  },
+  {
+    "id": "sheets-initiative-combat-busy-state",
+    "description": "Approved sheets, initiative/combat, and the projected busy/ready state match the same server snapshot."
+  },
+  {
+    "id": "repeated-request-id",
+    "description": "Submitting an identical command twice with one request ID returns the original receipt and enqueues one transcript input."
+  },
+  {
+    "id": "busy-input",
+    "description": "A full one-item runtime queue returns a visible busy receipt and does not append the rejected input."
+  },
+  {
+    "id": "refresh-reconnect",
+    "description": "Refresh and offline/online reconnect hydrate canonical state without resubmitting draft input."
+  },
+  {
+    "id": "server-instance-change",
+    "description": "A player page remains open during a verified tmp/combat_capture host restart; pending input becomes uncertain, is not replayed or duplicated, and a fresh snapshot resynchronizes. BLOCKED without --manage-sandbox-host."
+  },
+  {
+    "id": "missing-bundle",
+    "description": "With only tmp/combat_capture/web/frontend/dist absent, host UI remains usable, the player listener fails closed, and the original bundle is restored with manifest digests verified. BLOCKED without --manage-sandbox-host."
+  },
+  {
+    "id": "broken-bundle",
+    "description": "With one sandbox dist asset digest corrupted, host UI remains usable, the player listener fails closed, and the original bundle is restored with manifest digests verified. BLOCKED without --manage-sandbox-host."
+  },
+  {
+    "id": "host-only-route-event-and-bundle-probes",
+    "description": "Host-only routes and events are refused on the player origin, with no privileged payload or host marker in loaded player JavaScript."
+  }
+]

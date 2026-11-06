@@ -1,0 +1,895 @@
+// SPDX-FileCopyrightText: 2024 MoonlightByte
+// SPDX-License-Identifier: Fair-Source-1.0
+
+import { arch, platform, release } from "node:os";
+import { join } from "node:path";
+import { chromium, firefox, type Browser } from "playwright";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type TestInfo,
+} from "playwright/test";
+import { createN2BrowserInstances } from "./browser-contract.mjs";
+import {
+  annotation,
+  catalogDescription,
+  ensureEvidenceFolders,
+  evidenceDirectory,
+  N2_SCENARIOS,
+  relativeEvidencePath,
+  scenarioAnnotation,
+  scenarioBlocked,
+  scenarioObservation,
+  updateRunMetadata,
+  writeConsoleEvidence,
+  writeScenarioEvidence,
+} from "./evidence";
+
+type TranscriptMessage = Readonly<{
+  id: string;
+  sequence: number;
+  role: "user" | "assistant";
+  text: string;
+  author?: string;
+}>;
+
+type PlayerSnapshot = Readonly<{
+  schema_version: 1;
+  instance_id: string;
+  session_epoch: string;
+  revision: number;
+  event_cursor: number;
+  projection: Readonly<{
+    party: Readonly<{
+      members: readonly Readonly<{ name: string }>[];
+      active_character: string | null;
+      active_character_revision: number;
+    }>;
+    transcript?: Readonly<{
+      available: boolean;
+      messages: readonly TranscriptMessage[];
+    }>;
+    combat?: Readonly<{
+      available: boolean;
+      active: boolean;
+      round: number | null;
+      phase: string | null;
+      turn_order: readonly Readonly<{ name: string; initiative: number }>[];
+    }>;
+    busy?: boolean;
+  }>;
+}>;
+
+type PlayerVersion = Readonly<{ clientBuildId: string; protocolVersion: number }>;
+type SocketPacket = Readonly<{ event: string; payload: unknown }>;
+type BrowserSocketRequest = Readonly<{
+  events: readonly Readonly<{ name: string; payload: unknown }>[];
+  expectedEventCounts: Readonly<Record<string, number>>;
+  timeoutMs: number;
+  sendAtEpochMs?: number;
+}>;
+
+let PLAYER_URL = "";
+let HOST_URL = "";
+let PARTY_SIZE = 0;
+let PLAYER_PASSWORD = "";
+let RUN_ID = "n2-run-unknown";
+const MANAGED_LIFECYCLE_SCENARIOS = new Set([
+  "server-instance-change",
+  "missing-bundle",
+  "broken-bundle",
+]);
+const MANAGED_SANDBOX_HOST = process.env.NEQ_N2_MANAGE_SANDBOX_HOST === "1";
+const HOST_ONLY_HTTP_PATHS = ["/toolkit", "/api/toolkit/packs", "/api/settings/browser"] as const;
+const HOST_ONLY_SOCKET_EVENTS = ["request_plot_data", "request_storage_data", "request_module_list"] as const;
+const PRIVILEGED_SOCKET_EMISSIONS = [
+  "plot_data_response",
+  "storage_data_response",
+  "module_list_response",
+  "debug_output",
+] as const;
+const PLAYER_BUNDLE_MARKERS = [
+  "/toolkit",
+  "/api/settings",
+  "game_interface.html",
+  "shutdown",
+  "restart_server",
+  "debug_config",
+  "party_tracker.json",
+  "update_character_info",
+  "MULTIPLAYER_MODE",
+  "config.py",
+  "request_plot_data",
+  "request_storage_data",
+  "request_module_list",
+  "module_list_response",
+  "plot_data_response",
+  "debug_output",
+  "start_build",
+  "toggle_model",
+] as const;
+
+let chromeBrowser: Browser | undefined;
+let firefoxBrowser: Browser | undefined;
+let playerContextOne!: BrowserContext;
+let playerContextTwo!: BrowserContext;
+let hostContext!: BrowserContext;
+let playerOne: Page;
+let playerTwo: Page;
+let hostPage: Page;
+let activeScenarioId = "setup";
+
+test.describe.configure({ mode: "serial" });
+
+test.beforeAll(async () => {
+  PLAYER_URL = requiredEnv("NEQ_N2_PLAYER_URL");
+  HOST_URL = requiredEnv("NEQ_N2_HOST_URL");
+  PARTY_SIZE = partySizeFromEnv();
+  PLAYER_PASSWORD = requiredEnv("NEQ_N2_PLAYER_PASSWORD");
+  RUN_ID = process.env.NEQ_N2_RUN_ID ?? RUN_ID;
+  validateFixedEndpoints();
+  evidenceDirectory();
+  ensureEvidenceFolders();
+
+  try {
+    const chrome = await chromium.launch({ headless: true, channel: "chrome" });
+    chromeBrowser = chrome;
+    const firefoxInstance = await firefox.launch({ headless: true });
+    firefoxBrowser = firefoxInstance;
+    playerContextOne = await chrome.newContext();
+    playerContextTwo = await firefoxInstance.newContext();
+    hostContext = await chrome.newContext();
+    playerOne = await playerContextOne.newPage();
+    playerTwo = await playerContextTwo.newPage();
+    hostPage = await hostContext.newPage();
+    attachConsoleEvidence(playerOne, "player-a-chrome");
+    attachConsoleEvidence(playerTwo, "player-b-firefox");
+    attachConsoleEvidence(hostPage, "host-ui-chrome-context");
+
+    await Promise.all([
+      loginPlayer(playerOne),
+      loginPlayer(playerTwo),
+      loadHostUi(hostPage),
+    ]);
+
+    const firstVersion = await readPlayerVersion(playerOne);
+    const secondVersion = await readPlayerVersion(playerTwo);
+    expect(secondVersion).toEqual(firstVersion);
+    expect(chrome).not.toBe(firefoxInstance);
+    expect(playerContextOne).not.toBe(playerContextTwo);
+    expect(hostContext).not.toBe(playerContextOne);
+
+    updateRunMetadata({
+      client_build_id: firstVersion.clientBuildId,
+      browser_instances: createN2BrowserInstances(chrome.version(), firefoxInstance.version()),
+      os: { platform: platform(), release: release(), arch: arch() },
+      party_size: PARTY_SIZE,
+      scenario_list: N2_SCENARIOS,
+      provider_identity: "not-observed-by-browser-driver; operator review required if runtime invokes provider",
+    });
+  } catch (error) {
+    await Promise.all([
+      chromeBrowser?.close().catch(() => {}),
+      firefoxBrowser?.close().catch(() => {}),
+    ]);
+    throw error;
+  }
+});
+
+test.afterEach(async ({}, testInfo) => {
+  const id = annotation(testInfo, "n2-scenario-id") ?? "setup";
+  if (MANAGED_SANDBOX_HOST && MANAGED_LIFECYCLE_SCENARIOS.has(id)) return;
+  activeScenarioId = id;
+  const artifactPaths: string[] = [];
+  const captureErrors: string[] = [];
+  const entries = [
+    ["player-a-chrome", playerOne],
+    ["player-b-firefox", playerTwo],
+    ["host-ui-chrome-context", hostPage],
+  ] as const;
+
+  for (const [name, page] of entries) {
+    if (page && !page.isClosed()) {
+      const screenshotPath = join(evidenceDirectory(), "screenshots", `${id}-${name}.png`);
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true, animations: "disabled" });
+        artifactPaths.push(relativeEvidencePath(screenshotPath));
+      } catch {
+        captureErrors.push(`${name} screenshot was not captured`);
+      }
+    }
+  }
+
+  const blockedReason = annotation(testInfo, "n2-blocked");
+  const expected = parseAnnotation(annotation(testInfo, "n2-expected")) ?? catalogDescription(id);
+  const observed = parseAnnotation(annotation(testInfo, "n2-observed")) ?? {
+    status: testInfo.status,
+    note: "See the sanitized Playwright runner output for the observed assertion details.",
+  };
+  const verdict = blockedReason
+    ? "BLOCKED"
+    : testInfo.status === "passed" && captureErrors.length === 0
+      ? "PASS"
+      : "FAIL";
+
+  writeScenarioEvidence({
+    id,
+    expected,
+    observed: captureErrors.length > 0 ? { result: observed, evidence_errors: captureErrors } : observed,
+    verdict,
+    artifacts: artifactPaths,
+    recorded_at_utc: new Date().toISOString(),
+  });
+  if (captureErrors.length > 0) {
+    throw new Error("N2 evidence capture failed; see this scenario's FAIL record.");
+  }
+});
+
+test.afterAll(async () => {
+  await Promise.all([
+    playerContextOne?.close().catch(() => {}),
+    playerContextTwo?.close().catch(() => {}),
+    hostContext?.close().catch(() => {}),
+    chromeBrowser?.close().catch(() => {}),
+    firefoxBrowser?.close().catch(() => {}),
+  ]);
+});
+
+test("party-coherence: 1-PC and 4-PC projections agree across isolated clients and host", async ({}, testInfo) => {
+  activeScenarioId = "party-coherence";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    party_size: PARTY_SIZE,
+    player_a_browser: "Chrome",
+    player_b_browser: "Firefox",
+    expected_distinct_browser_instances: true,
+    host_ui_browser: "Chrome",
+    expected_separate_host_context: true,
+  });
+
+  const [first, second] = await Promise.all([
+    readPlayerSnapshot(playerOne),
+    readPlayerSnapshot(playerTwo),
+  ]);
+  const firstNames = first.projection.party.members.map((member) => member.name);
+  const secondNames = second.projection.party.members.map((member) => member.name);
+  expect(firstNames).toHaveLength(PARTY_SIZE);
+  expect(secondNames).toEqual(firstNames);
+  expect(second.projection.party.active_character).toBe(first.projection.party.active_character);
+  expect(first.projection.party.active_character).toBeTruthy();
+  expect(new URL(hostPage.url()).origin).toBe(HOST_URL);
+  await expect(hostPage.locator("#game-output")).toBeAttached();
+  await expect(hostPage.locator("#user-input")).toBeAttached();
+
+  scenarioObservation(testInfo, {
+    party_names: firstNames,
+    active_character: first.projection.party.active_character,
+    independent_sessions: true,
+    host_ui_context: "loaded separately",
+  });
+});
+
+test("repeated-request-id: identical command returns its original receipt once", async ({}, testInfo) => {
+  activeScenarioId = "repeated-request-id";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    duplicate_receipts: "same request_id returns original accepted receipt",
+    transcript_echo_count: 1,
+  });
+
+  const snapshot = await readPlayerSnapshot(playerOne);
+  const marker = `N2_REPEATED_REQUEST_${RUN_ID}`;
+  const requestId = `n2-${RUN_ID.replace(/[^A-Za-z0-9_-]/g, "-")}`.slice(0, 120);
+  const command = {
+    schema_version: 1,
+    instance_id: snapshot.instance_id,
+    session_epoch: snapshot.session_epoch,
+    request_id: requestId,
+    character_name: snapshot.projection.party.active_character,
+    active_character_revision: snapshot.projection.party.active_character_revision,
+    text: marker,
+  };
+  const version = await readPlayerVersion(playerOne);
+  const messages = await exchangePlayerSocket(playerOne, version, {
+    events: [
+      { name: "player.input.submit", payload: command },
+      { name: "player.input.submit", payload: command },
+    ],
+    expectedEventCounts: { "player.input.receipt": 2 },
+    timeoutMs: 10_000,
+  });
+  const receipts = messages
+    .filter((message) => message.event === "player.input.receipt")
+    .map((message) => message.payload as { status?: string });
+  expect(receipts).toHaveLength(2);
+  expect(receipts.map((receipt) => receipt.status)).toEqual(["accepted", "accepted"]);
+  await expect(playerOne.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+  await expect(playerTwo.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+
+  scenarioObservation(testInfo, {
+    receipt_statuses: receipts.map((receipt) => receipt.status),
+    transcript_echo_count: 1,
+    pending_queue_item: true,
+  });
+});
+
+test("host-transcript-ordering: host UI commit reaches both clients in sequence", async ({}, testInfo) => {
+  activeScenarioId = "host-transcript-ordering";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    host_user_input_visible_in_both_player_transcripts: true,
+    transcript_sequences_strictly_increasing: true,
+    duplicate_message_count: 1,
+  });
+
+  const before = await readPlayerSnapshot(playerOne);
+  const previousSequence = before.projection.transcript?.messages.at(-1)?.sequence ?? 0;
+  const activeCharacter = before.projection.party.active_character;
+  const marker = `N2_HOST_TRANSCRIPT_${RUN_ID}`;
+  const hostEcho = await sendHostInput(marker, activeCharacter);
+  expect(hostEcho).toBe(true);
+  await expect(playerOne.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+  await expect(playerTwo.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+
+  const [first, second] = await Promise.all([
+    readPlayerSnapshot(playerOne),
+    readPlayerSnapshot(playerTwo),
+  ]);
+  const firstMessages = first.projection.transcript?.messages ?? [];
+  const secondMessages = second.projection.transcript?.messages ?? [];
+  expectTranscriptOrder(firstMessages);
+  expectTranscriptOrder(secondMessages);
+  expect(firstMessages.map((message) => message.id)).toEqual(secondMessages.map((message) => message.id));
+  expect(firstMessages.filter((message) => message.text.includes(marker))).toHaveLength(1);
+  expect(secondMessages.filter((message) => message.text.includes(marker))).toHaveLength(1);
+  const firstHostMessage = firstMessages.find((message) => message.text.includes(marker));
+  const secondHostMessage = secondMessages.find((message) => message.text.includes(marker));
+  expect(firstHostMessage?.sequence).toBeGreaterThan(previousSequence);
+  expect(secondHostMessage?.sequence).toBe(firstHostMessage?.sequence);
+
+  scenarioObservation(testInfo, {
+    host_echo_observed: true,
+    player_transcript_message_count: firstMessages.length,
+    sequences: firstMessages.map((message) => message.sequence),
+    host_message_position: "after previous cursor; later assistant output may follow",
+  });
+});
+
+test("active-pc-sync-switch-race: synchronized selection and revision race", async ({}, testInfo) => {
+  activeScenarioId = "active-pc-sync-switch-race";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    party_size: PARTY_SIZE,
+    expected_final_revision_delta_for_competing_four_pc_selections: PARTY_SIZE === 4 ? 1 : "not applicable",
+  });
+
+  const initial = await readPlayerSnapshot(playerOne);
+  const names = initial.projection.party.members.map((member) => member.name);
+  await expect(playerOne.locator("#active-pc option")).toHaveCount(PARTY_SIZE);
+  await expect(playerTwo.locator("#active-pc option")).toHaveCount(PARTY_SIZE);
+  if (PARTY_SIZE === 1) {
+    expect(names).toHaveLength(1);
+    await expect(playerOne.locator("#active-pc")).toHaveValue(names[0]);
+    await expect(playerTwo.locator("#active-pc")).toHaveValue(names[0]);
+    scenarioObservation(testInfo, {
+      one_pc_switch_race: "not applicable; only the canonical single PC is selectable",
+      active_character: names[0],
+    });
+    return;
+  }
+
+  const current = initial.projection.party.active_character;
+  const sequentialTarget = names.find((name) => name !== current);
+  expect(sequentialTarget).toBeTruthy();
+  await playerOne.locator("#active-pc").selectOption(sequentialTarget as string);
+  await expect(playerTwo.locator("#active-pc")).toHaveValue(sequentialTarget as string);
+  const synchronized = await readPlayerSnapshot(playerOne);
+  expect(synchronized.projection.party.active_character).toBe(sequentialTarget);
+
+  const raceTargets = synchronized.projection.party.members
+    .map((member) => member.name)
+    .filter((name) => name !== synchronized.projection.party.active_character)
+    .slice(0, 2);
+  expect(raceTargets).toHaveLength(2);
+  const [one, two] = await Promise.all([
+    readPlayerSnapshot(playerOne),
+    readPlayerSnapshot(playerTwo),
+  ]);
+  expect(two.projection.party.active_character_revision).toBe(one.projection.party.active_character_revision);
+  const sendAtEpochMs = Date.now() + 3000;
+  const version = await readPlayerVersion(playerOne);
+  const [raceOne, raceTwo] = await Promise.all([
+    exchangePlayerSocket(playerOne, version, {
+      events: [{
+        name: "player.active_pc.select",
+        payload: activePcEnvelope(one, raceTargets[0]),
+      }],
+      expectedEventCounts: { "player.snapshot": 1 },
+      timeoutMs: 12_000,
+      sendAtEpochMs,
+    }),
+    exchangePlayerSocket(playerTwo, version, {
+      events: [{
+        name: "player.active_pc.select",
+        payload: activePcEnvelope(two, raceTargets[1]),
+      }],
+      expectedEventCounts: { "player.snapshot": 1 },
+      timeoutMs: 12_000,
+      sendAtEpochMs,
+    }),
+  ]);
+  expect(raceOne.some((message) => message.event === "player.snapshot")).toBe(true);
+  expect(raceTwo.some((message) => message.event === "player.snapshot")).toBe(true);
+
+  const finalOne = await readPlayerSnapshot(playerOne);
+  const finalTwo = await readPlayerSnapshot(playerTwo);
+  await expect(playerOne.locator("#active-pc")).toHaveValue(finalOne.projection.party.active_character ?? "");
+  await expect(playerTwo.locator("#active-pc")).toHaveValue(finalOne.projection.party.active_character ?? "");
+  expect(finalTwo.projection.party.active_character).toBe(finalOne.projection.party.active_character);
+  expect(finalOne.projection.party.active_character_revision).toBe(
+    one.projection.party.active_character_revision + 1,
+  );
+  expect(raceTargets).toContain(finalOne.projection.party.active_character);
+
+  scenarioObservation(testInfo, {
+    sequential_sync: true,
+    same_revision_race_targets: 2,
+    final_active_pc: finalOne.projection.party.active_character,
+    revision_delta: finalOne.projection.party.active_character_revision - one.projection.party.active_character_revision,
+  });
+});
+
+test("sheets-initiative-combat-busy-state: safe projection matches the visible UI", async ({}, testInfo) => {
+  activeScenarioId = "sheets-initiative-combat-busy-state";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    sheet: "active PC read-only sheet is visible",
+    combat: "seeded initiative and combat projection is visible",
+    busy_state: "visible UI label equals projected busy boolean",
+  });
+
+  for (const page of [playerOne, playerTwo]) {
+    const snapshot = await readPlayerSnapshot(page);
+    const activeName = snapshot.projection.party.active_character;
+    expect(activeName).toBeTruthy();
+    const sheet = page.locator('article[aria-label$=" read-only sheet"]');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole("heading", { name: activeName as string })).toBeVisible();
+    await expect(sheet.locator("dt", { hasText: "Hit points" })).toHaveCount(1);
+    expect(snapshot.projection.combat?.available).toBe(true);
+    expect(snapshot.projection.combat?.active).toBe(true);
+    expect(snapshot.projection.combat?.turn_order.length).toBeGreaterThanOrEqual(PARTY_SIZE);
+    await expect(page.getByRole("heading", { name: "Initiative and combat" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Initiative order" })).toBeVisible();
+
+    expect(typeof snapshot.projection.busy).toBe("boolean");
+    if (snapshot.projection.busy) {
+      await expect(page.getByText("The game is busy. Please wait before submitting input.", { exact: true })).toBeVisible();
+    } else {
+      await expect(page.getByText("The game is ready for input.", { exact: true })).toBeVisible();
+    }
+  }
+
+  const snapshot = await readPlayerSnapshot(playerOne);
+  scenarioObservation(testInfo, {
+    active_pc: snapshot.projection.party.active_character,
+    party_size: snapshot.projection.party.members.length,
+    combatants: snapshot.projection.combat?.turn_order.map((combatant) => combatant.name),
+    busy: snapshot.projection.busy,
+  });
+});
+
+test("busy-input: concurrent player inputs surface a busy receipt without appending it", async ({}, testInfo) => {
+  activeScenarioId = "busy-input";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    expected_receipts: "at least one busy response across concurrent independent player clients",
+    expected_busy_transcript_append_count: 0,
+    queue_capacity: 1,
+  });
+
+  const markers = [
+    `N2_BUSY_INPUT_ONE_${RUN_ID}`,
+    `N2_BUSY_INPUT_TWO_${RUN_ID}`,
+  ] as const;
+  const pages = [playerOne, playerTwo] as const;
+  for (const page of pages) {
+    await expect(page.getByText("The game is ready for input.", { exact: true })).toBeVisible();
+  }
+  await Promise.all(pages.map((page, index) => page.locator("#gameplay-input").fill(markers[index])));
+  await Promise.all(pages.map((page) => page.getByRole("button", { name: "Submit input" }).click()));
+
+  const busyNotice = /This input was not queued/;
+  await expect(playerOne.getByText(busyNotice).or(playerTwo.getByText(busyNotice))).toBeVisible();
+  const busyPages = await Promise.all(pages.map((page) => page.getByText(busyNotice).isVisible()));
+  const rejectedMarker = markers[busyPages[0] ? 0 : 1];
+  const snapshots = await Promise.all(pages.map((page) => readPlayerSnapshot(page)));
+  expect(snapshots.every((snapshot) =>
+    !snapshot.projection.transcript?.messages.some((message) => message.text.includes(rejectedMarker)),
+  )).toBe(true);
+
+  scenarioObservation(testInfo, {
+    visible_busy_receipts: busyPages.filter(Boolean).length,
+    rejected_input_transcript_append_count: 0,
+    submissions_from_independent_clients: 2,
+  });
+});
+
+test("refresh-reconnect: refresh and network reconnect never replay a draft", async ({}, testInfo) => {
+  activeScenarioId = "refresh-reconnect";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    refreshed_snapshot_is_authoritative: true,
+    offline_online_reconnect_resynchronizes: true,
+    unsent_draft_replay_count: 0,
+  });
+
+  const marker = `N2_UNSENT_DRAFT_${RUN_ID}`;
+  await playerOne.locator("#gameplay-input").fill(marker);
+  await playerOne.reload({ waitUntil: "domcontentloaded" });
+  await expect(playerOne.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
+  await expect(playerOne.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(playerOne.locator("#gameplay-input")).toHaveValue("");
+  expect((await readPlayerSnapshot(playerOne)).projection.transcript?.messages.some(
+    (message) => message.text.includes(marker),
+  )).toBe(false);
+
+  await playerContextOne.setOffline(true);
+  await expect(playerOne.getByText("Disconnected", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await playerContextOne.setOffline(false);
+  await expect(playerOne.getByText("Connected", { exact: true })).toBeVisible({ timeout: 20_000 });
+  const refreshed = await readPlayerSnapshot(playerOne);
+  expect(refreshed.projection.party.members).toHaveLength(PARTY_SIZE);
+  expect(refreshed.projection.party.active_character).toBeTruthy();
+
+  scenarioObservation(testInfo, {
+    refresh_snapshot_party_size: refreshed.projection.party.members.length,
+    reconnect_status: "Connected",
+    unsent_draft_replayed: false,
+  });
+});
+
+test("server-instance-change: owned sandbox restart leaves pending input uncertain and resynchronizes", async ({}, testInfo) => {
+  activeScenarioId = "server-instance-change";
+  scenarioAnnotation(testInfo, activeScenarioId, catalogDescription(activeScenarioId));
+  if (!MANAGED_SANDBOX_HOST) {
+    scenarioBlocked(
+      testInfo,
+      "BLOCKED: the host process is externally owned. Re-run with --manage-sandbox-host to exercise the verified sandbox restart.",
+    );
+  }
+});
+
+test("missing-bundle: owned sandbox host UI stays usable while player startup fails closed", async ({}, testInfo) => {
+  activeScenarioId = "missing-bundle";
+  scenarioAnnotation(testInfo, activeScenarioId, catalogDescription(activeScenarioId));
+  if (!MANAGED_SANDBOX_HOST) {
+    scenarioBlocked(
+      testInfo,
+      "BLOCKED: removing the bundle is permitted only for the driver-owned sandbox; re-run with --manage-sandbox-host.",
+    );
+  }
+});
+
+test("broken-bundle: digest mismatch keeps host UI usable and player startup closed", async ({}, testInfo) => {
+  activeScenarioId = "broken-bundle";
+  scenarioAnnotation(testInfo, activeScenarioId, catalogDescription(activeScenarioId));
+  if (!MANAGED_SANDBOX_HOST) {
+    scenarioBlocked(
+      testInfo,
+      "BLOCKED: corrupting an asset is permitted only for the driver-owned sandbox; re-run with --manage-sandbox-host.",
+    );
+  }
+});
+
+test("host-only-route-event-and-bundle-probes: player origin refuses host surfaces", async ({}, testInfo) => {
+  activeScenarioId = "host-only-route-event-and-bundle-probes";
+  scenarioAnnotation(testInfo, activeScenarioId, {
+    routes: HOST_ONLY_HTTP_PATHS.map((path) => ({ path, status: 404 })),
+    socket_events: HOST_ONLY_SOCKET_EVENTS,
+    privileged_payloads: 0,
+    loaded_player_js_host_markers: 0,
+  });
+
+  const routeResults = await playerOne.evaluate(async (paths) => {
+    const privilegedMarkers = ["plot_data_response", "storage_data_response", "module_list_response", "debug_output"];
+    return Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "manual",
+      });
+      const body = await response.text();
+      return {
+        path,
+        status: response.status,
+        privileged_payload: privilegedMarkers.some((marker) => body.includes(marker)),
+      };
+    }));
+  }, [...HOST_ONLY_HTTP_PATHS]);
+  for (const route of routeResults) {
+    expect(route.status).toBe(404);
+    expect(route.privileged_payload).toBe(false);
+  }
+
+  const snapshot = await readPlayerSnapshot(playerOne);
+  const version = await readPlayerVersion(playerOne);
+  const socketMessages = await exchangePlayerSocket(playerOne, version, {
+    events: HOST_ONLY_SOCKET_EVENTS.map((name) => ({
+      name,
+      payload: { probe: "N2_HOST_ONLY_PROBE", include_debug: true },
+    })),
+    expectedEventCounts: {},
+    timeoutMs: 1200,
+  });
+  const privilegedMessages = socketMessages.filter((message) =>
+    PRIVILEGED_SOCKET_EMISSIONS.includes(message.event as (typeof PRIVILEGED_SOCKET_EMISSIONS)[number]),
+  );
+  expect(privilegedMessages).toHaveLength(0);
+
+  const bundleScan = await scanLoadedPlayerJavaScript(playerOne);
+  expect(bundleScan.scriptCount).toBeGreaterThan(0);
+  expect(bundleScan.hits).toEqual([]);
+  expect(snapshot.projection.party.members).toHaveLength(PARTY_SIZE);
+
+  scenarioObservation(testInfo, {
+    route_statuses: routeResults.map((route) => route.status),
+    refused_host_socket_events: HOST_ONLY_SOCKET_EVENTS,
+    privileged_socket_payloads: privilegedMessages.length,
+    loaded_js_count: bundleScan.scriptCount,
+    host_marker_hits: bundleScan.hits,
+  });
+});
+
+async function loginPlayer(page: Page): Promise<void> {
+  await page.goto(PLAYER_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Player login" })).toBeVisible();
+  await page.getByLabel("Password").fill(PLAYER_PASSWORD);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+}
+
+async function loadHostUi(page: Page): Promise<void> {
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#game-output")).toBeAttached();
+  await expect(page.locator("#user-input")).toBeAttached();
+}
+
+function attachConsoleEvidence(page: Page, contextName: string): void {
+  page.on("console", (message) => {
+    writeConsoleEvidence(activeScenarioId, contextName, message.type(), message.text());
+  });
+  page.on("pageerror", (error) => {
+    writeConsoleEvidence(activeScenarioId, contextName, "pageerror", error.message);
+  });
+}
+
+async function readPlayerVersion(page: Page): Promise<PlayerVersion> {
+  return page.evaluate(() => {
+    const buildMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-client-build"]');
+    const protocolMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-protocol-version"]');
+    if (!buildMeta?.content || !protocolMeta?.content) {
+      throw new Error("Player shell is missing manifest build/protocol metadata.");
+    }
+    const protocolVersion = Number(protocolMeta.content);
+    if (!Number.isInteger(protocolVersion)) throw new Error("Player protocol metadata is invalid.");
+    return { clientBuildId: buildMeta.content, protocolVersion };
+  });
+}
+
+async function readPlayerSnapshot(page: Page): Promise<PlayerSnapshot> {
+  return page.evaluate(async () => {
+    const version = await (async () => {
+      const buildMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-client-build"]');
+      const protocolMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-protocol-version"]');
+      if (!buildMeta?.content || !protocolMeta?.content) throw new Error("Player version metadata is missing.");
+      return { build: buildMeta.content, protocol: protocolMeta.content };
+    })();
+    const response = await fetch("/api/player/snapshot", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: {
+        "X-NEQ-Client-Build": version.build,
+        "X-NEQ-Protocol-Version": version.protocol,
+      },
+    });
+    if (!response.ok) throw new Error(`Player snapshot request failed with HTTP ${response.status}.`);
+    return await response.json() as PlayerSnapshot;
+  });
+}
+
+function expectTranscriptOrder(messages: readonly TranscriptMessage[]): void {
+  for (let index = 1; index < messages.length; index += 1) {
+    expect(messages[index].sequence).toBeGreaterThan(messages[index - 1].sequence);
+  }
+}
+
+async function sendHostInput(text: string, character: string | null): Promise<boolean> {
+  return hostPage.evaluate(async ({ inputText, activeCharacter }) => {
+    type HostSocket = {
+      connected: boolean;
+      on: (event: string, callback: (payload?: unknown) => void) => void;
+      off: (event: string, callback: (payload?: unknown) => void) => void;
+      emit: (event: string, payload: unknown) => void;
+    };
+    const socket = (window as Window & { socket?: HostSocket }).socket;
+    if (!socket) throw new Error("Host UI Socket.IO client is unavailable.");
+    if (!socket.connected) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error("Host UI socket did not connect.")), 10_000);
+        const onConnect = (): void => {
+          window.clearTimeout(timer);
+          socket.off("connect", onConnect);
+          resolve();
+        };
+        socket.on("connect", onConnect);
+      });
+    }
+    return await new Promise<boolean>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        socket.off("game_output", onOutput);
+        reject(new Error("Host UI did not echo its transcript probe."));
+      }, 10_000);
+      const onOutput = (payload?: unknown): void => {
+        if (
+          payload !== null &&
+          typeof payload === "object" &&
+          "content" in payload &&
+          payload.content === inputText
+        ) {
+          window.clearTimeout(timer);
+          socket.off("game_output", onOutput);
+          resolve(true);
+        }
+      };
+      socket.on("game_output", onOutput);
+      socket.emit("user_input", { input: inputText, character: activeCharacter });
+    });
+  }, { inputText: text, activeCharacter: character });
+}
+
+function activePcEnvelope(snapshot: PlayerSnapshot, characterName: string) {
+  return {
+    schema_version: 1,
+    instance_id: snapshot.instance_id,
+    session_epoch: snapshot.session_epoch,
+    character_name: characterName,
+    expected_revision: snapshot.projection.party.active_character_revision,
+  };
+}
+
+async function exchangePlayerSocket(
+  page: Page,
+  version: PlayerVersion,
+  request: BrowserSocketRequest,
+): Promise<readonly SocketPacket[]> {
+  return page.evaluate(async (input) => {
+    const url = new URL("/socket.io/?EIO=4&transport=websocket", window.location.href);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(url.toString());
+    const received: SocketPacket[] = [];
+    const counts: Record<string, number> = {};
+
+    return await new Promise<readonly SocketPacket[]>((resolve, reject) => {
+      let settled = false;
+      let namespaceRequested = false;
+      let eventsSent = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        try {
+          socket.close();
+        } catch {
+          // The connection may already have closed after the assertion window.
+        }
+        if (error) reject(error);
+        else resolve(received);
+      };
+      const timeout = window.setTimeout(() => finish(), input.timeoutMs);
+      const sendEvents = (): void => {
+        if (eventsSent) return;
+        eventsSent = true;
+        for (const event of input.events) {
+          socket.send(`42/player,${JSON.stringify([event.name, event.payload])}`);
+        }
+      };
+
+      socket.onerror = () => finish(new Error("Browser Socket.IO probe failed to connect."));
+      socket.onclose = () => {
+        if (!settled) finish(new Error("Browser Socket.IO probe closed before its assertion window."));
+      };
+      socket.onmessage = (message): void => {
+        const packet = String(message.data);
+        if (packet === "2") {
+          socket.send("3");
+          return;
+        }
+        if (packet.startsWith("0")) {
+          if (!namespaceRequested) {
+            namespaceRequested = true;
+            socket.send(`40/player,${JSON.stringify({
+              client_build_id: input.clientBuildId,
+              protocol_version: input.protocolVersion,
+            })}`);
+          }
+          return;
+        }
+        if (packet.startsWith("44/player,")) {
+          finish(new Error("Player namespace refused the authenticated browser probe."));
+          return;
+        }
+        if (packet.startsWith("40/player,")) {
+          if (input.sendAtEpochMs === undefined) sendEvents();
+          else window.setTimeout(sendEvents, Math.max(0, input.sendAtEpochMs - Date.now()));
+          return;
+        }
+        if (!packet.startsWith("42/player,")) return;
+        try {
+          const decoded = JSON.parse(packet.slice("42/player,".length)) as unknown[];
+          if (typeof decoded[0] !== "string") return;
+          const event = decoded[0];
+          received.push({ event, payload: decoded[1] });
+          counts[event] = (counts[event] ?? 0) + 1;
+          const complete = Object.entries(input.expectedEventCounts).every(
+            ([name, count]) => (counts[name] ?? 0) >= count,
+          );
+          if (Object.keys(input.expectedEventCounts).length > 0 && complete) finish();
+        } catch {
+          finish(new Error("Player Socket.IO probe received a malformed event packet."));
+        }
+      };
+    });
+  }, {
+    ...request,
+    clientBuildId: version.clientBuildId,
+    protocolVersion: version.protocolVersion,
+  });
+}
+
+async function scanLoadedPlayerJavaScript(page: Page): Promise<{ scriptCount: number; hits: readonly string[] }> {
+  return page.evaluate(async (markers) => {
+    const scriptUrls = [...document.scripts]
+      .map((script) => script.src)
+      .filter((source) => source.length > 0)
+      .filter((source) => new URL(source, location.href).origin === location.origin)
+      .filter((source) => new URL(source, location.href).pathname.endsWith(".js"));
+    const loaded = await Promise.all(scriptUrls.map(async (source) => {
+      const response = await fetch(source, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error(`Player JavaScript asset returned HTTP ${response.status}.`);
+      return { source, text: await response.text() };
+    }));
+    const hits = loaded.flatMap(({ source, text }) =>
+      markers.filter((marker) => text.includes(marker)).map((marker) => `${new URL(source).pathname}:${marker}`),
+    );
+    return { scriptCount: loaded.length, hits };
+  }, [...PLAYER_BUNDLE_MARKERS]);
+}
+
+function partySizeFromEnv(): number {
+  const value = requiredEnv("NEQ_N2_PARTY_SIZE");
+  if (value !== "1" && value !== "4") throw new Error("NEQ_N2_PARTY_SIZE must be 1 or 4.");
+  return Number(value);
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} must be set in the environment.`);
+  return value;
+}
+
+function validateFixedEndpoints(): void {
+  if (HOST_URL !== "http://127.0.0.1:8360" || PLAYER_URL !== "http://127.0.0.1:8370") {
+    throw new Error("N2 browser suite accepts only host 127.0.0.1:8360 and player 127.0.0.1:8370.");
+  }
+  if (HOST_URL.includes(":8357") || PLAYER_URL.includes(":8357")) {
+    throw new Error("The installed campaign port 8357 is forbidden.");
+  }
+}
+
+function parseAnnotation(value: string | undefined): unknown {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
