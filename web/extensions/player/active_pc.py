@@ -3,7 +3,7 @@
 # License: See LICENSE file in the repository root
 # This software is subject to the terms of the Fair Source License.
 
-"""Typed active-PC selection checks for the future player runtime adapter."""
+"""Typed active-PC selection checks through the canonical checked writer."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ class PlayerActivePCSelection:
     active_character: str
     revision: int
     reason: str | None = None
+    changed: bool = False
 
 
 def select_player_active_pc(
@@ -34,7 +35,10 @@ def select_player_active_pc(
     result = set_active_pc_checked(character_name, expected_revision)
     if result.status in {"updated", "unchanged"}:
         return PlayerActivePCSelection(
-            "selected", result.active_character, result.revision
+            "selected",
+            result.active_character,
+            result.revision,
+            changed=result.changed,
         )
     if result.status == "stale":
         return PlayerActivePCSelection(

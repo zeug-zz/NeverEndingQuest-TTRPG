@@ -11,11 +11,16 @@ import asyncio
 import json
 import secrets
 import threading
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+from unittest import mock
 
 from socketio.exceptions import ConnectionRefusedError as SocketConnectionRefusedError
+
+from utils import file_operations, pc_manager
 
 from web.extensions.player import (
     PLAYER_HOST,
@@ -36,8 +41,10 @@ from web.extensions.player.contracts import (
     make_receipt_envelope,
     make_snapshot_envelope,
     validate_command_envelope,
+    validate_active_pc_selection_envelope,
     validate_event_envelope,
     validate_receipt_envelope,
+    validate_snapshot_request_envelope,
     validate_snapshot_envelope,
 )
 from web.extensions.player.gateway import UnavailablePlayerGateway
@@ -50,7 +57,9 @@ from web.extensions.player.limits import (
     MAX_SNAPSHOT_BYTES,
 )
 from web.extensions.player.sync import PlayerSyncCoordinator
+from web.extensions.player.projections import PlayerProjectionBuilder
 
+TMP_ROOT = Path("tmp") / "n2"
 PC_NAMES = ("Acheron", "Merisiel", "Kira", "Vitreol")
 TEST_CLIENT_BUILD_ID = "0123456789abcdef0123456789abcdef"
 
@@ -105,6 +114,50 @@ class _Gateway:
             request_id=getattr(command, "request_id"),
             status=self.status,
         )
+
+
+class _CanonicalSelectionGateway:
+    def __init__(self, builder: PlayerProjectionBuilder) -> None:
+        self.builder = builder
+        self.snapshot_reads = 0
+
+    def read_snapshot(self) -> PlayerSnapshot:
+        self.snapshot_reads += 1
+        _active_character, revision = pc_manager.read_active_pc_state()
+        return PlayerSnapshot(revision, self.builder.build())
+
+    def admit_input(self, command: object) -> PlayerInputAdmission:
+        del command
+        raise AssertionError("active-PC selection must not enter the input gateway")
+
+
+def _party_fixture(members: list[str], active_character: str) -> dict[str, object]:
+    return {
+        "partyMembers": list(members),
+        "partyNPCs": [],
+        "active_character": active_character,
+        "active_character_revision": 0,
+        "worldConditions": {
+            "year": 1,
+            "day": 1,
+            "currentLocation": "Test Room",
+        },
+        "host_only_fixture_marker": "not-player-visible",
+    }
+
+
+def _character_fixtures(members: tuple[str, ...]) -> dict[str, dict[str, object]]:
+    return {
+        name: {
+            "name": name,
+            "character_role": "player",
+            "character_type": "player",
+            "type": "player",
+            "level": index + 1,
+            "class": "Fighter",
+        }
+        for index, name in enumerate(members)
+    }
 
 
 def _command(
@@ -264,6 +317,44 @@ class GameplaySyncEnvelopeTests(unittest.TestCase):
             with self.subTest(envelope="receipt", value=value):
                 with self.assertRaises(EnvelopeValidationError):
                     validate_receipt_envelope(value)
+
+    def test_socket_snapshot_and_active_pc_requests_are_strict_v1_envelopes(self) -> None:
+        snapshot_request = {
+            "schema_version": PROTOCOL_VERSION,
+            "instance_id": self.instance_id,
+            "session_epoch": self.session_epoch,
+        }
+        self.assertEqual(
+            validate_snapshot_request_envelope(snapshot_request).session_epoch,
+            self.session_epoch,
+        )
+        selection = {
+            **snapshot_request,
+            "character_name": "Merisiel",
+            "expected_revision": 4,
+        }
+        parsed_selection = validate_active_pc_selection_envelope(selection)
+        self.assertEqual(parsed_selection.character_name, "Merisiel")
+        self.assertEqual(parsed_selection.expected_revision, 4)
+
+        malformed_requests = (
+            dict(snapshot_request, unexpected=True),
+            dict(snapshot_request, schema_version=2),
+            dict(selection, unexpected=True),
+            dict(selection, expected_revision=True),
+            dict(selection, character_name=" Merisiel"),
+        )
+        validators = (
+            validate_snapshot_request_envelope,
+            validate_snapshot_request_envelope,
+            validate_active_pc_selection_envelope,
+            validate_active_pc_selection_envelope,
+            validate_active_pc_selection_envelope,
+        )
+        for validator, payload in zip(validators, malformed_requests):
+            with self.subTest(validator=validator.__name__, payload=payload):
+                with self.assertRaises(EnvelopeValidationError):
+                    validator(payload)
 
     def test_oversized_envelopes_and_invalid_identity_bounds_are_rejected(self) -> None:
         oversized_command = dict(self.command, extra="x" * MAX_SOCKETIO_EVENT_BYTES)
@@ -906,6 +997,253 @@ class GameplaySyncApplicationTests(unittest.TestCase):
         self.assertEqual(emitted[-1][0][0], "player.error")
         self.assertEqual(emitted[-1][0][1]["code"], "invalid_command")
         self.assertEqual(gateway.admissions, [])
+
+
+class PlayerSocketCommandHandlerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self._temp_dir = tempfile.TemporaryDirectory(
+            dir=str(TMP_ROOT), prefix="player-socket-handlers-"
+        )
+        self.addCleanup(self._temp_dir.cleanup)
+        self.party_path = Path(self._temp_dir.name) / "party_tracker.json"
+        self._party_file_patch = mock.patch.object(
+            pc_manager,
+            "PARTY_TRACKER_FILE",
+            str(self.party_path),
+        )
+        self._party_file_patch.start()
+        self.addCleanup(self._party_file_patch.stop)
+        self._write_party(list(PC_NAMES))
+
+        characters = _character_fixtures(PC_NAMES)
+        builder = PlayerProjectionBuilder(
+            pc_manager.get_party_tracker,
+            lambda name: characters.get(name),
+            read_active_pc_state=pc_manager.read_active_pc_state,
+        )
+        self.gateway = _CanonicalSelectionGateway(builder)
+        self.security = PlayerSecurity(lambda: None)
+        self.grant = self.security.create_session()
+        self.assertIsNotNone(self.grant)
+        assert self.grant is not None
+        self.app = create_app(gateway=self.gateway, security=self.security)
+        self.emitted: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def capture_emit(*args: object, **kwargs: object) -> None:
+            self.emitted.append((args, kwargs))
+
+        self.app.socket_server.emit = capture_emit
+
+    def _write_party(self, members: list[str]) -> None:
+        self.assertTrue(
+            file_operations.atomic_writer.write_json(
+                str(self.party_path),
+                _party_fixture(members, members[0]),
+            )
+        )
+
+    def _register(self, sid: str) -> bool:
+        assert self.grant is not None
+        return self.security.register_socket(
+            sid,
+            self.grant.cookie_value,
+            f"{PLAYER_HOST}:{PLAYER_PORT}",
+            f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+        )
+
+    def _identity_payload(self) -> dict[str, object]:
+        assert self.grant is not None
+        return {
+            "schema_version": PROTOCOL_VERSION,
+            "instance_id": self.security.server_instance_id,
+            "session_epoch": self.grant.session_epoch,
+        }
+
+    def _selection_payload(
+        self,
+        character_name: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        return {
+            **self._identity_payload(),
+            "character_name": character_name,
+            "expected_revision": expected_revision,
+        }
+
+    def test_unregistered_socket_cannot_read_or_mutate_player_state(self) -> None:
+        snapshot_handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.snapshot.request"
+        ]
+        selection_handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.active_pc.select"
+        ]
+
+        asyncio.run(snapshot_handler("unregistered", self._identity_payload()))
+        asyncio.run(
+            selection_handler(
+                "unregistered",
+                self._selection_payload("Merisiel", 0),
+            )
+        )
+
+        self.assertEqual(self.emitted, [])
+        self.assertEqual(self.gateway.snapshot_reads, 0)
+        self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[0], 0))
+
+    def test_snapshot_request_emits_canonical_snapshot_only_to_requester(self) -> None:
+        self.assertTrue(self._register("snapshot-requester"))
+        self.assertTrue(self._register("snapshot-other"))
+        handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.snapshot.request"
+        ]
+
+        asyncio.run(handler("snapshot-requester", self._identity_payload()))
+
+        self.assertEqual(len(self.emitted), 1)
+        args, kwargs = self.emitted[0]
+        self.assertEqual(args[0], "player.snapshot")
+        self.assertEqual(kwargs.get("to"), "snapshot-requester")
+        snapshot = args[1]
+        self.assertEqual(snapshot["schema_version"], PROTOCOL_VERSION)
+        self.assertEqual(snapshot["projection"]["party"]["active_character"], PC_NAMES[0])
+        self.assertNotIn(
+            "host_only_fixture_marker",
+            snapshot["projection"]["party"],
+        )
+        self.assertEqual(self.gateway.snapshot_reads, 1)
+
+        self.emitted.clear()
+        stale_identity = self._identity_payload()
+        stale_identity["instance_id"] = _identity()
+        asyncio.run(handler("snapshot-requester", stale_identity))
+
+        self.assertEqual(
+            [item[0][0] for item in self.emitted],
+            ["player.error", "player.snapshot"],
+        )
+        self.assertEqual(self.emitted[0][0][1]["code"], "server_instance_changed")
+        refreshed_snapshot = self.emitted[1][0][1]
+        self.assertEqual(refreshed_snapshot["instance_id"], self.security.server_instance_id)
+        self.assertTrue(all(item[1].get("to") == "snapshot-requester" for item in self.emitted))
+        self.assertEqual(self.gateway.snapshot_reads, 2)
+
+    def test_active_pc_selection_success_and_identical_replay_are_cas_safe(self) -> None:
+        self.assertTrue(self._register("selection-requester"))
+        self.assertTrue(self._register("selection-other"))
+        hook = mock.Mock()
+        self.app._active_pc_selection_committed = hook
+        handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.active_pc.select"
+        ]
+        selection = self._selection_payload("Merisiel", 0)
+
+        asyncio.run(handler("selection-requester", selection))
+
+        self.assertEqual(pc_manager.read_active_pc_state(), ("Merisiel", 1))
+        self.assertEqual(len(self.emitted), 1)
+        args, kwargs = self.emitted[0]
+        self.assertEqual(args[0], "player.snapshot")
+        self.assertEqual(kwargs.get("to"), "selection-requester")
+        first_snapshot = args[1]
+        self.assertEqual(
+            first_snapshot["projection"]["party"]["active_character"],
+            "Merisiel",
+        )
+        self.assertEqual(
+            first_snapshot["projection"]["party"]["active_character_revision"],
+            1,
+        )
+        hook.assert_called_once()
+
+        self.emitted.clear()
+        asyncio.run(handler("selection-requester", selection))
+
+        self.assertEqual(pc_manager.read_active_pc_state(), ("Merisiel", 1))
+        self.assertEqual([item[0][0] for item in self.emitted], ["player.error", "player.snapshot"])
+        self.assertEqual(self.emitted[0][0][1]["code"], "stale_context")
+        replay_snapshot = self.emitted[1][0][1]
+        self.assertEqual(
+            replay_snapshot["projection"]["party"]["active_character_revision"],
+            1,
+        )
+        self.assertTrue(all(item[1].get("to") == "selection-requester" for item in self.emitted))
+        hook.assert_called_once()
+
+    def test_stale_nonmember_and_malformed_selections_error_then_refresh(self) -> None:
+        self.assertTrue(self._register("selection-requester"))
+        self.assertTrue(self._register("selection-other"))
+        handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.active_pc.select"
+        ]
+        rejected_requests = (
+            (self._selection_payload("Kira", 4), "stale_context"),
+            (self._selection_payload("Outsider", 0), "not_party_member"),
+            (
+                dict(self._selection_payload("Merisiel", 0), unknown=True),
+                "invalid_command",
+            ),
+            (
+                dict(
+                    self._selection_payload("Merisiel", 0),
+                    extra="x" * MAX_SOCKETIO_EVENT_BYTES,
+                ),
+                "invalid_command",
+            ),
+        )
+        for payload, expected_code in rejected_requests:
+            with self.subTest(expected_code=expected_code):
+                self.emitted.clear()
+                asyncio.run(handler("selection-requester", payload))
+                self.assertEqual(
+                    [item[0][0] for item in self.emitted],
+                    ["player.error", "player.snapshot"],
+                )
+                self.assertEqual(self.emitted[0][0][1]["code"], expected_code)
+                self.assertEqual(
+                    self.emitted[1][0][1]["projection"]["party"]["active_character"],
+                    PC_NAMES[0],
+                )
+                self.assertEqual(
+                    self.emitted[1][0][1]["projection"]["party"][
+                        "active_character_revision"
+                    ],
+                    0,
+                )
+                self.assertTrue(
+                    all(item[1].get("to") == "selection-requester" for item in self.emitted)
+                )
+        self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[0], 0))
+
+    def test_active_pc_selection_supports_one_and_four_pc_parties(self) -> None:
+        self.assertTrue(self._register("selection-requester"))
+        committed = mock.Mock()
+        self.app._active_pc_selection_committed = committed
+        handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.active_pc.select"
+        ]
+        for members, selected_name, expected_revision in (
+            ([PC_NAMES[0]], PC_NAMES[0], 0),
+            (list(PC_NAMES), PC_NAMES[1], 1),
+        ):
+            with self.subTest(party_size=len(members)):
+                self._write_party(members)
+                self.emitted.clear()
+                payload = self._selection_payload(selected_name, 0)
+                asyncio.run(handler("selection-requester", payload))
+                self.assertEqual(len(self.emitted), 1)
+                args, kwargs = self.emitted[0]
+                self.assertEqual(args[0], "player.snapshot")
+                self.assertEqual(kwargs.get("to"), "selection-requester")
+                party_projection = args[1]["projection"]["party"]
+                self.assertEqual(len(party_projection["members"]), len(members))
+                self.assertEqual(party_projection["active_character"], selected_name)
+                self.assertEqual(
+                    party_projection["active_character_revision"],
+                    expected_revision,
+                )
+        self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[1], 1))
+        committed.assert_called_once()
 
 
 if __name__ == "__main__":

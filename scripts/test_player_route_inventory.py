@@ -33,6 +33,9 @@ from web.extensions.player.capabilities import (
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PLAYER_PACKAGE_ROOT = REPOSITORY_ROOT / "web" / "extensions" / "player"
 ROUTE_PARAMETER_PATTERN = re.compile(r"<(?:(?P<converter>[^:<>]+):)?(?P<name>[^<>]+)>")
+PLAYER_CAPABILITIES_SPEC = (
+    REPOSITORY_ROOT / "openspec" / "specs" / "player-capabilities" / "spec.md"
+)
 
 
 @dataclass(frozen=True)
@@ -733,6 +736,40 @@ def _discover_player_emissions() -> tuple[set[str], set[str]]:
     return emissions, dynamic_sites
 
 
+def _player_allowlists_from_spec() -> tuple[
+    frozenset[tuple[str, str]],
+    frozenset[str],
+    frozenset[str],
+]:
+    """Read the positive player route/event/emission set from its N1 contract."""
+    spec = PLAYER_CAPABILITIES_SPEC.read_text(encoding="utf-8")
+    requirement = next(
+        (
+            line
+            for line in spec.splitlines()
+            if line.startswith("The player application SHALL expose only ")
+        ),
+        None,
+    )
+    if requirement is None:
+        raise AssertionError("player-capabilities allowlist requirement is missing")
+    routes = frozenset(
+        (method, path)
+        for method, path in re.findall(r"`(GET|POST) ([^`]+)`", requirement)
+    )
+    try:
+        event_clause = requirement.split(
+            "Its `/player` namespace SHALL accept only ", 1
+        )[1]
+        accepted_clause, emitted_clause = event_clause.split(" and emit only ", 1)
+        emitted_clause = emitted_clause.split(". Unknown paths", 1)[0]
+    except IndexError as exc:
+        raise AssertionError("player-capabilities event allowlists are malformed") from exc
+    accepted = frozenset(re.findall(r"`([^`]+)`", accepted_clause))
+    emitted = frozenset(re.findall(r"`([^`]+)`", emitted_clause))
+    return routes, accepted, emitted
+
+
 class PlayerRouteInventoryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -770,6 +807,12 @@ class PlayerRouteInventoryTests(unittest.TestCase):
         player_emissions, dynamic_player_emissions = _discover_player_emissions()
         self.assertEqual(player_emissions, PLAYER_SOCKET_EMISSION_ALLOWLIST)
         self.assertEqual(dynamic_player_emissions, set())
+
+    def test_implemented_allowlists_equal_the_n1_spec_exactly(self) -> None:
+        spec_http, spec_events, spec_emissions = _player_allowlists_from_spec()
+        self.assertEqual(PLAYER_HTTP_ALLOWLIST, spec_http)
+        self.assertEqual(PLAYER_SOCKET_EVENT_ALLOWLIST, spec_events)
+        self.assertEqual(PLAYER_SOCKET_EMISSION_ALLOWLIST, spec_emissions)
 
     def test_host_only_http_paths_are_not_reachable_through_player_asgi_app(self) -> None:
         app = create_app(security=PlayerSecurity(lambda: None))

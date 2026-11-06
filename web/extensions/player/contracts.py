@@ -81,6 +81,18 @@ RECEIPT_FIELDS = frozenset(
         "status",
     }
 )
+SNAPSHOT_REQUEST_FIELDS = frozenset(
+    {"schema_version", "instance_id", "session_epoch"}
+)
+ACTIVE_PC_SELECTION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "instance_id",
+        "session_epoch",
+        "character_name",
+        "expected_revision",
+    }
+)
 REPLAY_FIELDS = frozenset(
     {
         "schema_version",
@@ -130,6 +142,22 @@ class CommandEnvelope:
             "active_character_revision": self.active_character_revision,
             "text": self.text,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotRequestEnvelope:
+    schema_version: int
+    instance_id: str
+    session_epoch: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActivePCSelectionEnvelope:
+    schema_version: int
+    instance_id: str
+    session_epoch: str
+    character_name: str
+    expected_revision: int
 
 
 def canonical_json_bytes(value: object, max_bytes: int) -> bytes:
@@ -195,6 +223,34 @@ def validate_command_envelope(value: object) -> CommandEnvelope:
     )
     canonical_json_bytes(command.as_dict(), MAX_SOCKETIO_EVENT_BYTES)
     return command
+
+
+def validate_snapshot_request_envelope(value: object) -> SnapshotRequestEnvelope:
+    """Validate the exact, identity-bound N1 request for a fresh snapshot."""
+    raw = _require_mapping(value, SNAPSHOT_REQUEST_FIELDS, MAX_SOCKETIO_EVENT_BYTES)
+    _validate_version(raw)
+    return SnapshotRequestEnvelope(
+        schema_version=PROTOCOL_VERSION,
+        instance_id=_identity(raw.get("instance_id"), "instance_id"),
+        session_epoch=_identity(raw.get("session_epoch"), "session_epoch"),
+    )
+
+
+def validate_active_pc_selection_envelope(value: object) -> ActivePCSelectionEnvelope:
+    """Validate an identity-bound CAS selection without an input command ID."""
+    raw = _require_mapping(
+        value,
+        ACTIVE_PC_SELECTION_FIELDS,
+        MAX_SOCKETIO_EVENT_BYTES,
+    )
+    _validate_version(raw)
+    return ActivePCSelectionEnvelope(
+        schema_version=PROTOCOL_VERSION,
+        instance_id=_identity(raw.get("instance_id"), "instance_id"),
+        session_epoch=_identity(raw.get("session_epoch"), "session_epoch"),
+        character_name=_character_name(raw.get("character_name")),
+        expected_revision=_nonnegative_integer(raw.get("expected_revision")),
+    )
 
 
 def make_snapshot_envelope(

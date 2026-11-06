@@ -5,11 +5,9 @@
 
 """Positive player registrations and explicit host-surface classifications.
 
-Player allowlists intentionally describe the registrations implemented today,
-not the larger target surface in the OpenSpec contract. Tasks 3.2 and 4.x may
-add spec-listed routes/events only alongside explicit allowlist and test
-updates. Host classifications describe possible typed projections/commands;
-they never authorize reuse of the host route, handler, or emission.
+Player allowlists mirror the N1 player-capabilities contract. Host
+classifications describe possible typed projections/commands; they never
+authorize reuse of a host route, handler, or emission.
 """
 
 from __future__ import annotations
@@ -28,8 +26,7 @@ HOST_SURFACE_CLASSES = frozenset(
     }
 )
 
-# Player HTTP registrations are a positive subset of the spec-defined surface.
-# Gameplay input events remain unregistered until the sync/runtime tasks.
+# Player HTTP registrations are the exact positive surface from N1.
 PLAYER_HTTP_ALLOWLIST = frozenset(
     {
         ("GET", "/"),
@@ -41,12 +38,17 @@ PLAYER_HTTP_ALLOWLIST = frozenset(
     }
 )
 
-# Only typed input submission is registered at this stage. Socket.IO
-# connect/disconnect are transport lifecycle events, kept outside the gameplay
-# allowlist. The server emits typed receipts/errors and projected player events.
-PLAYER_SOCKET_EVENT_ALLOWLIST = frozenset({"player.input.submit"})
+# Socket.IO connect/disconnect are transport lifecycle events, kept outside the
+# gameplay allowlist. These are the complete N1 inbound and outbound sets.
+PLAYER_SOCKET_EVENT_ALLOWLIST = frozenset(
+    {
+        "player.snapshot.request",
+        "player.active_pc.select",
+        "player.input.submit",
+    }
+)
 PLAYER_SOCKET_EMISSION_ALLOWLIST = frozenset(
-    {"player.event", "player.input.receipt", "player.error"}
+    {"player.snapshot", "player.event", "player.input.receipt", "player.error"}
 )
 PLAYER_SOCKET_LIFECYCLE_EVENTS = frozenset({"connect", "disconnect"})
 

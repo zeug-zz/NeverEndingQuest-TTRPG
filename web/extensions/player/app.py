@@ -41,6 +41,7 @@ from .auth import (
 )
 from .constants import PLAYER_NAMESPACE, PLAYER_PORT
 from .gateway import PlayerGateway, UnavailablePlayerGateway
+from .active_pc import PlayerActivePCSelection, select_player_active_pc
 from .media import MediaRegistry
 from .limiters import PlayerLimiters
 from .limits import (
@@ -57,6 +58,9 @@ from .contracts import (
     EnvelopeValidationError,
     PROTOCOL_VERSION,
     canonical_json_bytes,
+    make_error_envelope,
+    validate_active_pc_selection_envelope,
+    validate_snapshot_request_envelope,
 )
 from .sync import PlayerSyncCoordinator
 
@@ -335,9 +339,10 @@ class PlayerHTTPRouter:
                 return
             if reconnect_request is None:
                 response = await asyncio.to_thread(
-                    self._sync.capture_snapshot,
+                    _capture_player_snapshot,
+                    self._sync,
+                    self._gateway,
                     session_identity.session_epoch,
-                    self._gateway.read_snapshot,
                 )
             else:
                 response = await asyncio.to_thread(
@@ -497,6 +502,8 @@ class PlayerApplication:
             engineio_logger=False,
         )
         self._socket_event_handlers: dict[str, Callable[..., Any]] = {
+            "player.snapshot.request": self._handle_player_snapshot_request,
+            "player.active_pc.select": self._handle_player_active_pc_select,
             "player.input.submit": self._handle_player_input,
         }
         if frozenset(self._socket_event_handlers) != PLAYER_SOCKET_EVENT_ALLOWLIST:
@@ -617,6 +624,163 @@ class PlayerApplication:
         del reason
         self.security.unregister_socket(sid)
 
+    async def _handle_player_snapshot_request(self, sid: str, payload: object) -> None:
+        """Return a canonical snapshot only to this authenticated socket."""
+        identity = self._authorized_socket_identity(sid)
+        if identity is None:
+            return
+        if not self.security.limiters.event_payload_allowed(payload):
+            await self._emit_player_error(sid, "invalid_command")
+            return
+        try:
+            request = validate_snapshot_request_envelope(payload)
+        except EnvelopeValidationError:
+            await self._emit_player_error(sid, "invalid_command")
+            return
+        if not self.security.limiters.allow_snapshot_read(identity.session_id):
+            await self._emit_player_error(sid, "rate_limited")
+            return
+        if request.instance_id != identity.instance_id:
+            await self._emit_player_error(sid, "server_instance_changed")
+        elif request.session_epoch != identity.session_epoch:
+            await self._emit_player_error(sid, "session_epoch_changed")
+        await self._emit_player_snapshot(sid, identity, read_admitted=True)
+
+    async def _handle_player_active_pc_select(self, sid: str, payload: object) -> None:
+        """Commit one revision-checked selection and refresh only its requester."""
+        identity = self._authorized_socket_identity(sid)
+        if identity is None:
+            return
+        if not self.security.limiters.event_payload_allowed(payload):
+            await self._emit_player_error(sid, "invalid_command")
+            await self._emit_player_snapshot(sid, identity)
+            return
+        if not self.security.limiters.allow_snapshot_read(identity.session_id):
+            await self._emit_player_error(sid, "rate_limited")
+            return
+        try:
+            request = validate_active_pc_selection_envelope(payload)
+        except EnvelopeValidationError:
+            await self._emit_player_error(sid, "invalid_command")
+            await self._emit_player_snapshot(sid, identity, read_admitted=True)
+            return
+
+        if request.instance_id != identity.instance_id:
+            await self._emit_player_error(sid, "server_instance_changed")
+            await self._emit_player_snapshot(sid, identity, read_admitted=True)
+            return
+        if request.session_epoch != identity.session_epoch:
+            await self._emit_player_error(sid, "session_epoch_changed")
+            await self._emit_player_snapshot(sid, identity, read_admitted=True)
+            return
+
+        selection = await asyncio.to_thread(
+            select_player_active_pc,
+            request.character_name,
+            request.expected_revision,
+        )
+        if not self.security.authorize_socket_event(sid):
+            return
+        if selection.status == "selected":
+            if selection.changed:
+                self._active_pc_selection_committed(selection)
+        else:
+            error_code = (
+                "stale_context"
+                if selection.status == "stale"
+                else "not_party_member"
+                if selection.reason == "not_party_member"
+                else "selection_rejected"
+            )
+            await self._emit_player_error(sid, error_code)
+        await self._emit_player_snapshot(sid, identity, read_admitted=True)
+
+    def _active_pc_selection_committed(
+        self,
+        selection: PlayerActivePCSelection,
+    ) -> None:
+        """Single post-change seam for task 3.3 ordered player publication."""
+        # TABLETOP MODE: Task 3.3 will connect this committed selection to the
+        # ordered PlayerSyncCoordinator publication path. Task 3.1 deliberately
+        # sends no selection event to other player sockets.
+        del selection
+
+    def _authorized_socket_identity(
+        self,
+        sid: str,
+    ) -> PlayerSessionIdentity | None:
+        if not self.security.authorize_socket_event(sid):
+            return None
+        return self.security.session_context_for_socket(sid)
+
+    async def _emit_player_error(self, sid: str, code: str) -> None:
+        if not self.security.authorize_socket_event(sid):
+            return
+        payload = make_error_envelope(code)
+        if not self.security.limiters.event_payload_allowed(payload):
+            return
+        await self.socket_server.emit(
+            "player.error",
+            payload,
+            namespace=PLAYER_NAMESPACE,
+            to=sid,
+        )
+
+    async def _emit_player_snapshot(
+        self,
+        sid: str,
+        identity: PlayerSessionIdentity,
+        *,
+        read_admitted: bool = False,
+    ) -> None:
+        if not self.security.authorize_socket_event(sid):
+            return
+        current_identity = self.security.session_context_for_socket(sid)
+        if current_identity != identity:
+            return
+        if not read_admitted and not self.security.limiters.allow_snapshot_read(
+            identity.session_id
+        ):
+            await self._emit_player_error(sid, "rate_limited")
+            return
+        try:
+            self.sync.reset_for_instance(identity.instance_id)
+            snapshot = await asyncio.to_thread(
+                _capture_player_snapshot,
+                self.sync,
+                self.gateway,
+                identity.session_epoch,
+            )
+            encoded = canonical_json_bytes(snapshot, MAX_SNAPSHOT_BYTES)
+            if not self.security.limiters.snapshot_allowed(encoded):
+                await self._emit_player_error(sid, "snapshot_too_large")
+                return
+        except EnvelopeTooLargeError:
+            await self._emit_player_error(sid, "snapshot_too_large")
+            return
+        except (
+            AttributeError,
+            EnvelopeValidationError,
+            OSError,
+            ProjectionError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            RecursionError,
+        ):
+            await self._emit_player_error(sid, "snapshot_unavailable")
+            return
+        if not self.security.authorize_socket_event(sid):
+            return
+        if self.security.session_context_for_socket(sid) != identity:
+            return
+        await self.socket_server.emit(
+            "player.snapshot",
+            snapshot,
+            namespace=PLAYER_NAMESPACE,
+            to=sid,
+        )
+
     async def _handle_player_input(self, sid: str, payload: object) -> None:
         """Validate, deduplicate, and acknowledge one typed player command."""
         if not self.security.authorize_socket_event(sid):
@@ -733,6 +897,15 @@ def create_app(
         media_registry=media_registry,
         build_root=build_root,
     )
+
+
+def _capture_player_snapshot(
+    sync: PlayerSyncCoordinator,
+    gateway: PlayerGateway,
+    session_epoch: str,
+) -> dict[str, object]:
+    """Use the same canonical snapshot path for HTTP and Socket.IO reads."""
+    return sync.capture_snapshot(session_epoch, gateway.read_snapshot)
 
 
 async def _read_bounded_body(
