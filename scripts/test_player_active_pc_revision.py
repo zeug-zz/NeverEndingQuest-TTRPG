@@ -39,7 +39,7 @@ from web.extensions.player.runtime_gateway import PlayerRuntimeGateway
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = Path("tmp") / "n1"
+TMP_ROOT = Path("tmp") / "n2"
 SCHEMA_PATH = PROJECT_ROOT / "schemas" / "party_schema.json"
 _MISSING = object()
 
@@ -826,6 +826,38 @@ class PlayerActivePCRevisionTests(unittest.TestCase):
         current_player = select_player_active_pc("Kira", expected_revision=1)
         self.assertEqual(current_player.status, "selected")
         self.assertEqual((current_player.active_character, current_player.revision), ("Kira", 2))
+
+    def test_only_committed_changed_selection_publishes_notice(self) -> None:
+        members = ["Acheron", "Merisiel", "Kira", "Vitreol"]
+        self._write_party(members, "Acheron", 5)
+        notices: list[tuple[object, object]] = []
+
+        def record_notice(kind: object, revision: object = None) -> bool:
+            notices.append((kind, revision))
+            return True
+
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
+        ):
+            selected = select_player_active_pc("Merisiel", expected_revision=5)
+            stale = select_player_active_pc("Kira", expected_revision=5)
+            rejected = select_player_active_pc("Outsider", expected_revision=6)
+
+        self.assertEqual(
+            (selected.status, selected.active_character, selected.revision),
+            ("selected", "Merisiel", 6),
+        )
+        self.assertEqual(
+            (stale.status, stale.active_character, stale.revision),
+            ("stale", "Merisiel", 6),
+        )
+        self.assertEqual(
+            (rejected.status, rejected.active_character, rejected.revision),
+            ("rejected", "Merisiel", 6),
+        )
+        self.assertEqual(pc_manager.read_active_pc_state(), ("Merisiel", 6))
+        self.assertEqual(notices, [("active_pc", 6)])
 
     def test_stale_revision_is_rejected_without_mutation(self) -> None:
         self._write_party(["Acheron", "Merisiel"], "Acheron", 3)

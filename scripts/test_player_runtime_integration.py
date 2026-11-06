@@ -27,7 +27,11 @@ import requests
 
 from utils import file_operations, pc_manager
 from web.extensions.player.contracts import PROTOCOL_VERSION
-from web.extensions.player.gateway import PlayerInputCommand, PlayerSnapshot
+from web.extensions.player.gateway import (
+    PlayerInputAdmission,
+    PlayerInputCommand,
+    PlayerSnapshot,
+)
 from web.extensions.player.limiters import PlayerLimiters
 from web.extensions.player.limits import MAX_PENDING_RUNTIME_INPUTS
 from web.extensions.player.runtime_gateway import PlayerRuntimeGateway
@@ -268,6 +272,52 @@ class PlayerRuntimeIntegrationTests(unittest.TestCase):
                 self.assertEqual(self.runtime_queue.qsize(), 0)
 
         self.assertEqual(self.echoes, [])
+
+    def test_active_pc_switch_before_admission_returns_stale_without_retargeting(self) -> None:
+        members = PARTY_SIZES["four_pc"]
+        self._write_party(members, "Acheron", 7)
+        underlying_gateway = self.gateway
+        admission_started = threading.Event()
+        release_admission = threading.Event()
+
+        class _AdmissionBarrierGateway:
+            def read_snapshot(self) -> PlayerSnapshot:
+                return underlying_gateway.read_snapshot()
+
+            def admit_input(self, command: PlayerInputCommand) -> PlayerInputAdmission:
+                admission_started.set()
+                if not release_admission.wait(timeout=2):
+                    raise TimeoutError("runtime admission barrier was not released")
+                return underlying_gateway.admit_input(command)
+
+        self.gateway = _AdmissionBarrierGateway()
+        receipts: list[dict[str, object]] = []
+        worker = threading.Thread(
+            target=lambda: receipts.append(
+                self._submit(
+                    self._command(
+                        request_id="active-pc-race",
+                        character_name="Acheron",
+                        revision=7,
+                    )
+                )
+            )
+        )
+        worker.start()
+        self.assertTrue(admission_started.wait(timeout=2))
+        selection = pc_manager.set_active_pc_checked(
+            "Merisiel",
+            expected_revision=7,
+        )
+        release_admission.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual((selection.active_character, selection.revision), ("Merisiel", 8))
+        self.assertEqual(receipts[0]["status"], "stale")
+        self.assertEqual(self.runtime_queue.qsize(), 0)
+        self.assertEqual(self.echoes, [])
+        self.assertEqual(self.event_order, [])
 
     def test_malformed_stored_revision_rejects_without_queueing(self) -> None:
         for index, revision in enumerate(("bad", True, -1)):

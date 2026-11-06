@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 import secrets
 import threading
 import tempfile
@@ -56,6 +57,7 @@ from web.extensions.player.limits import (
     MAX_SOCKETIO_EVENT_BYTES,
     MAX_SNAPSHOT_BYTES,
 )
+from web.extensions.player.runtime_gateway import PlayerRuntimeGateway
 from web.extensions.player.sync import PlayerSyncCoordinator
 from web.extensions.player.projections import PlayerProjectionBuilder
 
@@ -129,6 +131,29 @@ class _CanonicalSelectionGateway:
     def admit_input(self, command: object) -> PlayerInputAdmission:
         del command
         raise AssertionError("active-PC selection must not enter the input gateway")
+
+
+class _AdmissionBarrierGateway:
+    """Pause input immediately before canonical admission for race tests."""
+
+    def __init__(self, gateway: object) -> None:
+        self.gateway = gateway
+        self.admission_started = threading.Event()
+        self.release_admission = threading.Event()
+        self.admission_error: Exception | None = None
+
+    def read_snapshot(self) -> PlayerSnapshot:
+        return self.gateway.read_snapshot()
+
+    def admit_input(self, command: object) -> PlayerInputAdmission:
+        self.admission_started.set()
+        if not self.release_admission.wait(timeout=2):
+            raise TimeoutError("active-PC race admission barrier was not released")
+        try:
+            return self.gateway.admit_input(command)
+        except Exception as exc:
+            self.admission_error = exc
+            raise
 
 
 def _party_fixture(members: list[str], active_character: str) -> dict[str, object]:
@@ -920,7 +945,7 @@ class GameplaySyncApplicationTests(unittest.TestCase):
         self.assertEqual(security.active_socket_count, 1)
         self.assertTrue(security.authorize_socket_event("valid-sid"))
 
-    def test_player_input_event_emits_deduplicated_typed_receipt(self) -> None:
+    def test_player_input_retry_after_socket_reconnect_is_idempotent(self) -> None:
         security = PlayerSecurity(lambda: None)
         grant = security.create_session()
         self.assertIsNotNone(grant)
@@ -928,6 +953,7 @@ class GameplaySyncApplicationTests(unittest.TestCase):
         gateway = _Gateway()
         app = create_app(gateway=gateway, security=security)
         sid = "command-sid"
+        reconnected_sid = "command-reconnected-sid"
         self.assertTrue(
             security.register_socket(
                 sid,
@@ -948,17 +974,119 @@ class GameplaySyncApplicationTests(unittest.TestCase):
             grant.session_epoch,
         )
         asyncio.run(handler(sid, command))
-        asyncio.run(handler(sid, command))
         self.assertEqual(len(gateway.admissions), 1)
-        self.assertEqual(len(emitted), 2)
         self.assertEqual(emitted[0][0][0], "player.input.receipt")
-        self.assertEqual(emitted[1][0][1], emitted[0][0][1])
         self.assertEqual(emitted[0][0][1]["status"], "accepted")
 
+        disconnect = app.socket_server.handlers[PLAYER_NAMESPACE]["disconnect"]
+        asyncio.run(disconnect(sid))
+        self.assertFalse(security.authorize_socket_event(sid))
+        self.assertTrue(
+            security.register_socket(
+                reconnected_sid,
+                grant.cookie_value,
+                f"{PLAYER_HOST}:{PLAYER_PORT}",
+                f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+            )
+        )
+
+        snapshot_status, snapshot_body = _dispatch_http(
+            app,
+            "/api/player/snapshot",
+            cookie=grant.cookie_value,
+        )
+        self.assertEqual(snapshot_status, 200)
+        snapshot = json.loads(snapshot_body)
+        self.assertEqual(snapshot["event_cursor"], 0)
+        self.assertEqual(len(gateway.admissions), 1)
+
+        asyncio.run(handler(reconnected_sid, command))
+        self.assertEqual(len(gateway.admissions), 1)
+        self.assertEqual(emitted[-1][0][0], "player.input.receipt")
+        self.assertEqual(emitted[-1][0][1], emitted[0][0][1])
+
         changed = dict(command, text="Move east")
-        asyncio.run(handler(sid, changed))
+        asyncio.run(handler(reconnected_sid, changed))
         self.assertEqual(len(gateway.admissions), 1)
         self.assertEqual(emitted[-1][0][1]["code"], "request_id_conflict")
+
+    def test_old_instance_command_is_uncertain_and_never_replayed(self) -> None:
+        security = PlayerSecurity(lambda: None)
+        old_grant = security.create_session()
+        self.assertIsNotNone(old_grant)
+        assert old_grant is not None
+        gateway = _Gateway()
+        app = create_app(gateway=gateway, security=security)
+        old_sid = "old-instance-sid"
+        self.assertTrue(
+            security.register_socket(
+                old_sid,
+                old_grant.cookie_value,
+                f"{PLAYER_HOST}:{PLAYER_PORT}",
+                f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+            )
+        )
+        emitted: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def capture_emit(*args: object, **kwargs: object) -> None:
+            emitted.append((args, kwargs))
+
+        app.socket_server.emit = capture_emit
+        handler = app.socket_server.handlers[PLAYER_NAMESPACE]["player.input.submit"]
+        old_command = _command(
+            security.server_instance_id,
+            old_grant.session_epoch,
+            request_id="submitted-before-instance-change",
+        )
+        asyncio.run(handler(old_sid, old_command))
+        self.assertEqual(len(gateway.admissions), 1)
+        self.assertEqual(emitted[-1][0][1]["status"], "accepted")
+        app.sync.publish_event(1, "projection.updated", _projection())
+
+        security.start_listener()
+        new_instance_id = security.server_instance_id
+        self.assertNotEqual(new_instance_id, old_command["instance_id"])
+        new_grant = security.create_session()
+        self.assertIsNotNone(new_grant)
+        assert new_grant is not None
+        new_sid = "new-instance-sid"
+        self.assertTrue(
+            security.register_socket(
+                new_sid,
+                new_grant.cookie_value,
+                f"{PLAYER_HOST}:{PLAYER_PORT}",
+                f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+            )
+        )
+        self.assertFalse(security.authorize_socket_event(old_sid))
+        self.assertEqual(app.sync.event_cursor, 1)
+        emitted.clear()
+
+        asyncio.run(handler(new_sid, old_command))
+        self.assertEqual(emitted[-1][0][0], "player.input.receipt")
+        uncertain = emitted[-1][0][1]
+        self.assertEqual(uncertain["status"], "uncertain")
+        self.assertEqual(uncertain["code"], "server_instance_changed")
+        self.assertEqual(app.sync.instance_id, new_instance_id)
+        self.assertEqual(app.sync.event_cursor, 0)
+        self.assertEqual(len(gateway.admissions), 1)
+
+        snapshot_handler = app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.snapshot.request"
+        ]
+        asyncio.run(
+            snapshot_handler(
+                new_sid,
+                {
+                    "schema_version": PROTOCOL_VERSION,
+                    "instance_id": new_instance_id,
+                    "session_epoch": new_grant.session_epoch,
+                },
+            )
+        )
+        self.assertEqual(emitted[-1][0][0], "player.snapshot")
+        self.assertEqual(emitted[-1][0][1]["event_cursor"], 0)
+        self.assertEqual(len(gateway.admissions), 1)
 
     def test_changed_session_epoch_and_invalid_command_never_reach_gateway(self) -> None:
         security = PlayerSecurity(lambda: None)
@@ -1133,12 +1261,22 @@ class PlayerSocketCommandHandlerTests(unittest.TestCase):
         self.assertTrue(self._register("selection-other"))
         hook = mock.Mock()
         self.app._active_pc_selection_committed = hook
+        notices: list[tuple[object, object]] = []
+
+        def record_notice(kind: object, revision: object = None) -> bool:
+            notices.append((kind, revision))
+            return True
+
         handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
             "player.active_pc.select"
         ]
         selection = self._selection_payload("Merisiel", 0)
 
-        asyncio.run(handler("selection-requester", selection))
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
+        ):
+            asyncio.run(handler("selection-requester", selection))
 
         self.assertEqual(pc_manager.read_active_pc_state(), ("Merisiel", 1))
         self.assertEqual(len(self.emitted), 1)
@@ -1155,9 +1293,15 @@ class PlayerSocketCommandHandlerTests(unittest.TestCase):
             1,
         )
         hook.assert_called_once()
+        self.assertEqual(notices, [("active_pc", 1)])
+        self.assertNotIn("player.event", [item[0][0] for item in self.emitted])
 
         self.emitted.clear()
-        asyncio.run(handler("selection-requester", selection))
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
+        ):
+            asyncio.run(handler("selection-requester", selection))
 
         self.assertEqual(pc_manager.read_active_pc_state(), ("Merisiel", 1))
         self.assertEqual([item[0][0] for item in self.emitted], ["player.error", "player.snapshot"])
@@ -1169,6 +1313,7 @@ class PlayerSocketCommandHandlerTests(unittest.TestCase):
         )
         self.assertTrue(all(item[1].get("to") == "selection-requester" for item in self.emitted))
         hook.assert_called_once()
+        self.assertEqual(notices, [("active_pc", 1)])
 
     def test_stale_nonmember_and_malformed_selections_error_then_refresh(self) -> None:
         self.assertTrue(self._register("selection-requester"))
@@ -1191,59 +1336,161 @@ class PlayerSocketCommandHandlerTests(unittest.TestCase):
                 "invalid_command",
             ),
         )
-        for payload, expected_code in rejected_requests:
-            with self.subTest(expected_code=expected_code):
-                self.emitted.clear()
-                asyncio.run(handler("selection-requester", payload))
-                self.assertEqual(
-                    [item[0][0] for item in self.emitted],
-                    ["player.error", "player.snapshot"],
-                )
-                self.assertEqual(self.emitted[0][0][1]["code"], expected_code)
-                self.assertEqual(
-                    self.emitted[1][0][1]["projection"]["party"]["active_character"],
-                    PC_NAMES[0],
-                )
-                self.assertEqual(
-                    self.emitted[1][0][1]["projection"]["party"][
-                        "active_character_revision"
-                    ],
-                    0,
-                )
-                self.assertTrue(
-                    all(item[1].get("to") == "selection-requester" for item in self.emitted)
-                )
+        notices: list[tuple[object, object]] = []
+
+        def record_notice(kind: object, revision: object = None) -> bool:
+            notices.append((kind, revision))
+            return True
+
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
+        ):
+            for payload, expected_code in rejected_requests:
+                with self.subTest(expected_code=expected_code):
+                    self.emitted.clear()
+                    asyncio.run(handler("selection-requester", payload))
+                    self.assertEqual(
+                        [item[0][0] for item in self.emitted],
+                        ["player.error", "player.snapshot"],
+                    )
+                    self.assertEqual(self.emitted[0][0][1]["code"], expected_code)
+                    self.assertEqual(
+                        self.emitted[1][0][1]["projection"]["party"]["active_character"],
+                        PC_NAMES[0],
+                    )
+                    self.assertEqual(
+                        self.emitted[1][0][1]["projection"]["party"][
+                            "active_character_revision"
+                        ],
+                        0,
+                    )
+                    self.assertTrue(
+                        all(item[1].get("to") == "selection-requester" for item in self.emitted)
+                    )
+                    self.assertNotIn("player.event", [item[0][0] for item in self.emitted])
         self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[0], 0))
+        self.assertEqual(notices, [])
 
     def test_active_pc_selection_supports_one_and_four_pc_parties(self) -> None:
         self.assertTrue(self._register("selection-requester"))
         committed = mock.Mock()
         self.app._active_pc_selection_committed = committed
+        notices: list[tuple[object, object]] = []
+
+        def record_notice(kind: object, revision: object = None) -> bool:
+            notices.append((kind, revision))
+            return True
+
         handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
             "player.active_pc.select"
         ]
-        for members, selected_name, expected_revision in (
-            ([PC_NAMES[0]], PC_NAMES[0], 0),
-            (list(PC_NAMES), PC_NAMES[1], 1),
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
         ):
-            with self.subTest(party_size=len(members)):
-                self._write_party(members)
-                self.emitted.clear()
-                payload = self._selection_payload(selected_name, 0)
-                asyncio.run(handler("selection-requester", payload))
-                self.assertEqual(len(self.emitted), 1)
-                args, kwargs = self.emitted[0]
-                self.assertEqual(args[0], "player.snapshot")
-                self.assertEqual(kwargs.get("to"), "selection-requester")
-                party_projection = args[1]["projection"]["party"]
-                self.assertEqual(len(party_projection["members"]), len(members))
-                self.assertEqual(party_projection["active_character"], selected_name)
-                self.assertEqual(
-                    party_projection["active_character_revision"],
-                    expected_revision,
-                )
+            for members, selected_name, expected_revision in (
+                ([PC_NAMES[0]], PC_NAMES[0], 0),
+                (list(PC_NAMES), PC_NAMES[1], 1),
+            ):
+                with self.subTest(party_size=len(members)):
+                    self._write_party(members)
+                    self.emitted.clear()
+                    payload = self._selection_payload(selected_name, 0)
+                    asyncio.run(handler("selection-requester", payload))
+                    self.assertEqual(len(self.emitted), 1)
+                    args, kwargs = self.emitted[0]
+                    self.assertEqual(args[0], "player.snapshot")
+                    self.assertEqual(kwargs.get("to"), "selection-requester")
+                    party_projection = args[1]["projection"]["party"]
+                    self.assertEqual(len(party_projection["members"]), len(members))
+                    self.assertEqual(party_projection["active_character"], selected_name)
+                    self.assertEqual(
+                        party_projection["active_character_revision"],
+                        expected_revision,
+                    )
+                    self.assertNotIn("player.event", [item[0][0] for item in self.emitted])
         self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[1], 1))
         committed.assert_called_once()
+        self.assertEqual(notices, [("active_pc", 1)])
+
+    def test_active_pc_switch_race_keeps_submitted_input_bound_to_old_context(self) -> None:
+        self.assertTrue(self._register("race-sid"))
+        members = list(PC_NAMES)
+        self._write_party(members)
+        runtime_queue: queue.Queue[str] = queue.Queue()
+        echoes: list[dict[str, object]] = []
+
+        def read_party_state() -> dict[str, object]:
+            party_tracker = pc_manager.get_party_tracker()
+            if not isinstance(party_tracker, dict):
+                raise ValueError("party tracker is unavailable")
+            state = dict(party_tracker)
+            active_character, revision = pc_manager.read_active_pc_state()
+            state["active_character"] = active_character
+            state["active_character_revision"] = revision
+            return state
+
+        runtime_gateway = PlayerRuntimeGateway(
+            runtime_queue,
+            read_party_state=read_party_state,
+            canonical_state_lock=pc_manager._party_tracker_lock,
+            busy_probe=lambda: False,
+            echo_input=lambda message: echoes.append(dict(message)),
+            snapshot_reader=self.gateway.read_snapshot,
+        )
+        barrier_gateway = _AdmissionBarrierGateway(runtime_gateway)
+        self.app.gateway = barrier_gateway
+        input_handler = self.app.socket_server.handlers[PLAYER_NAMESPACE][
+            "player.input.submit"
+        ]
+        command = _command(
+            self.security.server_instance_id,
+            self.grant.session_epoch,
+            request_id="pc-switch-race",
+            character_name=PC_NAMES[0],
+        )
+        notices: list[tuple[object, object]] = []
+
+        def record_notice(kind: object, revision: object = None) -> bool:
+            notices.append((kind, revision))
+            return True
+
+        async def race_input_with_selection() -> None:
+            input_task = asyncio.create_task(input_handler("race-sid", command))
+            self.assertTrue(
+                await asyncio.to_thread(barrier_gateway.admission_started.wait, 2)
+            )
+            try:
+                selection_result.append(
+                    pc_manager.set_active_pc_checked(PC_NAMES[1], expected_revision=0)
+                )
+            finally:
+                barrier_gateway.release_admission.set()
+            await input_task
+
+        selection_result: list[object] = []
+        with mock.patch(
+            "utils.player_host_publication.submit_player_host_change",
+            side_effect=record_notice,
+        ):
+            asyncio.run(race_input_with_selection())
+
+        self.assertEqual(pc_manager.read_active_pc_state(), (PC_NAMES[1], 1))
+        self.assertIsNone(barrier_gateway.admission_error)
+        self.assertEqual(len(selection_result), 1)
+        self.assertEqual(runtime_queue.qsize(), 0)
+        self.assertEqual(echoes, [])
+        self.assertEqual(notices, [("active_pc", 1)])
+        emitted_names = [item[0][0] for item in self.emitted]
+        self.assertEqual(emitted_names, ["player.input.receipt"])
+        stale_receipt = next(
+            item[0][1]
+            for item in self.emitted
+            if item[0][0] == "player.input.receipt"
+        )
+        self.assertEqual(stale_receipt["status"], "stale")
+        self.assertNotIn("player.event", emitted_names)
 
 
 if __name__ == "__main__":
