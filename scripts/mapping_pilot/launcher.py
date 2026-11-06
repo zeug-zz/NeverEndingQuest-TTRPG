@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
@@ -17,6 +18,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
+
+from scripts.mapping_pilot.fixtures import (
+    FIXTURE_FILES,
+    LOCATION_ID_MAP,
+    _build_module_payloads,
+    load_verified_fixtures,
+)
 
 
 SANDBOX_PORT = 8360
@@ -98,6 +106,8 @@ def validate_sandbox(
     arm: str,
     fixture_id: str,
     party_size: int,
+    resume: bool = False,
+    resume_checkpoint_sha256: Optional[str] = None,
     project_root: Optional[str | Path] = None,
 ) -> ValidatedSandbox:
     """Fail closed on path, arm, fixture, party, port, or seed metadata drift."""
@@ -112,6 +122,16 @@ def validate_sandbox(
         or party_size not in (1, 4)
     ):
         raise ValueError("mapping-pilot party size must be 1 or 4")
+    if type(resume) is not bool:
+        raise ValueError("mapping-pilot resume mode is invalid")
+    if resume:
+        if (
+            not isinstance(resume_checkpoint_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", resume_checkpoint_sha256) is None
+        ):
+            raise ValueError("mapping-pilot resume checkpoint is missing or invalid")
+    elif resume_checkpoint_sha256 is not None:
+        raise ValueError("mapping-pilot checkpoint requires explicit resume mode")
 
     config_path = _safe_file(root, "config.py")
     try:
@@ -243,7 +263,10 @@ def validate_sandbox(
         or tracker.get("partyMembers") != members
         or tracker.get("active_character") not in members
         or not isinstance(world, Mapping)
-        or world.get("currentLocationId") != mapping.get("runtime_location_id")
+    ):
+        raise ValueError("sandbox party tracker conflicts with seed metadata")
+    if not resume and world.get("currentLocationId") != mapping.get(
+        "runtime_location_id"
     ):
         raise ValueError("sandbox party tracker conflicts with seed metadata")
     if fixture_id == _COMBAT_FIXTURE_ID:
@@ -258,6 +281,16 @@ def validate_sandbox(
         raise ValueError("non-combat fixture contains combat seed metadata")
 
     _validate_canonical_location(root, mapping)
+    if resume:
+        _validate_resume_checkpoint(
+            root,
+            fixture_id=fixture_id,
+            mapping=mapping,
+            tracker=tracker,
+            world=world,
+            runtime_to_source=runtime_to_source,
+            resume_checkpoint_sha256=resume_checkpoint_sha256,
+        )
     return ValidatedSandbox(root, metadata, fixture_payloads, runtime_to_source)
 
 
@@ -266,6 +299,8 @@ def launch(
     arm: str,
     fixture_id: str,
     party_size: int,
+    resume: bool = False,
+    resume_checkpoint_sha256: Optional[str] = None,
     runtime_root: Optional[str | Path] = None,
     known_ids: Optional[set[str]] = None,
     perceived_ids: Optional[set[str]] = None,
@@ -291,6 +326,8 @@ def launch(
         arm=arm,
         fixture_id=fixture_id,
         party_size=party_size,
+        resume=resume,
+        resume_checkpoint_sha256=resume_checkpoint_sha256,
     )
     if (known_ids is None) != (perceived_ids is None):
         raise ValueError("known and perceived ID overrides must be supplied together")
@@ -427,6 +464,213 @@ def _validate_canonical_location(root: Path, mapping: Mapping[str, Any]) -> None
         raise ValueError("sandbox canonical location does not match seed metadata")
 
 
+def _validate_resume_checkpoint(
+    root: Path,
+    *,
+    fixture_id: str,
+    mapping: Mapping[str, Any],
+    tracker: Mapping[str, Any],
+    world: Mapping[str, Any],
+    runtime_to_source: Mapping[str, str],
+    resume_checkpoint_sha256: Optional[str],
+) -> None:
+    """Validate an explicit same-sandbox checkpoint and its frozen location edge."""
+    if (
+        not isinstance(resume_checkpoint_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", resume_checkpoint_sha256) is None
+    ):
+        raise ValueError("mapping-pilot resume checkpoint is missing or invalid")
+    observed_sha256 = _canonical_state_sha256(root)
+    if observed_sha256 != resume_checkpoint_sha256:
+        raise ValueError("mapping-pilot resume checkpoint hash does not match sandbox state")
+
+    current_runtime_id = world.get("currentLocationId")
+    seed_runtime_id = mapping.get("runtime_location_id")
+    if (
+        not isinstance(current_runtime_id, str)
+        or not current_runtime_id
+        or current_runtime_id == seed_runtime_id
+    ):
+        raise ValueError("mapping-pilot resume location is not a moved checkpoint")
+    seed_source_id = mapping.get("source_location_id")
+    current_source_id = runtime_to_source.get(current_runtime_id)
+    if (
+        not isinstance(seed_source_id, str)
+        or not isinstance(current_source_id, str)
+        or LOCATION_ID_MAP.get(seed_source_id) != seed_runtime_id
+        or LOCATION_ID_MAP.get(current_source_id) != current_runtime_id
+    ):
+        raise ValueError("mapping-pilot resume location identity is unknown")
+
+    try:
+        frozen_fixtures, frozen_hashes = load_verified_fixtures()
+    except Exception as exc:
+        raise ValueError("frozen mapping-pilot location identity is unavailable") from exc
+    selected_fixture = frozen_fixtures.get(fixture_id)
+    if not isinstance(selected_fixture, Mapping):
+        raise ValueError("frozen mapping-pilot fixture identity is unavailable")
+    if (
+        selected_fixture.get("location_ids") != [seed_source_id]
+        or FIXTURE_FILES.get(fixture_id) not in frozen_hashes
+    ):
+        raise ValueError("mapping-pilot seed location is not in its frozen fixture")
+    known_source_ids = {
+        source_id
+        for fixture in frozen_fixtures.values()
+        for source_id in fixture.get("location_ids", [])
+        if isinstance(source_id, str)
+    }
+    if current_source_id not in known_source_ids:
+        raise ValueError("mapping-pilot resume source location is not frozen")
+
+    seed_location = _frozen_fixture_location(selected_fixture, seed_source_id)
+    known_open_exits = [
+        exit_row
+        for exit_row in seed_location.get("exits", [])
+        if isinstance(exit_row, Mapping)
+        and exit_row.get("state") == "open"
+        and exit_row.get("destination_knowledge") == "known"
+        and exit_row.get("known_destination_location_id") == current_source_id
+    ]
+    if seed_source_id == current_source_id or len(known_open_exits) != 1:
+        raise ValueError("mapping-pilot resume location is not a frozen open exit")
+
+    frozen_module = _build_module_payloads(frozen_fixtures)
+    expected_locations: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    for relative_path, area in frozen_module.items():
+        if not relative_path.startswith("areas/") or relative_path.endswith("_BU.json"):
+            continue
+        if not isinstance(area, Mapping) or not isinstance(area.get("locations"), list):
+            raise ValueError("frozen mapping-pilot area projection is invalid")
+        for location in area["locations"]:
+            if isinstance(location, Mapping) and isinstance(location.get("locationId"), str):
+                location_id = location["locationId"]
+                if location_id in expected_locations:
+                    raise ValueError("frozen mapping-pilot runtime location is duplicated")
+                expected_locations[location_id] = (area, location)
+
+    seed_expected = expected_locations.get(seed_runtime_id)
+    current_expected = expected_locations.get(current_runtime_id)
+    if seed_expected is None or current_expected is None:
+        raise ValueError("mapping-pilot resume location is absent from frozen areas")
+    seed_area, seed_expected_location = seed_expected
+    current_area, current_expected_location = current_expected
+    seed_actual_area, seed_actual_location = _resolve_canonical_location(
+        root, seed_runtime_id
+    )
+    current_actual_area, current_actual_location = _resolve_canonical_location(
+        root, current_runtime_id
+    )
+    if (
+        seed_actual_area.get("areaId") != seed_area.get("areaId")
+        or current_actual_area.get("areaId") != current_area.get("areaId")
+        or world.get("currentAreaId") != current_actual_area.get("areaId")
+    ):
+        raise ValueError("sandbox resume location area does not match canonical state")
+
+    for actual, expected in (
+        (seed_actual_location, seed_expected_location),
+        (current_actual_location, current_expected_location),
+    ):
+        for field in ("connectivity", "areaConnectivity", "areaConnectivityId"):
+            if actual.get(field) != expected.get(field):
+                raise ValueError("sandbox resume location connectivity is not frozen")
+            values = actual.get(field)
+            if (
+                not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or len(values) != len(set(values))
+                or any(value == actual.get("locationId") for value in values)
+            ):
+                raise ValueError("sandbox resume location connectivity is invalid")
+
+    same_area = seed_area.get("areaId") == current_area.get("areaId")
+    edge_field = "connectivity" if same_area else "areaConnectivityId"
+    if (
+        current_runtime_id not in seed_expected_location.get(edge_field, [])
+        or seed_runtime_id not in current_expected_location.get(edge_field, [])
+    ):
+        raise ValueError("mapping-pilot resume location has no reciprocal frozen connection")
+
+
+def _frozen_fixture_location(
+    fixture: Mapping[str, Any], source_location_id: str
+) -> Mapping[str, Any]:
+    locations = fixture.get("locations")
+    if not isinstance(locations, list):
+        raise ValueError("frozen mapping-pilot fixture locations are invalid")
+    matches = [
+        location
+        for location in locations
+        if isinstance(location, Mapping)
+        and location.get("location_id") == source_location_id
+    ]
+    if len(matches) != 1:
+        raise ValueError("frozen mapping-pilot source location is not unique")
+    return matches[0]
+
+
+def _resolve_canonical_location(
+    root: Path, runtime_location_id: str
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    module_dir = _safe_directory(root, "modules/" + MAPPING_PILOT_MODULE)
+    areas_dir = _safe_directory(module_dir, "areas")
+    matches: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+    for area_path in sorted(areas_dir.glob("*.json")):
+        if area_path.name.endswith("_BU.json"):
+            continue
+        area = _read_json_path(_safe_file(root, area_path.relative_to(root).as_posix()))
+        if not isinstance(area, Mapping):
+            continue
+        locations = area.get("locations")
+        if not isinstance(locations, list):
+            continue
+        for location in locations:
+            if (
+                isinstance(location, Mapping)
+                and location.get("locationId") == runtime_location_id
+            ):
+                matches.append((area, location))
+    if len(matches) != 1:
+        raise ValueError("sandbox runtime location is missing or duplicated in canonical areas")
+    return matches[0]
+
+
+def _canonical_state_sha256(root: Path) -> str:
+    """Match row_runner.hash_canonical_sandbox_state for a checkpoint check."""
+    files: dict[str, str] = {}
+    candidates: list[Path] = [_safe_file(root, "party_tracker.json")]
+    characters = _safe_directory(root, "characters")
+    areas = _safe_directory(
+        root, "modules/%s/areas" % MAPPING_PILOT_MODULE
+    )
+    for directory in (characters, areas):
+        candidates.extend(
+            _safe_file(root, path.relative_to(root).as_posix())
+            for path in sorted(directory.glob("*.json"), key=lambda item: item.name)
+        )
+    if not any(path.parent == characters for path in candidates):
+        raise ValueError("canonical sandbox character state is missing")
+    if not any(path.parent == areas for path in candidates):
+        raise ValueError("canonical sandbox area state is missing")
+
+    module_plot = root / "modules" / MAPPING_PILOT_MODULE / "module_plot.json"
+    if module_plot.exists() or module_plot.is_symlink():
+        candidates.append(_safe_file(root, "modules/%s/module_plot.json" % MAPPING_PILOT_MODULE))
+    encounters = root / "encounters"
+    if encounters.exists() or encounters.is_symlink():
+        _safe_directory(root, "encounters")
+        candidates.extend(
+            _safe_file(root, path.relative_to(root).as_posix())
+            for path in sorted(encounters.glob("*.json"), key=lambda item: item.name)
+        )
+    for path in sorted(set(candidates), key=lambda item: item.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    canonical = json.dumps(files, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
 def _read_json(root: Path, relative_path: str) -> Any:
     return _read_json_path(_safe_file(root, relative_path))
 
@@ -545,6 +789,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "combat_stage_tavern_zones",
     ), required=True)
     parser.add_argument("--party-size", type=int, choices=(1, 4), required=True)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--resume-checkpoint-sha256")
     parser.add_argument(
         "--runtime-root",
         default=str(PROJECT_ROOT / "tmp" / "combat_capture"),
@@ -563,6 +809,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         arm=args.arm,
         fixture_id=args.fixture_id,
         party_size=args.party_size,
+        resume=args.resume,
+        resume_checkpoint_sha256=args.resume_checkpoint_sha256,
         runtime_root=args.runtime_root,
         known_ids=known_ids,
         perceived_ids=perceived_ids,

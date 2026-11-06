@@ -478,6 +478,8 @@ def launch_worker(
     party_size: int,
     row_run_id: str,
     lifecycle_id: Optional[str] = None,
+    resume: bool = False,
+    resume_checkpoint_sha256: Optional[str] = None,
     runtime_root: str | Path = "tmp/combat_capture",
     launcher: Any = None,
 ) -> Any:
@@ -492,6 +494,16 @@ def launch_worker(
         raise ValueError("mapping-pilot row run ID is invalid")
     if lifecycle_id is not None and not _LIFECYCLE_ID.fullmatch(lifecycle_id):
         raise ValueError("mapping-pilot lifecycle ID is invalid")
+    if type(resume) is not bool:
+        raise ValueError("mapping-pilot resume mode is invalid")
+    if resume:
+        if (
+            not isinstance(resume_checkpoint_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", resume_checkpoint_sha256) is None
+        ):
+            raise ValueError("mapping-pilot resume checkpoint is missing or invalid")
+    elif resume_checkpoint_sha256 is not None:
+        raise ValueError("mapping-pilot checkpoint requires explicit resume mode")
     root = _safe_runtime_root(runtime_root)
     if launcher is None:
         from scripts.mapping_pilot import launcher as launcher_module
@@ -521,6 +533,8 @@ def launch_worker(
         arm=arm,
         fixture_id=fixture_id,
         party_size=party_size,
+        resume=resume,
+        resume_checkpoint_sha256=resume_checkpoint_sha256,
         runtime_root=root,
         movement_hint_observer=observer,
         lifecycle_id=lifecycle_id,
@@ -537,6 +551,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--row-run-id", required=True)
     parser.add_argument("--lifecycle-id", default=None)
     parser.add_argument("--runtime-root", default="tmp/combat_capture")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--resume-checkpoint-sha256")
     return parser.parse_args(argv)
 
 
@@ -549,6 +565,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             party_size=args.party_size,
             row_run_id=args.row_run_id,
             lifecycle_id=args.lifecycle_id,
+            resume=args.resume,
+            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             runtime_root=args.runtime_root,
         )
     except Exception as exc:

@@ -174,6 +174,7 @@ class MappingPilotAdapterTests(unittest.TestCase):
         root = owner / "tmp" / "combat_capture"
         (root / "mapping_pilot" / "expected").mkdir(parents=True)
         (root / "modules" / "Mapping_Pilot_Arena" / "areas").mkdir(parents=True)
+        (root / "characters").mkdir(parents=True)
         (root / "scripts" / "mapping_pilot").mkdir(parents=True)
         (root / "core" / "combat").mkdir(parents=True)
         (root / "web").mkdir(parents=True)
@@ -216,6 +217,8 @@ class MappingPilotAdapterTests(unittest.TestCase):
             else "The Lantern and Reed Tavern"
         )
         members = ["Acheron"] if party_size == 1 else ["Acheron", "Merisiel", "Valerius", "Nym"]
+        for member in members:
+            self._write_json(root / "characters" / (member + ".json"), {"name": member})
         mapping: dict[str, Any] = {
             "module": "Mapping_Pilot_Arena",
             "source_location_id": source_location_id,
@@ -277,11 +280,17 @@ class MappingPilotAdapterTests(unittest.TestCase):
                 {
                     "locationId": "MP01",
                     "name": "The Lantern and Reed Tavern",
+                    "connectivity": ["MP02"],
+                    "areaConnectivity": [],
+                    "areaConnectivityId": [],
                     "features": tavern_features,
                 },
                 {
                     "locationId": "MP02",
                     "name": "Rillford Village Green",
+                    "connectivity": ["MP01"],
+                    "areaConnectivity": ["Old Watchtower Approach"],
+                    "areaConnectivityId": ["MP03"],
                     "features": [],
                 },
             ],
@@ -292,6 +301,9 @@ class MappingPilotAdapterTests(unittest.TestCase):
                 {
                     "locationId": "MP03",
                     "name": "Old Watchtower Approach",
+                    "connectivity": [],
+                    "areaConnectivity": ["Mapping Pilot Arena"],
+                    "areaConnectivityId": ["MP02"],
                     "features": [],
                 }
             ],
@@ -328,6 +340,24 @@ class MappingPilotAdapterTests(unittest.TestCase):
             runtime_to_source={value: key for key, value in _RUNTIME_LOCATION_IDS.items()},
             knowledge_resolver=knowledge_resolver,
         )
+
+    def _move_tracker_to_green(self, root: pathlib.Path) -> None:
+        tracker_path = root / "party_tracker.json"
+        tracker = json.loads(tracker_path.read_text(encoding="utf-8"))
+        tracker["worldConditions"]["currentLocationId"] = "MP02"
+        tracker["worldConditions"]["currentLocation"] = "Rillford Village Green"
+        tracker["worldConditions"]["currentAreaId"] = "MPA001"
+        tracker["worldConditions"]["currentArea"] = "Mapping Pilot Arena"
+        self._write_json(tracker_path, tracker)
+
+    @staticmethod
+    def _parent_state_hash(owner: pathlib.Path) -> str:
+        from scripts.mapping_pilot import row_runner
+
+        with mock.patch.object(row_runner, "PROJECT_ROOT", owner):
+            return row_runner.hash_canonical_sandbox_state("tmp/combat_capture")[
+                "sha256"
+            ]
 
     def test_arm_a_is_no_patch_and_byte_identical_for_both_prompt_seams(self):
         dm_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
@@ -1493,6 +1523,206 @@ class MappingPilotAdapterTests(unittest.TestCase):
                 fixture_id="interior_tavern",
                 party_size=1,
                 project_root=file_symlink_owner,
+            )
+
+    def test_launcher_resume_accepts_only_checkpointed_frozen_location_moves(self):
+        for party_size in (1, 4):
+            with self.subTest(party_size=party_size):
+                owner, root, _metadata, _fixtures = self._workspace(
+                    party_size=party_size
+                )
+                metadata_path = root / "mapping_pilot" / "seed_metadata.json"
+                original_metadata = metadata_path.read_bytes()
+                self._move_tracker_to_green(root)
+                checkpoint = self._parent_state_hash(owner)
+                original_cwd = pathlib.Path.cwd()
+                original_path = list(sys.path)
+                original_launcher_root = launcher.PROJECT_ROOT
+                imports: list[str] = []
+                starts: list[str] = []
+                modules = {
+                    "web.web_interface": SimpleNamespace(
+                        __file__=str(root / "web" / "web_interface.py"),
+                        dm_main=SimpleNamespace(__file__=str(root / "main.py")),
+                        INSTALL_ROOT=str(root),
+                        _configured_web_port=8360,
+                        WEB_HOST="127.0.0.1",
+                        app=object(),
+                        socketio=SimpleNamespace(),
+                    ),
+                    "core.combat.prompts": SimpleNamespace(
+                        __file__=str(root / "core" / "combat" / "prompts.py")
+                    ),
+                    "core.combat.combat_manager": SimpleNamespace(
+                        __file__=str(root / "core" / "combat" / "combat_manager.py")
+                    ),
+                    "scripts.mapping_pilot.adapter": SimpleNamespace(
+                        __file__=str(root / "scripts" / "mapping_pilot" / "adapter.py"),
+                        SandboxPacketProvider=lambda **_kwargs: object(),
+                    ),
+                }
+
+                def importer(name: str) -> Any:
+                    imports.append(name)
+                    return modules[name]
+
+                def server_runner(_web: Any) -> str:
+                    starts.append("server")
+                    return "resumed"
+
+                try:
+                    launcher.PROJECT_ROOT = owner
+                    result = launcher.launch(
+                        arm="B",
+                        fixture_id="interior_tavern",
+                        party_size=party_size,
+                        resume=True,
+                        resume_checkpoint_sha256=checkpoint,
+                        runtime_root=root,
+                        module_importer=importer,
+                        server_runner=server_runner,
+                        adapter_installer=lambda **_kwargs: SimpleNamespace(
+                            uninstall=lambda: None
+                        ),
+                    )
+                finally:
+                    launcher.PROJECT_ROOT = original_launcher_root
+                    os.chdir(original_cwd)
+                    sys.path[:] = original_path
+
+                self.assertEqual(result, "resumed")
+                self.assertEqual(starts, ["server"])
+                self.assertTrue(imports)
+                self.assertEqual(metadata_path.read_bytes(), original_metadata)
+                self.assertEqual(
+                    self._parent_state_hash(owner), checkpoint
+                )
+
+    def test_launcher_initial_location_guard_still_rejects_moved_tracker(self):
+        owner, root, _metadata, _fixtures = self._workspace()
+        self._move_tracker_to_green(root)
+        with self.assertRaisesRegex(ValueError, "conflicts with seed metadata"):
+            launcher.validate_sandbox(
+                root,
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                project_root=owner,
+            )
+
+    def test_launcher_resume_rejects_missing_tampered_and_drifted_checkpoints(self):
+        owner, root, _metadata, _fixtures = self._workspace()
+        self._move_tracker_to_green(root)
+        with self.assertRaisesRegex(ValueError, "checkpoint is missing"):
+            launcher.validate_sandbox(
+                root,
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                resume=True,
+                project_root=owner,
+            )
+
+        checkpoint = self._parent_state_hash(owner)
+        with self.assertRaisesRegex(ValueError, "checkpoint hash does not match"):
+            launcher.validate_sandbox(
+                root,
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                resume=True,
+                resume_checkpoint_sha256="0" * 64,
+                project_root=owner,
+            )
+
+        character_path = root / "characters" / "Acheron.json"
+        character_path.write_text('{"name":"changed"}', encoding="ascii")
+        with self.assertRaisesRegex(ValueError, "checkpoint hash does not match"):
+            launcher.validate_sandbox(
+                root,
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                resume=True,
+                resume_checkpoint_sha256=checkpoint,
+                project_root=owner,
+            )
+
+    def test_launcher_resume_rejects_tracker_identity_and_location_drift(self):
+        cases = (
+            ("roster", "sandbox party tracker conflicts with seed metadata"),
+            ("module", "sandbox party tracker conflicts with seed metadata"),
+            ("active_pc", "sandbox party tracker conflicts with seed metadata"),
+            ("unknown_location", "resume location identity is unknown"),
+            ("area_mismatch", "resume location area does not match"),
+            ("fake_connection", "resume location is not a frozen open exit"),
+            ("self_loop", "connectivity is not frozen"),
+            ("duplicate_location", "runtime location is missing or duplicated"),
+        )
+        for case, expected_error in cases:
+            with self.subTest(case=case):
+                owner, root, _metadata, _fixtures = self._workspace()
+                self._move_tracker_to_green(root)
+                tracker_path = root / "party_tracker.json"
+                tracker = json.loads(tracker_path.read_text(encoding="utf-8"))
+                if case == "roster":
+                    tracker["partyMembers"] = ["Other"]
+                elif case == "module":
+                    tracker["module"] = "Other_Module"
+                elif case == "active_pc":
+                    tracker["active_character"] = "Not a party member"
+                elif case == "unknown_location":
+                    tracker["worldConditions"]["currentLocationId"] = "MP99"
+                elif case == "area_mismatch":
+                    tracker["worldConditions"]["currentAreaId"] = "MPA002"
+                elif case == "fake_connection":
+                    tracker["worldConditions"]["currentLocationId"] = "MP03"
+                    tracker["worldConditions"]["currentAreaId"] = "MPA002"
+                self._write_json(tracker_path, tracker)
+
+                if case == "self_loop":
+                    area_path = root / "modules" / "Mapping_Pilot_Arena" / "areas" / "MPA001.json"
+                    area = json.loads(area_path.read_text(encoding="utf-8"))
+                    area["locations"][1]["connectivity"] = ["MP01", "MP02"]
+                    self._write_json(area_path, area)
+                elif case == "duplicate_location":
+                    area_path = root / "modules" / "Mapping_Pilot_Arena" / "areas" / "MPA002.json"
+                    area = json.loads(area_path.read_text(encoding="utf-8"))
+                    area["locations"].append(
+                        {"locationId": "MP02", "name": "Fake duplicate"}
+                    )
+                    self._write_json(area_path, area)
+
+                checkpoint = self._parent_state_hash(owner)
+                with self.assertRaisesRegex(ValueError, expected_error):
+                    launcher.validate_sandbox(
+                        root,
+                        arm="B",
+                        fixture_id="interior_tavern",
+                        party_size=1,
+                        resume=True,
+                        resume_checkpoint_sha256=checkpoint,
+                        project_root=owner,
+                    )
+
+    def test_launcher_resume_rejects_symlinked_checkpoint_state(self):
+        owner, root, _metadata, _fixtures = self._workspace()
+        self._move_tracker_to_green(root)
+        character_path = root / "characters" / "Acheron.json"
+        outside = self.work / "outside-character.json"
+        outside.write_text('{"name":"Acheron"}', encoding="ascii")
+        character_path.unlink()
+        character_path.symlink_to(outside)
+
+        with self.assertRaisesRegex(ValueError, "sandbox path is unsafe"):
+            launcher.validate_sandbox(
+                root,
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                resume=True,
+                resume_checkpoint_sha256="a" * 64,
+                project_root=owner,
             )
 
     def test_launcher_imports_and_starts_the_sandbox_in_the_same_process(self):
