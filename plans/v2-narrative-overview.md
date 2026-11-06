@@ -525,7 +525,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | N | detached at `e2279f42` (N2 branch from current main) | B0 | Opened 2026-11-05 | N1 integrated; N2 provider-free planning/build authorized 2026-11-06, Overseer proposal review before build; no listener or live work until S releases 8360 | N2 React vertical slice |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 collected and released; paused for owner review | SP3 adjudication, then SP4 owner gate |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 adjudicated inconclusive; SP3b amendment drafting; SP4 D1/M1 review open | SP3b amendment review and booking, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -564,7 +564,40 @@ pending, not a gate verdict):
   infrastructure pause.
 - S's report marks all five recommendations inconclusive. ADR-0034 remains
   Proposed. SP2 D1 audit, M1 and transcript ratings, and the SP4 owner
-  choices remain pending. Tooling PR #97 is open and unmerged.
+  choices remain pending. Tooling PR #97 merged (`5999af37`) after the
+  Overseer reran its 241 tests on the exact rebased head.
+
+SP3 owner adjudication (2026-11-06, owner accepted the Overseer
+recommendations):
+
+- Main-run verdict: INCONCLUSIVE for every arm comparison. The substantive
+  content failures above stand as qualitative findings: no arm prevented
+  invented spatial facts. Content-failed rows are never rerun.
+- Deviation 1 (seven mid-matrix re-freezes) is accepted as a recorded
+  deviation, not waived: changes were limited to `scripts/`, frozen
+  preregistration hashes verify 10/10, and every row records its freeze.
+  Main-run rows are not pooled across freezes for arm comparison.
+- Deviation 2 (missed three-consecutive infrastructure pause) is recorded;
+  the affected landscape rows are infrastructure-classified and eligible for
+  the supplementary run, not scored as arm content.
+- Host defect fixed in PR #105 (`9291994f`): DM Note connectivity fallback
+  no longer raises `NameError` for locations without same-area connectivity;
+  1-PC and 4-PC regressions added.
+- SP3b supplementary run AUTHORIZED in principle, provider budget limited to
+  the unspent main-run balance (287 attempts; the six-hour cumulative live cap
+  is unchanged and continues from about 57 minutes used). Preconditions:
+  S writes a preregistered amendment as a new file beside the frozen
+  preregistration (frozen files unchanged, still 10/10), listing exactly the
+  infrastructure-classified cells (landscape E06/E13-E18, C01, E03-E05,
+  E01 and any combat cells invalidated by the startup provider call), the
+  harness fixes for each cause, its row order, and its stop rules including
+  an enforced three-consecutive infrastructure pause. The amendment freezes
+  one source/dependency/routing identity for the whole SP3b run; any
+  mid-run change stops the run. The Overseer reviews and freezes the
+  amendment, then books port 8360 separately; no SP3b live work before both.
+- SP4 may start now for inputs independent of SP3: the 1,048-row D1 claim
+  audit and the 16 M1 sketch ratings. Live-transcript ratings and the
+  ADR-0034 decision wait for SP3b evidence.
 
 ### 10.3 Gate record
 
@@ -578,7 +611,7 @@ pending, not a gate verdict):
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
 | SP2 offline D1/M1 | S | pending owner audit/ratings | 2026-11-06 | Tooling/evidence integrated; D1 20 attempts (11 validated, 9 invalid layouts), selected-source hashes 20/20; M1 16 sketches, artifact hashes 17/17; 1,048 D1 claim rows and M1 ratings remain blank. Integration is not an audited precision/backfill or usefulness PASS. | #94 (`e40e4899`) |
-| SP3 live matrix | S | collected; owner adjudication pending | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS, 4 reserves missing; 7 landscape FAILs caused by a host NameError, not arm content; seven mid-matrix tooling re-freezes await owner ruling. Not a PASS | #97 (open) |
+| SP3 live matrix | S | INCONCLUSIVE (main run); SP3b authorized pending amendment | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 | Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit ready, premature production request withdrawn; fixture/rubric and budget contracts still pending | #84 (audit); scope correction follows |
