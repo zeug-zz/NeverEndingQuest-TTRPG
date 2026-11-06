@@ -33,6 +33,7 @@ from web.extensions.player import (
     PlayerSnapshot,
     create_app,
 )
+from web.extensions.player.assets import VerifiedPlayerClientAssets
 from web.extensions.player.auth import (
     PLAYER_SESSION_COOKIE,
     PRELOGIN_CSRF_COOKIE,
@@ -654,6 +655,18 @@ class PlayerAccessTests(unittest.TestCase):
         self.assertIsNotNone(grant)
         assert grant is not None
         connect = app.socket_server.handlers[PLAYER_NAMESPACE]["connect"]
+        assets = VerifiedPlayerClientAssets(
+            shell_document=b"",
+            shell_content_type=b"text/html; charset=utf-8",
+            client_build_id="0123456789abcdef0123456789abcdef",
+            protocol_version=1,
+            assets={},
+        )
+        app._client_assets = assets
+        client_auth = {
+            "client_build_id": assets.client_build_id,
+            "protocol_version": assets.protocol_version,
+        }
 
         def environ(
             origin: str | None,
@@ -676,24 +689,57 @@ class PlayerAccessTests(unittest.TestCase):
             }
 
         for index in range(MAX_CONCURRENT_PLAYER_SOCKETS):
-            self.assertTrue(asyncio.run(connect(f"sid-{index}", environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"))))
-        self.assertFalse(asyncio.run(connect("over-cap", environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"))))
+            self.assertTrue(
+                asyncio.run(
+                    connect(
+                        f"sid-{index}",
+                        environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"),
+                        client_auth,
+                    )
+                )
+            )
         self.assertFalse(
-            asyncio.run(connect("bad-origin", environ("http://attacker.invalid")))
+            asyncio.run(
+                connect(
+                    "over-cap",
+                    environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"),
+                    client_auth,
+                )
+            )
         )
-        self.assertFalse(asyncio.run(connect("missing-origin", environ(None))))
+        self.assertFalse(
+            asyncio.run(
+                connect(
+                    "bad-origin",
+                    environ("http://attacker.invalid"),
+                    client_auth,
+                )
+            )
+        )
+        self.assertFalse(
+            asyncio.run(connect("missing-origin", environ(None), client_auth))
+        )
         self.assertFalse(
             asyncio.run(
                 connect(
                     "bad-host",
                     environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}", "attacker.invalid"),
+                    client_auth,
                 )
             )
         )
         self.assertEqual(security.active_socket_count, MAX_CONCURRENT_PLAYER_SOCKETS)
         self.assertTrue(security.authorize_socket_event("sid-0"))
         security.unregister_socket("sid-0")
-        self.assertTrue(asyncio.run(connect("replacement", environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"))))
+        self.assertTrue(
+            asyncio.run(
+                connect(
+                    "replacement",
+                    environ(f"http://{PLAYER_HOST}:{PLAYER_PORT}"),
+                    client_auth,
+                )
+            )
+        )
         self.assertEqual(security.active_socket_count, MAX_CONCURRENT_PLAYER_SOCKETS)
         socket_ids = security.stop_listener()
         self.assertIn("replacement", socket_ids)

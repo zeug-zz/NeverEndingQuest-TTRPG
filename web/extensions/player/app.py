@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from os import PathLike
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 from urllib.parse import parse_qs
@@ -54,9 +55,16 @@ from .projections import (
 from .contracts import (
     EnvelopeTooLargeError,
     EnvelopeValidationError,
+    PROTOCOL_VERSION,
     canonical_json_bytes,
 )
 from .sync import PlayerSyncCoordinator
+
+CLIENT_BUILD_HEADER = "x-neq-client-build"
+PROTOCOL_VERSION_HEADER = "x-neq-protocol-version"
+_CLIENT_BUILD_ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
+_CLIENT_PROTOCOL_VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]{0,8})\Z")
+_SOCKET_CONNECT_AUTH_FIELDS = frozenset({"client_build_id", "protocol_version"})
 
 _PLAYER_CONTENT_SECURITY_POLICY = (
     b"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
@@ -148,6 +156,30 @@ class PlayerHTTPRouter:
             if not read_allowed:
                 await _send_json(send, 429, {"error": "rate_limited"})
                 return
+            if route_handler == "snapshot":
+                client_version = _parse_http_client_version(scope.get("headers", ()))
+                if client_version is None or client_version[1] != PROTOCOL_VERSION:
+                    await _send_json(
+                        send,
+                        409,
+                        {"error": "client_version_mismatch"},
+                    )
+                    return
+                try:
+                    client_assets = self._get_client_assets()
+                except PlayerClientAssetsError:
+                    await _send_json(send, 503, {"error": "client_assets_unavailable"})
+                    return
+                if (
+                    client_version[0] != client_assets.client_build_id
+                    or client_version[1] != client_assets.protocol_version
+                ):
+                    await _send_json(
+                        send,
+                        409,
+                        {"error": "client_version_mismatch"},
+                    )
+                    return
 
         if route_handler == "login":
             if not self.security.allow_login_attempt():
@@ -539,10 +571,9 @@ class PlayerApplication:
         self,
         sid: str,
         environ: Mapping[str, Any],
-        auth: Mapping[str, object] | None = None,
+        auth: object = None,
     ) -> bool:
-        """Authenticate the player namespace from its raw ASGI handshake."""
-        del auth
+        """Authenticate and version-check before registering the player socket."""
         asgi_scope = environ.get("asgi.scope")
         if not isinstance(asgi_scope, Mapping):
             return False
@@ -551,11 +582,33 @@ class PlayerApplication:
             host, origin, unique_identity = extract_host_origin(headers)
         except TypeError:
             return False
-        if not unique_identity:
+        if not unique_identity or not self.security.request_identity_is_valid(
+            host,
+            origin,
+            require_origin=True,
+        ):
             return False
+
+        session_cookie = cookie_value(headers, PLAYER_SESSION_COOKIE)
+        if self.security.session_id_for_cookie(session_cookie) is None:
+            return False
+
+        client_version = _parse_socket_client_version(auth)
+        if client_version is None or client_version[1] != PROTOCOL_VERSION:
+            raise socketio.exceptions.ConnectionRefusedError("client_version_mismatch")
+        try:
+            client_assets = self.preflight_client_assets()
+        except PlayerClientAssetsError:
+            return False
+        if (
+            client_version[0] != client_assets.client_build_id
+            or client_version[1] != client_assets.protocol_version
+        ):
+            raise socketio.exceptions.ConnectionRefusedError("client_version_mismatch")
+
         return self.security.register_socket(
             sid,
-            cookie_value(headers, PLAYER_SESSION_COOKIE),
+            session_cookie,
             host,
             origin,
         )
@@ -910,6 +963,50 @@ def _parse_reconnect_query(
         "session_epoch": query.get("session_epoch", [None])[0],
         "cursor": cursor,
     }, None
+
+
+def _parse_http_client_version(
+    headers: Iterable[tuple[object, object]],
+) -> tuple[str, int] | None:
+    """Parse one bounded build/protocol pair from the documented HTTP headers."""
+    try:
+        build_values = header_values(headers, CLIENT_BUILD_HEADER)
+        protocol_values = header_values(headers, PROTOCOL_VERSION_HEADER)
+    except (TypeError, ValueError):
+        return None
+    if len(build_values) != 1 or len(protocol_values) != 1:
+        return None
+    build_id = build_values[0]
+    protocol_text = protocol_values[0]
+    if _CLIENT_BUILD_ID_PATTERN.fullmatch(build_id) is None:
+        return None
+    if (
+        len(protocol_text) > 9
+        or _CLIENT_PROTOCOL_VERSION_PATTERN.fullmatch(protocol_text) is None
+    ):
+        return None
+    try:
+        protocol_version = int(protocol_text)
+    except ValueError:
+        return None
+    return build_id, protocol_version
+
+
+def _parse_socket_client_version(auth: object) -> tuple[str, int] | None:
+    """Accept only the exact, typed version fields in Socket.IO connect auth."""
+    if not isinstance(auth, Mapping) or set(auth) != _SOCKET_CONNECT_AUTH_FIELDS:
+        return None
+    build_id = auth.get("client_build_id")
+    protocol_version = auth.get("protocol_version")
+    if (
+        not isinstance(build_id, str)
+        or _CLIENT_BUILD_ID_PATTERN.fullmatch(build_id) is None
+        or type(protocol_version) is not int
+        or protocol_version < 0
+        or protocol_version > 999_999_999
+    ):
+        return None
+    return build_id, protocol_version
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

@@ -15,6 +15,8 @@ import unittest
 from typing import Any
 from urllib.parse import urlencode
 
+from socketio.exceptions import ConnectionRefusedError as SocketConnectionRefusedError
+
 from web.extensions.player import (
     PLAYER_HOST,
     PLAYER_NAMESPACE,
@@ -23,6 +25,7 @@ from web.extensions.player import (
     PlayerSnapshot,
     create_app,
 )
+from web.extensions.player.assets import VerifiedPlayerClientAssets
 from web.extensions.player.auth import PLAYER_SESSION_COOKIE, PlayerSecurity
 from web.extensions.player.contracts import (
     EnvelopeValidationError,
@@ -49,6 +52,20 @@ from web.extensions.player.limits import (
 from web.extensions.player.sync import PlayerSyncCoordinator
 
 PC_NAMES = ("Acheron", "Merisiel", "Kira", "Vitreol")
+TEST_CLIENT_BUILD_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _install_test_client_assets(app: Any) -> VerifiedPlayerClientAssets:
+    """Supply a deterministic verified-version fixture without a built dist."""
+    assets = VerifiedPlayerClientAssets(
+        shell_document=b"",
+        shell_content_type=b"text/html; charset=utf-8",
+        client_build_id=TEST_CLIENT_BUILD_ID,
+        protocol_version=PROTOCOL_VERSION,
+        assets={},
+    )
+    app._client_assets = assets
+    return assets
 
 
 def _identity() -> str:
@@ -123,6 +140,7 @@ def _dispatch_http(
     *,
     query: str = "",
     cookie: str,
+    client_version_headers: list[tuple[bytes, bytes]] | None = None,
 ) -> tuple[int, bytes]:
     messages: list[dict[str, Any]] = []
     body_sent = False
@@ -131,6 +149,16 @@ def _dispatch_http(
         (b"origin", f"http://{PLAYER_HOST}:{PLAYER_PORT}".encode("ascii")),
         (b"cookie", f"{PLAYER_SESSION_COOKIE}={cookie}".encode("ascii")),
     ]
+    if client_version_headers is None:
+        assets = app._client_assets or _install_test_client_assets(app)
+        headers.extend(
+            [
+                (b"x-neq-client-build", assets.client_build_id.encode("ascii")),
+                (b"x-neq-protocol-version", str(assets.protocol_version).encode("ascii")),
+            ]
+        )
+    else:
+        headers.extend(client_version_headers)
 
     async def receive() -> dict[str, Any]:
         nonlocal body_sent
@@ -735,6 +763,71 @@ class GameplaySyncApplicationTests(unittest.TestCase):
                 self.assertEqual(resync["kind"], "resync_required")
                 self.assertEqual(resync["reason"], "instance_mismatch")
                 self.assertEqual(resync["snapshot"]["event_cursor"], 1)
+
+    def test_socket_version_mismatch_rejects_before_socket_registration(self) -> None:
+        security = PlayerSecurity(lambda: None)
+        grant = security.create_session()
+        self.assertIsNotNone(grant)
+        assert grant is not None
+        gateway = _Gateway()
+        app = create_app(gateway=gateway, security=security)
+        assets = _install_test_client_assets(app)
+        connect = app.socket_server.handlers[PLAYER_NAMESPACE]["connect"]
+
+        def environ(cookie: str | None = None) -> dict[str, Any]:
+            headers = [
+                (b"host", f"{PLAYER_HOST}:{PLAYER_PORT}".encode("ascii")),
+                (b"origin", f"http://{PLAYER_HOST}:{PLAYER_PORT}".encode("ascii")),
+            ]
+            if cookie is not None:
+                headers.append(
+                    (
+                        b"cookie",
+                        f"{PLAYER_SESSION_COOKIE}={cookie}".encode("ascii"),
+                    )
+                )
+            return {"asgi.scope": {"type": "websocket", "headers": headers}}
+
+        valid_auth = {
+            "client_build_id": assets.client_build_id,
+            "protocol_version": assets.protocol_version,
+        }
+        self.assertFalse(
+            asyncio.run(
+                connect(
+                    "unauthenticated-sid",
+                    environ(),
+                    {"client_build_id": "0" * 32, "protocol_version": 2},
+                )
+            )
+        )
+        self.assertEqual(security.active_socket_count, 0)
+
+        mismatches = (
+            None,
+            {"client_build_id": "0" * 32, "protocol_version": 1},
+            {"client_build_id": assets.client_build_id, "protocol_version": 2},
+            {**valid_auth, "unexpected": True},
+            {"client_build_id": assets.client_build_id, "protocol_version": "1"},
+        )
+        for index, auth in enumerate(mismatches):
+            with self.subTest(auth=auth):
+                with self.assertRaisesRegex(
+                    SocketConnectionRefusedError,
+                    "client_version_mismatch",
+                ):
+                    asyncio.run(
+                        connect(f"mismatch-sid-{index}", environ(grant.cookie_value), auth)
+                    )
+                self.assertEqual(security.active_socket_count, 0)
+                self.assertFalse(security.authorize_socket_event(f"mismatch-sid-{index}"))
+        self.assertEqual(gateway.admissions, [])
+
+        self.assertTrue(
+            asyncio.run(connect("valid-sid", environ(grant.cookie_value), valid_auth))
+        )
+        self.assertEqual(security.active_socket_count, 1)
+        self.assertTrue(security.authorize_socket_event("valid-sid"))
 
     def test_player_input_event_emits_deduplicated_typed_receipt(self) -> None:
         security = PlayerSecurity(lambda: None)

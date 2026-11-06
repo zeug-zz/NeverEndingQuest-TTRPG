@@ -18,14 +18,17 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from web.extensions.player import (
     PLAYER_HOST,
     PLAYER_PORT,
     PlayerClientAssetsError,
     PlayerListener,
+    PlayerSnapshot,
     create_app,
 )
+from web.extensions.player.auth import PlayerSecurity
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +114,9 @@ def _dispatch_http(
     *,
     raw_path: bytes | None = None,
     host: str | None = None,
+    cookie: str | None = None,
+    origin: str | None = None,
+    extra_headers: list[tuple[bytes, bytes]] | None = None,
 ) -> tuple[int, list[tuple[bytes, bytes]], bytes]:
     messages: list[dict[str, Any]] = []
 
@@ -125,13 +131,13 @@ def _dispatch_http(
         "method": "GET",
         "path": path,
         "query_string": b"",
-        "headers": [
-            (
-                b"host",
-                (host or f"{PLAYER_HOST}:{PLAYER_PORT}").encode("ascii"),
-            )
-        ],
+        "headers": [(b"host", (host or f"{PLAYER_HOST}:{PLAYER_PORT}").encode("ascii"))],
     }
+    if cookie is not None:
+        scope["headers"].append((b"cookie", f"neq_player_session={cookie}".encode("ascii")))
+    if origin is not None:
+        scope["headers"].append((b"origin", origin.encode("ascii")))
+    scope["headers"].extend(extra_headers or [])
     if raw_path is not None:
         scope["raw_path"] = raw_path
     asyncio.run(app(scope, receive, send))
@@ -341,6 +347,104 @@ class PlayerClientAssetsTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body, JS_BODY)
+
+    def test_snapshot_client_version_mismatch_is_bounded_and_precedes_projection(self) -> None:
+        security = PlayerSecurity(lambda: None)
+        grant = security.create_session()
+        self.assertIsNotNone(grant)
+        assert grant is not None
+        gateway = mock.Mock()
+        gateway.read_snapshot.return_value = PlayerSnapshot(
+            1,
+            {
+                "party": {
+                    "members": [],
+                    "active_character": None,
+                    "active_character_revision": 0,
+                    "world": {},
+                },
+                "busy": False,
+            },
+        )
+        app = create_app(
+            gateway=gateway,
+            security=security,
+            build_root=self.bundle_root,
+        )
+        build_id = str(self.manifest["client_build_id"])
+        current_version = [
+            (b"x-neq-client-build", build_id.encode("ascii")),
+            (b"x-neq-protocol-version", b"1"),
+        ]
+        mismatch_cases = (
+            ("stale build", [(b"x-neq-client-build", b"0" * 32), current_version[1]]),
+            ("unsupported protocol", [current_version[0], (b"x-neq-protocol-version", b"2")]),
+            ("missing build", [current_version[1]]),
+            ("missing protocol", [current_version[0]]),
+            ("malformed build", [(b"x-neq-client-build", b"not-a-build"), current_version[1]]),
+            ("malformed protocol", [current_version[0], (b"x-neq-protocol-version", b"1.0")]),
+            ("duplicate header", current_version + [current_version[0]]),
+        )
+        for label, version_headers in mismatch_cases:
+            with self.subTest(version=label):
+                status, _headers_value, body = _dispatch_http(
+                    app,
+                    "/api/player/snapshot",
+                    cookie=grant.cookie_value,
+                    origin=f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+                    extra_headers=version_headers,
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body, b'{"error":"client_version_mismatch"}')
+                self.assertNotIn(build_id.encode("ascii"), body)
+                gateway.read_snapshot.assert_not_called()
+
+        unauthenticated_status, _headers_value, unauthenticated_body = _dispatch_http(
+            app,
+            "/api/player/snapshot",
+            extra_headers=[
+                (b"x-neq-client-build", b"0" * 32),
+                (b"x-neq-protocol-version", b"1"),
+            ],
+        )
+        self.assertEqual(unauthenticated_status, 404)
+        self.assertEqual(unauthenticated_body, b'{"error":"not_found"}')
+        gateway.read_snapshot.assert_not_called()
+
+        bad_origin_status, _headers_value, bad_origin_body = _dispatch_http(
+            app,
+            "/api/player/snapshot",
+            cookie=grant.cookie_value,
+            origin="http://attacker.invalid",
+            extra_headers=[
+                (b"x-neq-client-build", b"0" * 32),
+                (b"x-neq-protocol-version", b"1"),
+            ],
+        )
+        self.assertEqual(bad_origin_status, 403)
+        self.assertEqual(bad_origin_body, b'{"error":"request_rejected"}')
+        gateway.read_snapshot.assert_not_called()
+
+        valid_status, _headers_value, valid_body = _dispatch_http(
+            app,
+            "/api/player/snapshot",
+            cookie=grant.cookie_value,
+            origin=f"http://{PLAYER_HOST}:{PLAYER_PORT}",
+            extra_headers=current_version,
+        )
+        self.assertEqual(valid_status, 200)
+        self.assertEqual(
+            set(json.loads(valid_body)),
+            {
+                "schema_version",
+                "instance_id",
+                "session_epoch",
+                "revision",
+                "event_cursor",
+                "projection",
+            },
+        )
+        gateway.read_snapshot.assert_called_once_with()
 
     def test_host_launcher_imports_without_a_dist_directory(self) -> None:
         no_dist_cwd = self.scratch / "host-without-dist"
