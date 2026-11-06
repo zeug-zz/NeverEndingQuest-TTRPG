@@ -35,7 +35,7 @@ from web.extensions.player.sync import PlayerSyncCoordinator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TMP_ROOT = Path("tmp") / "n1"
+TMP_ROOT = Path("tmp") / "n2"
 PARTY_SIZES = {
     "one_pc": ["Acheron"],
     "four_pc": ["Acheron", "Merisiel", "Kira", "Vitreol"],
@@ -425,7 +425,16 @@ class PlayerRuntimeIntegrationTests(unittest.TestCase):
             and node.func.id == "create_player_runtime_gateway"
         ]
         self.assertEqual(factory_calls, [])
-        self.assertNotIn("PlayerListener(", source)
+        self.assertIn("os.environ.get('NEQ_PLAYER_DEV_LISTENER') == '1'", source)
+        self.assertIn(
+            "start_player_dev_listener(\n                create_player_runtime_gateway",
+            source,
+        )
+        self.assertIn("_stop_player_dev_listener()", source)
+        self.assertLess(
+            source.index("start_player_dev_listener(\n                create_player_runtime_gateway"),
+            source.index("socketio.run(", source.index("if __name__ == '__main__':")),
+        )
 
 
 if __name__ == "__main__":

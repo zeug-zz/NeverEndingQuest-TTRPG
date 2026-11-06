@@ -4050,6 +4050,26 @@ def handle_request_storage_data():
     """Handles a request from the client to view all player storage."""
     handle_storage_data_request_impl(emit, debug, error)
 
+# TABLETOP MODE: The host owns the optional listener lifecycle so normal
+# host play remains independent of player assets and shutdown can stop it.
+_player_dev_listener = None
+
+
+def _stop_player_dev_listener():
+    global _player_dev_listener
+    listener = _player_dev_listener
+    _player_dev_listener = None
+    if listener is None:
+        return
+    try:
+        listener.stop()
+    except Exception:
+        warning(
+            "Player development listener shutdown failed; host shutdown continues",
+            category="player",
+        )
+
+
 @socketio.on('user_exit')
 def handle_user_exit():
     """Handle intentional user exit - graceful shutdown"""
@@ -4083,6 +4103,10 @@ def handle_user_exit():
             socketio.stop()
         except Exception as stop_err:
             print(f"[WARNING] Graceful stop failed: {stop_err}")
+
+        # TABLETOP MODE: Stop the same-process N2 player listener before the
+        # intentional process exit bypasses ordinary Python finalizers.
+        _stop_player_dev_listener()
         
         # TABLETOP MODE: Intentional shutdown exit code
         print("[Py] Server shutdown complete. Exiting process.")
@@ -7303,11 +7327,32 @@ if __name__ == '__main__':
     print("Starting NeverEndingQuest Web Interface...")
     port = _configured_web_port
     print(f"Opening browser at http://localhost:{port}")
-    
-    # Run the Flask app with SocketIO
-    socketio.run(app, 
-                host=WEB_HOST,
-                port=port,
-                debug=False,
-                use_reloader=False,
-                allow_unsafe_werkzeug=True)
+
+    # TABLETOP MODE: Keep the player listener absent unless the approved exact
+    # opt-in is present; failures never prevent ordinary host startup.
+    _player_dev_listener = None
+    if os.environ.get('NEQ_PLAYER_DEV_LISTENER') == '1':
+        try:
+            from web.extensions.player.dev_listener import start_player_dev_listener
+
+            _player_dev_listener = start_player_dev_listener(
+                create_player_runtime_gateway
+            )
+        except Exception:
+            warning(
+                "Player development listener unavailable (startup_error); local host play continues",
+                category="player",
+            )
+
+    # Run the Flask app with SocketIO; the listener is owned by this process.
+    try:
+        socketio.run(
+            app,
+            host=WEB_HOST,
+            port=port,
+            debug=False,
+            use_reloader=False,
+            allow_unsafe_werkzeug=True,
+        )
+    finally:
+        _stop_player_dev_listener()
