@@ -1,0 +1,24 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem auto;
+  max-width: 36rem;
+  padding: 0 1rem;
+}
+
+main {
+  border: 1px solid #888;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+label,
+input,
+button {
+  display: block;
+  margin: 0.75rem 0;
+}
+
+input,
+button {
+  font: inherit;
+}
