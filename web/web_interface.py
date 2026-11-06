@@ -7210,8 +7210,47 @@ def create_player_runtime_gateway():
         state['active_character_revision'] = revision
         return state
 
+    def read_player_transcript():
+        # TABLETOP MODE: Read only the canonical bounded GUI transcript file.
+        from utils.file_operations import safe_read_json
+
+        if not os.path.exists(MESSAGE_CACHE_FILE):
+            return []
+        transcript = safe_read_json(MESSAGE_CACHE_FILE)
+        if not isinstance(transcript, list):
+            raise ValueError("canonical transcript is unavailable")
+        return transcript
+
+    def read_active_encounter(encounter_id):
+        # TABLETOP MODE: Resolve only a validated encounter ID beneath the canonical owner.
+        if (
+            not isinstance(encounter_id, str)
+            or not encounter_id.isascii()
+            or not encounter_id
+            or len(encounter_id) > 128
+            or not encounter_id[0].isalnum()
+            or any(
+                not (character.isalnum() or character in "_-")
+                for character in encounter_id
+            )
+        ):
+            raise ValueError("invalid canonical encounter identifier")
+        from utils.file_operations import safe_read_json
+
+        encounter_path = resolve_repository_path(
+            f"modules/encounters/encounter_{encounter_id}.json",
+            root=INSTALL_ROOT,
+            allow_missing=False,
+        )
+        encounter = safe_read_json(str(encounter_path))
+        if not isinstance(encounter, dict):
+            raise ValueError("canonical encounter is unavailable")
+        return encounter
+
     projection_builder = PlayerProjectionBuilder.from_pc_manager(
-        read_busy_state=player_runtime_is_busy
+        read_busy_state=player_runtime_is_busy,
+        read_transcript_state=read_player_transcript,
+        read_encounter_state=read_active_encounter,
     )
 
     def read_player_snapshot():

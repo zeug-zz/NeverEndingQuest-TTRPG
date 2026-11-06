@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -22,23 +24,37 @@ from web.extensions.player.auth import PLAYER_SESSION_COOKIE, PlayerSecurity
 from web.extensions.player.contracts import EVENT_FIELDS, PROTOCOL_VERSION
 from web.extensions.player.limits import (
     EXPENSIVE_READS_PER_SESSION_PER_WINDOW,
+    MAX_COMBATANTS,
     MAX_PLAYER_MEDIA_BYTES,
+    MAX_PLAYER_TEXT_BYTES,
+    MAX_TRANSCRIPT_BYTES,
+    MAX_TRANSCRIPT_MESSAGES,
+    MAX_TRANSCRIPT_SOURCE_ITEMS,
     MEDIA_READS_PER_SESSION_PER_WINDOW,
 )
-from web.extensions.player.media import MediaRegistration, MediaRegistry
+from web.extensions.player.media import (
+    MediaRegistration,
+    MediaRegistry,
+    player_portrait_media_id,
+)
 from web.extensions.player.projections import (
     CHARACTER_FIELD_ALLOWLIST,
+    COMBATANT_FIELDS,
+    COMBAT_PROJECTION_FIELDS,
     PARTY_PROJECTION_FIELDS,
     PLAYER_EVENT_FIELD_ALLOWLIST,
     PLAYER_EVENT_TYPE_ALLOWLIST,
     PLAYER_PROJECTION_FIELDS,
+    TRANSCRIPT_MESSAGE_FIELDS,
+    TRANSCRIPT_PROJECTION_FIELDS,
     WORLD_FIELD_ALLOWLIST,
+    ProjectionError,
     PlayerProjectionBuilder,
     project_player_event,
 )
 from web.extensions.player.rendering import render_safe_markdown
 
-SCRATCH_ROOT = Path("tmp/n1")
+SCRATCH_ROOT = Path("tmp/n2")
 PC_NAMES = ("Acheron", "Merisiel", "Kira", "Vitreol")
 TEST_CLIENT_BUILD_ID = "0123456789abcdef0123456789abcdef"
 
@@ -63,9 +79,35 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
 
 
+def _load_player_transcript_reader(cache_path: Path) -> Any:
+    source_path = Path(__file__).resolve().parents[1] / "web" / "web_interface.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    gateway_factory = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "create_player_runtime_gateway"
+    )
+    reader_node = next(
+        node
+        for node in ast.walk(gateway_factory)
+        if isinstance(node, ast.FunctionDef) and node.name == "read_player_transcript"
+    )
+    namespace: dict[str, Any] = {
+        "MESSAGE_CACHE_FILE": str(cache_path),
+        "os": os,
+    }
+    reader_module = ast.Module(body=[reader_node], type_ignores=[])
+    exec(compile(reader_module, str(source_path), "exec"), namespace)
+    return namespace["read_player_transcript"]
+
+
 def _make_canonical_fixture(
     root: Path,
     party_size: int,
+    *,
+    projection_sources: dict[str, Any] | None = None,
 ) -> tuple[PlayerProjectionBuilder, list[str], list[str]]:
     names = list(PC_NAMES[:party_size])
     party_path = root / "canonical" / "party_tracker.json"
@@ -111,7 +153,11 @@ def _make_canonical_fixture(
             "majorEventsUnderway": [canaries[0]],
             "politicalClimate": canaries[0],
             "activeEncounter": canaries[1],
-            "activeCombatEncounter": canaries[6],
+            "activeCombatEncounter": (
+                canaries[6]
+                if projection_sources is None
+                else projection_sources.get("active_encounter_id", "")
+            ),
             "weatherConditions": canaries[0],
             "dm_notes": canaries[1],
         },
@@ -165,6 +211,7 @@ def _make_canonical_fixture(
                 "savingThrows": ["Strength", "Constitution"],
                 "skills": {"Athletics": 5, "Stealth": 1, "private": canaries[0]},
                 "proficiencyBonus": 2,
+                "portrait_media_id": player_portrait_media_id(name),
                 "portrait_path": path_canary,
                 "file_path": path_canary,
                 "dm_notes": canaries[1],
@@ -184,7 +231,39 @@ def _make_canonical_fixture(
         path = character_paths.get(name)
         return _read_json(path) if path is not None else None
 
-    builder = PlayerProjectionBuilder(read_party_tracker, read_character_state)
+    reader_options: dict[str, Any] = {}
+    if projection_sources is not None:
+        if "busy" in projection_sources:
+            reader_options["read_busy_state"] = lambda: projection_sources["busy"]
+        if "active_pc_state" in projection_sources:
+            reader_options["read_active_pc_state"] = lambda: projection_sources[
+                "active_pc_state"
+            ]
+        if "transcript" in projection_sources:
+            def read_transcript_state() -> object:
+                value = projection_sources["transcript"]
+                if isinstance(value, Exception):
+                    raise value
+                return value
+
+            reader_options["read_transcript_state"] = read_transcript_state
+        if "transcript_reader" in projection_sources:
+            reader_options["read_transcript_state"] = projection_sources[
+                "transcript_reader"
+            ]
+        if "encounter" in projection_sources:
+            def read_encounter_state(_encounter_id: str) -> object:
+                value = projection_sources["encounter"]
+                if isinstance(value, Exception):
+                    raise value
+                return value
+
+            reader_options["read_encounter_state"] = read_encounter_state
+    builder = PlayerProjectionBuilder(
+        read_party_tracker,
+        read_character_state,
+        **reader_options,
+    )
     return builder, names, canaries
 
 
@@ -304,6 +383,413 @@ class PlayerCapabilitiesTests(unittest.TestCase):
                 self.assertNotIn("Goblin", serialized)
                 self.assertNotIn("activeCombatEncounter", serialized)
                 self.assertNotIn("area-private-id", serialized)
+
+    def test_bounded_canonical_projection_orders_transcript_and_combat_for_one_and_four_pcs(
+        self,
+    ) -> None:
+        for party_size in (1, 4):
+            with self.subTest(party_size=party_size):
+                root = self._temporary_directory()
+                names = list(PC_NAMES[:party_size])
+                transcript_source: list[dict[str, object]] = []
+                expected_texts: list[str] = []
+                for index in range(20):
+                    if index in {2, 9}:
+                        transcript_source.append(
+                            {
+                                "type": "debug",
+                                "content": "CANARY-HOST-DEBUG-OUTPUT",
+                                "debug_output": "CANARY-HOST-DEBUG-OUTPUT",
+                                "filesystem_path": "tmp/n2/private.log",
+                            }
+                        )
+                        continue
+                    message_type = "user-input" if index % 2 else "narration"
+                    text = f"Transcript item {index}"
+                    expected_texts.append(text)
+                    message: dict[str, object] = {
+                        "type": message_type,
+                        "content": text,
+                        "host_payload": "CANARY-DM-NOTE",
+                        "debug_output": "CANARY-HOST-DEBUG-OUTPUT",
+                        "filesystem_path": "tmp/n2/private.log",
+                    }
+                    if message_type == "user-input":
+                        message["author"] = names[index % party_size]
+                    transcript_source.append(message)
+
+                creatures: list[dict[str, object]] = [
+                    {
+                        "name": names[0],
+                        "type": "player",
+                        "initiative": 11,
+                        "status": "alive",
+                        "currentHitPoints": 21,
+                        "maxHitPoints": 29,
+                        "armorClass": 17,
+                        "actions": {"actionType": "hidden", "target": "hidden"},
+                    },
+                    {
+                        "name": "Goblin",
+                        "type": "enemy",
+                        "initiative": 18,
+                        "status": "alive",
+                        "currentHitPoints": 31,
+                        "maxHitPoints": 36,
+                        "armorClass": 16,
+                        "dm_notes": "CANARY-ENEMY-HP-AND-AC",
+                    },
+                    {
+                        "name": "Scout",
+                        "type": "npc",
+                        "initiative": 15,
+                        "status": "unconscious",
+                        "currentHitPoints": 0,
+                        "maxHitPoints": 12,
+                        "hidden_stats": "CANARY-NPC-HIDDEN-STAT",
+                    },
+                ]
+                for index, name in enumerate(names[1:], start=1):
+                    creatures.append(
+                        {
+                            "name": name,
+                            "type": "player",
+                            "initiative": 15 - index,
+                            "status": "alive",
+                            "currentHitPoints": 20,
+                            "maxHitPoints": 28,
+                        }
+                    )
+                encounter_id = f"player-combat-{party_size}"
+                encounter = {
+                    "encounterId": encounter_id,
+                    "encounterSummary": "CANARY-HIDDEN-PLOT-SECRET",
+                    "combat_round": 3,
+                    "combat_phase": "PC_PHASE",
+                    "creatures": creatures,
+                    "dm_notes": "CANARY-DM-NOTE",
+                    "filesystem_path": "tmp/n2/encounter.json",
+                }
+                builder, fixture_names, canaries = _make_canonical_fixture(
+                    root,
+                    party_size,
+                    projection_sources={
+                        "active_encounter_id": encounter_id,
+                        "active_pc_state": (names[-1], 17),
+                        "busy": True,
+                        "transcript": transcript_source,
+                        "encounter": encounter,
+                    },
+                )
+
+                projection = builder.build()
+                self.assertEqual(fixture_names, names)
+                self.assertEqual(projection["busy"], True)
+                party = projection["party"]
+                self.assertEqual(party["active_character"], names[-1])
+                self.assertEqual(party["active_character_revision"], 17)
+                self.assertEqual(
+                    [member["portrait_media_id"] for member in party["members"]],
+                    [player_portrait_media_id(name) for name in names],
+                )
+                self.assertEqual(
+                    set(projection["transcript"]),
+                    TRANSCRIPT_PROJECTION_FIELDS,
+                )
+                transcript = projection["transcript"]["messages"]
+                expected_selected = expected_texts[-MAX_TRANSCRIPT_MESSAGES:]
+                self.assertEqual([item["text"] for item in transcript], expected_selected)
+                self.assertTrue(
+                    all(set(item) <= TRANSCRIPT_MESSAGE_FIELDS for item in transcript)
+                )
+                self.assertEqual(
+                    [item["sequence"] for item in transcript],
+                    list(range(1, len(transcript) + 1)),
+                )
+                self.assertEqual(len({item["id"] for item in transcript}), len(transcript))
+                self.assertEqual(transcript, builder.build()["transcript"]["messages"])
+
+                combat = projection["combat"]
+                self.assertEqual(set(combat), COMBAT_PROJECTION_FIELDS)
+                self.assertTrue(combat["active"])
+                self.assertEqual(combat["round"], 3)
+                self.assertEqual(combat["phase"], "PC_PHASE")
+                order = combat["turn_order"]
+                self.assertEqual(
+                    [item["initiative"] for item in order],
+                    sorted((item["initiative"] for item in order), reverse=True),
+                )
+                self.assertEqual(
+                    [item["name"] for item in order],
+                    ["Goblin", "Scout", *names[1:], names[0]],
+                )
+                self.assertTrue(all(set(item) == COMBATANT_FIELDS for item in order))
+                self.assertLessEqual(len(order), MAX_COMBATANTS)
+
+                serialized = json.dumps(projection, sort_keys=True)
+                for canary in canaries:
+                    self.assertNotIn(canary, serialized)
+                for canary in (
+                    "CANARY-HOST-DEBUG-OUTPUT",
+                    "CANARY-DM-NOTE",
+                    "CANARY-ENEMY-HP-AND-AC",
+                    "CANARY-NPC-HIDDEN-STAT",
+                    "tmp/n2/private.log",
+                    "tmp/n2/encounter.json",
+                ):
+                    self.assertNotIn(canary, serialized)
+                for hidden_field in (
+                    "host_payload",
+                    "debug_output",
+                    "filesystem_path",
+                    "currentHitPoints",
+                    "actions",
+                    "dm_notes",
+                    "hidden_stats",
+                ):
+                    self.assertNotIn(hidden_field, serialized)
+                serialized_combat = json.dumps(combat, sort_keys=True)
+                self.assertNotIn("currentHitPoints", serialized_combat)
+                self.assertNotIn("maxHitPoints", serialized_combat)
+                self.assertNotIn("armorClass", serialized_combat)
+
+                event = project_player_event(
+                    "safe-projection",
+                    18,
+                    "projection.updated",
+                    projection,
+                )
+                self.assertEqual(event["projection"]["combat"], combat)
+                self.assertEqual(event["projection"]["transcript"], projection["transcript"])
+
+    def test_transcript_byte_and_source_bounds_and_out_of_combat_state(self) -> None:
+        root = self._temporary_directory()
+        duplicate_sources: dict[str, Any] = {
+            "active_encounter_id": "",
+            "active_pc_state": (PC_NAMES[0], 4),
+            "busy": False,
+            "transcript": [
+                {"type": "user-input", "content": "Ready?", "author": PC_NAMES[0]},
+                {"type": "user-input", "content": "Ready?", "author": PC_NAMES[0]},
+            ],
+            "encounter": None,
+        }
+        duplicate_builder, _names, _canaries = _make_canonical_fixture(
+            root,
+            1,
+            projection_sources=duplicate_sources,
+        )
+        duplicate_messages = duplicate_builder.build()["transcript"]["messages"]
+        self.assertEqual(len({item["id"] for item in duplicate_messages}), 2)
+        self.assertEqual(
+            duplicate_messages,
+            duplicate_builder.build()["transcript"]["messages"],
+        )
+
+        long_transcript = [
+            {"type": "narration", "content": "x" * 4096}
+            for _index in range(MAX_TRANSCRIPT_MESSAGES)
+        ]
+        out_of_combat_sources: dict[str, Any] = {
+            "active_encounter_id": "",
+            "active_pc_state": (PC_NAMES[0], 4),
+            "busy": False,
+            "transcript": long_transcript,
+            "encounter": None,
+        }
+        builder, _names, _canaries = _make_canonical_fixture(
+            root,
+            1,
+            projection_sources=out_of_combat_sources,
+        )
+        projection = builder.build()
+        messages = projection["transcript"]["messages"]
+        transcript_bytes = len(
+            json.dumps(
+                projection["transcript"],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+        )
+        self.assertLessEqual(len(messages), MAX_TRANSCRIPT_MESSAGES)
+        self.assertLessEqual(transcript_bytes, MAX_TRANSCRIPT_BYTES)
+        self.assertGreater(len(messages), 0)
+        self.assertTrue(projection["combat"]["available"])
+        self.assertFalse(projection["combat"]["active"])
+        self.assertEqual(projection["combat"]["turn_order"], [])
+
+        oversized_sources = dict(out_of_combat_sources)
+        oversized_sources["transcript"] = [
+            {"type": "debug", "content": "private"}
+            for _index in range(MAX_TRANSCRIPT_SOURCE_ITEMS + 1)
+        ]
+        oversized_builder, _names, _canaries = _make_canonical_fixture(
+            self._temporary_directory(),
+            1,
+            projection_sources=oversized_sources,
+        )
+        with self.assertLogs("web.extensions.player.projections", level="WARNING"):
+            oversized_projection = oversized_builder.build()
+        self.assertEqual(
+            oversized_projection["transcript"],
+            {"available": False, "messages": []},
+        )
+        self.assertEqual(len(oversized_projection["party"]["members"]), 1)
+
+    def test_projection_fails_closed_for_malformed_active_revision(self) -> None:
+
+        malformed_revision_builder, _names, _canaries = _make_canonical_fixture(
+            self._temporary_directory(),
+            1,
+            projection_sources={
+                "active_encounter_id": "",
+                "active_pc_state": (PC_NAMES[0], True),
+                "transcript": [],
+                "encounter": None,
+            },
+        )
+        with self.assertRaises(ProjectionError):
+            malformed_revision_builder.build()
+
+    def test_missing_and_corrupt_transcript_sections_preserve_party_for_one_and_four_pcs(
+        self,
+    ) -> None:
+        for party_size in (1, 4):
+            with self.subTest(party_size=party_size):
+                root = self._temporary_directory()
+                transcript_path = root / "game_interface_cache.json"
+                reader = _load_player_transcript_reader(transcript_path)
+                builder, names, _canaries = _make_canonical_fixture(
+                    root,
+                    party_size,
+                    projection_sources={
+                        "active_pc_state": (PC_NAMES[party_size - 1], 2),
+                        "busy": True,
+                        "transcript_reader": reader,
+                        "active_encounter_id": "",
+                        "encounter": None,
+                    },
+                )
+
+                missing_projection = builder.build()
+                self.assertEqual(
+                    missing_projection["transcript"],
+                    {"available": True, "messages": []},
+                )
+                self.assertEqual(
+                    [member["name"] for member in missing_projection["party"]["members"]],
+                    names,
+                )
+
+                bad_file_canary = f"CANARY-CORRUPT-TRANSCRIPT-{party_size}"
+                transcript_path.write_text(
+                    '{"type":"narration","content":"' + bad_file_canary,
+                    encoding="utf-8",
+                )
+                with self.assertLogs(
+                    "web.extensions.player.projections", level="WARNING"
+                ) as captured:
+                    corrupt_projection = builder.build()
+                self.assertEqual(
+                    corrupt_projection["transcript"],
+                    {"available": False, "messages": []},
+                )
+                self.assertEqual(
+                    [member["name"] for member in corrupt_projection["party"]["members"]],
+                    names,
+                )
+                self.assertTrue(corrupt_projection["busy"])
+                self.assertNotIn(bad_file_canary, json.dumps(corrupt_projection))
+                self.assertNotIn(bad_file_canary, "\n".join(captured.output))
+
+                event = project_player_event(
+                    f"transcript-unavailable-{party_size}",
+                    1,
+                    "projection.updated",
+                    corrupt_projection,
+                )
+                self.assertEqual(
+                    event["projection"]["transcript"],
+                    {"available": False, "messages": []},
+                )
+
+    def test_malformed_optional_sections_preserve_party_and_combat_is_all_or_nothing(
+        self,
+    ) -> None:
+        for party_size in (1, 4):
+            names = list(PC_NAMES[:party_size])
+            for failure_case in ("malformed_combatant", "unreadable_encounter"):
+                with self.subTest(party_size=party_size, failure_case=failure_case):
+                    root = self._temporary_directory()
+                    encounter_id = f"bad-player-combat-{party_size}"
+                    bad_combat_canary = f"CANARY-BAD-COMBAT-{party_size}"
+                    if failure_case == "malformed_combatant":
+                        encounter: object = {
+                            "encounterId": encounter_id,
+                            "combat_round": 4,
+                            "combat_phase": "PC_PHASE",
+                            "creatures": [
+                                {
+                                    "name": names[0],
+                                    "type": "player",
+                                    "initiative": 12,
+                                    "status": "alive",
+                                },
+                                {
+                                    "name": bad_combat_canary,
+                                    "type": "enemy",
+                                    "status": "alive",
+                                    "dm_notes": bad_combat_canary,
+                                },
+                            ],
+                            "dm_notes": bad_combat_canary,
+                        }
+                    else:
+                        encounter = OSError(bad_combat_canary)
+                    builder, fixture_names, _canaries = _make_canonical_fixture(
+                        root,
+                        party_size,
+                        projection_sources={
+                            "active_pc_state": (names[-1], 9),
+                            "busy": False,
+                            "transcript": [],
+                            "active_encounter_id": encounter_id,
+                            "encounter": encounter,
+                        },
+                    )
+
+                    with self.assertLogs(
+                        "web.extensions.player.projections", level="WARNING"
+                    ) as captured:
+                        projection = builder.build()
+                    self.assertEqual(fixture_names, names)
+                    self.assertEqual(
+                        projection["combat"],
+                        {
+                            "available": False,
+                            "active": True,
+                            "round": None,
+                            "phase": None,
+                            "turn_order": [],
+                        },
+                    )
+                    self.assertEqual(
+                        [member["name"] for member in projection["party"]["members"]],
+                        names,
+                    )
+                    self.assertEqual(projection["party"]["active_character_revision"], 9)
+                    self.assertFalse(projection["busy"])
+                    serialized = json.dumps(projection, sort_keys=True)
+                    self.assertNotIn(bad_combat_canary, serialized)
+                    self.assertNotIn(bad_combat_canary, "\n".join(captured.output))
+
+                    event = project_player_event(
+                        f"combat-unavailable-{party_size}-{failure_case}",
+                        1,
+                        "projection.updated",
+                        projection,
+                    )
+                    self.assertEqual(event["projection"]["combat"], projection["combat"])
 
     def test_authenticated_snapshot_and_event_contain_only_player_projection(self) -> None:
         root = self._temporary_directory()
