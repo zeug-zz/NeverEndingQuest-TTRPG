@@ -86,7 +86,13 @@ def finalize_combat_session(
             f"STATE_CHANGE: Cleared active combat encounter. Last completed is now {last_encounter_id}",
             category="combat_events",
         )
-        dependencies.safe_write_json("party_tracker.json", inputs.party_tracker_data)
+        persisted = dependencies.safe_write_json("party_tracker.json", inputs.party_tracker_data)
+        if persisted is True:
+            # TABLETOP MODE: Combat teardown has committed its canonical owner;
+            # publish a typed notice for a fresh player-safe projection.
+            from utils.player_host_publication import submit_player_host_change
+
+            submit_player_host_change("combat")
     dependencies.log_info("FILE_OP: Saving final combat chat history log...", category="combat_logs")
     dependencies.generate_chat_history(inputs.conversation_history, inputs.encounter_id)
     player_info = dependencies.safe_json_load(inputs.player_file)

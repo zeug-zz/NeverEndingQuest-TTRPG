@@ -681,6 +681,12 @@ def recover_pending_combat_turn(
     except Exception as exc:
         raise CombatTurnRecoveryError("encounter_write") from exc
 
+    # TABLETOP MODE: Recovered combat state is visible only after the canonical
+    # encounter write succeeds; the listener rereads its player projection.
+    from utils.player_host_publication import submit_player_host_change
+
+    submit_player_host_change("combat")
+
     from core.combat.turn import sync_committed_combat_turn
 
     try:

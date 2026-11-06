@@ -1692,15 +1692,25 @@ def _build_normal_turn_dependencies(
         )
 
     def fast_command_io():
+        def persist_fast_encounter(current_id, data):
+            persisted = safe_write_json(
+                f"modules/encounters/encounter_{current_id}.json", data
+            )
+            if persisted is True:
+                # TABLETOP MODE: Only the confirmed deterministic encounter
+                # write crosses as a typed player notice.
+                from utils.player_host_publication import submit_player_host_change
+
+                submit_player_host_change("combat")
+            return persisted
+
         return FastCommandIO(
             emit=print,
             flush=sys.stdout.flush,
             debug=debug,
             warning=warning,
             save_json=save_json_file,
-            persist_encounter=lambda current_id, data: safe_write_json(
-                f"modules/encounters/encounter_{current_id}.json", data
-            ),
+            persist_encounter=persist_fast_encounter,
         )
 
     def deterministic_command_io(path_manager, player_file, session, party_tracker_snapshot):
@@ -2378,7 +2388,13 @@ def sync_active_encounter(
 
         if not safe_write_json(encounter_file, encounter_data):
             error(f"FAILURE: Failed to save encounter file: {encounter_file}", category="file_operations")
-        trace_file_operation("write", "active_encounter_sync")
+        else:
+            # TABLETOP MODE: Notify only after the canonical encounter mirror
+            # has been written successfully.
+            from utils.player_host_publication import submit_player_host_change
+
+            submit_player_host_change("combat")
+            trace_file_operation("write", "active_encounter_sync")
         debug(
             f"SUCCESS: Active encounter {active_encounter_id} synced with latest character data",
             category="encounter_setup",

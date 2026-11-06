@@ -503,6 +503,13 @@ def save_message_cache():
             json.dump(list(message_cache), f, indent=2)
     except Exception as e:
         print(f"[MESSAGE_CACHE] Failed to save cache: {e}")
+        return False
+    # TABLETOP MODE: Notify the isolated player listener only after the canonical
+    # transcript cache write succeeds; no host message or emission crosses over.
+    from utils.player_host_publication import submit_player_host_change
+
+    submit_player_host_change("transcript")
+    return True
 
 def add_to_message_cache(message):
     """Add a message to the cache and save it"""

@@ -69,6 +69,7 @@ class PlayerSyncCoordinator:
         self._next_event_id = 0
         self._events: deque[_RetainedEvent] = deque()
         self._replay_bytes = 0
+        self._resync_required = threading.Event()
 
     @property
     def instance_id(self) -> str:
@@ -90,6 +91,11 @@ class PlayerSyncCoordinator:
             self._next_event_id = 0
             self._events.clear()
             self._replay_bytes = 0
+            self._resync_required.clear()
+
+    def require_authoritative_resync(self) -> None:
+        """Keep future reconnects on a fresh canonical snapshot after a failure."""
+        self._resync_required.set()
 
     def capture_snapshot(
         self,
@@ -132,6 +138,19 @@ class PlayerSyncCoordinator:
                 self._replay_bytes -= expired.encoded_bytes
             return event
 
+    def publish_snapshot_event(
+        self,
+        snapshot_reader: Callable[[], object],
+    ) -> PublishedPlayerEvent:
+        """Read canonical state and retain its projection under the snapshot lock."""
+        with self._lock:
+            snapshot = snapshot_reader()
+            revision = getattr(snapshot, "revision", None)
+            projection = getattr(snapshot, "projection", None)
+            if not isinstance(projection, Mapping):
+                raise EnvelopeValidationError("snapshot reader returned no projection")
+            return self.publish_event(revision, "projection.updated", projection)
+
     def reconnect(
         self,
         client_instance_id: object,
@@ -149,6 +168,8 @@ class PlayerSyncCoordinator:
                 client_cursor,
                 current_epoch,
             )
+            if reason is None and self._resync_required.is_set():
+                reason = "event_gap"
             if reason is not None:
                 snapshot = self._capture_snapshot_locked(current_epoch, snapshot_reader)
                 return make_resync_envelope(reason, snapshot)

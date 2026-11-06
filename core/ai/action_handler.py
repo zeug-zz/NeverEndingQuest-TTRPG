@@ -1694,7 +1694,9 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                 party_tracker_data["worldConditions"]["activeCombatEncounter"] = (
                     encounter_id
                 )
-                safe_json_dump(party_tracker_data, "party_tracker.json")
+                combat_owner_persisted = safe_json_dump(
+                    party_tracker_data, "party_tracker.json"
+                )
                 debug(
                     f"STATE_CHANGE: Updated party tracker with combat encounter ID: {encounter_id}",
                     category="combat_processing",
@@ -1757,6 +1759,13 @@ def process_action(action, party_tracker_data, location_data, conversation_histo
                             category="combat_processing",
                         )
                         multi_pc_manager = None  # Fall back to single-PC mode
+
+                if combat_owner_persisted is True:
+                    # TABLETOP MODE: Notify after encounter ownership and any
+                    # initiative initialization have committed; pass no payload.
+                    from utils.player_host_publication import submit_player_host_change
+
+                    submit_player_host_change("combat")
 
                 # Reload location data here
                 current_location_id = party_tracker_data["worldConditions"][
