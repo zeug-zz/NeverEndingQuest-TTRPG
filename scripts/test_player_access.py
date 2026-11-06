@@ -210,7 +210,13 @@ class PlayerAccessTests(unittest.TestCase):
         self.assertEqual(app.socket_server.handlers.keys(), {PLAYER_NAMESPACE})
         self.assertEqual(
             set(app.socket_server.handlers[PLAYER_NAMESPACE]),
-            {"connect", "disconnect", "player.input.submit"},
+            {
+                "connect",
+                "disconnect",
+                "player.snapshot.request",
+                "player.active_pc.select",
+                "player.input.submit",
+            },
         )
         self.assertEqual(app.socket_server.namespace_handlers, {})
         self.assertEqual(app.socket_server.namespaces, [PLAYER_NAMESPACE])
