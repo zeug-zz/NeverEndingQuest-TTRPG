@@ -525,7 +525,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
 | N | detached at `e2279f42` (N2 branch from current main) | B0 | Opened 2026-11-05 | N1 integrated; N2 provider-free planning/build authorized 2026-11-06, Overseer proposal review before build; no listener or live work until S releases 8360 | N2 React vertical slice |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 scheduled; SP2 human review pending | SP3 live evidence, then SP4 owner gate |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 collected and released; paused for owner review | SP3 adjudication, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -534,41 +534,37 @@ nono-sandboxed OpenCode wrapper starts only inside its approved roots:
 built-in worktree root `~/.local/share/opencode/worktree`, with the main
 repository's shared git dir granted for linked worktrees.
 
-Live window: RESERVED exclusively for worktree S, SP3. Booking identity and
-UTC interval (record in the execution ledger before any preparation):
+Live window: FREE. S released SP3 booking `sp3-s-20261105t200000z` at
+`2026-11-06T02:18:55Z` after teardown; the Overseer verified port 8360 free at
+`2026-11-06T04:18:56Z`. A session books the window through the Overseer before
+any live run and releases it after teardown. N2's multi-browser gate needs its
+own booking; live work never overlaps.
 
-- Booking ID: `sp3-s-20261105t200000z`.
-- Holder: `Worktree S primary orchestrator`; approved by the Overseer.
-- Start: `2026-11-05T20:00:00Z`.
-- End: `2026-11-06T04:00:00Z`.
-- `network_non_overlap_confirmed`: `true`. N0 is torn down, and N1 is
-  provider-free review remediation with no Network live booking. No Network
-  live work is authorized during this reservation; any new request must wait
-  for S's teardown and explicit release.
-- Port 8360 loopback bind preflight succeeded before booking; no listener
-  was started. S must recheck port availability/ownership before each run.
-- The eight-hour reservation includes seeding, evidence handling and teardown;
-  it does not enlarge the frozen six-hour live-time or 800-attempt matrix
-  caps. Each row remains capped at 35 attempts and 25 minutes. Record live
-  intervals from sandbox launch through teardown completion; their sum is
-  capped at six hours, with between-row pauses excluded. Never reset totals
-  on resume or on a later booking.
-- Do not start a row with less than 25 minutes remaining in the reservation.
-  Stop further work and tear down by the booking end; unfinished coverage
-  remains explicitly missing/blocked. Report release after teardown. If the
-  window is missed, obtain another booking rather than running outside it.
+SP3 collection closeout (run `sp3-s-20261105t200000z`; owner adjudication
+pending, not a gate verdict):
 
-SP3 collection is authorized within the existing frozen protocol after S
-preserves its local execution commit, reconciles with `origin/main`, records
-the booking, and reruns focused provider-free checks and strict validation.
-S may publish its separate SP3/SP4 tooling PR; this does not accept ADR-0034
-or pre-judge any live row. Freeze and record source/dependency/model-routing
-identity before the first row; do not rebase, install dependencies or change
-that baseline between arms. The primary owns execution and each verdict;
-builders do not run captures. Use only the real `tmp/combat_capture/` copy,
-repository venv, port 8360 and `NEQ_OPEN_BROWSER=0`. Preserve unique bundles
-and the frozen reserve/stop rules. No production behavior or paid work beyond
-the existing matrix caps is authorized.
+- 26 of 30 slots attempted; R01-R04 reserves unused and reported missing.
+  Primary row verdicts: 18 FAIL, 8 BLOCKED, 0 PASS; E01 has no finalized
+  bundle or score. 513 of 800 attempts and about 57 minutes of the six-hour
+  live budget used. Frozen preregistration still verifies 10/10.
+- Substantive content failures, all arms: invented destinations for frozen
+  unknown doors (E02, E07, E11), an unauthored relocation (E08), extra
+  sensory cues beyond authored ones (E12), unsupported distances (C05, C06),
+  and stair-to-balcony overshoot (C02-C04, C06, C08).
+- Not arm signal: all seven landscape rows (E06, E13-E18) stopped on a host
+  `NameError` (`packet_location` undefined in `main_game_loop`,
+  `main.py` about line 7486, present on `main` since 2026-03). Six of these
+  record no failed rubric check. Combat startup lacked the goblin template
+  (C01) and made one unexpected provider call per row (C02-C08); E03-E05 lost
+  transport before the first scripted reply.
+- Protocol deviations for owner adjudication: the booking forbade changing the
+  baseline between arms, but seven tooling-only re-freezes
+  (`identity-freeze-*.json`, `scripts/` only) were made during collection;
+  repeated same-cause landscape failures did not trigger the three-consecutive
+  infrastructure pause.
+- S's report marks all five recommendations inconclusive. ADR-0034 remains
+  Proposed. SP2 D1 audit, M1 and transcript ratings, and the SP4 owner
+  choices remain pending. Tooling PR #97 is open and unmerged.
 
 ### 10.3 Gate record
 
@@ -582,7 +578,7 @@ the existing matrix caps is authorized.
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
 | SP2 offline D1/M1 | S | pending owner audit/ratings | 2026-11-06 | Tooling/evidence integrated; D1 20 attempts (11 validated, 9 invalid layouts), selected-source hashes 20/20; M1 16 sketches, artifact hashes 17/17; 1,048 D1 claim rows and M1 ratings remain blank. Integration is not an audited precision/backfill or usefulness PASS. | #94 (`e40e4899`) |
-| SP3 live matrix | S | pending | -- | -- | -- |
+| SP3 live matrix | S | collected; owner adjudication pending | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS, 4 reserves missing; 7 landscape FAILs caused by a host NameError, not arm content; seven mid-matrix tooling re-freezes await owner ruling. Not a PASS | #97 (open) |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 | Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit ready, premature production request withdrawn; fixture/rubric and budget contracts still pending | #84 (audit); scope correction follows |
