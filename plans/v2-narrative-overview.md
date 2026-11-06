@@ -524,7 +524,7 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | detached at `e2279f42` (N2 branch from current main) | B0 | Opened 2026-11-05 | N1 integrated; N2 provider-free planning/build authorized 2026-11-06, Overseer proposal review before build; no listener or live work until S releases 8360 | N2 React vertical slice |
+| N | `feature/v2-network-n2` | B0 | Opened 2026-11-05 | N1 archived (#102); N2 proposal #103 approved 2026-11-06; provider-free build authorized | N2 React vertical slice (live gate needs its own booking) |
 | S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 adjudicated inconclusive; SP3b amendment drafting; SP4 D1/M1 review open | SP3b amendment review and booking, then SP4 owner gate |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
@@ -598,6 +598,37 @@ recommendations):
 - SP4 may start now for inputs independent of SP3: the 1,048-row D1 claim
   audit and the 16 M1 sketch ratings. Live-transcript ratings and the
   ADR-0034 decision wait for SP3b evidence.
+
+N2 proposal rulings (2026-11-06; change `v2-react-player-vertical-slice`,
+draft PR #103; N1 archived in #102 at `77bb3f1a`). Approved under the
+standing owner instruction:
+
+1. Route layout: serve the shell at the existing player `GET /` and assets
+   at `GET /static/player/<asset-id>`, not plan s6's `/client`. This keeps
+   the N1 allowlist unchanged; any later new route or event first needs a
+   MODIFIED `player-capabilities` requirement and inventory-test update.
+2. `NEQ_PLAYER_DEV_LISTENER=1`: off by default, loopback `127.0.0.1:8370`
+   only, no bind/port override, existing scrypt verifier required, host
+   play unaffected on failure, every host edit marked `# TABLETOP MODE:`.
+   Temporary; N3 sharing controls replace it.
+3. Frontend dependencies: the ten named packages only (`playwright`
+   dev-only). Exact current stable versions, committed lockfile, install
+   with `npm ci` inside `web/frontend/` only. Before merge, the
+   implementation PR must carry the direct/transitive license inventory
+   and a clean `npm audit --audit-level=low`; any copyleft, unknown or
+   unlicensed package, or an added package, returns for review. The Node
+   setup action is pinned to a commit SHA whose provenance is recorded in
+   the PR.
+4. Generated `web/frontend/dist/` and `node_modules/` stay gitignored in
+   N2; prebuilt distribution belongs to N3.
+5. Browser evidence: installing Playwright Firefox and WebKit binaries
+   into the user's Playwright cache is authorized, using the lockfile's
+   pinned `playwright` version, after task 2.1 and with no other system
+   changes. A sandbox denial is reported, not worked around. The external
+   owner-run driver path requires separate review before use. With no real
+   browser path the gate is BLOCKED; socket-only evidence never passes it.
+   The live gate (host 8360, player 8370, isolated Capture_Arena) needs its
+   own booking and is serialized with S's SP3b.
 
 ### 10.3 Gate record
 
