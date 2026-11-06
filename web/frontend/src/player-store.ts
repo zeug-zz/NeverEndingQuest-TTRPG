@@ -28,6 +28,15 @@ export type PlayerStoreState = Readonly<{
   snapshot: PlayerSnapshot | null;
   message: string | null;
   lastReceipt: PlayerReceipt | null;
+  pendingInput: PendingPlayerInput | null;
+  requiresResync: boolean;
+}>;
+
+export type PendingPlayerInput = Readonly<{
+  requestId: string;
+  characterName: string;
+  activeCharacterRevision: number;
+  status: "pending" | "uncertain";
 }>;
 
 export type SnapshotRequester = (request: PlayerSnapshotRequest) => void;
@@ -42,6 +51,7 @@ const RESYNC_ERROR_CODES = new Set([
   "server_instance_changed",
   "session_epoch_changed",
   "session_epoch_mismatch",
+  "stale_context",
 ]);
 
 export class PlayerStore {
@@ -51,6 +61,8 @@ export class PlayerStore {
     snapshot: null,
     message: null,
     lastReceipt: null,
+    pendingInput: null,
+    requiresResync: false,
   };
   private readonly listeners = new Set<() => void>();
   private snapshotRequester: SnapshotRequester | null = null;
@@ -75,6 +87,8 @@ export class PlayerStore {
       snapshot: null,
       message: null,
       lastReceipt: null,
+      pendingInput: null,
+      requiresResync: false,
     });
   }
 
@@ -91,10 +105,21 @@ export class PlayerStore {
       return false;
     }
     this.snapshotRequestPending = false;
+    const currentSnapshot = this.currentState.snapshot;
+    const pendingInput = this.currentState.pendingInput;
+    const identityChanged =
+      currentSnapshot !== null &&
+      (currentSnapshot.instance_id !== payload.instance_id ||
+        currentSnapshot.session_epoch !== payload.session_epoch);
     this.update({
       snapshot: payload,
       status: this.currentState.status === "hydrating" ? "connecting" : this.currentState.status,
       message: null,
+      pendingInput:
+        pendingInput?.status === "pending" && identityChanged
+          ? { ...pendingInput, status: "uncertain" }
+          : pendingInput,
+      requiresResync: false,
     });
     return true;
   }
@@ -138,7 +163,52 @@ export class PlayerStore {
       this.requestSnapshot();
       return false;
     }
-    this.update({ lastReceipt: payload });
+    const pendingInput = this.currentState.pendingInput;
+    if (pendingInput === null || pendingInput.requestId !== payload.request_id) {
+      return false;
+    }
+    const requiresResync =
+      this.currentState.requiresResync ||
+      payload.status === "stale" ||
+      payload.status === "uncertain";
+    this.update({
+      pendingInput: null,
+      lastReceipt: payload,
+      requiresResync,
+    });
+    if (payload.status === "stale" || payload.status === "uncertain") {
+      this.requestSnapshot(true);
+    }
+    return true;
+  }
+
+  beginInput(
+    requestId: string,
+    characterName: string,
+    activeCharacterRevision: number,
+  ): boolean {
+    const snapshot = this.currentState.snapshot;
+    const existing = this.currentState.pendingInput;
+    if (
+      this.currentState.status !== "connected" ||
+      snapshot === null ||
+      this.currentState.requiresResync ||
+      existing?.status === "pending" ||
+      snapshot.projection.party.active_character !== characterName ||
+      snapshot.projection.party.active_character_revision !== activeCharacterRevision
+    ) {
+      return false;
+    }
+    this.update({
+      pendingInput: {
+        requestId,
+        characterName,
+        activeCharacterRevision,
+        status: "pending",
+      },
+      lastReceipt: null,
+      message: null,
+    });
     return true;
   }
 
@@ -175,7 +245,14 @@ export class PlayerStore {
     ) {
       return;
     }
-    this.update({ status: "disconnected", message });
+    const pendingInput = this.currentState.pendingInput;
+    const inputWasPending = pendingInput?.status === "pending";
+    this.update({
+      status: "disconnected",
+      message,
+      pendingInput: inputWasPending ? { ...pendingInput, status: "uncertain" } : pendingInput,
+      requiresResync: this.currentState.requiresResync || inputWasPending,
+    });
   }
 
   setStatus(status: PlayerConnectionStatus, message: string | null = null): void {
@@ -184,7 +261,14 @@ export class PlayerStore {
 
   requireReload(message = "This player build is out of date. Reload this page to continue."): void {
     this.snapshotRequestPending = false;
-    this.update({ status: "reload-required", message });
+    const pendingInput = this.currentState.pendingInput;
+    const inputWasPending = pendingInput?.status === "pending";
+    this.update({
+      status: "reload-required",
+      message,
+      pendingInput: inputWasPending ? { ...pendingInput, status: "uncertain" } : pendingInput,
+      requiresResync: this.currentState.requiresResync || inputWasPending,
+    });
   }
 
   logoutComplete(): void {
@@ -196,6 +280,8 @@ export class PlayerStore {
       snapshot: null,
       message: null,
       lastReceipt: null,
+      pendingInput: null,
+      requiresResync: false,
     };
     this.notify();
   }
@@ -221,6 +307,9 @@ export class PlayerStore {
 }
 
 function messageForPlayerError(error: PlayerError): string | null {
+  if (error.code === "stale_context") {
+    return "The active-PC selection was stale. Reviewing the refreshed state.";
+  }
   if (RESYNC_ERROR_CODES.has(error.code)) return "Resynchronizing player state...";
   if (error.code === "rate_limited") return "Please wait before requesting another update.";
   if (error.code === "snapshot_unavailable") return "The player snapshot is temporarily unavailable.";
