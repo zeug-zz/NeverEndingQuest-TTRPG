@@ -48,6 +48,17 @@ Diagnostic-only metadata records that the subprocess guard had refused execution
 
 Across E01-E06 there is no PASS: original classifications remain **UNRESOLVED**, with no reserves or replays; the matrix remains in progress.
 
-All gate tasks remain unchecked; ADR-0034 remains Proposed and human ratings remain pending. Verification recorded: `git diff --check` and `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate v2-mapping-pilot-execution --strict`. No commits, pushes, or live reruns were performed.
+All gate tasks remain unchecked; ADR-0034 remains Proposed and human ratings remain pending. Verification recorded: `git diff --check` and `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate v2-mapping-pilot-execution --strict`. Tooling publication does not establish gameplay success; no failed row was replayed.
 
 No provider route, prompt, runtime, fixture, or script changes were made. Owner D1/M1/live ratings remain pending; Stage 1 is waived. ADR-0034 remains Proposed.
+
+## E07-E10 primary review and checked-resume correction
+
+| Row | Primary verdict | Immutable bundle | Completed turns | Attempts / receipts | Live seconds | Missing coverage |
+|---|---|---|---:|---:|---:|---|
+| E07 | FAIL (kitchen state) | BLOCKED | 6 usable | 35 / 35 | 283.228991 | Restart and E4-08 not executed after timeout/cap; kitchen door incorrectly narrated open. |
+| E08 | FAIL (party relocation) | BLOCKED | 4 delivered | 33 / 32 | 206.869153 | Door-bar/restart/return; E1-05 timed out, with an in-flight receipt missing. |
+| E09 | BLOCKED (attempt cap) | BLOCKED | 7 delivered | 35 / 35 | 162.827676 | Restart and E4-08/final persistence-return coverage. |
+| E10 | BLOCKED (resume refusal despite matching hash) | BLOCKED | 7 delivered | 30 / 30 | 132.847351 | Restart readiness and final E4-08; strict seed-location check refused the moved MP02 resume. |
+
+Commit `4c890add` was the last clean source; the worktree now has an uncommitted capture-only checked-resume patch (heavy builder). Its explicit resume checkpoint verifies hash, party, module, current canonical area, known frozen location, and reciprocal frozen connectivity. The initial-launch strict seed-location guard is unchanged. Primary verification: 233 tests passed in 11.485 seconds; ASCII 849/0; strict validation valid; diff clean. This adds no seed-metadata writes, core hook, or product fix. The main `packet_location` bug remains untouched. All original evidence is retained; original classifications remain **UNRESOLVED**, with no reserves or replays. A new identity amendment is required before any future row. No live PASS is established; human ratings remain pending.

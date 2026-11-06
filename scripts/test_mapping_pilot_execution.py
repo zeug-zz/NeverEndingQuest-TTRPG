@@ -1485,6 +1485,7 @@ FakeTransport().create()
         live_time_cap: bool = False,
         pre_content_decision: dict[str, Any] | None = None,
         pre_content_exception: Exception | None = None,
+        missing_checkpoint_after_e4_07: bool = False,
         prepared_run_id: str | None = None,
         prepared_row_run_id: str | None = None,
         prepared_ledger_root: Path | None = None,
@@ -1513,6 +1514,7 @@ FakeTransport().create()
             "contexts": [],
             "receipts": [],
             "servers_started": [],
+            "server_identities": [],
             "servers_stopped": [],
             "drivers": [],
             "seed_calls": [],
@@ -1644,6 +1646,7 @@ FakeTransport().create()
         def start_server(
             row: dict[str, Any], run_token: str, lifecycle_id: str, log_path: Path
         ) -> dict[str, Any]:
+            trace["server_identities"].append(dict(row))
             if co_located_runtime_metadata:
                 runtime_directory = Path(row["_request_guard_directory"])
                 metadata_path = runtime_directory / "sitecustomize.py"
@@ -1743,6 +1746,13 @@ FakeTransport().create()
             }
 
         def state_hasher(_root: str) -> dict[str, Any]:
+            if (
+                missing_checkpoint_after_e4_07
+                and trace["drivers"]
+                and trace["drivers"][0].sent
+                and trace["drivers"][0].sent[-1] == "E4-07"
+            ):
+                return {"status": "missing", "sha256": None, "files": {}}
             state_hash = (
                 "c" * 64
                 if state_mismatch_after_restart and len(trace["servers_started"]) > 1
@@ -1873,6 +1883,11 @@ FakeTransport().create()
             self.assertEqual(
                 result["lifecycle_checkpoint"]["saved_state_sha256"],
                 result["lifecycle_checkpoint"]["resumed_state_sha256"],
+            )
+            self.assertNotIn("resume_checkpoint_sha256", trace["server_identities"][0])
+            self.assertEqual(
+                trace["server_identities"][1]["resume_checkpoint_sha256"],
+                result["lifecycle_checkpoint"]["saved_state_sha256"],
             )
             bundle = Path(trace["evidence_root"]) / "sp3" / trace["row_run_id"]
             stored_row = json.loads((PROJECT_ROOT / bundle / "row.json").read_text(encoding="ascii"))
@@ -2351,6 +2366,95 @@ FakeTransport().create()
         self.assertFalse(result["lifecycle_checkpoint"]["resume_integrity_verified"])
         self.assertFalse(result["lifecycle_checkpoint"]["state_hash_matches"])
         self.assertNotIn("E4-08", trace["drivers"][1].sent)
+
+    def test_row_runner_refuses_restart_without_a_parent_checkpoint_hash(self) -> None:
+        result, trace = self._run_injected_row(
+            "E07", missing_checkpoint_after_e4_07=True
+        )
+        self.assertEqual(result["verdict"], "BLOCKED")
+        self.assertEqual(result["lifecycle_checkpoint"]["status"], "blocked")
+        self.assertTrue(result["lifecycle_checkpoint"]["resume_checkpoint_missing"])
+        self.assertEqual(len(trace["seed_calls"]), 1)
+        self.assertEqual(len(trace["servers_started"]), 1)
+        self.assertNotIn("E4-08", trace["drivers"][0].sent)
+
+    def test_default_server_start_binds_resume_flags_to_saved_hash(self) -> None:
+        from scripts.mapping_pilot import row_runner
+
+        checkpoint = "b" * 64
+        row = {
+            "arm": "B",
+            "fixture_id": "interior_tavern",
+            "party": "P1",
+            "resume_checkpoint_sha256": checkpoint,
+        }
+        log_path = PROJECT_ROOT / self.base / "resume-server.log"
+        fake_process = SimpleNamespace(poll=lambda: None)
+        with mock.patch.object(row_runner, "_request_guard_environment", return_value={}), mock.patch.object(
+            subprocess, "Popen", return_value=fake_process
+        ) as popen:
+            owned = row_runner._start_owned_server(
+                row, "row-resume", "row-resume-s2", log_path
+            )
+        try:
+            command = popen.call_args.args[0]
+            self.assertIn("--resume", command)
+            checkpoint_index = command.index("--resume-checkpoint-sha256")
+            self.assertEqual(command[checkpoint_index + 1], checkpoint)
+            self.assertEqual(popen.call_args.kwargs["env"]["NEQ_OPEN_BROWSER"], "0")
+        finally:
+            owned.log_handle.close()
+
+    def test_server_worker_requires_and_forwards_explicit_resume_checkpoint(self) -> None:
+        from scripts.mapping_pilot import server
+
+        sandbox = PROJECT_ROOT / self.base / "server-sandbox"
+        sandbox.mkdir(parents=True)
+        checkpoint = "c" * 64
+        forwarded: list[dict[str, Any]] = []
+        fake_launcher = SimpleNamespace(
+            launch=lambda **kwargs: forwarded.append(dict(kwargs)) or "started"
+        )
+        with mock.patch.object(server, "_safe_runtime_root", return_value=sandbox):
+            with self.assertRaisesRegex(ValueError, "checkpoint is missing"):
+                server.launch_worker(
+                    arm="B",
+                    fixture_id="interior_tavern",
+                    party_size=1,
+                    row_run_id="server-resume-test",
+                    resume=True,
+                    launcher=fake_launcher,
+                )
+            self.assertEqual(forwarded, [])
+            result = server.launch_worker(
+                arm="B",
+                fixture_id="interior_tavern",
+                party_size=1,
+                row_run_id="server-resume-test",
+                resume=True,
+                resume_checkpoint_sha256=checkpoint,
+                launcher=fake_launcher,
+            )
+        self.assertEqual(result, "started")
+        self.assertEqual(forwarded[0]["resume"], True)
+        self.assertEqual(forwarded[0]["resume_checkpoint_sha256"], checkpoint)
+        parsed = server._parse_args(
+            [
+                "--arm",
+                "B",
+                "--fixture-id",
+                "interior_tavern",
+                "--party-size",
+                "1",
+                "--row-run-id",
+                "server-resume-test",
+                "--resume",
+                "--resume-checkpoint-sha256",
+                checkpoint,
+            ]
+        )
+        self.assertTrue(parsed.resume)
+        self.assertEqual(parsed.resume_checkpoint_sha256, checkpoint)
 
     def test_server_receipt_observer_attributes_startup_and_model_turn_without_content(self) -> None:
         from scripts.mapping_pilot import server as server_module

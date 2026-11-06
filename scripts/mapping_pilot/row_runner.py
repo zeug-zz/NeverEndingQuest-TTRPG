@@ -66,6 +66,7 @@ DEFAULT_ROW_EVIDENCE_ROOT = DEFAULT_EVIDENCE_ROOT / "row-bundles"
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_ROW_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SAFE_LIFECYCLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_SAFE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _RECORD_NAME = re.compile(r"^record-[0-9]{8}\.json$")
 _MOVEMENT_RECORD_NAME = re.compile(r"^record-[0-9]{6}\.json$")
 # Research-only CaptureSession scope: python-engineio exposes this decoder
@@ -1408,6 +1409,23 @@ def execute_row(
                         saved_state = _try_state_hash(
                             hooks.state_hasher, runtime_root, error_types
                         )
+                        saved_state_sha256 = saved_state.get("sha256")
+                        if (
+                            saved_state.get("status") != "recorded"
+                            or not isinstance(saved_state_sha256, str)
+                            or _SAFE_SHA256.fullmatch(saved_state_sha256) is None
+                        ):
+                            lifecycle_ok = False
+                            lifecycle_checkpoint = {
+                                "status": "blocked",
+                                "resume_integrity_verified": False,
+                                "saved_state_sha256": saved_state_sha256,
+                                "resume_checkpoint_missing": True,
+                                "reseed": False,
+                                "e4_08_sent": False,
+                            }
+                            error_types.append("ResumeCheckpointUnavailable")
+                            raise _StopDriving
                         receipts_before_restart = hooks.load_router_receipts(
                             selected_run_id
                         )
@@ -1450,6 +1468,7 @@ def execute_row(
                             ledger_root=ledger_root,
                             runtime_directory=runtime_directory,
                             live_started_monotonic=live_started,
+                            resume_checkpoint_sha256=saved_state_sha256,
                         )
                         active_server = execute_booked_operation(
                             run_id,
@@ -2312,6 +2331,17 @@ def _start_owned_server(
         "--runtime-root",
         "tmp/combat_capture",
     ]
+    resume_checkpoint_sha256 = row.get("resume_checkpoint_sha256")
+    if resume_checkpoint_sha256 is not None:
+        if (
+            not isinstance(resume_checkpoint_sha256, str)
+            or _SAFE_SHA256.fullmatch(resume_checkpoint_sha256) is None
+        ):
+            log_handle.close()
+            raise RowExecutionError("mapping-pilot resume checkpoint is invalid")
+        command.extend(
+            ["--resume", "--resume-checkpoint-sha256", resume_checkpoint_sha256]
+        )
     environment = os.environ.copy()
     environment["NEQ_OPEN_BROWSER"] = "0"
     environment.update(request_guard_environment)
@@ -3254,6 +3284,7 @@ def _server_identity(
     ledger_root: str | Path,
     runtime_directory: Path,
     live_started_monotonic: Optional[float],
+    resume_checkpoint_sha256: Optional[str] = None,
 ) -> dict[str, Any]:
     if (
         isinstance(live_started_monotonic, bool)
@@ -3274,6 +3305,13 @@ def _server_identity(
         "live_started_monotonic": float(live_started_monotonic),
     }
     identity["_request_guard_directory"] = runtime_directory.as_posix()
+    if resume_checkpoint_sha256 is not None:
+        if (
+            not isinstance(resume_checkpoint_sha256, str)
+            or _SAFE_SHA256.fullmatch(resume_checkpoint_sha256) is None
+        ):
+            raise RowExecutionError("mapping-pilot resume checkpoint is invalid")
+        identity["resume_checkpoint_sha256"] = resume_checkpoint_sha256
     return identity
 
 
