@@ -13,6 +13,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestInfo } from "playwright/test";
+import { isSensitiveEvidenceField, redactEvidenceText } from "./redaction.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const TMP_ROOT = resolve(REPOSITORY_ROOT, "tmp");
@@ -139,13 +140,11 @@ export function redactValue<T>(value: T): T {
 }
 
 export function sanitizeText(value: string): string {
-  const password = process.env.NEQ_N2_PLAYER_PASSWORD;
-  let result = value;
-  if (password) result = result.split(password).join("[REDACTED]");
-  return result
-    .replace(/(set-cookie|cookie|authorization|password|csrf[_-]?token)\s*[:=]\s*[^\r\n]*/gi, "$1=[REDACTED]")
-    .replace(/(neq[_-]player[_-](?:session|prelogin)\s*[:=]\s*)[^,;\s]+/gi, "$1[REDACTED]")
-    .slice(0, 4096);
+  return redactEvidenceText(
+    value,
+    [process.env.NEQ_N2_PLAYER_PASSWORD, process.env.NEQ_PLAYER_PASSWORD_VERIFIER],
+    4096,
+  );
 }
 
 export function annotation(testInfo: TestInfo, type: string): string | undefined {
@@ -170,16 +169,5 @@ export function atomicJsonWrite(path: string, payload: unknown): void {
 }
 
 function isSensitiveField(key: string): boolean {
-  return new Set([
-    "cookie",
-    "set-cookie",
-    "authorization",
-    "password",
-    "csrf_token",
-    "csrf-token",
-    "x-neq-player-session",
-    "neq_player_session",
-    "neq_player_prelogin",
-    "cookies",
-  ]).has(key.toLowerCase());
+  return isSensitiveEvidenceField(key);
 }

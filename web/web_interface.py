@@ -7220,7 +7220,6 @@ def handle_trigger_update():
     except Exception as e:
         emit('update_error', {'error': str(e)})
 
-# TABLETOP MODE: Build the explicit player gateway without starting its listener.
 def read_player_transcript():
     # TABLETOP MODE: Read only the canonical bounded GUI transcript file.
     from utils.file_operations import safe_read_json
@@ -7233,6 +7232,7 @@ def read_player_transcript():
     return transcript
 
 
+# TABLETOP MODE: Build the explicit player gateway without starting its listener.
 def create_player_runtime_gateway():
     """Wire the opt-in player boundary to canonical state and the host queue."""
     from core.managers.status_manager import status_manager

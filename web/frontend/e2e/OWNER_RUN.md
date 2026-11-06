@@ -29,21 +29,28 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   system Chrome launched by Playwright as `chromium.launch({ channel: "chrome" })`;
   Player B is Playwright Firefox from the pinned package. The facilitator UI
   uses a separate BrowserContext on Player A's Chrome instance. `run.json`
-  records the name and actual version for Player A, Player B, and the host UI
-  context. WebKit is not a replacement for either required player engine. The
-  gate writes no browser storage state, HAR, or trace archive. Console text is
-  bounded and redacts password, cookie, authorization, and CSRF values. Do not
-  add raw network or storage artifacts.
+  records the commit SHA, clean-checkout state, and name and actual version for
+  Player A, Player B, and the host UI context. WebKit is not a replacement for
+  either required player engine. The gate writes no browser storage state, HAR,
+  or trace archive. Console text is bounded and redacts password, verifier,
+  cookie, authorization, and CSRF values. Do not add raw network or storage
+  artifacts.
 - Gameplay probes submit player and host inputs. The sandbox may process them
   through its configured provider path. Run only when that provider execution
-  is separately authorized. If any provider is invoked, the reviewer must
-  replace the driver's `not-observed` placeholder with the actual model and
-  provider identity in `run.json` and `summary.json`; do not infer it from the
-  browser or configuration.
-- Inject `NEQ_N2_PLAYER_PASSWORD` and `NEQ_PLAYER_PASSWORD_VERIFIER` from the
-  approved secret source without putting either value in command arguments,
-  shell history, evidence, screenshots, or notes. The driver removes the plain
-  login password from the managed host child's environment.
+  is separately authorized. If any provider is invoked, run the provider-identity
+  extractor described below. It reads timestamped router response receipts and
+  available provider trace records from the sandbox, scopes them to `run.json`,
+  and writes a separate `provider-identity.json` sidecar. Never hand-edit
+  `run.json` or `summary.json`; never infer provider, model, or attempt count
+  from browser output or configuration. An absent or incomplete source remains
+  `unknown` with its reason.
+- The player password is read with Bash `read -rs` into an exported variable.
+  The scrypt verifier is generated from that environment value, never from a
+  command-line argument. `web/extensions/player/auth.py --make-verifier`
+  accepts only the flag and reads the password using `getpass.getpass`; it has
+  no password argument. The managed host child receives the verifier, while
+  the driver removes the plain login password from the child's environment.
+  Never put either value in shell history, evidence, screenshots, or notes.
 
 ## Static preflight (no browser, process, or evidence side effects)
 
@@ -76,13 +83,121 @@ Playwright Firefox for Player B. WebKit is not selected by this gate and cannot
 replace either required browser. The host UI runs in its own Chrome
 BrowserContext. Do not install browsers or dependencies during the live run.
 
+## Live-window lock and frozen caps
+
+Acquire a separate shared live-window lock for each party-size run, before
+starting its host. First use a clean `~/Projects/neq-v2-network` checkout at a
+recorded SHA (post-merge `main` is preferred), and confirm ports 8360 and 8370
+are free. Resolve the shared coordination directory and acquire the lock with
+one atomic `mkdir`; if it fails, do not retry or start the gate:
+
+```bash
+cd ~/Projects/neq-v2-network
+C="$(git rev-parse --path-format=absolute --git-common-dir)/neq-coordination"
+LOCK="$C/live-window.lock"
+PARTY_SIZE=1
+RUN_ID="p${PARTY_SIZE}-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-${RUN_ID}"
+command -v lsof >/dev/null || { echo "lsof is required for the port pre-check"; exit 1; }
+for port in 8360 8370; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null; then
+    echo "Port $port is occupied; do not acquire the N2 lock"
+    exit 1
+  fi
+done
+mkdir "$LOCK" || { echo "Live-window lock is held; do not retry"; exit 1; }
+```
+
+Immediately after `mkdir` succeeds, create `holder.json` and append the same
+JSON line to `bookings.log`. Use holder `owner-run for N`, gate `N2`, and
+authorizing reference `rulings/N.md` at `2026-11-06T18:55:13Z`, item 3. Freeze
+ a maximum three-hour window and a cap of **30 provider SDK attempts per
+ party-size run**, including transport retries and fallback attempts. Freeze
+ the browser matrix: Player A system Chrome, Player B Playwright 1.65.0 Firefox,
+ and host UI system Chrome. Do not
+start another gameplay probe after the cap is reached. There are no operator
+retry loops or gate reruns. The repeated-request-ID scenario deliberately sends
+the same command twice but queues one input; it is not permission to retry a
+provider call. If the extracted attempt total is unknown or incomplete, preserve
+that value and reason as unknown; do not claim the cap was proven from partial
+receipts.
+
+For one party-size run, set `PARTY_SIZE` and `RUN_EVIDENCE` to that run's
+values, then write the holder and acquisition line immediately after the lock
+directory is created:
+
+```bash
+python3 - "$C" "$LOCK" "$PARTY_SIZE" "$RUN_EVIDENCE" <<'PY'
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+coordination, lock, party_size, evidence = sys.argv[1:]
+start = datetime.now(timezone.utc).replace(microsecond=0)
+record = {
+    "booking_id": f"N2-N-{start.strftime('%Y%m%dT%H%M%SZ')}",
+    "holder": "owner-run for N",
+    "gate": "N2",
+    "authorizing_ruling": "rulings/N.md@2026-11-06T18:55:13Z#3",
+    "window_start": start.isoformat().replace("+00:00", "Z"),
+    "window_end": (start + timedelta(hours=3)).isoformat().replace("+00:00", "Z"),
+    "frozen_caps": {
+        "window_hours": 3,
+        "provider_sdk_attempts_per_party_size_run": 30,
+        "party_size": int(party_size),
+        "browsers": ["player-a:system-chrome", "player-b:playwright-firefox-1.65.0", "host:system-chrome"],
+    },
+}
+holder_path = Path(lock) / "holder.json"
+line = json.dumps(record, sort_keys=True, separators=(",", ":"))
+with holder_path.open("x", encoding="ascii") as stream:
+    stream.write(line + "\n")
+with (Path(coordination) / "bookings.log").open("a", encoding="ascii") as stream:
+    stream.write(line + "\n")
+print(record["booking_id"], evidence)
+PY
+```
+
+After managed teardown, verify both ports are free, append a release entry with
+the booking ID, release time, and evidence path to `bookings.log`, remove
+`holder.json`, then `rmdir "$LOCK"`. Do not release while a listener remains.
+Repeat the acquire/run/release sequence for the other party size.
+
+After confirming both ports are free with the same `lsof` check, append the
+release record before removing the holder and lock:
+
+```bash
+python3 - "$C" "$LOCK" "$RUN_EVIDENCE" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+coordination, lock, evidence = sys.argv[1:]
+lock_path = Path(lock)
+holder_path = lock_path / "holder.json"
+holder = json.loads(holder_path.read_text(encoding="ascii"))
+release = {
+    "event": "release",
+    "booking_id": holder["booking_id"],
+    "released_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "evidence_path": evidence,
+}
+with (Path(coordination) / "bookings.log").open("a", encoding="ascii") as stream:
+    stream.write(json.dumps(release, sort_keys=True, separators=(",", ":")) + "\n")
+holder_path.unlink()
+lock_path.rmdir()
+PY
+```
+
 ## Approved live-run sequence
 
 1. Confirm system Chrome and Playwright 1.65.0 Firefox are installed, the
-   separate booking is active, ports 8360 and 8370 are unused, and provider
-   execution is authorized. Record worktree/revision, OS, the fixed Chrome plus
-   Firefox pairing, and party-size order. Do not install dependencies or browsers
-   during this run.
+   separate booking and lock are active, ports 8360 and 8370 are unused, the
+   checkout is clean, and provider execution is authorized. The driver enforces
+   and records the clean SHA. Do not install dependencies or browsers during
+   this run.
 2. Build the player bundle once from the project root:
 
    ```sh
@@ -96,16 +211,31 @@ BrowserContext. Do not install browsers or dependencies during the live run.
    .venv/bin/python scripts/seed_combat_capture.py --prepare --party 1
    ```
 
-4. Export the fixed endpoints and inject both credentials through the approved
-   secret source. For example, a secret manager may populate these variables;
-   never type either value into a shell command:
+4. Export the fixed endpoints and prepare the credentials in the approved Bash
+   shell. Use a fresh Bash shell for each party-size run and do not enable
+   command tracing (`set -x`); the EXIT trap clears both credentials when the
+   run shell closes:
 
-   ```sh
+   ```bash
+   IFS= read -r -s -p "Player password: " NEQ_N2_PLAYER_PASSWORD
+   printf '\n'
+   export NEQ_N2_PLAYER_PASSWORD
+   NEQ_PLAYER_PASSWORD_VERIFIER="$(.venv/bin/python - <<'PY'
+   import os
+   from web.extensions.player.auth import make_verifier
+
+   print(make_verifier(os.environ["NEQ_N2_PLAYER_PASSWORD"]))
+   PY
+   )"
+   export NEQ_PLAYER_PASSWORD_VERIFIER
+   trap 'unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER' EXIT
    export NEQ_N2_HOST_URL=http://127.0.0.1:8360
    export NEQ_N2_PLAYER_URL=http://127.0.0.1:8370
-   # Inject NEQ_N2_PLAYER_PASSWORD and NEQ_PLAYER_PASSWORD_VERIFIER out of band.
-   RUN_ID="p1-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
    ```
+
+   `auth.py --make-verifier` is an alternate interactive CLI that accepts no
+   password positional argument and uses `getpass.getpass`; never pass the real
+   password on its command line.
 
 5. Run the 1-PC gate. The driver starts the sandbox host itself; do not launch
    `run_web.py` separately:
@@ -120,18 +250,34 @@ BrowserContext. Do not install browsers or dependencies during the live run.
     separate Chrome host context. Runs are serial; never share one arena or port
     pair across concurrent runs.
 
-6. Only after the managed run exits and confirms teardown, prepare a fresh 4-PC
-   sandbox and run its matching gate:
+6. Only after the managed 1-PC run exits, provider identity is extracted, the
+   first booking is released, and teardown is confirmed, start a fresh Bash
+   shell. Repeat steps 1-5 with `PARTY_SIZE=4` and `--party 4`, which creates a
+   new run ID, lock booking, and isolated sandbox:
 
    ```sh
-   .venv/bin/python scripts/seed_combat_capture.py --prepare --party 4
-   RUN_ID="p4-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-   npm --prefix web/frontend run test:n2-gate -- \
-     --party-size 4 --manage-sandbox-host \
-     --evidence-dir "tmp/router-rollout/v2-network/n2-${RUN_ID}"
-   ```
+    .venv/bin/python scripts/seed_combat_capture.py --prepare --party 4
+    PARTY_SIZE=4
+    RUN_ID="p${PARTY_SIZE}-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-${RUN_ID}"
+    npm --prefix web/frontend run test:n2-gate -- \
+      --party-size 4 --manage-sandbox-host \
+      --evidence-dir "tmp/router-rollout/v2-network/n2-${RUN_ID}"
+    ```
 
     Do not reuse the 1-PC sandbox or run the party sizes concurrently.
+
+7. After each managed driver run exits and teardown is confirmed, extract
+   provider identity to a separate file. Do not edit the driver evidence:
+
+   ```sh
+   node web/frontend/e2e/provider-identity.mjs \
+     --evidence-dir "$RUN_EVIDENCE"
+   ```
+
+   Preserve `provider-identity.json` beside `run.json` and `summary.json`, then
+   release that run's lock only after verifying both ports are free. If the
+   attempt total is unknown, preserve the reason and do not replace it with zero.
 
 ## Required scenario and assertion matrix
 
@@ -160,10 +306,14 @@ the real-browser gate.
 
 Each unique `tmp/router-rollout/v2-network/n2-<run-id>/` contains:
 
-- `run.json`: run/build SHA, Player A Chrome version, Player B Firefox version,
-  separate host-context Chrome version, OS, party size, endpoint pair, scenario
-  catalog, provider identity placeholder, and managed sandbox process ownership
-  metadata (no passwords/verifiers).
+- `run.json`: run/build SHA, clean-checkout state, Player A Chrome version,
+  Player B Firefox version, separate host-context Chrome version, OS, party
+  size, endpoint pair, scenario catalog, provider identity placeholder, and
+  managed sandbox process ownership metadata (no passwords/verifiers).
+- `provider-identity.json`: extractor-generated provider/model identities,
+  observed attempt rows, count completeness, source availability, and explicit
+  unknown reasons. It is a separate sidecar; `run.json` and `summary.json` are
+  never hand-edited.
 - `summary.json`: aggregate PASS/FAIL/BLOCKED counts and the reviewed run
   identity.
 - `scenarios.jsonl`: expected and observed assertions, per-scenario verdicts,
@@ -174,8 +324,8 @@ Each unique `tmp/router-rollout/v2-network/n2-<run-id>/` contains:
   browser storage state, or trace archive.
 
 Review all records and screenshots before assigning the primary verdict. Check
-the actual provider/model identity if any input invoked a provider, confirm the
-original bundle digests, and verify both ports are free after the driver exits.
+`provider-identity.json` if any input invoked a provider, confirm the original
+bundle digests, and verify both ports are free after the driver exits.
 The driver stops only its own host group; it does not stop arbitrary processes.
 Preserve evidence before any owner-controlled sandbox cleanup. If managed
 teardown or bundle restoration fails, leave the evidence/recovery copy intact,

@@ -18,6 +18,7 @@ import {
   N2_PLAYER_PORT,
   validateManagedSandboxRoot,
 } from "./managed-host.mjs";
+import { redactEvidenceText } from "./redaction.mjs";
 
 const LIFECYCLE_IDS = ["server-instance-change", "missing-bundle", "broken-bundle"];
 const HOST_URL = "http://127.0.0.1:8360";
@@ -222,11 +223,12 @@ export function restoreSandboxDist(repositoryRoot, sandboxRoot, backupPath, snap
 }
 
 function safeErrorMessage(error, password) {
-  let message = error instanceof Error ? error.message : String(error);
-  if (password) message = message.split(password).join("[REDACTED]");
-  return message
-    .replace(/(set-cookie|cookie|authorization|password|csrf[_-]?token)\s*[:=]\s*[^\r\n]*/gi, "$1=[REDACTED]")
-    .slice(0, 4096);
+  const message = error instanceof Error ? error.message : String(error);
+  return redactEvidenceText(
+    message,
+    [password, process.env.NEQ_PLAYER_PASSWORD_VERIFIER],
+    4096,
+  );
 }
 
 function parseSocketEvent(message) {

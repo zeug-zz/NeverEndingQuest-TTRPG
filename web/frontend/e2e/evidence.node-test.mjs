@@ -26,7 +26,7 @@ import {
 } from "./managed-lifecycle.mjs";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const PROJECT_TMP = join(PROJECT_ROOT, "tmp");
+const PROJECT_TMP = join(PROJECT_ROOT, "tmp", "n2");
 
 test("browser evidence contract requires Chrome and Firefox instances plus the separate Chrome host context", () => {
   const instances = createN2BrowserInstances("Chrome 132.0", "Firefox 135.0");
@@ -48,25 +48,33 @@ test("browser evidence contract requires Chrome and Firefox instances plus the s
 
 test("structured and console evidence redact password and session secrets", () => {
   const secret = "n2-secret-password-219";
+  const verifier = "neq-scrypt$v1$32768$8$1$0123456789abcdef0123456789abcdef$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   const previousPassword = process.env.NEQ_N2_PLAYER_PASSWORD;
+  const previousVerifier = process.env.NEQ_PLAYER_PASSWORD_VERIFIER;
   process.env.NEQ_N2_PLAYER_PASSWORD = secret;
+  process.env.NEQ_PLAYER_PASSWORD_VERIFIER = verifier;
   try {
     const safe = redactValue({
       password: secret,
+      password_verifier: verifier,
       nested: {
         "set-cookie": "neq_player_session=session-secret; HttpOnly",
-        message: `password=${secret}\nAuthorization: Bearer authorization-secret\nneq_player_prelogin=prelogin-secret`,
+        message: `password=${secret}\nAuthorization: Bearer authorization-secret\nneq_player_prelogin=prelogin-secret\nverifier=${verifier}`,
       },
     });
     const serialized = JSON.stringify(safe);
-    for (const value of [secret, "session-secret", "authorization-secret", "prelogin-secret"]) {
+    for (const value of [secret, verifier, "session-secret", "authorization-secret", "prelogin-secret"]) {
       assert.equal(serialized.includes(value), false, `evidence retained ${value}`);
     }
     assert.equal(safe.password, "[REDACTED]");
+    assert.equal(safe.password_verifier, "[REDACTED]");
     assert.match(sanitizeText("neq_player_session=session-secret"), /\[REDACTED\]/);
+    assert.match(sanitizeText(`NEQ_PLAYER_PASSWORD_VERIFIER=${verifier}`), /\[REDACTED\]/);
   } finally {
     if (previousPassword === undefined) delete process.env.NEQ_N2_PLAYER_PASSWORD;
     else process.env.NEQ_N2_PLAYER_PASSWORD = previousPassword;
+    if (previousVerifier === undefined) delete process.env.NEQ_PLAYER_PASSWORD_VERIFIER;
+    else process.env.NEQ_PLAYER_PASSWORD_VERIFIER = previousVerifier;
   }
 });
 
@@ -173,6 +181,7 @@ test("managed port-free preflight checks only 8360 and 8370 and fails closed", a
 });
 
 function makeSandboxFixture() {
+  mkdirSync(PROJECT_TMP, { recursive: true });
   const testRoot = mkdtempSync(join(PROJECT_TMP, "n2-managed-test-"));
   const repositoryRoot = join(testRoot, "fixture-repo");
   const sandboxRoot = join(repositoryRoot, "tmp", "combat_capture");
