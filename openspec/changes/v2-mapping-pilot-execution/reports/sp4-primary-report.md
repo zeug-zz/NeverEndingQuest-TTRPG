@@ -84,3 +84,71 @@ Primary-owned local final integration verification is complete: `.venv/bin/pytho
 - [SP4 generated decision report](../../../../tmp/router-rollout/mapping-pilot/sp4/sp4-report-20261106-01/decision_report.json)
 - [SP4 review manifest](../../../../tmp/router-rollout/mapping-pilot/review/sp4-review-20261106-01/manifest.json) · [ratings](../../../../tmp/router-rollout/mapping-pilot/review/sp4-review-20261106-01/ratings.csv) · [blinding disclosure](../../../../tmp/router-rollout/mapping-pilot/review/sp4-review-20261106-01/disclosure.txt)
 - Row reviews and canonical snapshots: `tmp/router-rollout/mapping-pilot/sp3/sp3-s-20261105t200000z/<ID>-primary-review.json` and `<ID>-primary-canonical-state.json`; bundles are under `tmp/router-rollout/mapping-pilot/row-bundles/sp3/`.
+
+## Later adjudication and SP3b readiness outcome
+
+This section records later adjudication and profiling evidence. The preceding
+SP3 and SP4 report remains the historical collection report; its earlier
+pending/unresolved language is not the current SP3 owner-adjudication policy.
+
+### SP3 adjudication
+
+- Overseer adjudication `1a994608` records every main-SP3 arm comparison as
+  **INCONCLUSIVE**. The seven mid-matrix re-freezes and missed
+  three-consecutive-infrastructure pause remain recorded deviations, not
+  waived deviations. Substantive content findings stand. Results are not pooled
+  across freezes for arm comparisons; historical `UNRESOLVED` row records are
+  left untouched.
+
+### SP3b attempt and readiness
+
+- Under the 2026-11-06T18:55:13Z ruling, one bounded, provider-free real-code
+  profiling attempt was authorized. The attempt failed before seeder or
+  runtime-path execution: the CLI raised `ModuleNotFoundError: No module named
+  'scripts'`. The evidence reports zero attempted paths and zero accepted
+  profiles. All eight fixture-party profile cases are missing, including the
+  `transition_tower_approach` landscape branch (1-PC and 4-PC).
+- The 96-check plan and `attempt-error.txt` were reconstructed after abort;
+  neither is a prospective execution plan nor raw process stderr. They do not
+  establish runtime coverage or runtime impossibility. The primary rejected
+  the harness because it unconditionally stopped after the first path. Rejected
+  source hashes were preserved and its untracked code/tests removed. No runtime
+  attempt was repeated after the fix, and no retry is permitted without a new
+  ruling.
+- Primary readiness is **BLOCKED**: approved SP3B-001 through SP3B-019 are all
+  missing for lack of a verified lifecycle profile, and none is permitted for
+  live execution. The complete 19-row disposition is in the linked primary
+  review JSON below. The program verdict remains for the Overseer to record;
+  this is not a live PASS or final FREEZE.
+- No server, listener, socket, port, booking, provider request, new gameplay
+  content, or sandbox was used/created. Remaining budget is unchanged at 287
+  attempts and 18,146.637181792015 live seconds. The main run remains 513
+  attempts and 3,453.3628182079847 live seconds.
+
+### Conditional SP4 owner handoff
+
+- The ruling's fallback is to proceed to the SP4 owner gate using existing
+  evidence after the Overseer records the outcome. No supplementary arm
+  comparisons or new transcripts are authorized. All owner fields across D1's
+  1,048 claim-audit rows and both rating fields across M1's 16 sketches remain
+  blank. Of 25 blinded responses, 18 are not rateable
+  and seven are complete-for-rating, with all owner scores blank. The condition
+  key remains held until owner lock; E01 remains excluded. No owner decision,
+  rating, or audit is fabricated. ADR-0034 remains Proposed.
+- Retained post-attempt checks report 35 focused checks OK, 276 mapping checks
+  OK in 14.221 seconds, and isolated-host checks 6 OK in 1.153 seconds. These
+  are supplementary checks, not runtime or profile proof. The foundation is
+  draft PR #111 (`c739d516`), not merged; H2 profiles, H3 wiring, headroom, and
+  freeze are not done. Green unit checks do not establish a live PASS or a
+  verified profile.
+- Preserve the historical report counts (241 tests and 850 ASCII checks); do
+  not overwrite them with these later supplementary checks. The retained
+  primary-review JSON SHA-256 is
+  `31d646f63c3bd4081be73901da03d9ab7ceda4bf235573583625879d38cf1643`;
+  profile-report JSON SHA-256 is
+  `75f4e9304652ebecc46390d94daa3f57f7a6eeba77840e8140610a3da2b702db`.
+
+### Later evidence index
+
+- [SP3b primary review](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/primary-review.json)
+- [SP3b profile report](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/profile-report.json) · [attempt error](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/attempt-error.txt) · [rejected source index](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/rejected-source/index.json)

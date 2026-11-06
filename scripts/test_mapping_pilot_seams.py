@@ -415,12 +415,12 @@ class MappingPilotSeamTests(unittest.TestCase):
             len(user_turn_calls),
             2,
             "seam (d): expected the two mutually exclusive per-user-input "
-            "sites at main.py:7178 and main.py:7180",
+            "sites at main.py:7215 and main.py:7217",
         )
         user_turn_lines = {call.lineno for call, _targets in user_turn_calls}
         self.assertEqual(
             user_turn_lines,
-            {7178, 7180},
+            {7215, 7217},
             "seam (d): user_input_text entry locations changed; re-audit "
             "the launcher boundary in main.py",
         )
@@ -431,7 +431,7 @@ class MappingPilotSeamTests(unittest.TestCase):
         input_binding = main_scope.lookup("input")
         self.assertTrue(
             input_binding.is_global() and not input_binding.is_local(),
-            "seam (d): main.py:7178/7180 must resolve the builtins input "
+            "seam (d): main.py:7215/7217 must resolve the builtins input "
             "function so a copied-runtime launcher can wrap it",
         )
 
@@ -444,7 +444,7 @@ class MappingPilotSeamTests(unittest.TestCase):
         self.assertTrue(
             nearest_loops[0] is not None and nearest_loops[0] is nearest_loops[1],
             "seam (d): both user-input sites must share the main logical-turn "
-            "loop at main.py:7178/7180",
+            "loop at main.py:7215/7217",
         )
 
         all_input_calls = [
