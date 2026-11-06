@@ -928,6 +928,7 @@ class CombatStageBehaviorTests(unittest.TestCase):
 
     def test_death_save_wrong_actor_and_valid_roll(self):
         from core.combat.turn import PhaseGateIO, run_input_phase_gate
+        from utils.pc_manager import ActivePCWriteResult
 
         class Manager:
             combat_phase = "PC_PHASE"
@@ -938,7 +939,11 @@ class CombatStageBehaviorTests(unittest.TestCase):
             def validate_death_save_input_actor(self, actor, fallback_actor_name=None): return False, None, "Merisiel must roll"
             def resolve_death_save_roll(self, pc, roll): return True, "resolved"
         output = []
-        io = PhaseGateIO(output.append, lambda: output.append("flush"), lambda *a, **k: None, lambda *a: None, lambda text, gate: (True, 12, None))
+        active_pc_writes = []
+        def commit_active_character(name):
+            active_pc_writes.append(name)
+            return ActivePCWriteResult("updated", name, 1, changed=True)
+        io = PhaseGateIO(output.append, lambda: output.append("flush"), lambda *a, **k: None, lambda *a: None, lambda text, gate: (True, 12, None), commit_active_character=commit_active_character)
         result = run_input_phase_gate("[Acheron]: 12", encounter_data={}, multi_pc_manager=Manager(), party_tracker_data={"active_character": "Acheron"}, json_file_path="x", conversation_history=[], conversation_history_file="h", io=io, initiative_gate=lambda *args: {"handled": False, "error_message": ""})
         self.assertEqual(result.control_action, "continue")
         self.assertIn("Merisiel must roll", output[0])
@@ -948,6 +953,7 @@ class CombatStageBehaviorTests(unittest.TestCase):
         result = run_input_phase_gate("[Merisiel]: 12", encounter_data={}, multi_pc_manager=manager, party_tracker_data={"active_character": "Acheron"}, json_file_path="x", conversation_history=[], conversation_history_file="h", io=io, initiative_gate=lambda *args: {"handled": False, "error_message": ""})
         self.assertEqual(result.control_action, "continue")
         self.assertIn("resolved", output)
+        self.assertEqual(active_pc_writes, ["Merisiel"])
 
     def test_stats_hp_save_and_quit_are_stage_owned(self):
         from core.combat.commands import run_deterministic_command_stage
