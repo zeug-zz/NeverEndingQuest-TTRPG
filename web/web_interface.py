@@ -7221,6 +7221,18 @@ def handle_trigger_update():
         emit('update_error', {'error': str(e)})
 
 # TABLETOP MODE: Build the explicit player gateway without starting its listener.
+def read_player_transcript():
+    # TABLETOP MODE: Read only the canonical bounded GUI transcript file.
+    from utils.file_operations import safe_read_json
+
+    if not os.path.exists(MESSAGE_CACHE_FILE):
+        return []
+    transcript = safe_read_json(MESSAGE_CACHE_FILE)
+    if not isinstance(transcript, list):
+        raise ValueError("canonical transcript is unavailable")
+    return transcript
+
+
 def create_player_runtime_gateway():
     """Wire the opt-in player boundary to canonical state and the host queue."""
     from core.managers.status_manager import status_manager
@@ -7240,17 +7252,6 @@ def create_player_runtime_gateway():
         state['active_character'] = active_character
         state['active_character_revision'] = revision
         return state
-
-    def read_player_transcript():
-        # TABLETOP MODE: Read only the canonical bounded GUI transcript file.
-        from utils.file_operations import safe_read_json
-
-        if not os.path.exists(MESSAGE_CACHE_FILE):
-            return []
-        transcript = safe_read_json(MESSAGE_CACHE_FILE)
-        if not isinstance(transcript, list):
-            raise ValueError("canonical transcript is unavailable")
-        return transcript
 
     def read_active_encounter(encounter_id):
         # TABLETOP MODE: Resolve only a validated encounter ID beneath the canonical owner.

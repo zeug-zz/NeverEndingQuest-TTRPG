@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ASSET_ID_PATTERN,
+  assertNoInlineScripts,
   MAX_ASSET_BYTES,
   MAX_ASSET_COUNT,
   calculateClientBuildId,
@@ -23,6 +24,22 @@ const validAsset = (overrides = {}) => ({
   bytes: 10,
   content_type: "text/javascript; charset=utf-8",
   ...overrides
+});
+
+test("rejects inline scripts and script bodies while accepting the external shell script", () => {
+  for (const html of [
+    "<script>alert(1)</script>",
+    "<SCRIPT>x</SCRIPT>",
+    "<script>x</script\t\n bar>",
+    "<script type=\"module\">x</script >",
+    "<script\n>x</script>",
+    "<script src=\"/static/player/a.js\">x</script>"
+  ]) {
+    assert.throws(() => assertNoInlineScripts(html), /must not contain inline scripts/);
+  }
+  assert.doesNotThrow(() => assertNoInlineScripts(
+    '<script type="module" crossorigin src="/static/player/a.js"></script>'
+  ));
 });
 
 test("accepts bounded ASCII asset IDs and rejects traversal or non-ASCII IDs", () => {

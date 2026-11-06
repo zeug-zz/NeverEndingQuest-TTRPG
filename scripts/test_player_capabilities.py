@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import ast
 import json
 import os
 import re
@@ -80,27 +79,13 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
 
 
 def _load_player_transcript_reader(cache_path: Path) -> Any:
-    source_path = Path(__file__).resolve().parents[1] / "web" / "web_interface.py"
-    source = source_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    gateway_factory = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "create_player_runtime_gateway"
-    )
-    reader_node = next(
-        node
-        for node in ast.walk(gateway_factory)
-        if isinstance(node, ast.FunctionDef) and node.name == "read_player_transcript"
-    )
-    namespace: dict[str, Any] = {
-        "MESSAGE_CACHE_FILE": str(cache_path),
-        "os": os,
-    }
-    reader_module = ast.Module(body=[reader_node], type_ignores=[])
-    exec(compile(reader_module, str(source_path), "exec"), namespace)
-    return namespace["read_player_transcript"]
+    from web import web_interface
+
+    def read_transcript() -> Any:
+        with mock.patch.object(web_interface, "MESSAGE_CACHE_FILE", str(cache_path)):
+            return web_interface.read_player_transcript()
+
+    return read_transcript
 
 
 def _make_canonical_fixture(

@@ -36,7 +36,7 @@ const HEX_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const CONTENT_HASH_PATTERN = /^[A-Za-z0-9_-]{8,}$/;
 const BUILD_ID_PLACEHOLDER = "__NEQ_CLIENT_BUILD_ID__";
 const FORBIDDEN_OUTPUT_PATTERN = /localhost|127\.0\.0\.1|\/Users\/|sourceMappingURL/i;
-const INLINE_SCRIPT_PATTERN = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+const SCRIPT_OPEN_TAG_PATTERN = /<script\b[^>]*>/gi;
 
 export function validateAssetId(assetId) {
   return typeof assetId === "string" && ASSET_ID_PATTERN.test(assetId);
@@ -153,9 +153,13 @@ function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-function assertNoInlineScripts(html) {
-  for (const match of html.matchAll(INLINE_SCRIPT_PATTERN)) {
-    if (match[1].trim() !== "") {
+export function assertNoInlineScripts(html) {
+  for (const match of html.matchAll(SCRIPT_OPEN_TAG_PATTERN)) {
+    const tag = match[0];
+    const remainder = html.slice(match.index + tag.length);
+    const closingTagIndex = remainder.search(/<\/script\s*[^>]*>/i);
+    const body = closingTagIndex === -1 ? remainder : remainder.slice(0, closingTagIndex);
+    if (!/\ssrc\s*=/i.test(tag) || body.trim() !== "") {
       throw new Error("Player shell must not contain inline scripts");
     }
   }
