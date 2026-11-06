@@ -519,6 +519,48 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
     design; this is not a defect.
 - Not yet approved: worktrees R, SB, SC, M, T, B and G, and any
   installed-campaign operation.
+- Standing authorization for worktree sessions (owner approval 2026-11-06).
+  Sessions N and S proceed without relaying routine approvals through the
+  owner or the Overseer, keep their goals active, and pause only at the stop
+  points below.
+  - Pre-approved within an already-approved change or phase: propose, build
+    through `openspec-build-loop`, open a PR, wait for CI, rebase on
+    `origin/main`, archive a completed change, update the change's own docs,
+    and make bounded fixes inside the approved scope. A session may merge its
+    own implementation, archive or docs PR only when all required CI checks
+    pass, the change's focused verification passes with exact commands
+    recorded, and the PR claims no gate verdict. Rebase merges only;
+    `--match-head-commit` on every merge; every `gh` command names
+    `--repo zeug-zz/NeverEndingQuest-TTRPG`.
+  - Live windows: booked mechanically through the shared lock below, without
+    an Overseer booking, but only for a live run that a recorded ruling has
+    already authorized (N2 gate under the #107 conditions; SP3b only after
+    its amendment is frozen).
+  - Still stops (pause with the reason in the mailbox): owner ratings and
+    audits (SP4 D1 audit, M1 and transcript ratings); ADR acceptance;
+    preregistration amendments, including freezing the SP3b amendment;
+    any new dependency, package, browser or tool install beyond those
+    already named in a ruling; scope changes to an owning plan or approved
+    change; secrets, sandbox grants or installed-campaign operations;
+    outward requests to other projects; any gate verdict (sessions submit
+    evidence, the Overseer records PASS/FAIL); and any failed final attempt
+    under a bounded-retry rule.
+  - Sessions do not edit this index; the Overseer records verdicts and ledger
+    state from the mailbox. Assumed approvals never create evidence.
+- Coordination mailbox and live-window lock (owner approval 2026-11-06). The
+  shared directory is `<git-common-dir>/neq-coordination/`, resolved with
+  `git rev-parse --path-format=absolute --git-common-dir` (currently
+  `~/Projects/NeverEndingQuest/.git/neq-coordination/`). It is outside every
+  working tree, never committed, and reachable through the existing
+  linked-worktree git-dir grant. If a session cannot read or write it, that
+  session reports the denial to the owner rather than working around it.
+  - `inbox/<N|S>.md`: the session appends a dated UTC entry for each
+    report, PR, stop point or evidence submission. Append only.
+  - `rulings/<N|S>.md`: the Overseer appends rulings. A session reads it at
+    each resume and between tasks; a ruling there has the same authority as
+    one pasted into its session.
+  - `bookings.log`: append-only record of every acquire, release and stale
+    break.
 
 ### 10.2 Worktrees and goals
 
@@ -536,9 +578,34 @@ repository's shared git dir granted for linked worktrees.
 
 Live window: FREE. S released SP3 booking `sp3-s-20261105t200000z` at
 `2026-11-06T02:18:55Z` after teardown; the Overseer verified port 8360 free at
-`2026-11-06T04:18:56Z`. A session books the window through the Overseer before
-any live run and releases it after teardown. N2's multi-browser gate needs its
-own booking; live work never overlaps.
+`2026-11-06T04:18:56Z`. From 2026-11-06 the window is booked mechanically
+through the shared lock; live work on 8360 or 8370 never overlaps.
+
+Live-window lock rules (`C` is the coordination directory above):
+
+1. One holder at a time for ports 8360 and 8370 together. Acquire with
+   `mkdir "$C/live-window.lock"`; the atomic `mkdir` either succeeds (the
+   session holds the window) or fails (someone else does; do not retry in a
+   loop, do other eligible work or pause).
+2. Immediately after acquiring, write `"$C/live-window.lock/holder.json"`
+   with `booking_id` (`<gate>-<N|S>-<UTC yyyymmddThhmmssZ>`), `holder`,
+   `gate`, the authorizing ruling (ledger commit or mailbox entry),
+   `window_start`, `window_end` (at most 8 hours later), and the run's
+   frozen caps. Append the same line to `bookings.log`.
+3. Before launching, confirm no listener on 8360/8370 except one the holder
+   starts. The run's own caps and stop rules still apply (SP3b: the
+   remaining 287 attempts and the cumulative six-hour cap; N2: its approved
+   gate plan). Do not start a row or scenario that cannot finish before
+   `window_end`.
+4. Release only after teardown and a no-listener check: append a release
+   line with the time and evidence path to `bookings.log`, delete
+   `holder.json`, then `rmdir` the lock. Report the release in the inbox.
+5. Stale lock: if `window_end` passed more than 30 minutes ago and nothing
+   listens on 8360/8370, another session may append a `stale-break` line
+   citing the old booking, remove the lock and acquire it anew. It reports
+   the break in its inbox; it never alters the old holder's evidence.
+6. A lock that is missing `holder.json` for more than 10 minutes after
+   creation counts as stale under rule 5's no-listener condition.
 
 SP3 collection closeout (run `sp3-s-20261105t200000z`; owner adjudication
 pending, not a gate verdict):
