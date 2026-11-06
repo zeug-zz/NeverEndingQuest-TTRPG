@@ -1,0 +1,30 @@
+{
+  "name": "neq-player-client",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest",
+    "build": "vite build && node scripts/write-manifest.mjs",
+    "test:manifest": "node --test scripts/write-manifest.node-test.mjs",
+    "test:e2e": "playwright test",
+    "test:n2-gate": "node e2e/n2-gate.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "socket.io-client": "4.8.4"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "jsdom": "31.0.0",
+    "playwright": "1.65.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}
