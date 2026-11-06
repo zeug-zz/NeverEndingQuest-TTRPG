@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 MoonlightByte
 // SPDX-License-Identifier: Fair-Source-1.0
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 import { createN2BrowserInstances, hasN2BrowserVersions, N2_PLAYWRIGHT_PROJECT } from "./browser-contract.mjs";
 import { SandboxHostManager, validateManagedSandboxRoot, validateSandboxPython } from "./managed-host.mjs";
 import { readVerifiedBundleSnapshot, runManagedLifecycleScenarios } from "./managed-lifecycle.mjs";
+import { redactEvidenceText } from "./redaction.mjs";
+import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY_ROOT = resolve(FRONTEND_ROOT, "../..");
@@ -62,7 +64,8 @@ prepares the sandbox.
 The Playwright suite uses separate Chrome and Firefox browser instances for the
 players and a third host UI context. No browser storage state, HAR, or trace archive
 is written. Structured console evidence redacts cookie, authorization, password,
-and CSRF values.
+verifier, and CSRF values. A live run requires a clean checkout; its commit and
+clean-tree state are recorded in run.json.
 
 Without --manage-sandbox-host, the server-instance-change, missing-bundle, and
 broken-bundle scenarios are explicitly recorded BLOCKED. With the flag, the driver
@@ -167,18 +170,6 @@ function makeRunId() {
   return `n2-${timestamp}-${suffix}`;
 }
 
-function gitSha() {
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: REPOSITORY_ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-}
-
 function atomicJsonWrite(path, payload) {
   const temporary = `${path}.pending`;
   writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
@@ -207,12 +198,11 @@ function summarize(results) {
 }
 
 function sanitizeOutput(text, password) {
-  let output = text;
-  if (password) output = output.split(password).join("[REDACTED]");
-  return output
-    .replace(/(set-cookie|cookie|authorization|password|csrf[_-]?token)\s*[:=]\s*[^\r\n]*/gi, "$1=[REDACTED]")
-    .replace(/(neq[_-]player[_-](?:session|prelogin)\s*[:=]\s*)[^,;\s]+/gi, "$1[REDACTED]")
-    .slice(-120_000);
+  return redactEvidenceText(
+    text,
+    [password, process.env.NEQ_PLAYER_PASSWORD_VERIFIER],
+    120_000,
+  ).slice(-120_000);
 }
 
 function runPlaywright(playwrightPath, args, environment) {
@@ -265,6 +255,11 @@ if (!options.evidenceDir) usageError("Set --evidence-dir or NEQ_N2_EVIDENCE_DIR"
 const hostUrl = validateEndpoint("NEQ_N2_HOST_URL", process.env.NEQ_N2_HOST_URL ?? "", 8360);
 const playerUrl = validateEndpoint("NEQ_N2_PLAYER_URL", process.env.NEQ_N2_PLAYER_URL ?? "", 8370);
 if (!process.env.NEQ_N2_PLAYER_PASSWORD) usageError("NEQ_N2_PLAYER_PASSWORD must be set in the environment");
+const workspaceIdentity = readWorkspaceIdentity(REPOSITORY_ROOT);
+if (workspaceIdentity.git_sha === "unknown") usageError("A readable git commit SHA is required for an N2 live run");
+if (workspaceIdentity.git_worktree_state !== "clean") {
+  usageError("N2 live runs require a clean git checkout; no evidence directory or server was started");
+}
 if (!existsSync(join(REPOSITORY_ROOT, "tmp"))) usageError("Repository tmp/ directory is required for evidence");
 if (existsSync(options.evidenceDir)) usageError("Evidence directory already exists; select a unique run directory");
 
@@ -280,7 +275,7 @@ const runRecord = {
   run_id: runId,
   started_at_utc: utcNow(),
   finished_at_utc: null,
-  git_sha: gitSha(),
+  ...workspaceIdentity,
   client_build_id: null,
   browser_instances: createN2BrowserInstances(),
   os: { platform: process.platform, release: (await import("node:os")).release(), arch: process.arch },
@@ -349,13 +344,15 @@ if (options.manageSandboxHost) {
 
 if (startupError === null && !shutdownController.signal.aborted) {
   try {
+    const playwrightEnvironment = { ...process.env };
+    delete playwrightEnvironment.NEQ_PLAYER_PASSWORD_VERIFIER;
     child = await runPlaywright(playwright, [
       "test",
       "--config=playwright.config.ts",
       `--project=${N2_PLAYWRIGHT_PROJECT}`,
       "--workers=1",
     ], {
-      ...process.env,
+      ...playwrightEnvironment,
       NEQ_N2_HOST_URL: hostUrl,
       NEQ_N2_PLAYER_URL: playerUrl,
       NEQ_N2_PARTY_SIZE: options.partySize,
