@@ -101,6 +101,31 @@ state, combat behavior or player experience. Those are this pilot's questions.
 
 ## 4. Questions
 
+### Owner review direction: narrator-first mise-en-scene
+
+The completed M1 review and nine worked redesign examples are preserved in
+[SP4 owner feedback](v2-mapping-pilot-owner-feedback.md), including the final
+16 original scores. Both combat fixtures scored 5/5; authored fixtures overall
+scored 5.0/4.6, versus 1.55/2.09 for D1-derived sketches. The complete original
+packet scored 2.625/2.875, below its frozen 3.5 thresholds.
+
+The owner directs subsequent mapping planning toward **mise-en-scene for the
+NEQ LLMs first**: coherent approaches, thresholds, boundaries, focal points,
+routes and inhabitants under Python-owned topology, with player maps derived
+secondarily. This calls for scene-authoring and relationship-quality work,
+not merely decorating an empty grid. Builder may author initial facts;
+runtime narration preserves them. Wider-world context remains compatible
+with TITAN contracts and mechanical facts with Firelight/Python authority.
+
+S will propose a separate prospective planning/evaluation follow-up using the
+feedback and worked examples. The original questions, arm comparisons,
+thresholds and frozen preregistration below remain historical pilot contracts;
+SP3 stays INCONCLUSIVE and SP3b CLOSED BLOCKED. Neither redesigned examples
+nor their separate ratings can be substituted into those results. This
+direction does not complete SP4, accept ADR-0034 or authorize implementation.
+
+### Original preregistered questions
+
 1. **Sense of place:** In live multi-turn play, does spatial context (B or D)
    make the game feel and behave like a coherent, imaginable place compared
    with the current game (A)?
