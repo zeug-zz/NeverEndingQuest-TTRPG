@@ -10,6 +10,14 @@ retained as design history. This plan is the current builder planning baseline.
 
 ## 1. Purpose and intended experience
 
+Required spatial planning input: [owner mise-en-scene review](v2-mapping-pilot-owner-feedback.md),
+especially the nine expanded scene examples. Builder must distinguish faithful
+extraction from creative initial-world authoring: seed enrichment can populate
+a coherent scene, but cannot contradict Python-owned topology or claim seed
+provenance that was not consulted. Review explicit anchor relationships,
+initial NPC placement, public cues and hidden triggers in subsequent MB
+contracts; these notes do not authorize a runtime build or production seed job.
+
 Build complete, distinctive adventures that a human DM can run without NEQ, TITAN
 or access to the world-seed database. Produce the same adventure as compatible NEQ
 artifacts with enough explicit identity, motivation, knowledge, causal structure

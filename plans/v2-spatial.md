@@ -47,6 +47,14 @@ as who people are and what happened.
 
 ## 2. Authority and scope
 
+Owner M1 review follow-up: [mise-en-scene feedback and worked examples](v2-mapping-pilot-owner-feedback.md)
+are required planning input for S1-S4, spatial combat and later regional
+design. Prioritize LLM spatial continuity; derive the player sketch from the
+same canonical relationships. Explicitly address scene scope, multi-cell
+paths/boundaries, initial occupants versus fixed anchors, reciprocal scene
+connections and knowledge-filtered cues. This is prospective design input,
+not evidence that a format won the live pilot or permission to start S5 early.
+
 - Precedence: `AGENTS.md` > accepted ADRs > active OpenSpec changes > master
   plans > the index. This plan proposes changes and goals; it authorizes none.
 - **ADR needed:** "Spatial authority and projections". The pilot (SP4) drafts it.
