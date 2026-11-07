@@ -152,3 +152,114 @@ pending/unresolved language is not the current SP3 owner-adjudication policy.
 
 - [SP3b primary review](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/primary-review.json)
 - [SP3b profile report](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/profile-report.json) · [attempt error](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/attempt-error.txt) · [rejected source index](../../../../tmp/router-rollout/mapping-pilot/sp3b-profiling/20261106T194337Z/rejected-source/index.json)
+
+## Later M1 owner review and mise-en-scene planning handoff
+
+This append records the completed M1 owner review and the prospective planning
+direction. It does not rewrite the frozen experiment, accept ADR-0034, resolve
+other owner decisions, or authorize runtime implementation.
+
+### M1 original-artifact ratings
+
+The completed owner ratings CSV is
+`tmp/router-rollout/mapping-pilot/m1/m1-20261105-02/ratings.csv` (SHA-256
+`2611bc239076fc5e7d47f2495576134369e24f823049f45cd1c11da09f1b3b78`). The
+16 scores below are bound by their full CSV `sketch_id`, not conversational
+review numbering. All 16 sketch file hashes match the existing manifest; its
+`ratings.csv` entry (`0b2d5f5176ad1958b359e6e8de2cb0e11cdee3198cd4934d84eea2708cf48c65`)
+is the pre-review blank sheet, remains unchanged, and does not bind the
+reviewed CSV. The reviewed CSV is separately bound above. Detailed per-file
+hashes and calculation inputs are in
+`../../../../tmp/router-rollout/mapping-pilot/mise-en-scene-planning/m1-owner-evidence.json`.
+
+| Original sketch_id | Legibility | Usefulness |
+|---|---:|---:|
+| `fixture-interior_tavern-MPV2_LOC_TAVERN-start-1b2c19ae8c47` | 5 | 5 |
+| `fixture-landscape_village-MPV2_LOC_VILLAGE_GREEN-start-5035a149fc68` | 5 | 4 |
+| `fixture-transition_tower_approach-MPV2_LOC_TOWER_APPROACH-start-45f89e279035` | 5 | 4 |
+| `fixture-combat_stage_tavern_zones-MPV2_LOC_TAVERN-P1-3eef50e1733d` | 5 | 5 |
+| `fixture-combat_stage_tavern_zones-MPV2_LOC_TAVERN-P4-147cc61822ee` | 5 | 5 |
+| `d1-Keep_of_Doom-AA01-D1-review-start-e1f0b1cdde26` | 3 | 3 |
+| `d1-Keep_of_Doom-AL01-D1-review-start-22fddc6eb767` | 2 | 3 |
+| `d1-The_Thornwood_Watch-NC01-D1-review-start-c006660c84d4` | 1 | 1 |
+| `d1-The_Thornwood_Watch-NC04-D1-review-start-cc9f57501237` | 1 | 2 |
+| `d1-The_Thornwood_Watch-NC05-D1-review-start-40c08ae46c2b` | 1 | 1 |
+| `d1-The_Pumpkin_Kings_Curse-AD01-D1-review-start-d7a580f44c4e` | 3 | 3 |
+| `d1-The_Pumpkin_Kings_Curse-AB01-D1-review-start-9a3f3a19cebe` | 2 | 2 |
+| `d1-The_Pumpkin_Kings_Curse-V01-D1-review-start-5fa169079dd9` | 1 | 2 |
+| `d1-The_Pumpkin_Kings_Curse-AB02-D1-review-start-fc5bfc09cc82` | 1 | 1 |
+| `d1-The_Pumpkin_Kings_Curse-V02-D1-review-start-37243b1f8a0c` | 1 | 2 |
+| `d1-The_Pumpkin_Kings_Curse-AB03-D1-review-start-122b55e14ca2` | 1 | 3 |
+
+| Descriptive group | Count | Legibility | Usefulness |
+|---|---:|---:|---:|
+| Entire original M1 packet | 16 | 2.625 | 2.875 |
+| Authored fixtures | 5 | 5.000 | 4.600 |
+| D1-generated locations | 11 | 17/11 = 1.54545 | 23/11 = 2.09091 |
+| Combat fixture subset | 2 | 5.000 | 5.000 |
+
+M1 misses the frozen `>=3.5` threshold on BOTH axes. This is the M1 threshold
+result, not a whole-pilot verdict. The combat fixtures are a descriptive subset,
+not a live-combat PASS. The separate owner 5/5 redesign ratings for the village
+square and Voidstone hilltop are development feedback, not original-packet
+scores. The assistant's 4/5 hollow redesign self-review is not independent;
+there is no owner numeric redesign score for it. Descriptive group means and
+schematic comparisons do not demonstrate narration gains; proposed held-out
+evaluation and separately authorized live evidence remain necessary.
+
+### Prospective central goal: narrator-first mise-en-scene
+
+The owner identifies mise-en-scene as the mapping goal: create an actionable,
+coherent imagined place for narration first; cumulative, knowledge-filtered
+player maps are a secondary projection of the same spatial knowledge. The
+representation should support approaches, thresholds, scene scope, focal
+points, traversable space, boundaries, inhabitants, sensory relationships and
+adventure links, without turning schematic cells into measured distances or
+mechanical rules.
+
+The nine expanded scenes A-I in the owner feedback are teaching/calibration
+examples only, not blinded, held-out, live, or independent evidence. Their
+concise lessons: A paths/causeways span cells; B-C represent boundaries,
+shared spaces and reciprocal scene links; D stage an initial populated scene
+with fixed anchors distinct from mobile occupants; E one crossroads has
+connected route arms; F a hollow has extent, rim and central anchor; G an
+approach and cave threshold stage a transition; H spatially place camp
+investigation while preserving the hidden fire-lighting trigger and omitting
+its unknown effect; I connect channels, enclosing ring and focal altar. Across
+all, keep unknown mechanics, routes, distances and sensory reach unknown unless
+authoritatively established. Preserve stable reciprocal scene identities and
+do not treat mere co-location in a schematic cell as proof of access, sightline
+or audibility.
+
+Keep three authority modes distinct: extraction faithfully reports existing
+facts; creative validated Builder work authors and commits initial-world facts
+within Python-owned topology and provenance; runtime narration elaborates
+within canonical truth and state/knowledge boundaries. This prospective
+handoff is for review across Spatial S1-S5/SC, Builder, TITAN, Narrator,
+Network and Firelight; it implies no contract approval, owner decision, or
+implementation authorization. The separate prospective proposal and its
+design owner handoffs are **PROPOSED pending Overseer review**, not approved
+contracts: [proposal](../../v2-mise-en-scene-authoring-projection-evaluation/proposal.md)
+and [design cross-track owner handoffs](../../v2-mise-en-scene-authoring-projection-evaluation/design.md#cross-track-owner-handoffs-not-implementation-tasks-here).
+See the [pinned PR113 feedback at
+2859b59e](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-mapping-pilot-owner-feedback.md)
+(SHA-256 `721373d9c99c69dfedb844d8671ad6cb5c106265ce64b14d928dd6d64146c2d6`).
+The prospective handoff maps owners across Spatial S1-S5/SC, Builder, TITAN,
+and Narrator; Network and Firelight ownership is referenced there rather than
+copying their shared documents. Verified pinned owner-plan references at the
+same commit: [Mapping Pilot](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-mapping-pilot.md#4-questions),
+[Spatial](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-spatial.md#6-exploration-and-narrator-phases-s1-s5),
+[Module Builder](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-module-builder.md#5-logical-representation-and-migration-contracts),
+[TITAN](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-titan-game-engine.md#3-baseline-audit-and-seed-content-prerequisite),
+and [Narrator](https://github.com/zeug-zz/NeverEndingQuest-TTRPG/blob/2859b59e517bc94ab663e413391e51bb4a20ddf4/plans/v2-narrator.md#8-perspective-isolation-and-future-npctitan-access).
+PR113 remains OPEN; shared docs are referenced, not copied to this branch.
+
+### Current status clarification
+
+PR111 merged at `9b897ebd` as unexecuted tooling; that merge is not a live
+gate. SP3b is CLOSED BLOCKED under `73e9211f`, with no retry, profiling, or live
+execution; its amendment is DRAFT, NOT FROZEN. The prior blank-sheet statements
+are superseded only for M1. The 1,048 D1 claim rows, seven rateable transcripts
+(18 not rateable; E01 excluded; condition key withheld), final format/combat/
+data choices, and ADR-0034 Proposed status remain pending. No whole decision
+report is rerun or inferred from absent inputs.
