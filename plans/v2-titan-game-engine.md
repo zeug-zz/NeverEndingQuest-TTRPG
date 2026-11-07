@@ -7,6 +7,12 @@ Delivery: One overarching delivery goal, decomposed into focused OpenSpec change
 
 ## 1. Purpose and overriding experience
 
+Required cross-track planning input: [mapping mise-en-scene review](v2-mapping-pilot-owner-feedback.md).
+TITAN's wider-world places, routes and consequences must remain compatible
+with Builder-authored local scenes and Narrator-facing spatial context. Keep
+existing ownership boundaries: this feedback does not move module authoring
+into TITAN, authorize production seeding, or imply a new regional runtime.
+
 Transform NEQ from a predominantly static module adventure into a dynamic,
 incrementally disclosed gameworld: people remember, enemies pursue interests,
 events develop beyond the party's view, and consequences cross module boundaries.

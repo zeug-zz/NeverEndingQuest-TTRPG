@@ -9,6 +9,13 @@ compaction, and durable conditional agendas on the dedicated game server.
 
 ## 1. Overriding build principle
 
+Required spatial planning input: [owner mise-en-scene review](v2-mapping-pilot-owner-feedback.md).
+Narration should bring the committed stage to life, preserving scene links,
+anchor positions, changing occupants and knowledge-appropriate cues/triggers
+while leaving player choices open. The nine Builder-mode examples illustrate
+desired input quality, not proof of live narrator improvement. Coordinate
+with Spatial S2 rather than creating a separate spatial truth model.
+
 **Create the experience of a "sentient ghost in the machine": an attentive,
 believably intelligent DM who remembers the players, their relationships, their
 choices, and the consequences of their shared adventure.** This is the overriding

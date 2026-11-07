@@ -566,8 +566,8 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network-n2` | B0 | Opened 2026-11-05 | N1 archived (#102); N2 proposal #103 approved 2026-11-06; provider-free build authorized | N2 React vertical slice (live gate needs its own booking) |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | SP3 INCONCLUSIVE; SP3b closed BLOCKED; paused for owner | SP4 owner gate (owner inputs) |
+| N | `feature/v2-network-n2` | B0 | Opened 2026-11-05 | #103 implementation merged; external owner-run package under review | N2 live gate; provider-attempt cap enforcement correction required before handoff |
+| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | M1 review complete; mise-en-scene planning follow-up authorized; SP3b remains BLOCKED | Prospective planning PR; remaining SP4 owner inputs |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -705,6 +705,25 @@ recommendations):
   data-pipeline choices, and the ADR-0034 decision (Proposed). None may be
   imputed. With no arm comparison available, ADR-0034 should be expected to
   need revision rather than acceptance as drafted.
+- Owner M1 review completed (2026-11-07): all 16 original sketches rated;
+  legibility/usefulness means 2.625/2.875, below 3.5 on both axes. Both combat
+  fixtures scored 5/5; all five authored fixtures averaged 5.0/4.6, compared
+  with 1.545/2.091 for the eleven D1-generated sketches. These descriptive
+  groups explain the quality contrast but do not replace the aggregate gate.
+  [Owner feedback and nine expanded examples](v2-mapping-pilot-owner-feedback.md)
+  preserve all original scores, corrections, redesigns and separate assessor
+  judgments. The M1 sheet is no longer blank; D1 and transcript inputs remain
+  pending.
+- Owner directs that mise-en-scene lessons be embedded going forward:
+  narrator-first coherent scene authoring and canonical relationships, player
+  maps derived afterward. S is AUTHORIZED to resume provider-free planning:
+  append the completed M1 evidence to its report and propose a new prospective
+  authoring/projection/evaluation change with cross-track handoffs. Use the
+  worked examples, Python topology, source/authoring provenance, knowledge
+  boundaries and held-out evaluation criteria. Submit for Overseer review
+  before implementation. This does not reopen SP3b, alter frozen pilot
+  artifacts or scores, authorize live spending or production seeding, open
+  later worktrees, complete SP4, or accept ADR-0034.
 
 N2 proposal rulings (2026-11-06; change `v2-react-player-vertical-slice`,
 draft PR #103; N1 archived in #102 at `77bb3f1a`). Approved under the
@@ -743,12 +762,12 @@ standing owner instruction:
 | --- | --- | --- | --- | --- | --- |
 | N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
 | N1 player boundary and contract | N | PASS | 2026-11-06 | Initial head `196fd98d` held after the Overseer reproduced a stale active-PC revision rollback; one bounded correction plus verification-only continuation; Overseer independently re-verified the final head `a7abddcd`: focused N1 99 OK, rollback reproducer and lifecycle probes 0 failures (1-PC/4-PC), host/combat suites 75/26/13/13/7/15 OK, ASCII/Bandit/Semgrep clean, CI 10/10. Pre-existing request-path gaps surfaced by CodeQL fixed separately in #98/#99; remaining character-name alerts dismissed as false positive with owner approval (private review `plans/security/pr93-n1-review.md`). N2 requires separate authorization | #93 (`0b12f44f` integrated head) |
-| N2 React vertical slice | N | pending | -- | -- | -- |
+| N2 React vertical slice | N | implementation integrated; live gate pending | 2026-11-07 | External owner-run package submitted; no live gate attempted. Review found documentation-only 30-attempt cap; enforcement must be demonstrated before owner handoff. No N2 PASS or N3 authorization | #103 (`2cf224ce`) |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
-| SP2 offline D1/M1 | S | pending owner audit/ratings | 2026-11-06 | Tooling/evidence integrated; D1 20 attempts (11 validated, 9 invalid layouts), selected-source hashes 20/20; M1 16 sketches, artifact hashes 17/17; 1,048 D1 claim rows and M1 ratings remain blank. Integration is not an audited precision/backfill or usefulness PASS. | #94 (`e40e4899`) |
+| SP2 offline D1/M1 | S | M1 below threshold; D1 owner audit pending | 2026-11-07 | Original M1 16/16 owner-rated: 2.625 legibility / 2.875 usefulness, below 3.5. Combat fixtures 5/5; redesign ratings excluded. D1 20 attempts (11 validated, 9 invalid layouts); 1,048 claim rows unaudited. See owner feedback for exact scores and next planning direction | #94 (`e40e4899`) |
 | SP3 live matrix | S | INCONCLUSIVE (main run); SP3b BLOCKED (no verified lifecycle profiles) | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
 | SP4 decision gate | S | pending | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
