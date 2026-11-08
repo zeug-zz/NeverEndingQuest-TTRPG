@@ -31,13 +31,25 @@ The offline prototype SHALL distinguish source-extracted facts, explicitly Build
 
 ### Requirement: Scene staging SHALL encode scope, orientation, and actionable relationships (R2)
 
-Each fixture SHALL state its scene scope and whether compass orientation is known or unknown. It SHALL encode applicable approaches, thresholds, focal relations, multi-cell extents, and usable space as relationships, not just a feature inventory. Non-applicable elements SHALL be marked with a reason. Cells are schematic, not metric.
+Each fixture SHALL state its scene scope and distinguish extraction-unknown compass orientation from explicitly Builder-authored orientation. Authored orientation SHALL be checked against approved topology/compass frames. Fixtures SHALL encode applicable approaches, thresholds, focal relations, multi-cell extents, and usable space as relationships; non-applicable elements SHALL have a reason. Cells are schematic, not metric or mechanical.
 
-#### Scenario: Unknown world compass is not silently set to north
-- **GIVEN** a scene establishes relative arrangement but gives no world-compass direction
-- **WHEN** the scene is staged or projected
-- **THEN** its compass direction SHALL remain explicitly unknown
+#### Scenario: Extraction leaves unsupported compass orientation unknown
+- **GIVEN** source material establishes relative arrangement but gives no world-compass direction and no Builder orientation is supplied
+- **WHEN** the scene is extracted or projected
+- **THEN** compass direction SHALL remain explicitly unknown
 - **AND** the prototype SHALL NOT default the diagram to north-up or invent a bearing
+
+#### Scenario: Builder-authored north-up orientation is explicit and consistent
+- **GIVEN** approved topology and a compatible compass frame, and a Builder explicitly authors north-up
+- **WHEN** the scene is staged and orientation is validated
+- **THEN** north-up SHALL be marked Builder-authored and accepted only if consistent with the approved frame
+- **AND** the orientation SHALL NOT establish metric distance, access, or legality
+
+#### Scenario: Conflicting Builder orientation is rejected
+- **GIVEN** an explicitly Builder-authored orientation conflicts with approved topology or compass frames
+- **WHEN** orientation validation runs
+- **THEN** the fixture SHALL fail with a stable orientation-conflict diagnostic
+- **AND** the prototype SHALL NOT silently rotate, default, or rewrite the approved topology
 
 #### Scenario: Approaches, thresholds, and focal relationships are testable
 - **GIVEN** a scene fixture has an approach, a threshold, and a focal anchor
@@ -50,7 +62,7 @@ Each fixture SHALL state its scene scope and whether compass orientation is know
 - **WHEN** the scene is normalized and rendered
 - **THEN** each feature's declared multi-cell extent SHALL be preserved
 - **AND** the usable space SHALL remain identifiable as space, not be reduced to an isolated feature label
-- **AND** the representation SHALL NOT imply metric width, distance, or movement cost
+- **AND** the representation SHALL NOT imply metric width, distance, movement cost, or legality
 
 ### Requirement: Scene identities SHALL preserve fixed anchors, mobile occupants, and separate frontages (R3)
 
@@ -112,14 +124,21 @@ The prototype SHALL keep schematic placement distinct from distance, scale, acce
 
 ### Requirement: Projection conditions SHALL preserve matched facts without selecting a production format (R6)
 
-The evaluation prototype SHALL be able to emit three matched conditions from the same semantic fact set: (A) structured relationships without a grid, (B) prose-only relationships conveying those same facts, and (C) the structured relationships plus a schematic grid. It SHALL bind each condition to the same scene/source identity and disclose no extra facts in one condition. These arms compare evidence; they do not select a production representation.
+The evaluation prototype SHALL emit four conditions from the same normalized semantic fact set: (A) structured relationships, (B) prose-only matched-facts control, (C) A plus schematic grid, and (D) C plus Builder-authored staged arrival prose. Each condition SHALL bind the same scene/source identity, fact IDs, provenance, topology, and any sensory-gradient or affordance facts used. D adds presentation/staging, not facts; the comparison SHALL NOT select a production representation.
 
-#### Scenario: Grid contribution is compared incrementally
-- **GIVEN** the same scene facts are rendered in conditions A, B, and C
-- **WHEN** positional assertions, owner ratings, and advisory-assessor ratings are reported
-- **THEN** A versus C SHALL report the descriptive incremental difference associated with adding the schematic grid to the structured facts
-- **AND** B SHALL remain a prose-only matched-facts comparison
-- **AND** the report SHALL NOT claim a causal effect beyond this bounded comparison
+#### Scenario: Four conditions preserve identical facts and provenance
+- **GIVEN** a scene fixture has normalized facts, topology, provenance, and any authored sensory-gradient or affordance facts used
+- **WHEN** the prototype emits conditions A, B, C, and D
+- **THEN** all four SHALL preserve the same fact IDs, provenance, topology, and semantic facts
+- **AND** B SHALL remain prose-only, C SHALL add only the schematic grid, and D SHALL add only staged arrival presentation to C
+- **AND** D SHALL disclose no extra factual information or convert unknown/non-applicable cues into known facts
+
+#### Scenario: Representation increments remain descriptive
+- **GIVEN** matched A/B/C/D artifact versions and their ratings/assertions
+- **WHEN** evaluation results are reported
+- **THEN** A-versus-C SHALL describe the grid increment and C-versus-D SHALL describe the staging increment
+- **AND** D-versus-B SHALL describe the combined-shape comparison
+- **AND** no comparison SHALL claim an automatic winner, general causal effect, or production-format choice
 
 #### Scenario: Narrator and cumulative public projections preserve scoped knowledge
 - **GIVEN** a linked two-scene fixture has stable scene/feature identities, known visited and discovered facts, a rumoured fact, and GM-only route/trigger fields explicitly marked unknown to the public
@@ -141,7 +160,7 @@ The offline suite SHALL validate provenance, topology compatibility, identity, d
 
 ### Requirement: Held-out evaluation SHALL be version-bound, leakage-checked, and advisory-assessor-calibrated (R8)
 
-The evaluation SHALL keep known examples development-only and use leakage-checked new holdouts. Freeze hashes for sources, facts, artifacts, rubric, and assessor configuration before scoring. Owner ratings bind to exact artifact versions. Freeze advisory output before the assessor sees owner scores; keep self-review, advisory output, and owner ratings separate. Proposed counts and thresholds are in `design.md` and require owner approval.
+The evaluation SHALL exclude known examples from leakage-checked holdouts and freeze source, fact, artifact, rubric, and assessor hashes before scoring. Owner ratings SHALL bind to exact artifact versions; self-review, advisory output, and owner ratings SHALL remain separate. Proposed counts and thresholds in `design.md` require owner approval.
 
 #### Scenario: Known examples calibrate but never enter the holdout
 - **GIVEN** the original M1 artifacts or expanded owner examples are used for rubric/advisory-assessor development
@@ -162,14 +181,22 @@ The evaluation SHALL keep known examples development-only and use leakage-checke
 - **THEN** each rating SHALL identify the artifact hash/version, scene, condition, axis, and rater
 - **AND** no assistant score SHALL substitute for the owner rating
 
+#### Scenario: Supplied-fixture projection does not establish LLM Builder staging
+- **GIVEN** the offline prototype validates or projects supplied fixtures
+- **WHEN** the prototype's evidence and any future LLM-authored staging evaluation are described
+- **THEN** the fixture results SHALL NOT be represented as evidence that an LLM Builder can stage scenes
+- **AND** any LLM-authored staging evaluation SHALL require separate authorization, budget, protocol, and source provenance
+- **AND** it SHALL NOT be treated as a current task or provider call
+
 ### Requirement: Prospective navigation evidence SHALL be bounded and independently adjudicated (R9)
 
-If separately approved, live navigation SHALL cover each condition separately for P1 and P4 within the bounds in `design.md`. Critical failures have zero tolerance; non-critical outcomes use declared denominators and rates. Missing required evidence is BLOCKED. The primary orchestrator owns Capture_Arena execution and verdict after focused tests; a driver or advisory score alone cannot pass.
+If separately approved, live navigation SHALL cover all four conditions separately for P1 and P4 within the proposed bounds in `design.md`. Critical failures have zero tolerance; non-critical outcomes use declared denominators and rates. Missing required evidence is BLOCKED. The primary orchestrator owns Capture_Arena execution and verdict after focused tests; a driver or advisory score alone cannot pass. Results SHALL NOT be partially pooled across conditions or party shapes.
 
 #### Scenario: Required route and return checks are judged per condition and party shape
 - **GIVEN** an authorized episode includes approach, threshold, a scene transition, and return over multiple turns
 - **WHEN** its narration and observations are checked against the frozen assertions
 - **THEN** the report SHALL separately identify its condition and P1/P4 party shape
+- **AND** the proposed 6-scene, 4-condition protocol SHALL schedule 48 episodes total, 24 for each party shape
 - **AND** it SHALL not pool results across conditions or party shapes
 
 #### Scenario: Critical failure or missing evidence prevents a pass
@@ -177,3 +204,43 @@ If separately approved, live navigation SHALL cover each condition separately fo
 - **WHEN** the primary orchestrator adjudicates the evidence
 - **THEN** the affected cell SHALL be FAIL for a critical violation or BLOCKED for missing evidence
 - **AND** neither SHALL be counted as a success or hidden by averaging
+
+### Requirement: Builder-authored staged arrival prose SHALL remain bound to the structured scene (R10)
+
+Builder-authored arrival prose SHALL present an actionable approach-to-threshold-to-focal hierarchy using the same structured fact IDs and provenance. It SHALL add no topology, metrics, mechanics, access, or guarded content. Checkable prose-only facts SHALL produce localized diagnostics; unknown and non-applicable cues SHALL remain so.
+
+#### Scenario: Arrival hierarchy and sensory transition match authored facts
+- **GIVEN** a fixture has an authored approach, threshold, focal anchor, known light/sound/weather cues, and a topology/perception-valid next-section relation
+- **WHEN** the D Builder-authored arrival presentation is projected
+- **THEN** prose SHALL stage approach, threshold, then focal point and bind each checkable statement to the same structured fact IDs and provenance
+- **AND** authored cue gradients and transition SHALL respect known facts and topology/perception
+- **AND** visible affordances MAY invite action but SHALL NOT prescribe a choice or successful outcome
+
+#### Scenario: Prose-only actionable facts are localized while atmosphere remains flexible
+- **GIVEN** arrival prose contains non-actionable atmospheric framing and a checkable actionable claim absent from structured facts
+- **WHEN** provider-free diagnostics compare prose with the structured layer
+- **THEN** non-actionable framing MAY remain
+- **AND** the unsupported actionable claim SHALL be flagged with its missing fact and prose location
+
+#### Scenario: Topology or fixed-anchor relocation in prose is rejected
+- **GIVEN** paired arrival fixtures where one prose version invents a connection and another relocates a fixed anchor from the structured scene
+- **WHEN** D is validated
+- **THEN** both invalid versions SHALL fail with localized topology/anchor diagnostics
+- **AND** prose SHALL NOT alter the approved topology or fixed-anchor position
+
+#### Scenario: Fabricated sensory gradient is rejected
+- **GIVEN** paired fixtures where one arrival description invents a light, sound, or weather gradient and another preserves an unknown or non-applicable cue as such
+- **WHEN** prose is checked against structured sensory facts
+- **THEN** the fabricated gradient SHALL fail with a localized diagnostic
+- **AND** the unknown/non-applicable cue SHALL remain unknown/non-applicable
+
+#### Scenario: Guarded content cannot leak into arrival prose
+- **GIVEN** a staged scene contains a guarded fact unavailable to the public arrival view
+- **WHEN** the D prose is projected for that public view
+- **THEN** any prose revealing or activating the guarded fact SHALL fail with a localized knowledge-boundary diagnostic
+
+#### Scenario: Arrival invitation does not prescribe player choice or success
+- **GIVEN** a valid scene with visible affordances and a prose variant that dictates a player choice or successful outcome
+- **WHEN** D is validated
+- **THEN** the invitation grounded in visible affordances MAY pass
+- **AND** the prescriptive choice or success claim SHALL fail with a localized agency diagnostic

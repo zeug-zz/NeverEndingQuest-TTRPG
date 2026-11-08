@@ -104,6 +104,7 @@ class MappingPilotBoundaryTests(unittest.TestCase):
             "openspec/changes/v2-mapping-pilot-tooling/",
             "openspec/changes/v2-mapping-pilot-offline/",
             "openspec/changes/v2-mapping-pilot-execution/",
+            "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/",
             "adrs/0034-spatial-authority-and-projections.md",
             "adrs/index.md",
         )
