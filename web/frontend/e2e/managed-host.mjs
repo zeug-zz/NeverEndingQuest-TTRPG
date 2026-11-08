@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 MoonlightByte
 // SPDX-License-Identifier: Fair-Source-1.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import {
   existsSync,
@@ -10,7 +10,8 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildProviderAttemptEnvironment,
   providerAttemptLedgerPath,
@@ -25,6 +26,65 @@ const PLAYER_URL = `http://127.0.0.1:${N2_PLAYER_PORT}`;
 const START_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 8_000;
 const POLL_INTERVAL_MS = 200;
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const CONFIG_VALIDATOR_PYTHON = join(REPOSITORY_ROOT, ".venv", "bin", "python");
+// Parse Python syntax without importing or executing sandbox config; source is stdin-only and output is one fixed token.
+const WEB_PORT_CONFIG_VALIDATOR = [
+  "import ast",
+  "import io",
+  "import sys",
+  "import tokenize",
+  "",
+  "def has_non_port_binding(tree):",
+  "    for node in ast.walk(tree):",
+  "        if isinstance(node, ast.Name) and node.id == 'WEB_PORT' and isinstance(node.ctx, (ast.Store, ast.Del)):",
+  "            continue",
+  "        if isinstance(node, ast.Attribute) and node.attr == 'WEB_PORT' and isinstance(node.ctx, (ast.Store, ast.Del)):",
+  "            return True",
+  "        if isinstance(node, (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and getattr(node, 'arg', getattr(node, 'name', None)) == 'WEB_PORT':",
+  "            return True",
+  "        if isinstance(node, ast.ExceptHandler) and node.name == 'WEB_PORT':",
+  "            return True",
+  "        if isinstance(node, (ast.Global, ast.Nonlocal)) and 'WEB_PORT' in node.names:",
+  "            return True",
+  "        if isinstance(node, ast.alias) and (node.asname or node.name.split('.')[0]) == 'WEB_PORT':",
+  "            return True",
+  "        if type(node).__name__ in ('MatchAs', 'MatchStar') and getattr(node, 'name', None) == 'WEB_PORT':",
+  "            return True",
+  "        if type(node).__name__ == 'MatchMapping' and getattr(node, 'rest', None) == 'WEB_PORT':",
+  "            return True",
+  "    return False",
+  "",
+  "def is_valid(source):",
+  "    tree = ast.parse(source, mode='exec')",
+  "    assignments = [node for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'WEB_PORT']",
+  "    if len(assignments) != 1:",
+  "        return False",
+  "    assignment = assignments[0]",
+  "    target = assignment.targets[0]",
+  "    stores = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == 'WEB_PORT' and isinstance(node.ctx, (ast.Store, ast.Del))]",
+  "    if len(stores) != 1 or stores[0] is not target or has_non_port_binding(tree):",
+  "        return False",
+  "    value = assignment.value",
+  "    if not isinstance(value, ast.Constant) or type(value.value) is not int or value.value != 8360:",
+  "        return False",
+  "    try:",
+  "        for token in tokenize.generate_tokens(io.StringIO(source).readline):",
+  "            if token.type == tokenize.OP and token.string == ';' and assignment.lineno <= token.start[0] <= assignment.end_lineno:",
+  "                return False",
+  "    except (tokenize.TokenError, IndentationError):",
+  "        return False",
+  "    return True",
+  "",
+  "try:",
+  "    raw = sys.stdin.buffer.read()",
+  "    encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)",
+  "    source = raw.decode(encoding)",
+  "    result = is_valid(source)",
+  "except Exception:",
+  "    result = False",
+  "sys.stdout.write('valid\\n' if result else 'invalid\\n')",
+].join("\n");
 
 function isContainedPath(parent, candidate) {
   const path = relative(parent, candidate);
@@ -79,10 +139,23 @@ export function validateManagedSandboxRoot(repositoryRoot, candidateRoot = join(
       throw new Error(`The prepared sandbox is missing ${name}.`);
     }
   }
-  const config = readFileSync(join(expected, "config.py"), "utf8");
-  const portAssignments = config.match(/^\s*WEB_PORT\s*=\s*8360\s*$/gm) ?? [];
-  if (portAssignments.length !== 1) {
-    throw new Error("The sandbox config must contain exactly one WEB_PORT = 8360 assignment.");
+  const config = readFileSync(join(expected, "config.py"));
+  const portValidation = spawnSync(
+    CONFIG_VALIDATOR_PYTHON,
+    ["-I", "-S", "-c", WEB_PORT_CONFIG_VALIDATOR],
+    {
+      cwd: REPOSITORY_ROOT,
+      env: {},
+      encoding: "utf8",
+      input: config,
+      maxBuffer: 64,
+      timeout: 10_000,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    },
+  );
+  if (portValidation.error || portValidation.status !== 0 || portValidation.stdout !== "valid\n") {
+    throw new Error("The sandbox config must contain exactly one standalone WEB_PORT = 8360 assignment.");
   }
 
   const frontendRoot = join(expected, "web", "frontend");

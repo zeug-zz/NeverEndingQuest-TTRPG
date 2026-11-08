@@ -5,9 +5,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -108,6 +110,106 @@ test("managed host accepts only the exact non-symlink tmp/combat_capture root", 
     assert.throws(
       () => validateManagedSandboxRoot(fixture.repositoryRoot),
       /must not traverse symlinks/,
+    );
+  } finally {
+    rmSync(fixture.testRoot, { recursive: true, force: true });
+  }
+});
+
+test("managed host accepts exactly one standalone WEB_PORT literal with an optional inline comment", () => {
+  const fixture = makeSandboxFixture();
+  try {
+    const configPath = join(fixture.sandboxRoot, "config.py");
+    for (const source of [
+      "WEB_PORT = 8360\n",
+      "# WEB_PORT = 9000 is documentation only\nWEB_PORT = 8360  # Port for the web interface\n",
+      "description = '''\nWEB_PORT = 9000\nnot an assignment\n'''\nWEB_PORT = 8360\n",
+    ]) {
+      writeFileSync(configPath, source);
+      assert.equal(
+        validateManagedSandboxRoot(fixture.repositoryRoot, fixture.sandboxRoot),
+        fixture.sandboxRoot,
+      );
+    }
+  } finally {
+    rmSync(fixture.testRoot, { recursive: true, force: true });
+  }
+});
+
+test("managed host rejects every non-canonical, duplicate, dynamic, or nested WEB_PORT assignment", () => {
+  const fixture = makeSandboxFixture();
+  try {
+    const configPath = join(fixture.sandboxRoot, "config.py");
+    const rejectedConfigs = [
+      "WEB_PORT = 8360\nWEB_PORT = 8360\n",
+      "WEB_PORT = 8000\nWEB_PORT = 8360\n",
+      "WEB_PORT = 8360\nWEB_PORT = 8000\n",
+      "WEB_PORT = 8370\n",
+      "WEB_PORT = 8360 + 0\n",
+      "WEB_PORT = os.environ.get('WEB_PORT', 8360)\n",
+      "WEB_PORT = f'{8360}'\n",
+      "WEB_PORT = '8360'\n",
+      "WEB_PORT = other_value\n",
+      "WEB_PORT = other = 8360\n",
+      "WEB_PORT: int = 8360\n",
+      "WEB_PORT, other = (8360, 1)\n",
+      "WEB_PORT += 0\n",
+      "other = (WEB_PORT := 8360)\n",
+      "WEB_PORT = 8360; other = 1\n",
+      "other = 1; WEB_PORT = 8360\n",
+      "if True:\n    WEB_PORT = 8360\n",
+      "try:\n    WEB_PORT = 8360\nexcept Exception:\n    pass\n",
+      "def configure():\n    WEB_PORT = 8360\n",
+      "class Config:\n    WEB_PORT = 8360\n",
+      "with resource as handle:\n    WEB_PORT = 8360\n",
+      "for item in ():\n    WEB_PORT = 8360\n",
+      "WEB_PORT = 8360\nif False:\n    WEB_PORT = 8360\n",
+    ];
+
+    for (const source of rejectedConfigs) {
+      writeFileSync(configPath, source);
+      assert.throws(
+        () => validateManagedSandboxRoot(fixture.repositoryRoot, fixture.sandboxRoot),
+        /exactly one standalone WEB_PORT = 8360 assignment/,
+      );
+    }
+  } finally {
+    rmSync(fixture.testRoot, { recursive: true, force: true });
+  }
+});
+
+const preparedSandboxRoot = join(PROJECT_ROOT, "tmp", "combat_capture");
+test("real seeder-prepared sandbox config passes without exposing config contents", {
+  skip: !existsSync(join(preparedSandboxRoot, "config.py")),
+}, () => {
+  const sandboxRoot = preparedSandboxRoot;
+  assert.equal(validateManagedSandboxRoot(PROJECT_ROOT, sandboxRoot), sandboxRoot);
+});
+
+test("synthetic seeder prepare output validates before any host startup", () => {
+  const fixture = makeSandboxFixture();
+  try {
+    const sourceAreas = join(fixture.repositoryRoot, "modules", "Capture_Arena", "areas");
+    const sandboxAreas = join(fixture.sandboxRoot, "modules", "Capture_Arena", "areas");
+    const sourceBackup = join(sourceAreas, "CTR001_BU.json");
+    const sandboxBackup = join(sandboxAreas, "CTR001_BU.json");
+    const sandboxLiveArea = join(sandboxAreas, "CTR001.json");
+    mkdirSync(sourceAreas, { recursive: true });
+    mkdirSync(sandboxAreas, { recursive: true });
+    writeFileSync(sourceBackup, '{"area_id":"CTR001","fixture":true}\n');
+
+    // Model the seeder's sandbox-only prepare output from a canonical backup.
+    copyFileSync(sourceBackup, sandboxBackup);
+    copyFileSync(sandboxBackup, sandboxLiveArea);
+    writeFileSync(
+      join(fixture.sandboxRoot, "config.py"),
+      "WEB_PORT = 8360  # Port for the web interface\n",
+    );
+
+    assert.deepEqual(readFileSync(sandboxLiveArea), readFileSync(sourceBackup));
+    assert.equal(
+      validateManagedSandboxRoot(fixture.repositoryRoot, fixture.sandboxRoot),
+      fixture.sandboxRoot,
     );
   } finally {
     rmSync(fixture.testRoot, { recursive: true, force: true });
