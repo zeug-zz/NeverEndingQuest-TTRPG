@@ -203,6 +203,63 @@ def _assert_sandbox_path(path: Path) -> Path:
     return resolved
 
 
+def _assert_sandbox_hydration_path(path: Path) -> Path:
+    """Reject symlinks and paths outside the canonical sandbox for area hydration."""
+    root = _assert_sandbox_root()
+    try:
+        relative = Path(path).absolute().relative_to(root.absolute())
+    except ValueError as exc:
+        raise RuntimeError("refusing to hydrate an area outside the sandbox: %s" % path) from exc
+
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError("refusing to hydrate through a symlink: %s" % current)
+    return _assert_sandbox_path(Path(path))
+
+
+def _hydrate_capture_arena_area_file() -> bool:
+    """Restore one absent live area from its canonical BU copy in the sandbox only."""
+    root = _assert_sandbox_root()
+    module_dir = _assert_sandbox_hydration_path(
+        root / "modules" / MODULE_DIR_NAME
+    )
+    areas_dir = _assert_sandbox_hydration_path(module_dir / "areas")
+    if not areas_dir.is_dir():
+        raise RuntimeError("Capture_Arena sandbox areas directory is missing")
+
+    area_files = sorted(areas_dir.glob("*.json"))
+    for area_path in area_files:
+        _assert_sandbox_hydration_path(area_path)
+        if not area_path.is_file():
+            raise RuntimeError("Capture_Arena sandbox area path is not a file: %s" % area_path.name)
+
+    live_files = [path for path in area_files if not path.name.endswith("_BU.json")]
+    if live_files:
+        # A prepared live area is runtime state. Preserve its exact bytes and
+        # let the existing reference validation decide whether it is usable.
+        return False
+
+    backups = [path for path in area_files if path.name.endswith("_BU.json")]
+    if len(backups) != 1:
+        raise RuntimeError(
+            "cannot hydrate Capture_Arena live area: expected exactly one *_BU.json backup, found %d"
+            % len(backups)
+        )
+
+    backup = backups[0]
+    live_path = areas_dir / (backup.name[:-len("_BU.json")] + ".json")
+    backup_path = _assert_sandbox_hydration_path(backup)
+    live_path = _assert_sandbox_hydration_path(live_path)
+    if live_path.exists():
+        # Defend against a file appearing after the initial directory scan;
+        # never replace runtime bytes.
+        return False
+    shutil.copyfile(backup_path, live_path)
+    return True
+
+
 def _copy_file(relative_path: str, *, required: bool) -> None:
     source = PROJECT_ROOT / relative_path
     if not source.is_file():
@@ -1455,6 +1512,7 @@ def prepare(
     SANDBOX_ROOT.mkdir(parents=True, exist_ok=False)
 
     copied = _copy_runtime()
+    _hydrate_capture_arena_area_file()
     _patch_sandbox_config()
     _patch_sandbox_model_config(gate, scenario_id)
     if profile and profile.get("seed_scenario_id", profile["scenario_id"]) == "narrator-dialogue-travel":
