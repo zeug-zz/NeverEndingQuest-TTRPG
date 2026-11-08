@@ -50,6 +50,7 @@ def _render_files() -> tuple[dict[str, bytes], dict[str, Any]]:
         test_sha256=_sha256_file(_REPO_ROOT / _TEST_RELATIVE),
         rubric_sha256=_sha256_file(_REPO_ROOT / _RUBRIC_RELATIVE),
         assessor_sha256=_sha256_file(_REPO_ROOT / _ASSESSOR_RELATIVE),
+        include_owner_leakage_adjudications=True,
     )
     manifest_text = json.dumps(
         manifest,
@@ -106,13 +107,19 @@ def _render_files() -> tuple[dict[str, bytes], dict[str, Any]]:
 
 def _render_leakage_review(manifest: dict[str, Any]) -> str:
     summary = manifest["leakage_summary"]
+    adjudications = {
+        (item["scene_id"], item["known_record_id"]): item
+        for item in manifest["leakage_adjudications"]
+    }
     lines = [
         "# Bounded Leakage Screen - Draft Review Record",
         "",
         "**Status: DRAFT / UNFROZEN / NOT OWNER-APPROVED.** This is a provider-free lexical screen, not semantic proof or a leakage certification.",
         "",
         "- Evaluator result: `" + manifest["leakage_status"] + "`",
-        "- Manual review: `PENDING`; no flagged pair is resolved by this record.",
+        "- Manual review: owner-adjudicated on `2026-11-08` for `"
+        + str(len(adjudications))
+        + "` flagged pairs; the draft remains not owner-approved for freeze or scoring.",
         "- Rejected pairs: `" + str(summary["rejected_pairs"]) + "`",
         "- Review-required pairs: `" + str(summary["review_required_pairs"]) + "`",
         "- No-match pairs within bounded checks: `" + str(summary["no_match_pairs"]) + "`",
@@ -120,18 +127,50 @@ def _render_leakage_review(manifest: dict[str, Any]) -> str:
         "",
         "The evaluator checks exact identity/reference/hash/lineage and bounded text, artifact-text, layout, and feature token overlap against all 16 original M1 artifacts and nine expanded owner examples. It does not claim semantic detection. Thresholds remain unchanged from the reviewed selection and evaluation contract.",
         "",
+        "## Manual owner adjudication (2026-11-08)",
+        "",
+        "The repository owner, under ruling `2026-11-08T21:14:44Z`, adjudicated both flagged pairs as `ACCEPTED-NOT-DERIVED`. The overlap is generic approach-to-threshold-to-focal staging vocabulary; there is no text or lineage overlap, and the module differs. This is a narrow manual decision, not semantic/NLP proof.",
+        "",
         "## Flagged pairs",
         "",
     ]
-    flagged = _flagged_pairs(manifest)
-    if flagged:
-        lines.extend("- `" + item + "` - unresolved; inspect before any future freeze." for item in flagged)
+    flagged_checks = [
+        check
+        for check in manifest["leakage_checks"]
+        if check["verdict"] != "NO_MATCH_WITHIN_BOUNDED_CHECKS"
+    ]
+    if flagged_checks:
+        for check in flagged_checks:
+            scene_slug = check["scene_id"].split(":scene:", 1)[1]
+            flags = ",".join(check["review_flags"] or check["flags"])
+            pair = scene_slug + " / " + check["known_record_id"] + " / " + flags
+            decision = adjudications.get(
+                (check["scene_id"], check["known_record_id"])
+            )
+            if decision is None:
+                lines.append(
+                    "- `" + pair + "` - unresolved; inspect before any future freeze."
+                )
+            else:
+                lines.append(
+                    "- `"
+                    + pair
+                    + "` - automated `"
+                    + check["verdict"]
+                    + "`; owner-adjudicated `"
+                    + decision["adjudication"]
+                    + "` by `"
+                    + decision["owner"]
+                    + "` on `"
+                    + decision["adjudicated_on"]
+                    + "`."
+                )
     else:
         lines.append("- None from the bounded checks; this is not a semantic independence finding.")
     lines.extend(
         [
             "",
-            "No threshold was changed, no source was substituted, no owner decision was inferred, and no assignment seed/order was selected. A review-required pair is not silently accepted or treated as rejected. This draft does not authorize scoring, provider assessment, or live evaluation.",
+            "No threshold was changed, no source was substituted, and no assignment seed/order was selected. The two manual decisions are stored separately from the automated `REVIEW_REQUIRED` results and do not alter the generic status contract. This draft remains `DRAFT_UNFROZEN` / `NOT_OWNER_APPROVED` and does not authorize scoring, provider assessment, or live evaluation.",
             "",
         ]
     )

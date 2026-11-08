@@ -11,7 +11,7 @@
     "status": "PENDING_OWNER_SEED"
   },
   "authorization_status": "NOT_OWNER_APPROVED",
-  "candidate_sha256": "d07bb4db95f1555d500e500b567856fc8fccecb79b13215e8e511af3d05eda87",
+  "candidate_sha256": "df1b79673d8b58bfbbf761a2bb2f209c528f552df955d7cd76f410e434850665",
   "catalog": {
     "expanded_owner_examples": 9,
     "kind": "development_only_known_examples",
@@ -44,12 +44,34 @@
     "episode_order_sha256": null,
     "facts_sha256": "c51f653fa3d1b11504726b1dc281c884e725fc9492a1df0d0185fdce02c93211",
     "fixtures_sha256": "c00dc6411681c2dc53fac6e7a3bacef209ab26506afe87c1b0fb80f9faff6dc7",
-    "leakage_review_sha256": "173eafb0fb227e948e2ee10c08263fc78823de5ad3890f191e0796c6e240ef5c",
+    "leakage_review_sha256": "00f65b59c1b80615da4ba79e5621b519dc11c8114dbd7dc0183e5942e4883c86",
     "order_sha256": null,
     "rubric_sha256": "1d376f837bf76b53e960d0ef6f622555be2aa7b0b4dfa88db5016fd0d413bbcc",
     "sources_sha256": "f5b57d381b190da37bb17081c8d80e7d0eb79682f35da458d5a30e6a6a2bc03e",
-    "test_sha256": "cfbcd468e125c5c5d82cf6a903b2b4f04750e90130cdfa280fa48bb5af798c25"
+    "test_sha256": "57a8d6acb15233cf47371ce9b85f1e1aabce4dc4675aab714580f95f04f6db98"
   },
+  "leakage_adjudications": [
+    {
+      "adjudicated_on": "2026-11-08",
+      "adjudication": "ACCEPTED-NOT-DERIVED",
+      "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+      "automated_verdict": "REVIEW_REQUIRED",
+      "known_record_id": "owner:G",
+      "owner": "repository owner",
+      "ruling_timestamp": "2026-11-08T21:14:44Z",
+      "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths"
+    },
+    {
+      "adjudicated_on": "2026-11-08",
+      "adjudication": "ACCEPTED-NOT-DERIVED",
+      "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+      "automated_verdict": "REVIEW_REQUIRED",
+      "known_record_id": "owner:H",
+      "owner": "repository owner",
+      "ruling_timestamp": "2026-11-08T21:14:44Z",
+      "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths"
+    }
+  ],
   "leakage_checks": [
     {
       "artifact_hash_matches": [],
@@ -11016,7 +11038,7 @@
   "protocol_hashes": {
     "assessor_sha256": "4cc47a32172261abc579cb52a30eedd88444e57d12b6c7b80421f334e21a0b9b",
     "rubric_sha256": "1d376f837bf76b53e960d0ef6f622555be2aa7b0b4dfa88db5016fd0d413bbcc",
-    "test_sha256": "cfbcd468e125c5c5d82cf6a903b2b4f04750e90130cdfa280fa48bb5af798c25"
+    "test_sha256": "57a8d6acb15233cf47371ce9b85f1e1aabce4dc4675aab714580f95f04f6db98"
   },
   "scenes": [
     {
