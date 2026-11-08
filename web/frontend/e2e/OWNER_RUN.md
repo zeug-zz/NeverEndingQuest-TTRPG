@@ -65,8 +65,10 @@ npm --prefix web/frontend run test:n2-gate -- --dry-run --manage-sandbox-host
 
 Confirm the scenario IDs below are listed. Stop if any command fails or the
 dry-run reports anything other than the fixed `127.0.0.1:8360` / `127.0.0.1:8370`
-pair and no side effects. A run without `--manage-sandbox-host` leaves the three
-lifecycle scenarios BLOCKED and cannot pass the gate.
+pair and no side effects. A live run without `--manage-sandbox-host` is refused
+before evidence creation or endpoint contact. The provider budget cannot be
+applied safely to an externally started host; `--dry-run` remains available
+without managed mode.
 
 ## Browser prerequisites
 
@@ -111,16 +113,32 @@ mkdir "$LOCK" || { echo "Live-window lock is held; do not retry"; exit 1; }
 Immediately after `mkdir` succeeds, create `holder.json` and append the same
 JSON line to `bookings.log`. Use holder `owner-run for N`, gate `N2`, and
 authorizing reference `rulings/N.md` at `2026-11-06T18:55:13Z`, item 3. Freeze
- a maximum three-hour window and a cap of **30 provider SDK attempts per
- party-size run**, including transport retries and fallback attempts. Freeze
- the browser matrix: Player A system Chrome, Player B Playwright 1.65.0 Firefox,
- and host UI system Chrome. Do not
-start another gameplay probe after the cap is reached. There are no operator
-retry loops or gate reruns. The repeated-request-ID scenario deliberately sends
-the same command twice but queues one input; it is not permission to retry a
-provider call. If the extracted attempt total is unknown or incomplete, preserve
-that value and reason as unknown; do not claim the cap was proven from partial
-receipts.
+ a maximum three-hour window and a **30 outbound HTTPX attempt budget per
+ party-size run**. In managed mode the driver injects the budget, a unique
+ sandbox-local ledger path, and the run ID into the owned `tmp/combat_capture`
+ host. The host validates the isolated root and installs a sync/async HTTPX
+ pre-dispatch guard; each non-loopback request reserves a slot under a
+ cross-process file lock before transport send. SDK retries, router fallbacks,
+ direct OpenAI image/TTS calls, background requests, and inherited-environment
+ child processes use the same ledger. Loopback is not counted. If activation is
+ partial, invalid, outside the isolated root, or the ledger cannot be reserved,
+ the Python dispatch process refuses startup or refuses the request; it never
+ continues unbudgeted. The 31st attempt is recorded as a refusal and is not
+  sent. Both the gate driver and the Playwright suite require a matching
+  active-ledger record before launching gameplay browser input, so direct
+  `test:e2e` runs without managed enforcement fail before browser startup. The
+  driver copies the ledger into run evidence after teardown and makes any refusal
+  a FAIL with its reason. There is no manual Ctrl-C cap boundary and no unbudgeted
+  non-managed gameplay mode.
+
+ `provider-identity.json` remains a separate receipt-derived identity artifact:
+ it extracts model/provider observations and may report an unknown or
+ incomplete receipt count. It neither reserves budget nor substitutes for the
+ transport ledger. Freeze the browser matrix: Player A system Chrome, Player B
+ Playwright 1.65.0 Firefox, and host UI system Chrome. There are no operator
+ retry loops or gate reruns. The repeated-request-ID scenario deliberately sends
+ the same command twice but queues one input; it is not permission to retry a
+ provider call.
 
 For one party-size run, set `PARTY_SIZE` and `RUN_EVIDENCE` to that run's
 values, then write the holder and acquisition line immediately after the lock
@@ -144,7 +162,7 @@ record = {
     "window_end": (start + timedelta(hours=3)).isoformat().replace("+00:00", "Z"),
     "frozen_caps": {
         "window_hours": 3,
-        "provider_sdk_attempts_per_party_size_run": 30,
+        "outbound_httpx_attempts_per_party_size_run": 30,
         "party_size": int(party_size),
         "browsers": ["player-a:system-chrome", "player-b:playwright-firefox-1.65.0", "host:system-chrome"],
     },
@@ -298,9 +316,9 @@ failed assertion is FAIL, not waived:
 | `broken-bundle` | One manifest-listed sandbox asset is corrupted during host restart; host gameplay UI remains usable, player startup fails closed, and original manifest/asset digests are restored. |
 | `host-only-route-event-and-bundle-probes` | Player origin refuses the host-only HTTP/socket probes and loaded player JavaScript has no privileged host markers. |
 
-The lifecycle records are BLOCKED and the overall result is non-zero when the
-driver is run without `--manage-sandbox-host`. Socket-only evidence never passes
-the real-browser gate.
+The driver refuses live mode without `--manage-sandbox-host`, because it cannot
+enforce the provider budget on an external process. Socket-only evidence never
+passes the real-browser gate.
 
 ## Evidence review and teardown
 
@@ -309,7 +327,13 @@ Each unique `tmp/router-rollout/v2-network/n2-<run-id>/` contains:
 - `run.json`: run/build SHA, clean-checkout state, Player A Chrome version,
   Player B Firefox version, separate host-context Chrome version, OS, party
   size, endpoint pair, scenario catalog, provider identity placeholder, and
-  managed sandbox process ownership metadata (no passwords/verifiers).
+  managed sandbox process ownership metadata (no passwords/verifiers), plus
+  provider-budget activation, reservation/refusal counts, and ledger-copy status.
+- `provider-attempt-ledger.jsonl`: the sandbox transport ledger copied after
+  managed teardown. Its activation/header and per-request reservation/refusal
+  records contain process, time, host, method, and path without query strings;
+  it contains no headers, request bodies, or credentials. Preserve refusal rows
+  even when the gate fails.
 - `provider-identity.json`: extractor-generated provider/model identities,
   observed attempt rows, count completeness, source availability, and explicit
   unknown reasons. It is a separate sidecar; `run.json` and `summary.json` are

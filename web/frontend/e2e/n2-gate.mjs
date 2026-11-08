@@ -18,6 +18,13 @@ import { SandboxHostManager, validateManagedSandboxRoot, validateSandboxPython }
 import { readVerifiedBundleSnapshot, runManagedLifecycleScenarios } from "./managed-lifecycle.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
+import {
+  copyProviderAttemptLedger,
+  parseProviderAttemptLedger,
+  providerAttemptLedgerPath,
+  PROVIDER_ATTEMPT_BUDGET,
+  requireProviderAttemptBudgetForGameplay,
+} from "./provider-attempt-budget.mjs";
 
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY_ROOT = resolve(FRONTEND_ROOT, "../..");
@@ -67,10 +74,12 @@ is written. Structured console evidence redacts cookie, authorization, password,
 verifier, and CSRF values. A live run requires a clean checkout; its commit and
 clean-tree state are recorded in run.json.
 
-Without --manage-sandbox-host, the server-instance-change, missing-bundle, and
-broken-bundle scenarios are explicitly recorded BLOCKED. With the flag, the driver
-exercises those phases against only its own verified sandbox process. Any BLOCKED or
-FAIL verdict makes the final driver exit nonzero. Socket-only evidence is never a PASS.
+Live runs require --manage-sandbox-host because only the owned sandbox receives
+the fail-closed 30-attempt provider budget; external hosts cannot be safely
+budgeted. Without the flag, the driver refuses before creating evidence or
+contacting endpoints. A cap refusal is recorded in the provider ledger and
+forces FAIL. Any BLOCKED or FAIL verdict makes the final driver exit nonzero.
+Socket-only evidence is never a PASS.
 `;
 
 function usageError(message) {
@@ -244,12 +253,22 @@ if (options.dryRun) {
       player: "http://127.0.0.1:8370",
       forbidden_port: 8357,
     },
+    provider_attempt_budget: {
+      maximum: PROVIDER_ATTEMPT_BUDGET,
+      enforced_only_in_managed_sandbox: true,
+      active_ledger_required_before_gameplay: true,
+    },
     scenarios: SCENARIO_CATALOG,
     no_server_or_campaign_side_effects: true,
   }, null, 2));
   process.exit(0);
 }
 
+if (!options.manageSandboxHost) {
+  usageError(
+    "Live N2 runs require --manage-sandbox-host because the provider-attempt budget cannot be enforced on an external host",
+  );
+}
 if (options.partySize === null) usageError("Set --party-size 1|4 or NEQ_N2_PARTY_SIZE");
 if (!options.evidenceDir) usageError("Set --evidence-dir or NEQ_N2_EVIDENCE_DIR");
 const hostUrl = validateEndpoint("NEQ_N2_HOST_URL", process.env.NEQ_N2_HOST_URL ?? "", 8360);
@@ -264,6 +283,8 @@ if (!existsSync(join(REPOSITORY_ROOT, "tmp"))) usageError("Repository tmp/ direc
 if (existsSync(options.evidenceDir)) usageError("Evidence directory already exists; select a unique run directory");
 
 const runId = makeRunId();
+const sandboxRoot = resolve(REPOSITORY_ROOT, "tmp", "combat_capture");
+const expectedProviderAttemptLedger = providerAttemptLedgerPath(sandboxRoot, runId);
 const relativeEvidenceDir = relative(REPOSITORY_ROOT, options.evidenceDir).split(sep).join("/");
 const scenarioFile = join(options.evidenceDir, "scenarios.jsonl");
 const runFile = join(options.evidenceDir, "run.json");
@@ -282,6 +303,12 @@ const runRecord = {
   party_size: Number(options.partySize),
   scenario_list: SCENARIO_CATALOG,
   provider_identity: "not-observed-by-browser-driver; operator review required if runtime invokes provider",
+  provider_attempt_budget: {
+    maximum: PROVIDER_ATTEMPT_BUDGET,
+    status: "pending",
+    scope: "managed-tmp-combat_capture-only",
+    ledger_path: `tmp/n2/provider-attempt-ledger-${runId}.jsonl`,
+  },
   endpoints: { host: hostUrl, player: playerUrl },
   evidence_dir: relativeEvidenceDir,
   managed_sandbox_host: options.manageSandboxHost ? { enabled: true, sandbox_root: "tmp/combat_capture" } : { enabled: false },
@@ -294,6 +321,13 @@ let child = null;
 let managedHost = null;
 let startupError = null;
 let lifecycleResults = [];
+let providerBudgetReport = null;
+let providerBudgetBlocker = null;
+let providerBudgetPreflightPassed = false;
+let providerBudgetStatus = "pending";
+let providerBudgetCopyError = null;
+let providerBudgetLedgerCopy = { copied: false, destination: null };
+let providerBudgetRefusals = [];
 let managedTeardownStatus = options.manageSandboxHost ? "not-started" : "not-applicable";
 let requestedSignal = null;
 let signalStopError = null;
@@ -324,12 +358,36 @@ if (options.manageSandboxHost) {
     const sandboxRoot = validateManagedSandboxRoot(REPOSITORY_ROOT);
     const pythonPath = validateSandboxPython(REPOSITORY_ROOT);
     readVerifiedBundleSnapshot(REPOSITORY_ROOT, sandboxRoot);
-    managedHost = new SandboxHostManager({ repositoryRoot: REPOSITORY_ROOT, sandboxRoot, pythonPath });
+    managedHost = new SandboxHostManager({
+      repositoryRoot: REPOSITORY_ROOT,
+      sandboxRoot,
+      pythonPath,
+      runId,
+    });
     const processInfo = await managedHost.start({
       playerExpected: true,
       signal: shutdownController.signal,
     });
     managedTeardownStatus = "running";
+    try {
+      providerBudgetReport = requireProviderAttemptBudgetForGameplay({
+        managed: options.manageSandboxHost,
+        ledgerPath: expectedProviderAttemptLedger,
+        budget: PROVIDER_ATTEMPT_BUDGET,
+        runId,
+      });
+      providerBudgetRefusals = providerBudgetReport.refusals;
+      providerBudgetStatus = "active";
+      runRecord.provider_attempt_budget.status = providerBudgetStatus;
+      providerBudgetPreflightPassed = true;
+    } catch (error) {
+      if (providerBudgetRefusals.length === 0) providerBudgetBlocker = error;
+      startupError = error;
+      providerBudgetStatus = providerBudgetRefusals.length > 0
+        ? "refused_before_gameplay"
+        : "blocked_inactive_or_exhausted";
+      runRecord.provider_attempt_budget.status = providerBudgetStatus;
+    }
     runRecord.managed_sandbox_host = {
       enabled: true,
       sandbox_root: "tmp/combat_capture",
@@ -339,6 +397,7 @@ if (options.manageSandboxHost) {
     atomicJsonWrite(runFile, runRecord);
   } catch (error) {
     startupError = error;
+    providerBudgetStatus = "startup_failed";
   }
 }
 
@@ -375,8 +434,10 @@ if (options.manageSandboxHost) {
       .map((scenario) => ({
         id: scenario.id,
         expected: scenario.description,
-        observed: { error: sanitizeOutput(String(lifecycleError), process.env.NEQ_N2_PLAYER_PASSWORD) },
-        verdict: "FAIL",
+        observed: providerBudgetBlocker !== null
+          ? { blocked: sanitizeOutput(String(providerBudgetBlocker), process.env.NEQ_N2_PLAYER_PASSWORD) }
+          : { error: sanitizeOutput(String(lifecycleError), process.env.NEQ_N2_PLAYER_PASSWORD) },
+        verdict: providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
         artifacts: [],
         recorded_at_utc: utcNow(),
       }));
@@ -431,6 +492,33 @@ if (signalStopError !== null) {
   startupError ??= signalStopError;
 }
 
+try {
+  providerBudgetLedgerCopy = copyProviderAttemptLedger(
+    expectedProviderAttemptLedger,
+    options.evidenceDir,
+  );
+  if (providerBudgetLedgerCopy.copied) {
+    providerBudgetReport = parseProviderAttemptLedger(
+      readFileSync(join(options.evidenceDir, providerBudgetLedgerCopy.destination), "utf8"),
+      { budget: PROVIDER_ATTEMPT_BUDGET, runId },
+    );
+    providerBudgetRefusals = providerBudgetReport.refusals;
+    providerBudgetStatus = providerBudgetRefusals.length > 0
+      ? "refused"
+      : providerBudgetReport.active
+        ? "complete"
+        : "blocked_inactive";
+    runRecord.provider_attempt_budget.status = providerBudgetStatus;
+    runRecord.provider_attempt_budget.ledger_evidence = providerBudgetLedgerCopy.destination;
+  } else if (providerBudgetBlocker === null && startupError === null) {
+    providerBudgetCopyError = new Error("The managed run produced no provider attempt ledger.");
+    providerBudgetStatus = "ledger_missing";
+  }
+} catch (error) {
+  providerBudgetCopyError = error;
+  providerBudgetStatus = "ledger_evidence_invalid_or_unavailable";
+}
+
 for (const result of lifecycleResults) appendScenario(scenarioFile, result);
 
 let results = readScenarioResults(scenarioFile);
@@ -440,8 +528,10 @@ for (const scenario of SCENARIO_CATALOG) {
     appendScenario(scenarioFile, {
       id: scenario.id,
       expected: scenario.description,
-      observed: "Playwright did not produce a scenario result; see the sanitized runner output.",
-      verdict: "FAIL",
+      observed: providerBudgetBlocker !== null
+        ? { blocked: "Provider attempt budget was not active before gameplay; no browser inputs were dispatched." }
+        : "Playwright did not produce a scenario result; see the sanitized runner output.",
+      verdict: providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
       artifacts: [],
       recorded_at_utc: utcNow(),
     });
@@ -455,6 +545,19 @@ if (options.manageSandboxHost && finalRunRecord.managed_sandbox_host &&
     typeof finalRunRecord.managed_sandbox_host === "object") {
   finalRunRecord.managed_sandbox_host.teardown_status = managedTeardownStatus;
 }
+finalRunRecord.provider_attempt_budget = {
+  ...finalRunRecord.provider_attempt_budget,
+  status: providerBudgetStatus,
+  active_before_gameplay: providerBudgetPreflightPassed,
+  ledger_copied_to_evidence: providerBudgetLedgerCopy.copied,
+  ledger_evidence: providerBudgetLedgerCopy.destination,
+  reservation_count: providerBudgetReport?.reservation_count ?? null,
+  refusal_count: providerBudgetReport?.refusal_count ?? null,
+  refusal_reason: providerBudgetRefusals.length > 0 ? "budget_exhausted" : null,
+  copy_error: providerBudgetCopyError === null
+    ? null
+    : sanitizeOutput(String(providerBudgetCopyError), process.env.NEQ_N2_PLAYER_PASSWORD),
+};
 if (!finalRunRecord.client_build_id) {
   finalRunRecord.metadata_error = "Player shell did not provide client_build_id from the manifest.";
 }
@@ -462,9 +565,17 @@ if (!hasN2BrowserVersions(finalRunRecord.browser_instances)) {
   finalRunRecord.metadata_error = "Chrome, Firefox, and host-context browser versions were not recorded.";
 }
 const result = summarize(results);
-if (startupError || child?.error || child?.status !== 0 || finalRunRecord.metadata_error) {
+result.provider_attempt_budget = finalRunRecord.provider_attempt_budget;
+if (providerBudgetBlocker !== null) {
+  if (result.verdict !== "FAIL") result.verdict = "BLOCKED";
+  result.runner_error = "The managed host did not prove active provider-attempt enforcement before gameplay.";
+} else if (startupError || child?.error || child?.status !== 0 || finalRunRecord.metadata_error || providerBudgetCopyError) {
   result.verdict = "FAIL";
   result.runner_error = "Playwright runner or required run metadata failed; see sanitized output.";
+}
+if (providerBudgetRefusals.length > 0) {
+  result.verdict = "FAIL";
+  result.provider_attempt_budget.refusal_reason = "budget_exhausted; outbound dispatch was refused before transport send";
 }
 finalRunRecord.verdict = result.verdict;
 result.run_id = runId;

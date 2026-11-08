@@ -10,6 +10,12 @@ Provides unified interface for OpenAI, OpenRouter, and future providers
 
 import math
 from typing import Optional, Dict, Any
+
+# TABLETOP MODE: Activate the isolated provider budget before creating SDK clients.
+from utils.provider_attempt_budget import activate_provider_attempt_budget
+
+activate_provider_attempt_budget()
+
 import httpx
 from openai import APITimeoutError, OpenAI
 from utils.enhanced_logger import debug, info, warning, error
