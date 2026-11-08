@@ -39,14 +39,24 @@ Web Interface for NeverEndingQuest
 This module provides a Flask-based web interface for the dungeon master game,
 with separate panels for game output and debug information.
 """
+import os
+import sys
+
+# TABLETOP MODE: Preserve the existing root append before provider-budget activation.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# TABLETOP MODE: The web process owns direct image and speech SDK calls as well
+# as router calls, so install the sandbox guard before importing provider clients.
+from utils.provider_attempt_budget import activate_provider_attempt_budget
+
+activate_provider_attempt_budget()
+
 # Suppress httpx debug messages on startup
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from flask import Flask, render_template, request, jsonify, Response, send_file
 from flask_socketio import SocketIO, emit
-import os
-import sys
 import json
 import threading
 import queue
@@ -70,9 +80,6 @@ from utils.repo_paths import (
 )
 from utils.web_boundary import resolve_socketio_origins, resolve_web_host
 INSTALL_ROOT = repository_root()
-
-# Add parent directory to path so we can import from utils, core, etc.
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from openai import OpenAI
 from utils.llm_router import llm

@@ -93,3 +93,35 @@ N2 development and gate startup SHALL require an explicit off-by-default opt-in 
 #### Scenario: Development opt-in is valid
 - **WHEN** an authorized facilitator enables the N2 development/test opt-in with a valid verifier and client bundle
 - **THEN** the listener starts only on loopback port 8370 and still exposes only player capabilities
+
+### Requirement: Managed N2 dispatches SHALL share a bounded attempt ledger
+
+The managed N2 driver SHALL inject a 30-attempt budget into its owned sandbox. Each non-loopback HTTPX dispatch SHALL reserve one slot in a cross-process locked ledger before transport send; loopback requests SHALL not reserve. SDK retries, router fallbacks, concurrent work, and inherited child processes SHALL share the ledger.
+
+#### Scenario: Thirty attempts are allowed and the next is refused before dispatch
+- **WHEN** 30 non-loopback HTTPX dispatches have been reserved in one managed run and another dispatch is requested
+- **THEN** the first 30 may enter the transport, the next is recorded as refusal 31, and that request does not reach the transport
+
+#### Scenario: Retries, fallbacks, and concurrent provider work share one budget
+- **WHEN** SDK retries, router fallback, background work, or multiple inherited-environment processes dispatch non-loopback HTTPX requests in one run
+- **THEN** each dispatch reserves from the same ledger, and concurrent requests cannot send more than 30 non-loopback dispatches to transport
+
+#### Scenario: Loopback requests do not consume provider budget
+- **WHEN** HTTPX sends to loopback host or player services during the gate
+- **THEN** the request reaches its transport without a provider-attempt reservation
+
+### Requirement: Managed N2 budget activation SHALL fail closed
+
+Budget activation SHALL require all run variables and a proven isolated root. Partial/invalid activation or ledger failure SHALL refuse startup or dispatch. Without activation variables, ordinary startup and HTTPX behavior SHALL remain unchanged.
+
+#### Scenario: Missing or unsafe activation fails closed
+- **WHEN** activation variables are partial/invalid, the runtime root is not isolated, or the ledger cannot safely reserve
+- **THEN** startup or the pending dispatch is refused before transport; without activation variables no guard or ledger side effect is installed
+
+### Requirement: Managed N2 gate SHALL preserve budget and identity evidence
+
+Live N2 runs SHALL require managed mode and a matching active ledger before gameplay input. The driver SHALL copy the ledger after teardown and fail the run on any refusal. Receipt-derived provider identity SHALL remain separate; ledger records SHALL omit headers, bodies, credentials, and query strings.
+
+#### Scenario: Managed gate verifies budget and preserves separate evidence
+- **WHEN** a live N2 gate starts or finishes its managed host lifecycle
+- **THEN** it refuses non-managed live execution before endpoint contact or evidence creation, requires matching active-budget evidence before browser gameplay, copies the ledger after teardown, and reports any refusal as FAIL without using receipt-derived provider identity as a budget count
