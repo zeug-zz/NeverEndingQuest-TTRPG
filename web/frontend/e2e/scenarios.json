@@ -1,46 +1,90 @@
 [
   {
     "id": "party-coherence",
-    "description": "Player A in a Chrome browser instance and Player B in a Firefox browser instance, plus a separate Chrome host UI context, agree on the seeded one-PC or four-PC party."
+    "description": "Chrome Player A's snapshot matches the separate host UI request_party_data member list and active PC; when requested, an independent Firefox Player B agrees as well.",
+    "checks": [
+      { "id": "chrome-host-party-consistency", "description": "Chrome Player A's snapshot party members and active PC match the host Chrome context's canonical request_party_data response.", "requires_firefox": false },
+      { "id": "firefox-cross-browser-party-consistency", "description": "Independent Firefox Player B agrees with Chrome Player A on party and active PC.", "requires_firefox": true }
+    ]
   },
   {
     "id": "host-transcript-ordering",
-    "description": "A host UI user_input commit appears once and in strictly increasing sequence order in both player projections."
+    "description": "A host UI user_input commit appears once and in strictly increasing sequence order in Chrome Player A and, when requested, Firefox Player B.",
+    "checks": [
+      { "id": "chrome-player-transcript-order", "description": "The host UI commit appears once and in order in the Chrome player projection.", "requires_firefox": false },
+      { "id": "firefox-player-transcript-convergence", "description": "The same host commit appears once and in order in the independent Firefox player projection.", "requires_firefox": true }
+    ]
   },
   {
     "id": "active-pc-sync-switch-race",
-    "description": "Player active-PC changes synchronize, and competing stale-revision selections converge without a lost revision."
+    "description": "Chrome Player A validates the active-PC selection; the independent Firefox client and cross-client revision race are covered when Firefox is requested.",
+    "checks": [
+      { "id": "chrome-active-pc-selection", "description": "Chrome Player A can select only a canonical party member and reflects the authoritative revision.", "requires_firefox": false },
+      { "id": "firefox-cross-browser-active-pc-and-race", "description": "Firefox receives the canonical active-PC selection and, for a four-PC party, independent clients converge on a same-revision selection race.", "requires_firefox": true }
+    ]
   },
   {
     "id": "sheets-initiative-combat-busy-state",
-    "description": "Approved sheets, initiative/combat, and the projected busy/ready state match the same server snapshot."
+    "description": "Approved sheets, initiative/combat, and projected busy/ready state match the server snapshot in Chrome Player A and, when requested, Firefox Player B.",
+    "checks": [
+      { "id": "chrome-sheet-combat-busy-projection", "description": "Chrome Player A renders the approved sheet, combat order, and projected busy state.", "requires_firefox": false },
+      { "id": "firefox-sheet-combat-busy-projection", "description": "Firefox Player B renders the same approved sheet, combat order, and projected busy state.", "requires_firefox": true }
+    ]
   },
   {
     "id": "repeated-request-id",
-    "description": "Submitting an identical command twice with one request ID returns the original receipt and enqueues one transcript input."
+    "description": "Submitting an identical command twice with one request ID returns the original receipt and enqueues one transcript input in Chrome, with Firefox convergence when requested.",
+    "checks": [
+      { "id": "chrome-request-id-dedup", "description": "Chrome receives the original repeated-request receipt and observes one transcript input.", "requires_firefox": false },
+      { "id": "firefox-transcript-receipt-convergence", "description": "Firefox observes the single accepted transcript input from the repeated request.", "requires_firefox": true }
+    ]
   },
   {
     "id": "busy-input",
-    "description": "A full one-item runtime queue returns a visible busy receipt and does not append the rejected input."
+    "description": "A full one-item runtime queue returns a busy receipt without appending the rejected input; cross-client concurrency uses Firefox when requested.",
+    "checks": [
+      { "id": "chrome-player-admission-and-busy-receipt", "description": "Chrome's player session can fill the queue and receives one busy result without appending the rejected input.", "requires_firefox": false },
+      { "id": "firefox-independent-player-concurrency", "description": "Independent Chrome and Firefox player sessions exercise concurrent queue admission.", "requires_firefox": true }
+    ]
   },
   {
     "id": "refresh-reconnect",
-    "description": "Refresh and offline/online reconnect hydrate canonical state without resubmitting draft input."
+    "description": "Refresh and offline/online reconnect hydrate canonical state without resubmitting draft input in Chrome and, when requested, Firefox.",
+    "checks": [
+      { "id": "chrome-refresh-reconnect-no-replay", "description": "Chrome refresh and reconnect resynchronize without replaying an unsent draft.", "requires_firefox": false },
+      { "id": "firefox-refresh-reconnect-no-replay", "description": "Firefox refresh and reconnect resynchronize without replaying an unsent draft.", "requires_firefox": true }
+    ]
   },
   {
     "id": "server-instance-change",
-    "description": "A player page remains open during a verified tmp/combat_capture host restart; pending input becomes uncertain, is not replayed or duplicated, and a fresh snapshot resynchronizes. BLOCKED without --manage-sandbox-host."
+    "description": "A Chrome player page remains open during a verified tmp/combat_capture host restart; pending input becomes uncertain and a fresh snapshot resynchronizes. Firefox resynchronization is additionally covered when requested.",
+    "checks": [
+      { "id": "chrome-server-instance-resync", "description": "Chrome retains uncertainty, does not replay input, and resynchronizes to the restarted server instance.", "requires_firefox": false },
+      { "id": "firefox-server-instance-resync", "description": "Firefox independently retains uncertainty and resynchronizes to the restarted server instance.", "requires_firefox": true }
+    ]
   },
   {
     "id": "missing-bundle",
-    "description": "With only tmp/combat_capture/web/frontend/dist absent, host UI remains usable, the player listener fails closed, and the original bundle is restored with manifest digests verified. BLOCKED without --manage-sandbox-host."
+    "description": "With only tmp/combat_capture/web/frontend/dist absent, host UI remains usable, the player listener fails closed in available browsers, and the original bundle is restored with manifest digests verified.",
+    "checks": [
+      { "id": "chrome-missing-bundle-host-and-player", "description": "The separate host Chrome context remains usable and Chrome cannot reach the failed-closed player listener.", "requires_firefox": false },
+      { "id": "firefox-missing-bundle-player", "description": "Firefox cannot reach the failed-closed player listener.", "requires_firefox": true }
+    ]
   },
   {
     "id": "broken-bundle",
-    "description": "With one sandbox dist asset digest corrupted, host UI remains usable, the player listener fails closed, and the original bundle is restored with manifest digests verified. BLOCKED without --manage-sandbox-host."
+    "description": "With one sandbox dist asset digest corrupted, host UI remains usable, the player listener fails closed in available browsers, and the original bundle is restored with manifest digests verified.",
+    "checks": [
+      { "id": "chrome-broken-bundle-host-and-player", "description": "The separate host Chrome context remains usable and Chrome cannot reach the failed-closed player listener.", "requires_firefox": false },
+      { "id": "firefox-broken-bundle-player", "description": "Firefox cannot reach the failed-closed player listener.", "requires_firefox": true }
+    ]
   },
   {
     "id": "host-only-route-event-and-bundle-probes",
-    "description": "Host-only routes and events are refused on the player origin, with no privileged payload or host marker in loaded player JavaScript."
+    "description": "Host-only routes and events are refused on the player origin, with no privileged payload or host marker in the loaded JavaScript for each requested player browser.",
+    "checks": [
+      { "id": "chrome-player-origin-host-surface-isolation", "description": "Chrome's player origin refuses host routes/events and its loaded JavaScript has no host-only markers.", "requires_firefox": false },
+      { "id": "firefox-player-origin-host-surface-isolation", "description": "Firefox's player origin refuses host routes/events and its loaded JavaScript has no host-only markers.", "requires_firefox": true }
+    ]
   }
 ]

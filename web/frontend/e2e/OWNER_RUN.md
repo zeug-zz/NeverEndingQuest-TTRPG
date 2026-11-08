@@ -25,16 +25,20 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   digest. A cleanup/restoration failure is a FAIL; preserve any
   `managed-*-original-dist` recovery directory under the run evidence and do
   not prepare over it until the original tree is restored.
-- The gate always uses two different player browser instances: Player A is
-  system Chrome launched by Playwright as `chromium.launch({ channel: "chrome" })`;
-  Player B is Playwright Firefox from the pinned package. The facilitator UI
-  uses a separate BrowserContext on Player A's Chrome instance. `run.json`
-  records the commit SHA, clean-checkout state, and name and actual version for
-  Player A, Player B, and the host UI context. WebKit is not a replacement for
-  either required player engine. The gate writes no browser storage state, HAR,
-  or trace archive. Console text is bounded and redacts password, verifier,
-  cookie, authorization, and CSRF values. Do not add raw network or storage
-  artifacts.
+- The default browser set is `chrome+firefox`: Player A is system Chrome
+  launched by Playwright as `chromium.launch({ channel: "chrome" })`; Player B
+  is Playwright Firefox from the pinned package. The facilitator UI uses a
+  separate BrowserContext on Player A's Chrome instance. An explicit
+  `--browsers chrome` run has one Chrome player plus the separate host context;
+  it never launches Firefox or substitutes a second Chrome player. Every
+  Firefox-dependent check is recorded `BLOCKED` with reason
+  `firefox-unavailable-in-sandbox`, beside independent Chrome check results.
+  Any such BLOCKED check prevents an overall PASS. `run.json` and
+  `summary.json` record requested/run browser sets, actual versions for launched
+  roles, and blocked checks. WebKit cannot replace either player engine. The
+  gate writes no browser storage state, HAR, or trace archive. Console text is
+  bounded and redacts password, verifier, cookie, authorization, and CSRF
+  values. Do not add raw network or storage artifacts.
 - Gameplay probes submit player and host inputs. The sandbox may process them
   through its configured provider path. Run only when that provider execution
   is separately authorized. If any provider is invoked, run the provider-identity
@@ -51,6 +55,17 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   no password argument. The managed host child receives the verifier, while
   the driver removes the plain login password from the child's environment.
   Never put either value in shell history, evidence, screenshots, or notes.
+- The restricted `--agent-run` path requires both `--manage-sandbox-host` and
+  `--browsers chrome`. Use it only for the exact prepared project-local
+  `tmp/combat_capture/` tree; the driver validates that root, the repository
+  `.venv/bin/python`, and original bundle digests before generating anything.
+  It rejects non-empty inherited `NEQ_N2_PLAYER_PASSWORD` or
+  `NEQ_PLAYER_PASSWORD_VERIFIER` values, generates no credentials in dry-run,
+  and creates a fresh password in-process. Python creates its verifier using
+  stdin, not argv. The password is sent only to the Playwright child and the
+  verifier only to the owned host child. Neither is written to argv, logs, or
+  evidence. This mode does not change the owner-supplied credential path or the
+  default `chrome+firefox` behavior.
 
 ## Static preflight (no browser, process, or evidence side effects)
 
@@ -61,6 +76,7 @@ create its selected evidence directory:
 npm --prefix web/frontend run test:e2e -- --list
 npm --prefix web/frontend run test:n2-gate -- --help
 npm --prefix web/frontend run test:n2-gate -- --dry-run --manage-sandbox-host
+( unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER; npm --prefix web/frontend run test:n2-gate -- --dry-run --manage-sandbox-host --browsers chrome --agent-run )
 ```
 
 Confirm the scenario IDs below are listed. Stop if any command fails or the
@@ -80,10 +96,14 @@ before the run window with:
 npx --prefix web/frontend playwright install firefox
 ```
 
-The gate has no `--browser` selector: every run launches Chrome for Player A and
-Playwright Firefox for Player B. WebKit is not selected by this gate and cannot
-replace either required browser. The host UI runs in its own Chrome
-BrowserContext. Do not install browsers or dependencies during the live run.
+The default is `chrome+firefox`, launching Chrome for Player A and Playwright
+Firefox for Player B. `--browsers chrome` is an explicit reduced-coverage mode
+for the sandbox decision: it runs Chrome-applicable assertions in one Chrome
+player and records all Firefox-dependent checks as BLOCKED. It can never produce
+an overall PASS. Do not install or launch Firefox for this Chrome-only run;
+Firefox work is separate. WebKit is not selected and cannot replace either
+required browser. The host UI runs in its own Chrome BrowserContext. Do not
+install browsers or dependencies during a live run.
 
 ## Live-window lock and frozen caps
 
@@ -98,7 +118,7 @@ cd ~/Projects/neq-v2-network
 C="$(git rev-parse --path-format=absolute --git-common-dir)/neq-coordination"
 LOCK="$C/live-window.lock"
 PARTY_SIZE=1
-RUN_ID="p${PARTY_SIZE}-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_ID="p${PARTY_SIZE}-chrome-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-${RUN_ID}"
 command -v lsof >/dev/null || { echo "lsof is required for the port pre-check"; exit 1; }
 for port in 8360 8370; do
@@ -164,7 +184,10 @@ record = {
         "window_hours": 3,
         "outbound_httpx_attempts_per_party_size_run": 30,
         "party_size": int(party_size),
-        "browsers": ["player-a:system-chrome", "player-b:playwright-firefox-1.65.0", "host:system-chrome"],
+        "browsers": ["player-a:system-chrome", "host:system-chrome"],
+        "browser_set": "chrome",
+        "default_browser_set": "chrome+firefox",
+        "firefox_check_reason": "firefox-unavailable-in-sandbox",
     },
 }
 holder_path = Path(lock) / "holder.json"
@@ -211,8 +234,10 @@ PY
 
 ## Approved live-run sequence
 
-1. Confirm system Chrome and Playwright 1.65.0 Firefox are installed, the
-   separate booking and lock are active, ports 8360 and 8370 are unused, the
+1. For the default `chrome+firefox` set, confirm system Chrome and Playwright
+   1.65.0 Firefox are installed. For the current Chrome-only sandbox decision,
+   use only Chrome and do not install or launch Firefox. In either mode, confirm
+   the separate booking and lock are active, ports 8360 and 8370 are unused, the
    checkout is clean, and provider execution is authorized. The driver enforces
    and records the clean SHA. Do not install dependencies or browsers during
    this run.
@@ -229,10 +254,10 @@ PY
    .venv/bin/python scripts/seed_combat_capture.py --prepare --party 1
    ```
 
-4. Export the fixed endpoints and prepare the credentials in the approved Bash
-   shell. Use a fresh Bash shell for each party-size run and do not enable
-   command tracing (`set -x`); the EXIT trap clears both credentials when the
-   run shell closes:
+4. For the ordinary owner-supplied `chrome+firefox` run, export the fixed
+   endpoints and prepare credentials in the approved Bash shell. Use a fresh
+   Bash shell for each party-size run and do not enable command tracing
+   (`set -x`); the EXIT trap clears both credentials when the run shell closes:
 
    ```bash
    IFS= read -r -s -p "Player password: " NEQ_N2_PLAYER_PASSWORD
@@ -255,6 +280,11 @@ PY
    password positional argument and uses `getpass.getpass`; never pass the real
    password on its command line.
 
+   For the restricted Chrome-only sandbox agent run, use a fresh shell with no
+   non-empty owner password/verifier variables and do not execute the credential
+   setup above. The driver validates sandbox confinement before generating its
+   ephemeral credentials; dry-run mode generates none.
+
 5. Run the 1-PC gate. The driver starts the sandbox host itself; do not launch
    `run_web.py` separately:
 
@@ -264,9 +294,21 @@ PY
      --evidence-dir "tmp/router-rollout/v2-network/n2-${RUN_ID}"
    ```
 
-    One invocation exercises the fixed Chrome/Firefox player pair and the
-    separate Chrome host context. Runs are serial; never share one arena or port
-    pair across concurrent runs.
+    This retains the default Chrome+Firefox player pair and separate Chrome
+    host context. The Chrome-only sandbox agent mode instead uses:
+
+    ```sh
+    unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER
+    export NEQ_N2_HOST_URL=http://127.0.0.1:8360
+    export NEQ_N2_PLAYER_URL=http://127.0.0.1:8370
+    npm --prefix web/frontend run test:n2-gate -- \
+      --party-size 1 --manage-sandbox-host --browsers chrome --agent-run \
+      --evidence-dir "tmp/router-rollout/v2-network/n2-${RUN_ID}"
+    ```
+
+    Chrome assertions still run in this mode; every Firefox-dependent check is
+    recorded BLOCKED, so overall status cannot be PASS. Runs are serial; never
+    share one arena or port pair across concurrent runs.
 
 6. Only after the managed 1-PC run exits, provider identity is extracted, the
    first booking is released, and teardown is confirmed, start a fresh Bash
@@ -276,7 +318,7 @@ PY
    ```sh
     .venv/bin/python scripts/seed_combat_capture.py --prepare --party 4
     PARTY_SIZE=4
-    RUN_ID="p${PARTY_SIZE}-chrome-firefox-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+     RUN_ID="p${PARTY_SIZE}-chrome-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-${RUN_ID}"
     npm --prefix web/frontend run test:n2-gate -- \
       --party-size 4 --manage-sandbox-host \
@@ -293,28 +335,152 @@ PY
      --evidence-dir "$RUN_EVIDENCE"
    ```
 
-   Preserve `provider-identity.json` beside `run.json` and `summary.json`, then
-   release that run's lock only after verifying both ports are free. If the
-   attempt total is unknown, preserve the reason and do not replace it with zero.
+    Preserve `provider-identity.json` beside `run.json` and `summary.json`, then
+    release that run's lock only after verifying both ports are free. If the
+    attempt total is unknown, preserve the reason and do not replace it with zero.
+
+## Chrome-only `--agent-run` booking and live review
+
+This is a separate, narrower agent-run procedure; it does not replace or alter
+the owner-supplied `chrome+firefox` path above. The primary Chrome headless
+channel smoke is already PASS, but it is only a smoke check, not N2 evidence.
+The ruling at `2026-11-08T11:03:59Z` authorizes this bounded Chrome-only
+procedure. **The PR still requires Overseer approval before any live run.**
+Apply the s10.2 port prechecks below immediately before atomic lock acquisition;
+the booking window is at most three hours.
+
+Use a fresh run ID and a distinct evidence directory for each invocation. The
+following is the same `live-window.lock`, `holder.json`, and `bookings.log`
+contract as the owner-run procedure, with the agent-run holder and gate fields:
+
+```bash
+cd ~/Projects/neq-v2-network
+C="$(git rev-parse --path-format=absolute --git-common-dir)/neq-coordination"
+LOCK="$C/live-window.lock"
+PARTY_SIZE=1
+RUN_ID="p${PARTY_SIZE}-agent-chrome-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-chrome/${RUN_ID}"
+command -v lsof >/dev/null || { echo "lsof is required for the s10.2 port pre-check"; exit 1; }
+for port in 8360 8370; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null; then
+    echo "Port $port is occupied; do not acquire the N2-chrome lock"
+    exit 1
+  fi
+done
+mkdir "$LOCK" || { echo "Live-window lock is held; do not retry acquisition"; exit 1; }
+python3 - "$C" "$LOCK" "$PARTY_SIZE" "$RUN_EVIDENCE" <<'PY'
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+coordination, lock, party_size, evidence = sys.argv[1:]
+start = datetime.now(timezone.utc).replace(microsecond=0)
+record = {
+    "booking_id": f"N2-chrome-{start.strftime('%Y%m%dT%H%M%SZ')}",
+    "holder": "N agent-run",
+    "gate": "N2-chrome",
+    "authorizing_ruling": "2026-11-08T11:03:59Z",
+    "window_start": start.isoformat().replace("+00:00", "Z"),
+    "window_end": (start + timedelta(hours=3)).isoformat().replace("+00:00", "Z"),
+    "frozen_caps": {
+        "window_hours": 3,
+        "outbound_httpx_attempts_per_party_size_run": 30,
+        "party_size": int(party_size),
+        "browsers": ["player-a:system-chrome", "host:system-chrome"],
+        "browser_set": "chrome",
+        "default_browser_set": "chrome+firefox",
+        "firefox_check_reason": "firefox-unavailable-in-sandbox",
+    },
+}
+lock_path = Path(lock)
+line = json.dumps(record, sort_keys=True, separators=(",", ":"))
+with (lock_path / "holder.json").open("x", encoding="ascii") as stream:
+    stream.write(line + "\n")
+with (Path(coordination) / "bookings.log").open("a", encoding="ascii") as stream:
+    stream.write(line + "\n")
+print(record["booking_id"], evidence)
+PY
+```
+
+After booking, build the approved bundle if needed, prepare a fresh sandbox for
+this party size, and run exactly one managed Chrome invocation. Do not start a
+host manually. Keep owner credentials unset; `--agent-run` generates credentials
+only after managed-sandbox preflight. Do not use `set -x`.
+
+```bash
+npm --prefix web/frontend run build
+.venv/bin/python scripts/seed_combat_capture.py --prepare --party "$PARTY_SIZE"
+(
+  unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER
+  export NEQ_N2_HOST_URL=http://127.0.0.1:8360
+  export NEQ_N2_PLAYER_URL=http://127.0.0.1:8370
+  npm --prefix web/frontend run test:n2-gate -- \
+    --party-size "$PARTY_SIZE" --manage-sandbox-host --browsers chrome --agent-run \
+    --evidence-dir "$RUN_EVIDENCE"
+)
+node web/frontend/e2e/provider-identity.mjs --evidence-dir "$RUN_EVIDENCE"
+```
+
+Each invocation gets its own fail-closed 30 outbound HTTPX attempt budget and
+ledger; the 31st attempt is refused before send. Never pool or carry budget
+between invocations. There are no retry loops. Permit at most one
+infrastructure-only retry per party size, and only when the failed invocation
+produced no gameplay output. A retry uses a new run ID, evidence directory,
+booking, and fresh 30-attempt ledger. Do not retry gameplay/provider activity,
+an assertion failure, or an invocation that produced gameplay output. Complete
+party size 1, extract provider identity, verify teardown, and release its booking
+before preparing and booking party size 4; never run them concurrently. After
+party 1's release, set the following values and repeat the port prechecks,
+atomic booking, managed run, extraction, teardown, and release blocks above for
+party 4. If using a fresh shell, reinitialize `C` and `LOCK` as in the booking
+block and use this `PARTY_SIZE` value instead of its initial `1`:
+
+```bash
+PARTY_SIZE=4
+RUN_ID="p${PARTY_SIZE}-agent-chrome-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_EVIDENCE="tmp/router-rollout/v2-network/n2-chrome/${RUN_ID}"
+```
+
+Before releasing either booking, require the managed driver to have exited and
+verify that both listeners are gone:
+
+```bash
+for port in 8360 8370; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null; then
+    echo "Port $port still has a listener; do not release the booking"
+    exit 1
+  fi
+done
+```
+
+Then use the release block above with this run's `$RUN_EVIDENCE`; it appends the
+release record before removing `holder.json` and the lock. Review evidence under
+`tmp/router-rollout/v2-network/n2-chrome/<run-id>/`. Firefox-dependent checks
+remain BLOCKED, so at most the Chrome portion may be judged PASS by the Overseer
+after review. This does not pass N2: keep N2 and OpenSpec task 6.2 open.
 
 ## Required scenario and assertion matrix
 
 Each party-size run must produce a record for every ID below; any missing or
-failed assertion is FAIL, not waived:
+failed assertion is FAIL, not waived. Scenario records classify each browser
+check independently. In Chrome-only mode every Firefox-dependent check is
+BLOCKED with reason `firefox-unavailable-in-sandbox`; it is not silently waived,
+and Chrome passes do not make the overall run PASS:
 
 | Scenario ID | Required observation |
 | --- | --- |
-| `party-coherence` | Player A (Chrome) and Player B (Firefox) are independent browser instances, show the expected 1-PC/4-PC party and same active PC, and a separate Chrome BrowserContext has host gameplay controls. |
-| `host-transcript-ordering` | A host UI input appears once in both player transcripts, after the previous cursor, with strictly increasing message sequence. |
-| `active-pc-sync-switch-race` | A selection synchronizes to both clients; 4-PC competing selections at one revision converge to one accepted revision increment. For 1-PC, the sole PC remains the only selectable option. |
+| `party-coherence` | Chrome Player A's snapshot party members and active PC match the host Chrome context's canonical `request_party_data` response; when requested, independent Firefox Player B agrees too. Host gameplay controls remain available. |
+| `host-transcript-ordering` | A host UI input appears once in Chrome and, when requested, Firefox transcripts, after the previous cursor and in strictly increasing sequence order. |
+| `active-pc-sync-switch-race` | Chrome selection is validated; when Firefox is requested, both clients synchronize and 4-PC competing selections at one revision converge to one accepted revision increment. For 1-PC, only the canonical PC is selectable. |
 | `sheets-initiative-combat-busy-state` | The approved active-PC sheet, seeded initiative/combat order, and displayed busy/ready state match canonical snapshots. |
 | `repeated-request-id` | Reusing the same request ID returns the original accepted receipt and adds one transcript input, not two. |
-| `busy-input` | Concurrent submissions produce a visible busy result for the rejected item and do not append it. |
-| `refresh-reconnect` | Refresh and offline/online reconnect resynchronize from the server; an unsent draft is not replayed. |
-| `server-instance-change` | With the player page still open, the owned host restarts. The pending input becomes visibly uncertain; its request ID is not sent again, its transcript marker is not duplicated, and a fresh login/snapshot has a different instance ID and the expected party. |
-| `missing-bundle` | Only the sandbox `web/frontend/dist` is absent during host restart; host gameplay UI remains usable, the player listener is unreachable/port-free, and original manifest/asset digests are restored. |
-| `broken-bundle` | One manifest-listed sandbox asset is corrupted during host restart; host gameplay UI remains usable, player startup fails closed, and original manifest/asset digests are restored. |
-| `host-only-route-event-and-bundle-probes` | Player origin refuses the host-only HTTP/socket probes and loaded player JavaScript has no privileged host markers. |
+| `busy-input` | Chrome receives a visible busy result for the rejected item without transcript append; independent Firefox concurrency is checked when requested. |
+| `refresh-reconnect` | Chrome, and when requested Firefox, resynchronize after refresh/reconnect; unsent drafts are not replayed. |
+| `server-instance-change` | With player page(s) still open, the owned host restarts. Chrome, and when requested Firefox, visibly retains uncertainty, does not replay the request, and resynchronizes to a new instance ID and expected party. |
+| `missing-bundle` | Only sandbox `web/frontend/dist` is absent during host restart; host UI remains usable, the player listener is unreachable/port-free in the available browsers, and original digests are restored. |
+| `broken-bundle` | One sandbox asset digest is corrupted during host restart; host UI remains usable, player startup fails closed in available browsers, and original digests are restored. |
+| `host-only-route-event-and-bundle-probes` | Each requested player browser's origin refuses host-only HTTP/socket probes and its loaded JavaScript has no privileged host markers. |
 
 The driver refuses live mode without `--manage-sandbox-host`, because it cannot
 enforce the provider budget on an external process. Socket-only evidence never
@@ -322,12 +488,15 @@ passes the real-browser gate.
 
 ## Evidence review and teardown
 
-Each unique `tmp/router-rollout/v2-network/n2-<run-id>/` contains:
+Owner-supplied runs use `tmp/router-rollout/v2-network/n2-<run-id>/`. The
+Chrome-only `--agent-run` evidence root is
+`tmp/router-rollout/v2-network/n2-chrome/<run-id>/`. Both contain:
 
-- `run.json`: run/build SHA, clean-checkout state, Player A Chrome version,
-  Player B Firefox version, separate host-context Chrome version, OS, party
-  size, endpoint pair, scenario catalog, provider identity placeholder, and
-  managed sandbox process ownership metadata (no passwords/verifiers), plus
+- `run.json`: run/build SHA, clean-checkout state, requested/run browser sets,
+  actual versions for each launched player/host role, browser-specific blocked
+  checks, OS, party size, endpoint pair, scenario catalog, provider identity
+  placeholder, and managed sandbox process ownership metadata (no
+  passwords/verifiers), plus
   provider-budget activation, reservation/refusal counts, and ledger-copy status.
 - `provider-attempt-ledger.jsonl`: the sandbox transport ledger copied after
   managed teardown. Its activation/header and per-request reservation/refusal
@@ -338,10 +507,10 @@ Each unique `tmp/router-rollout/v2-network/n2-<run-id>/` contains:
   observed attempt rows, count completeness, source availability, and explicit
   unknown reasons. It is a separate sidecar; `run.json` and `summary.json` are
   never hand-edited.
-- `summary.json`: aggregate PASS/FAIL/BLOCKED counts and the reviewed run
-  identity.
-- `scenarios.jsonl`: expected and observed assertions, per-scenario verdicts,
-  UTC timestamps, and evidence paths.
+- `summary.json`: aggregate PASS/FAIL/BLOCKED counts, requested/run browser
+  sets, launched-role versions, blocked checks, and the reviewed run identity.
+- `scenarios.jsonl`: expected and observed assertions, per-check and per-scenario
+  verdicts, UTC timestamps, and evidence paths.
 - `screenshots/`: separate player/host UI snapshots, including uncertainty and
   post-restart resynchronization for the instance-change phase.
 - `console.jsonl` and `playwright-test-results/`: bounded diagnostics; no HAR,
@@ -359,8 +528,9 @@ does not replace review.
 
 ## Exit codes
 
-- `0`: all browser assertions pass, no lifecycle scenario is blocked, and
-  managed teardown/restoration checks pass.
+- `0`: all requested browser assertions pass, no required check is blocked, and
+  managed teardown/restoration checks pass. Chrome-only mode cannot return 0
+  because Firefox-dependent coverage remains BLOCKED.
 - `1`: an assertion, browser, evidence, managed-host, restoration, or runner
   failure occurred.
 - `2`: at least one lifecycle scenario is BLOCKED because managed mode was not

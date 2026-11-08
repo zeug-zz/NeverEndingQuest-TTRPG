@@ -125,3 +125,35 @@ Live N2 runs SHALL require managed mode and a matching active ledger before game
 #### Scenario: Managed gate verifies budget and preserves separate evidence
 - **WHEN** a live N2 gate starts or finishes its managed host lifecycle
 - **THEN** it refuses non-managed live execution before endpoint contact or evidence creation, requires matching active-budget evidence before browser gameplay, copies the ledger after teardown, and reports any refusal as FAIL without using receipt-derived provider identity as a budget count
+
+### Requirement: N2 browser selection SHALL preserve the default
+
+The driver SHALL default to `chrome+firefox`. `--browsers chrome` SHALL launch one Chrome player and the separate Chrome host context, without launching Firefox or substituting a second Chrome player.
+
+#### Scenario: Chrome-only records partial browser coverage
+- **WHEN** the driver runs with `--browsers chrome`
+- **THEN** it launches only one Chrome player and the separate Chrome host context
+
+#### Scenario: Default browser behavior is unchanged
+- **WHEN** no browser selector is supplied
+- **THEN** the driver requests Chrome and Firefox and preserves the existing independent-player coverage
+
+### Requirement: N2 evidence SHALL retain per-check browser coverage
+
+The catalog SHALL identify Firefox-dependent checks. Chrome results SHALL remain independently visible; omitted Firefox checks SHALL be BLOCKED with reason `firefox-unavailable-in-sandbox`. `run.json` and `summary.json` SHALL record requested/run sets, actual launched-role versions, and blocked checks. Overall status SHALL NOT be PASS when any check is BLOCKED.
+
+#### Scenario: Chrome-only coverage is explicitly incomplete
+- **WHEN** the driver completes a Chrome-only run
+- **THEN** it records each Chrome check and each Firefox-dependent check separately, preserves the Firefox block reason and actual Chrome/host versions in both run records, and reports overall BLOCKED rather than PASS
+
+### Requirement: Agent-run credentials SHALL be confined and ephemeral
+
+`--agent-run` SHALL require `--manage-sandbox-host --browsers chrome`. It SHALL validate the managed sandbox and bundle before credential generation, reject inherited owner credentials, and generate none during dry-run. It SHALL keep the throwaway password and verifier out of argv, logs, and evidence.
+
+#### Scenario: Safe managed agent-run starts with fresh credentials
+- **WHEN** an agent requests a live Chrome-only managed run with no inherited owner credentials and confinement preflight succeeds
+- **THEN** the password is generated in-process, the repository auth helper creates its verifier through stdin, the Playwright child receives only the password, and the owned host child receives only the verifier
+
+#### Scenario: Unsafe agent-run or dry-run refuses credential generation
+- **WHEN** agent-run is requested without managed Chrome-only mode, with a non-empty inherited owner credential, with failed confinement preflight, or in dry-run mode
+- **THEN** the driver refuses the incompatible live mode or prints only the dry-run plan, without generating a credential or starting a child process
