@@ -1,0 +1,659 @@
+{
+  "source": {
+    "adaptation_lineage": [],
+    "lineage_status": "independent",
+    "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+    "source_field_refs": [],
+    "source_files": [
+      {
+        "path": "modules/The_Ancients_Lab/areas/BA001_BU.json",
+        "sha256": "f269385e6b9bd112d4fee82beda801fe2cf5c20f5eb9202df5a59687cdffe8b0"
+      }
+    ],
+    "source_identity": "published-module:The_Ancients_Lab:BA001:I02",
+    "source_ref": "modules/The_Ancients_Lab/areas/BA001_BU.json#locations[locationId=I02]",
+    "source_spans": [
+      [
+        "modules/The_Ancients_Lab/areas/BA001_BU.json",
+        "locations",
+        "locationId",
+        "I02"
+      ]
+    ],
+    "source_text_sha256": "97b698883f33c62d653402b6a5593a7d294e1f8cba22674673e3bd7cc2eacd8f"
+  },
+  "spec": {
+    "arrival_segments": [
+      {
+        "fact_ids": [
+          "the_ancients_lab:fact:moor_path_builder_feature",
+          "the_ancients_lab:fact:stage_approach",
+          "the_ancients_lab:fact:ravine_splits_moor"
+        ],
+        "id": "arrival-approach",
+        "role": "approach",
+        "text": "A moor-side path reaches the rim of a jagged rift splitting the moor."
+      },
+      {
+        "fact_ids": [
+          "the_ancients_lab:fact:ravine_rim_builder_feature",
+          "the_ancients_lab:fact:stage_threshold",
+          "the_ancients_lab:fact:ravine_basalt_sides",
+          "the_ancients_lab:fact:stream_at_bottom",
+          "the_ancients_lab:fact:mist_at_bottom"
+        ],
+        "id": "arrival-threshold",
+        "role": "threshold",
+        "text": "From the rim, basalt sides descend to a narrow stream veiled in thin, swirling mist."
+      },
+      {
+        "fact_ids": [
+          "the_ancients_lab:fact:stage_focal",
+          "the_ancients_lab:fact:runes_on_rock",
+          "the_ancients_lab:fact:runes_invitation"
+        ],
+        "id": "arrival-focal",
+        "role": "focal",
+        "text": "Rain-worn runes mark the exposed rock, offering a visible detail to inspect."
+      }
+    ],
+    "facts": [
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:ravine_splits_moor",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-extent",
+        "predicate": "contains_ravine",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "A jagged rift splits the moor."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:ravine_basalt_sides",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:scene:abyssal-fracture",
+        "predicate": "terrain_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-extent",
+        "value": "The ravine has basalt sides that plunge toward its bottom."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:stream_at_bottom",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:bottom-stream",
+        "predicate": "stream_at_ravine_bottom",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "A narrow, mist-choked stream lies at the bottom of the ravine."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:runes_on_rock",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:exposed-runes",
+        "predicate": "runes_on_exposed_rock",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "Strange runes are carved on exposed rock, half-eroded by centuries of rain."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:mist_at_bottom",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-extent",
+        "predicate": "mist_at_ravine_bottom",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "The ravine bottom is perpetually shrouded in thin, swirling mist."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:connection_i01",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:scene:shattered-forge-approach",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "The source lists I01 as connected; it does not establish a compass bearing here."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:moor_path_builder_feature",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:moor-path-cell-b",
+        "predicate": "builder_authored_feature",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:moor-path-cell-a",
+        "value": "Builder-authored moor-side approach path represented by two schematic cells."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:ravine_rim_builder_feature",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-extent",
+        "predicate": "builder_authored_feature",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": "Builder-authored ravine rim feature used as the arrival threshold."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:stage_approach",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-rim",
+        "predicate": "approach_to_threshold",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:moor-path-cell-b",
+        "value": "Builder-authored relation assigns the moor-side path as an approach to the ravine rim; no route length or access rule is implied."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:stage_threshold",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-extent",
+        "predicate": "threshold_to_ravine",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": "Builder-authored threshold relation connects the ravine rim to the ravine below."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:stage_focal",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:exposed-runes",
+        "predicate": "focal_anchor_assignment",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": "Builder-authored focal relation highlights the exposed runes."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:runes_invitation",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:scene:abyssal-fracture",
+        "predicate": "visible_affordance",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:exposed-runes",
+        "value": "The exposed runes offer a visible detail for closer inspection."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:path_extent_authored",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:moor-path-cell-b",
+        "predicate": "schematic_path_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:moor-path-cell-a",
+        "value": "Builder-authored path extent uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:ravine_extent_authored",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-cell-b",
+        "predicate": "schematic_terrain_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-cell-a",
+        "value": "Builder-authored ravine terrain extent uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:boundary_extent_authored",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:rim-boundary-cell-b",
+        "predicate": "schematic_boundary_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:rim-boundary-cell-a",
+        "value": "Builder-authored ravine boundary extent uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:usable_space_authored",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:rim-usable-cell-b",
+        "predicate": "schematic_usable_space",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:rim-usable-cell-a",
+        "value": "Builder-authored rim space is a usable-space candidate, not a movement or legality claim."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_ancients_lab:fact:schematic_cells_authored",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:scene:abyssal-fracture",
+        "predicate": "schematic_layout_authorship",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": "Builder-authored schematic cells have no compass, metric, access, or rules meaning."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "the_ancients_lab:fact:guarded_bramble_trap",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:concealed-brambles",
+        "predicate": "guarded_hazard",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+          ]
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "known",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": "GM-only: the source describes concealed sharp brambles at the bottom and a 1d4 piercing trap effect."
+      },
+      {
+        "audience": "gm_only",
+        "id": "the_ancients_lab:fact:guarded_additional_effect_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:scene:abyssal-fracture",
+        "predicate": "additional_guarded_effect",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:concealed-brambles",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:compass_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-rim",
+        "predicate": "compass_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:scene:abyssal-fracture",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:route_distance_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-rim",
+        "predicate": "approach_route_length",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:moor-path-cell-a",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:light_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:exposed-runes",
+        "predicate": "light_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:sound_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:bottom-stream",
+        "predicate": "sound_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:weather_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-extent",
+        "predicate": "weather_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:ravine-rim",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_ancients_lab:fact:movement_cost_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_ancients_lab:entity:ravine-rim",
+        "predicate": "movement_cost",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_ancients_lab:scene:abyssal-fracture",
+        "status": "unknown",
+        "subject_id": "the_ancients_lab:entity:moor-path-cell-a",
+        "value": null
+      }
+    ],
+    "fixture_id": "the_ancients_lab:scene:abyssal-fracture",
+    "schema_version": 1,
+    "topology": {
+      "links": [
+        {
+          "from_scene_id": "the_ancients_lab:scene:abyssal-fracture",
+          "id": "the_ancients_lab:fact:connection_i01",
+          "relation": "listed_connection",
+          "to_scene_id": "the_ancients_lab:scene:shattered-forge-approach"
+        }
+      ],
+      "scene_nodes": [
+        {
+          "id": "the_ancients_lab:scene:abyssal-fracture",
+          "knowledge_status": "known",
+          "label": "Abyssal Fracture"
+        },
+        {
+          "id": "the_ancients_lab:scene:shattered-forge-approach",
+          "knowledge_status": "known",
+          "label": "Shattered Forge Approach"
+        }
+      ],
+      "schematic_layout": [
+        {
+          "anchor_id": "the_ancients_lab:entity:moor-path-cell-a",
+          "column": 0,
+          "label": "path",
+          "row": 0,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:moor-path-cell-b",
+          "column": 1,
+          "label": "path",
+          "row": 0,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:ravine-rim",
+          "column": 2,
+          "label": "threshold",
+          "row": 0,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:ravine-extent",
+          "column": 0,
+          "label": "ravine_extent",
+          "row": 1,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:ravine-cell-a",
+          "column": 1,
+          "label": "ravine",
+          "row": 1,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:ravine-cell-b",
+          "column": 2,
+          "label": "ravine",
+          "row": 1,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:rim-boundary-cell-a",
+          "column": 1,
+          "label": "boundary",
+          "row": 2,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:rim-boundary-cell-b",
+          "column": 2,
+          "label": "boundary",
+          "row": 2,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:rim-usable-cell-a",
+          "column": 2,
+          "label": "usable_space",
+          "row": 0,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:rim-usable-cell-b",
+          "column": 2,
+          "label": "usable_space",
+          "row": 1,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:bottom-stream",
+          "column": 3,
+          "label": "stream",
+          "row": 2,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:exposed-runes",
+          "column": 3,
+          "label": "runes",
+          "row": 1,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        },
+        {
+          "anchor_id": "the_ancients_lab:entity:concealed-brambles",
+          "column": 2,
+          "label": "brambles",
+          "row": 3,
+          "scene_id": "the_ancients_lab:scene:abyssal-fracture"
+        }
+      ]
+    },
+    "topology_scope": {
+      "gm_narrator": {
+        "links": [
+          "the_ancients_lab:fact:connection_i01"
+        ],
+        "scene_nodes": [
+          "the_ancients_lab:scene:abyssal-fracture",
+          "the_ancients_lab:scene:shattered-forge-approach"
+        ],
+        "schematic_layout": [
+          "the_ancients_lab:entity:moor-path-cell-a",
+          "the_ancients_lab:entity:moor-path-cell-b",
+          "the_ancients_lab:entity:ravine-rim",
+          "the_ancients_lab:entity:ravine-extent",
+          "the_ancients_lab:entity:ravine-cell-a",
+          "the_ancients_lab:entity:ravine-cell-b",
+          "the_ancients_lab:entity:rim-boundary-cell-a",
+          "the_ancients_lab:entity:rim-boundary-cell-b",
+          "the_ancients_lab:entity:rim-usable-cell-a",
+          "the_ancients_lab:entity:rim-usable-cell-b",
+          "the_ancients_lab:entity:bottom-stream",
+          "the_ancients_lab:entity:exposed-runes",
+          "the_ancients_lab:entity:concealed-brambles"
+        ]
+      },
+      "public": {
+        "links": [
+          "the_ancients_lab:fact:connection_i01"
+        ],
+        "scene_nodes": [
+          "the_ancients_lab:scene:abyssal-fracture",
+          "the_ancients_lab:scene:shattered-forge-approach"
+        ],
+        "schematic_layout": [
+          "the_ancients_lab:entity:moor-path-cell-a",
+          "the_ancients_lab:entity:moor-path-cell-b",
+          "the_ancients_lab:entity:ravine-rim",
+          "the_ancients_lab:entity:ravine-extent",
+          "the_ancients_lab:entity:ravine-cell-a",
+          "the_ancients_lab:entity:ravine-cell-b",
+          "the_ancients_lab:entity:rim-boundary-cell-a",
+          "the_ancients_lab:entity:rim-boundary-cell-b",
+          "the_ancients_lab:entity:rim-usable-cell-a",
+          "the_ancients_lab:entity:rim-usable-cell-b",
+          "the_ancients_lab:entity:bottom-stream",
+          "the_ancients_lab:entity:exposed-runes"
+        ]
+      }
+    }
+  },
+  "status": "DRAFT_UNFROZEN_NOT_OWNER_APPROVED"
+}

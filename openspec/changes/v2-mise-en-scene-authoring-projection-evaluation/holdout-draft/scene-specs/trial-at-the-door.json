@@ -1,0 +1,597 @@
+{
+  "source": {
+    "adaptation_lineage": [],
+    "lineage_status": "independent",
+    "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+    "source_field_refs": [
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:location_identity",
+        "field": "map.rooms[id=A01].name",
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:location_identity",
+        "field": "locations[locationId=A01].name",
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+      },
+      {
+        "fact_id": null,
+        "field": "locations[locationId=A01].description (empty; no scene fact extracted)",
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_connection_a02",
+        "field": "map.rooms[id=A01].connections",
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_connection_a02",
+        "field": "locations[locationId=A01].connectivity",
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_visible_rubble_vegetation",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:stage_approach",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_shuluth_meets_party",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_shuluth_leads_party",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:source_watchtower",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:stage_threshold",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:stage_focal",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:guarded_illusory_wall",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      },
+      {
+        "fact_id": "the_hidden_city_of_numillian:fact:guarded_conditional_trial",
+        "field": "plotPoints[id=TRIAL000].description",
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+      }
+    ],
+    "source_files": [
+      {
+        "path": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json",
+        "sha256": "cb36dfe6ebe2eccc679d9ba9b218da00cf686bef3d06dd5bf3d5eedff4208900"
+      },
+      {
+        "path": "modules/The_Hidden_City_of_Numillian/module_plot_BU.json",
+        "sha256": "1ddddc7b10f063f7a18cabfc9e31a13acd8534cc0981e906a53a83510c781ee1"
+      }
+    ],
+    "source_identity": "published-module:The_Hidden_City_of_Numillian:A000:A01:TRIAL000",
+    "source_ref": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json#map.rooms[id=A01];modules/The_Hidden_City_of_Numillian/areas/A000_BU.json#locations[locationId=A01];modules/The_Hidden_City_of_Numillian/module_plot_BU.json#plotPoints[id=TRIAL000]",
+    "source_spans": [
+      [
+        "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json",
+        "map.rooms",
+        "id",
+        "A01"
+      ],
+      [
+        "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json",
+        "locations",
+        "locationId",
+        "A01"
+      ],
+      [
+        "modules/The_Hidden_City_of_Numillian/module_plot_BU.json",
+        "plotPoints",
+        "id",
+        "TRIAL000"
+      ]
+    ],
+    "source_text_sha256": "96d0ef1579a7a80d05df443f375acbb1030e28825af546e2c8776f8b78c9fce9"
+  },
+  "spec": {
+    "arrival_segments": [
+      {
+        "fact_ids": [
+          "the_hidden_city_of_numillian:fact:location_identity",
+          "the_hidden_city_of_numillian:fact:source_visible_rubble_vegetation",
+          "the_hidden_city_of_numillian:fact:stage_approach"
+        ],
+        "id": "arrival-approach",
+        "role": "approach",
+        "text": "At Numillian, rubble and impenetrable vegetation confront the party's approach."
+      },
+      {
+        "fact_ids": [
+          "the_hidden_city_of_numillian:fact:source_visible_rubble_vegetation",
+          "the_hidden_city_of_numillian:fact:stage_approach",
+          "the_hidden_city_of_numillian:fact:source_shuluth_meets_party"
+        ],
+        "id": "arrival-threshold",
+        "role": "threshold",
+        "text": "Rubble and impenetrable vegetation confront the party; Shuluth walks out to meet them."
+      },
+      {
+        "fact_ids": [
+          "the_hidden_city_of_numillian:fact:source_shuluth_leads_party",
+          "the_hidden_city_of_numillian:fact:stage_threshold",
+          "the_hidden_city_of_numillian:fact:stage_focal",
+          "the_hidden_city_of_numillian:fact:source_watchtower"
+        ],
+        "id": "arrival-focal",
+        "role": "focal",
+        "text": "Shuluth leads the party to a small stone watchtower."
+      }
+    ],
+    "facts": [
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:location_identity",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "predicate": "selected_location",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "A01 is named Numillian / The Hidden City."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:source_visible_rubble_vegetation",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "predicate": "visible_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "Rubble and impenetrable vegetation confront the approaching party."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:source_watchtower",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "named_sequence_anchor",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "A small stone watchtower is the destination of the approach sequence."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:source_shuluth_meets_party",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:shuluth",
+        "predicate": "has_mobile_occupant",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "The plot point says Shuluth walks out to meet the party."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:source_shuluth_leads_party",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "leads_party_to",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:entity:shuluth",
+        "value": "Shuluth leads the party to a small stone watchtower."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:source_connection_a02",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:scene:stone-watchtower",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/areas/A000_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "The A01 source record lists a connection to A02."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:stage_approach",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "predicate": "approach_to_threshold",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": "The plot point describes characters approaching the rubble and impenetrable vegetation."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:stage_threshold",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "threshold_to_focal",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "value": "Shuluth walks out to meet the party and leads them from the approach to a small stone watchtower."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:stage_focal",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "focal_anchor_assignment",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "The small stone watchtower is the focal destination of Shuluth's approach sequence."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_hidden_city_of_numillian:fact:shuluth_arrival_position",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "predicate": "arrival_schematic_position",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:entity:shuluth",
+        "value": "Builder-authored schematic placement at the visible rubble-and-vegetation meeting point; it does not claim Shuluth's unobserved starting point."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_hidden_city_of_numillian:fact:schematic_cells_authored",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "predicate": "schematic_layout_authorship",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/areas/A000_BU.json",
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": "Builder-authored cells are schematic only and imply no compass, metric, route, or access."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:guarded_illusory_wall",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:guarded-illusory-wall",
+        "predicate": "guarded_secret",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "GM-only: rubble and vegetation conceal an illusory wall hiding a 20-foot stone wall with anti-flight wards; a DC 16 Perception check reveals it."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "the_hidden_city_of_numillian:fact:guarded_conditional_trial",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:scene:trial-one-gm-view",
+        "predicate": "guarded_conditional_sequence",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Hidden_City_of_Numillian/module_plot_BU.json"
+          ]
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "known",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": "GM-only: after agreement, Shuluth bars the tower door and begins the mindscape sequence leading to TRIAL001."
+      },
+      {
+        "audience": "gm_only",
+        "id": "the_hidden_city_of_numillian:fact:guarded_trial_outcome_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "predicate": "guarded_effect_outcome",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-one-gm-view",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:compass_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "predicate": "compass_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:approach_distance_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "predicate": "approach_route_length",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:tower_route_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "route_geometry_to_watchtower",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:light_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "light_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:sound_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "sound_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_hidden_city_of_numillian:fact:weather_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+        "predicate": "weather_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+        "status": "unknown",
+        "subject_id": "the_hidden_city_of_numillian:entity:party-approach",
+        "value": null
+      }
+    ],
+    "fixture_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+    "schema_version": 1,
+    "topology": {
+      "links": [
+        {
+          "from_scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+          "id": "the_hidden_city_of_numillian:fact:source_connection_a02",
+          "relation": "listed_connection",
+          "to_scene_id": "the_hidden_city_of_numillian:scene:stone-watchtower"
+        },
+        {
+          "from_scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+          "id": "the_hidden_city_of_numillian:fact:guarded_conditional_trial",
+          "relation": "guarded_next_sequence",
+          "to_scene_id": "the_hidden_city_of_numillian:scene:trial-one-gm-view"
+        }
+      ],
+      "scene_nodes": [
+        {
+          "id": "the_hidden_city_of_numillian:scene:trial-at-the-door",
+          "knowledge_status": "known",
+          "label": "Numillian / The Hidden City"
+        },
+        {
+          "id": "the_hidden_city_of_numillian:scene:stone-watchtower",
+          "knowledge_status": "known",
+          "label": "Stone Watchtower"
+        },
+        {
+          "id": "the_hidden_city_of_numillian:scene:trial-one-gm-view",
+          "knowledge_status": "known",
+          "label": "Trial sequence (GM only)"
+        }
+      ],
+      "schematic_layout": [
+        {
+          "anchor_id": "the_hidden_city_of_numillian:entity:party-approach",
+          "column": 0,
+          "label": "approach",
+          "row": 0,
+          "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door"
+        },
+        {
+          "anchor_id": "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+          "column": 1,
+          "label": "threshold",
+          "row": 0,
+          "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door"
+        },
+        {
+          "anchor_id": "the_hidden_city_of_numillian:entity:stone-watchtower",
+          "column": 2,
+          "label": "watchtower",
+          "row": 0,
+          "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door"
+        },
+        {
+          "anchor_id": "the_hidden_city_of_numillian:entity:shuluth",
+          "column": 1,
+          "label": "shuluth",
+          "row": 1,
+          "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door"
+        },
+        {
+          "anchor_id": "the_hidden_city_of_numillian:entity:guarded-illusory-wall",
+          "column": 1,
+          "label": "guarded_wall",
+          "row": 2,
+          "scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door"
+        }
+      ]
+    },
+    "topology_scope": {
+      "gm_narrator": {
+        "links": [
+          "the_hidden_city_of_numillian:fact:source_connection_a02",
+          "the_hidden_city_of_numillian:fact:guarded_conditional_trial"
+        ],
+        "scene_nodes": [
+          "the_hidden_city_of_numillian:scene:trial-at-the-door",
+          "the_hidden_city_of_numillian:scene:stone-watchtower",
+          "the_hidden_city_of_numillian:scene:trial-one-gm-view"
+        ],
+        "schematic_layout": [
+          "the_hidden_city_of_numillian:entity:party-approach",
+          "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+          "the_hidden_city_of_numillian:entity:stone-watchtower",
+          "the_hidden_city_of_numillian:entity:shuluth",
+          "the_hidden_city_of_numillian:entity:guarded-illusory-wall"
+        ]
+      },
+      "public": {
+        "links": [
+          "the_hidden_city_of_numillian:fact:source_connection_a02"
+        ],
+        "scene_nodes": [
+          "the_hidden_city_of_numillian:scene:trial-at-the-door",
+          "the_hidden_city_of_numillian:scene:stone-watchtower"
+        ],
+        "schematic_layout": [
+          "the_hidden_city_of_numillian:entity:party-approach",
+          "the_hidden_city_of_numillian:entity:rubble-and-overgrown-vegetation",
+          "the_hidden_city_of_numillian:entity:stone-watchtower",
+          "the_hidden_city_of_numillian:entity:shuluth"
+        ]
+      }
+    }
+  },
+  "status": "DRAFT_UNFROZEN_NOT_OWNER_APPROVED"
+}

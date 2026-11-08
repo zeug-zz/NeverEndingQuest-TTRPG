@@ -776,11 +776,37 @@ def _build_assignment(scene_ids: list[str], seed: str) -> dict[str, Any]:
     }
 
 
-def _hash_envelope(manifest: dict[str, Any]) -> dict[str, str]:
+def _build_pending_assignment() -> dict[str, Any]:
+    """Represent owner-controlled ordering without choosing or hashing a seed."""
+
+    return {
+        "algorithm": "sha256-rank-v1",
+        "status": "PENDING_OWNER_SEED",
+        "seed": None,
+        "seed_sha256": None,
+        "artifact_order": None,
+        "episode_order": None,
+        "artifact_order_sha256": None,
+        "episode_order_sha256": None,
+        "order_sha256": None,
+    }
+
+
+def _hash_envelope(manifest: dict[str, Any]) -> dict[str, Any]:
     scenes = manifest["scenes"]
     assignment = manifest["assignment"]
-    artifact_order_ids = [item["artifact_id"] for item in assignment["artifact_order"]]
-    episode_order_ids = [item["episode_id"] for item in assignment["episode_order"]]
+    artifact_order = assignment.get("artifact_order")
+    episode_order = assignment.get("episode_order")
+    artifact_order_ids = (
+        [item["artifact_id"] for item in artifact_order]
+        if type(artifact_order) is list
+        else None
+    )
+    episode_order_ids = (
+        [item["episode_id"] for item in episode_order]
+        if type(episode_order) is list
+        else None
+    )
     return {
         "sources_sha256": _hash_json(
             [{"scene_id": scene["scene_id"], "source": scene["source"]} for scene in scenes]
@@ -812,10 +838,10 @@ def _hash_envelope(manifest: dict[str, Any]) -> dict[str, str]:
         "test_sha256": manifest["protocol_hashes"]["test_sha256"],
         "rubric_sha256": manifest["protocol_hashes"]["rubric_sha256"],
         "assessor_sha256": manifest["protocol_hashes"]["assessor_sha256"],
-        "assignment_seed_sha256": assignment["seed_sha256"],
-        "artifact_order_sha256": assignment["artifact_order_sha256"],
-        "episode_order_sha256": assignment["episode_order_sha256"],
-        "order_sha256": assignment["order_sha256"],
+        "assignment_seed_sha256": assignment.get("seed_sha256"),
+        "artifact_order_sha256": assignment.get("artifact_order_sha256"),
+        "episode_order_sha256": assignment.get("episode_order_sha256"),
+        "order_sha256": assignment.get("order_sha256"),
         "catalog_sha256": manifest["catalog"]["sha256"],
         "leakage_review_sha256": _hash_json(
             {
@@ -864,11 +890,62 @@ def build_proposed_holdout_manifest(
     scoring, persistence, network access, or provider call.
     """
 
+    return _build_holdout_manifest(
+        scenes,
+        assignment_seed,
+        test_sha256=test_sha256,
+        rubric_sha256=rubric_sha256,
+        assessor_sha256=assessor_sha256,
+        catalog=catalog,
+        draft=False,
+    )
+
+
+def build_draft_holdout_manifest(
+    scenes: object,
+    *,
+    test_sha256: object,
+    rubric_sha256: object,
+    assessor_sha256: object,
+    catalog: object | None = None,
+) -> dict[str, Any]:
+    """Build the same six-scene proposal while leaving ordering to the owner.
+
+    The result is explicitly unfrozen and carries a pending assignment with no
+    seed, order, or order hashes. It does not authorize scoring or evaluation.
+    """
+
+    return _build_holdout_manifest(
+        scenes,
+        None,
+        test_sha256=test_sha256,
+        rubric_sha256=rubric_sha256,
+        assessor_sha256=assessor_sha256,
+        catalog=catalog,
+        draft=True,
+    )
+
+
+def _build_holdout_manifest(
+    scenes: object,
+    assignment_seed: object | None,
+    *,
+    test_sha256: object,
+    rubric_sha256: object,
+    assessor_sha256: object,
+    catalog: object | None,
+    draft: bool,
+) -> dict[str, Any]:
     selected_catalog = load_known_examples() if catalog is None else copy.deepcopy(catalog)
     catalog_sha256 = validate_known_examples(selected_catalog)
     if type(scenes) is not list or len(scenes) != _MAX_SCENES:
         raise EvaluationManifestError("SCENE_COUNT_EXACTLY_SIX", "$.scenes")
-    if type(assignment_seed) is not str or not assignment_seed or not assignment_seed.isascii() or len(assignment_seed) > 256:
+    if not draft and (
+        type(assignment_seed) is not str
+        or not assignment_seed
+        or not assignment_seed.isascii()
+        or len(assignment_seed) > 256
+    ):
         raise EvaluationManifestError("ASSIGNMENT_SEED", "$.assignment_seed")
     protocol_hashes = _validate_sha_inputs(test_sha256, rubric_sha256, assessor_sha256)
 
@@ -925,11 +1002,15 @@ def build_proposed_holdout_manifest(
     leakage_checks, leakage_summary, leakage_status = _build_leakage_checks(
         normalized_scenes, catalog_records
     )
-    assignment = _build_assignment(
-        [scene["scene_id"] for scene in normalized_scenes], assignment_seed
+    assignment = (
+        _build_pending_assignment()
+        if draft
+        else _build_assignment(
+            [scene["scene_id"] for scene in normalized_scenes], assignment_seed
+        )
     )
     artifact_count = sum(len(scene["artifacts"]) for scene in normalized_scenes)
-    episode_count = len(assignment["episode_order"])
+    episode_count = 48 if draft else len(assignment["episode_order"])
     if artifact_count != 24 or episode_count != 48:
         raise EvaluationManifestError("PROPOSED_MATRIX_COUNTS", "$.counts")
 
@@ -937,8 +1018,10 @@ def build_proposed_holdout_manifest(
         "schema_version": 1,
         "manifest_kind": "proposed_mise_en_scene_holdout",
         "trace": "R8",
-        "status": "PROPOSED",
-        "authorization_status": "NOT_AUTHORIZED",
+        "status": "DRAFT_UNFROZEN" if draft else "PROPOSED",
+        "authorization_status": (
+            "NOT_OWNER_APPROVED" if draft else "NOT_AUTHORIZED"
+        ),
         "scoring_status": "NOT_STARTED",
         "counts": {
             "scenes": 6,
@@ -969,7 +1052,9 @@ def build_proposed_holdout_manifest(
     return manifest
 
 
-def _verify_manifest_shell(manifest: object) -> dict[str, Any]:
+def _verify_manifest_shell(
+    manifest: object, *, draft: bool = False
+) -> dict[str, Any]:
     expected_keys = {
         "schema_version",
         "manifest_kind",
@@ -993,7 +1078,12 @@ def _verify_manifest_shell(manifest: object) -> dict[str, Any]:
         raise EvaluationManifestError("MANIFEST_SCHEMA_VERSION", "$.manifest.schema_version")
     if data["manifest_kind"] != "proposed_mise_en_scene_holdout" or data["trace"] != "R8":
         raise EvaluationManifestError("MANIFEST_KIND", "$.manifest")
-    if data["status"] != "PROPOSED" or data["authorization_status"] != "NOT_AUTHORIZED":
+    expected_authority = (
+        ("DRAFT_UNFROZEN", "NOT_OWNER_APPROVED")
+        if draft
+        else ("PROPOSED", "NOT_AUTHORIZED")
+    )
+    if (data["status"], data["authorization_status"]) != expected_authority:
         raise EvaluationManifestError("MANIFEST_AUTHORITY_STATE", "$.manifest.status")
     if data["scoring_status"] != "NOT_STARTED":
         raise EvaluationManifestError("SCORING_NOT_ALLOWED", "$.manifest.scoring_status")
@@ -1003,9 +1093,28 @@ def _verify_manifest_shell(manifest: object) -> dict[str, Any]:
 def verify_proposed_manifest(
     manifest: object, *, catalog: object | None = None
 ) -> dict[str, Any]:
-    """Recompute projections, leakage pairs, assignment, and all envelope hashes."""
+    """Recompute projections, leakage pairs, seeded assignment, and hashes."""
 
-    data = _verify_manifest_shell(manifest)
+    return _verify_manifest(manifest, catalog=catalog, draft=False)
+
+
+def verify_draft_holdout_manifest(
+    manifest: object, *, catalog: object | None = None
+) -> dict[str, Any]:
+    """Recompute an unseeded draft without creating an assignment order."""
+
+    report = _verify_manifest(manifest, catalog=catalog, draft=True)
+    report["status"] = "DRAFT_UNFROZEN"
+    report["assignment_status"] = "PENDING_OWNER_SEED"
+    return report
+
+
+def _verify_manifest(
+    manifest: object, *, catalog: object | None, draft: bool
+) -> dict[str, Any]:
+    """Recompute projections, leakage pairs, assignment state, and hashes."""
+
+    data = _verify_manifest_shell(manifest, draft=draft)
     selected_catalog = load_known_examples() if catalog is None else copy.deepcopy(catalog)
     catalog_sha256 = validate_known_examples(selected_catalog)
     catalog_binding = _require_record(
@@ -1207,12 +1316,34 @@ def verify_proposed_manifest(
         raise EvaluationManifestError("MANIFEST_COUNTS_STALE", "$.manifest.counts")
 
     assignment = data["assignment"]
-    if type(assignment) is not dict or assignment.get("algorithm") != "sha256-rank-v1":
-        raise EvaluationManifestError("ASSIGNMENT_SHAPE", "$.manifest.assignment")
-    seed = assignment.get("seed")
-    if type(seed) is not str or not seed or not seed.isascii() or len(seed) > 256:
-        raise EvaluationManifestError("ASSIGNMENT_SEED", "$.manifest.assignment.seed")
-    expected_assignment = _build_assignment(scene_ids, seed)
+    if draft:
+        assignment = _require_record(
+            assignment,
+            {
+                "algorithm",
+                "status",
+                "seed",
+                "seed_sha256",
+                "artifact_order",
+                "episode_order",
+                "artifact_order_sha256",
+                "episode_order_sha256",
+                "order_sha256",
+            },
+            "$.manifest.assignment",
+        )
+        expected_assignment = _build_pending_assignment()
+        if _canonical_json(assignment) != _canonical_json(expected_assignment):
+            raise EvaluationManifestError(
+                "ASSIGNMENT_PENDING_STALE", "$.manifest.assignment"
+            )
+    else:
+        if type(assignment) is not dict or assignment.get("algorithm") != "sha256-rank-v1":
+            raise EvaluationManifestError("ASSIGNMENT_SHAPE", "$.manifest.assignment")
+        seed = assignment.get("seed")
+        if type(seed) is not str or not seed or not seed.isascii() or len(seed) > 256:
+            raise EvaluationManifestError("ASSIGNMENT_SEED", "$.manifest.assignment.seed")
+        expected_assignment = _build_assignment(scene_ids, seed)
     if _canonical_json(assignment) != _canonical_json(expected_assignment):
         raise EvaluationManifestError("ASSIGNMENT_ORDER_STALE", "$.manifest.assignment")
 
@@ -1278,6 +1409,14 @@ def freeze_manifest_binding(
     ``synthetic-test-only:`` reference. The returned binding never authorizes
     scoring or a live evaluation.
     """
+
+    if type(manifest) is dict:
+        assignment = manifest.get("assignment")
+        if manifest.get("status") == "DRAFT_UNFROZEN" or (
+            type(assignment) is dict
+            and assignment.get("status") == "PENDING_OWNER_SEED"
+        ):
+            raise EvaluationManifestError("SEED_PENDING", "$.manifest.assignment.seed")
 
     report = verify_proposed_manifest(manifest, catalog=catalog)
     data = _verify_manifest_shell(manifest)

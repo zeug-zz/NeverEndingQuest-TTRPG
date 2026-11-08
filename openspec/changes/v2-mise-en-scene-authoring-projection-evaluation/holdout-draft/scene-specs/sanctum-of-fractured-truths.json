@@ -1,0 +1,673 @@
+{
+  "source": {
+    "adaptation_lineage": [],
+    "lineage_status": "independent",
+    "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+    "source_field_refs": [],
+    "source_files": [
+      {
+        "path": "modules/Xhalruuns_Masquerade/areas/TPG001_BU.json",
+        "sha256": "8c1271cee7c9db9f82665a2204b5c35f6259336f11b5c949240290965b1afca0"
+      }
+    ],
+    "source_identity": "published-module:Xhalruuns_Masquerade:TPG001:AK01",
+    "source_ref": "modules/Xhalruuns_Masquerade/areas/TPG001_BU.json#locations[locationId=AK01]",
+    "source_spans": [
+      [
+        "modules/Xhalruuns_Masquerade/areas/TPG001_BU.json",
+        "locations",
+        "locationId",
+        "AK01"
+      ]
+    ],
+    "source_text_sha256": "a9239061ad1981e68eaef0d1611283cae9c79514802d6f3d3ceb952d7fd37d98"
+  },
+  "spec": {
+    "arrival_segments": [
+      {
+        "fact_ids": [
+          "xhalruuns_masquerade:fact:entry_approach_builder_feature",
+          "xhalruuns_masquerade:fact:stage_approach",
+          "xhalruuns_masquerade:fact:source_entrance",
+          "xhalruuns_masquerade:fact:source_lanterns"
+        ],
+        "id": "arrival-approach",
+        "role": "approach",
+        "text": "Tall oak double doors carved with paradoxical symbols mark the South Entrance, flanked by flickering lanterns."
+      },
+      {
+        "fact_ids": [
+          "xhalruuns_masquerade:fact:stage_threshold",
+          "xhalruuns_masquerade:fact:source_temple_appearance",
+          "xhalruuns_masquerade:fact:source_mosaics",
+          "xhalruuns_masquerade:fact:source_altar"
+        ],
+        "id": "arrival-threshold",
+        "role": "threshold",
+        "text": "At the South Entrance, the domed marble temple's mirrored mosaics subtly shift; at its center, a fractured-crystal altar sits among ritual implements and an offering bowl."
+      },
+      {
+        "fact_ids": [
+          "xhalruuns_masquerade:fact:source_lanterns",
+          "xhalruuns_masquerade:fact:source_altar",
+          "xhalruuns_masquerade:fact:source_mosaics",
+          "xhalruuns_masquerade:fact:stage_focal",
+          "xhalruuns_masquerade:fact:mosaic_invitation"
+        ],
+        "id": "arrival-focal",
+        "role": "focal",
+        "text": "Flickering lanterns cast strange overlapping shadows as rainbow light refracts across the crystal altar. The shifting mosaics offer changing details to notice."
+      }
+    ],
+    "facts": [
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:location_identity",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "selected_location",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "The selected module record names one Sanctum of Fractured Truths location."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:source_entrance",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:south-entrance",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "Tall oak double doors carved with paradoxical symbols form the South Entrance, flanked by flickering lanterns."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:source_temple_appearance",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "visible_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "The temple is domed marble with shifting, mirrored mosaics."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:source_lanterns",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "visible_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "Flickering lanterns project strange, overlapping shadows across the floor."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:source_altar",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "At the temple's center, an altar of fractured crystal sits among ritual implements and an offering bowl, bathed in rainbow light."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:source_mosaics",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:mirrored-mosaics",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "Mirrored mosaics subtly shift, sometimes showing different scenes to different viewers."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:keeper_present",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:keeper-veyron",
+        "predicate": "has_mobile_occupant",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "Keeper Veyron is present at the temple location."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:connection_ak02",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:miragebound-exchange",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "The source lists connectivity to AK02 without a view bearing."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:entry_view_identity",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "view_of_shared_location",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-entry-view",
+        "value": "Builder-authored entry view references the one selected source location identity."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:altar_view_identity",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "view_of_shared_location",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+        "value": "Builder-authored altar view references the same selected source location identity."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:shared_view_identity",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+        "predicate": "shared_identity_across_views",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-entry-view",
+        "value": "The two Builder-authored views share one place identity; this makes no separate-frontage claim."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:entry_approach_builder_feature",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:south-entrance",
+        "predicate": "builder_authored_feature",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": "Builder-authored entry approach feature for the source-listed South Entrance."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:stage_approach",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:south-entrance",
+        "predicate": "approach_to_threshold",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": "Builder-authored visual approach relation places the source-listed South Entrance in the arrival view without a compass frame."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:stage_threshold",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "threshold_to_focal",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:south-entrance",
+        "value": "Builder-authored visual staging relates the South Entrance threshold to the central altar without implying entry or access."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:stage_focal",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "focal_anchor_assignment",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "Builder-authored focal relation highlights the central crystal altar."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:mosaic_invitation",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "visible_affordance",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:mirrored-mosaics",
+        "value": "The shifting mosaics offer changing visible details to notice."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:keeper_start_position",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+        "predicate": "initial_schematic_position",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:keeper-veyron",
+        "value": "Builder-authored schematic placement; the source does not specify Keeper Veyron's position."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "xhalruuns_masquerade:fact:schematic_cells_authored",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "schematic_layout_authorship",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": "Builder-authored schematic cells do not establish compass, metric, access, or separate frontages."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:guarded_vestry",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:guarded-vestry-door",
+        "predicate": "guarded_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": "GM-only: a hidden locked vestry door is described behind the central altar."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "xhalruuns_masquerade:fact:keeper_guarded_knowledge",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "guarded_knowledge",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Xhalruuns_Masquerade/areas/TPG001_BU.json"
+          ]
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "known",
+        "subject_id": "xhalruuns_masquerade:entity:keeper-veyron",
+        "value": "GM-only: the source says Keeper Veyron is concealing information about the altar."
+      },
+      {
+        "audience": "gm_only",
+        "id": "xhalruuns_masquerade:fact:guarded_knowledge_outcome_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "predicate": "guarded_effect_outcome",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:entity:keeper-veyron",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:compass_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:south-entrance",
+        "predicate": "compass_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:approach_distance_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:south-entrance",
+        "predicate": "approach_route_length",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:view_bearing_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+        "predicate": "view_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:scene:sanctum-entry-view",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:light_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "light_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:sound_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "sound_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "xhalruuns_masquerade:fact:weather_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "xhalruuns_masquerade:entity:crystal-altar",
+        "predicate": "weather_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "status": "unknown",
+        "subject_id": "xhalruuns_masquerade:entity:entry-approach",
+        "value": null
+      }
+    ],
+    "fixture_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+    "schema_version": 1,
+    "topology": {
+      "links": [
+        {
+          "from_scene_id": "xhalruuns_masquerade:scene:sanctum-entry-view",
+          "id": "xhalruuns_masquerade:fact:entry_view_identity",
+          "relation": "same_location_view",
+          "to_scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths"
+        },
+        {
+          "from_scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+          "id": "xhalruuns_masquerade:fact:altar_view_identity",
+          "relation": "same_location_view",
+          "to_scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths"
+        },
+        {
+          "from_scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+          "id": "xhalruuns_masquerade:fact:connection_ak02",
+          "relation": "listed_connection",
+          "to_scene_id": "xhalruuns_masquerade:scene:miragebound-exchange"
+        }
+      ],
+      "scene_nodes": [
+        {
+          "id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+          "knowledge_status": "known",
+          "label": "Sanctum of Fractured Truths"
+        },
+        {
+          "id": "xhalruuns_masquerade:scene:sanctum-entry-view",
+          "knowledge_status": "known",
+          "label": "Entry view of shared location"
+        },
+        {
+          "id": "xhalruuns_masquerade:scene:sanctum-altar-view",
+          "knowledge_status": "known",
+          "label": "Altar view of shared location"
+        },
+        {
+          "id": "xhalruuns_masquerade:scene:miragebound-exchange",
+          "knowledge_status": "known",
+          "label": "Miragebound Exchange"
+        }
+      ],
+      "schematic_layout": [
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:entry-approach",
+          "column": 0,
+          "label": "approach",
+          "row": 0,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-entry-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:south-entrance",
+          "column": 1,
+          "label": "entrance",
+          "row": 0,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-entry-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:crystal-altar",
+          "column": 1,
+          "label": "altar",
+          "row": 1,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:lanterns",
+          "column": 0,
+          "label": "lanterns",
+          "row": 1,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:mirrored-mosaics",
+          "column": 1,
+          "label": "mosaics",
+          "row": 2,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:keeper-veyron",
+          "column": 2,
+          "label": "keeper",
+          "row": 1,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view"
+        },
+        {
+          "anchor_id": "xhalruuns_masquerade:entity:guarded-vestry-door",
+          "column": 2,
+          "label": "guarded_vestry",
+          "row": 2,
+          "scene_id": "xhalruuns_masquerade:scene:sanctum-altar-view"
+        }
+      ]
+    },
+    "topology_scope": {
+      "gm_narrator": {
+        "links": [
+          "xhalruuns_masquerade:fact:entry_view_identity",
+          "xhalruuns_masquerade:fact:altar_view_identity",
+          "xhalruuns_masquerade:fact:connection_ak02"
+        ],
+        "scene_nodes": [
+          "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+          "xhalruuns_masquerade:scene:sanctum-entry-view",
+          "xhalruuns_masquerade:scene:sanctum-altar-view",
+          "xhalruuns_masquerade:scene:miragebound-exchange"
+        ],
+        "schematic_layout": [
+          "xhalruuns_masquerade:entity:entry-approach",
+          "xhalruuns_masquerade:entity:south-entrance",
+          "xhalruuns_masquerade:entity:crystal-altar",
+          "xhalruuns_masquerade:entity:lanterns",
+          "xhalruuns_masquerade:entity:mirrored-mosaics",
+          "xhalruuns_masquerade:entity:keeper-veyron",
+          "xhalruuns_masquerade:entity:guarded-vestry-door"
+        ]
+      },
+      "public": {
+        "links": [
+          "xhalruuns_masquerade:fact:entry_view_identity",
+          "xhalruuns_masquerade:fact:altar_view_identity",
+          "xhalruuns_masquerade:fact:connection_ak02"
+        ],
+        "scene_nodes": [
+          "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+          "xhalruuns_masquerade:scene:sanctum-entry-view",
+          "xhalruuns_masquerade:scene:sanctum-altar-view",
+          "xhalruuns_masquerade:scene:miragebound-exchange"
+        ],
+        "schematic_layout": [
+          "xhalruuns_masquerade:entity:entry-approach",
+          "xhalruuns_masquerade:entity:south-entrance",
+          "xhalruuns_masquerade:entity:crystal-altar",
+          "xhalruuns_masquerade:entity:lanterns",
+          "xhalruuns_masquerade:entity:mirrored-mosaics",
+          "xhalruuns_masquerade:entity:keeper-veyron"
+        ]
+      }
+    }
+  },
+  "status": "DRAFT_UNFROZEN_NOT_OWNER_APPROVED"
+}

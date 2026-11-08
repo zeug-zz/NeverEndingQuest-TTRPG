@@ -1,0 +1,721 @@
+{
+  "source": {
+    "adaptation_lineage": [],
+    "lineage_status": "independent",
+    "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+    "source_field_refs": [],
+    "source_files": [
+      {
+        "path": "modules/The_Garden_of_Demons/areas/GV001_BU.json",
+        "sha256": "9176a18c58394ac47bb101f3e43a112fcb9454024ea0d38cdc70e91553893407"
+      }
+    ],
+    "source_identity": "published-module:The_Garden_of_Demons:GV001:H03",
+    "source_ref": "modules/The_Garden_of_Demons/areas/GV001_BU.json#locations[locationId=H03]",
+    "source_spans": [
+      [
+        "modules/The_Garden_of_Demons/areas/GV001_BU.json",
+        "locations",
+        "locationId",
+        "H03"
+      ]
+    ],
+    "source_text_sha256": "945728477f2ac06ea120463cb31486ff88cc019d98127b291ca85de1d7d1bda5"
+  },
+  "spec": {
+    "arrival_segments": [
+      {
+        "fact_ids": [
+          "the_garden_of_demons:fact:gravel_path_builder_feature",
+          "the_garden_of_demons:fact:path_from_square",
+          "the_garden_of_demons:fact:stage_approach",
+          "the_garden_of_demons:fact:market_stalls_present"
+        ],
+        "id": "arrival-approach",
+        "role": "approach",
+        "text": "A gravel path from the village square meets several market stalls clustered around a low barrow mound covered in tangled fogroot."
+      },
+      {
+        "fact_ids": [
+          "the_garden_of_demons:fact:stage_threshold",
+          "the_garden_of_demons:fact:stalls_around_barrow",
+          "the_garden_of_demons:fact:cool_persistent_mist"
+        ],
+        "id": "arrival-threshold",
+        "role": "threshold",
+        "text": "Among the stalls, the low mound is covered in tangled fogroot; the air is cool and perpetually misty."
+      },
+      {
+        "fact_ids": [
+          "the_garden_of_demons:fact:stage_focal",
+          "the_garden_of_demons:fact:market_goods",
+          "the_garden_of_demons:fact:market_goods_invitation"
+        ],
+        "id": "arrival-focal",
+        "role": "focal",
+        "text": "Vendors hawk root vegetables, carved charms, and old relics unearthed from the barrow; the charms and relics invite a closer look."
+      }
+    ],
+    "facts": [
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:path_from_square",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "predicate": "source_named_approach",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": "The location is accessible by following a gravel path from the village square; the ground is soft and muddy, but passable."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:market_stalls_present",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:market-stalls",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "Several market stalls cluster around a low barrow mound covered in tangled fogroot."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:stalls_around_barrow",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "stalls_cluster_around",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "Several market stalls cluster around a low barrow mound covered in tangled fogroot."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:market_goods",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "predicate": "visible_contents",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:market-stalls",
+        "value": "Vendors hawk root vegetables, carved charms, and old relics unearthed from the barrow itself."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:stone_ring_gathering",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:stone-ring-cell-a",
+        "predicate": "contains_gathering_space",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "A ring of stones is a gathering place for villagers."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:child_among_stalls",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:spectral-child",
+        "predicate": "has_mobile_occupant",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "The Spectral Child wanders among the stalls at dusk."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:cool_persistent_mist",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "weather_condition",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "The air is described as cool and perpetually misty."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:connection_h02",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:withered-lantern-square",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "The source lists H02 as connected to H03."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:connection_wilds",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:thornwound-wilds",
+        "predicate": "listed_area_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "The source lists a connection to the Thornwound Wilds."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:gravel_path_builder_feature",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:gravel-path-cell-b",
+        "predicate": "builder_authored_feature",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": "Builder-authored gravel path approach represented by two schematic cells."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:stage_approach",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:market-stalls",
+        "predicate": "approach_to_threshold",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-b",
+        "value": "Builder-authored relation connects the gravel path approach to the source-listed market stalls; no route length is stated."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:stage_threshold",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "threshold_to_focal",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:market-stalls",
+        "value": "Builder-authored threshold relation connects the market stalls to the low barrow mound."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:stage_focal",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "focal_anchor_assignment",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "Builder-authored focal relation highlights the low barrow mound."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:path_extent_authored",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:gravel-path-cell-b",
+        "predicate": "schematic_path_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": "Builder-authored gravel approach extent uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:stall_boundary_authored",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:stall-boundary-cell-b",
+        "predicate": "schematic_boundary_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:stall-boundary-cell-a",
+        "value": "Builder-authored stall boundary uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:barrow_boundary_authored",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:barrow-boundary-cell-b",
+        "predicate": "schematic_terrain_extent",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:barrow-boundary-cell-a",
+        "value": "Builder-authored barrow terrain extent uses two schematic cells only."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:ring_usable_space_authored",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:stone-ring-cell-b",
+        "predicate": "schematic_usable_space",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:stone-ring-cell-a",
+        "value": "Builder-authored stone-ring cells represent usable gathering space, not movement or access."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:market_goods_invitation",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "predicate": "visible_affordance",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:market-stalls",
+        "value": "The displayed charms and relics offer a visible invitation to browse."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:child_start_position",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:stall-boundary-cell-a",
+        "predicate": "initial_schematic_position",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:spectral-child",
+        "value": "Builder-authored initial schematic placement among stalls; exact position is not source-specified."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "the_garden_of_demons:fact:schematic_cells_authored",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "predicate": "schematic_layout_authorship",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:market-stalls",
+        "value": "Builder-authored schematic cells have no compass, metric, access, or mechanics meaning."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:guarded_cache_hook",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:guarded-cache",
+        "predicate": "guarded_discovery",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": "GM-only: the source describes a hidden cache beneath the barrow and a clue from the child."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "the_garden_of_demons:fact:guarded_silver_trail",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "guarded_clue",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/The_Garden_of_Demons/areas/GV001_BU.json"
+          ]
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "known",
+        "subject_id": "the_garden_of_demons:entity:spectral-child",
+        "value": "GM-only: a Perception check can reveal a faint silver trail behind the barrow."
+      },
+      {
+        "audience": "gm_only",
+        "id": "the_garden_of_demons:fact:guarded_outcome_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "predicate": "guarded_effect_outcome",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:entity:guarded-cache",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_garden_of_demons:fact:compass_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:market-stalls",
+        "predicate": "compass_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_garden_of_demons:fact:route_distance_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:market-stalls",
+        "predicate": "approach_route_length",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_garden_of_demons:fact:light_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "light_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_garden_of_demons:fact:sound_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "sound_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "the_garden_of_demons:fact:weather_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "the_garden_of_demons:entity:fogroot-barrow",
+        "predicate": "weather_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+        "status": "unknown",
+        "subject_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+        "value": null
+      }
+    ],
+    "fixture_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+    "schema_version": 1,
+    "topology": {
+      "links": [
+        {
+          "from_scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+          "id": "the_garden_of_demons:fact:connection_h02",
+          "relation": "listed_connection",
+          "to_scene_id": "the_garden_of_demons:scene:withered-lantern-square"
+        },
+        {
+          "from_scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+          "id": "the_garden_of_demons:fact:connection_wilds",
+          "relation": "listed_area_connection",
+          "to_scene_id": "the_garden_of_demons:scene:thornwound-wilds"
+        }
+      ],
+      "scene_nodes": [
+        {
+          "id": "the_garden_of_demons:scene:fogroot-barrow-stalls",
+          "knowledge_status": "known",
+          "label": "Fogroot Barrow Stalls"
+        },
+        {
+          "id": "the_garden_of_demons:scene:withered-lantern-square",
+          "knowledge_status": "known",
+          "label": "Withered Lantern Square"
+        },
+        {
+          "id": "the_garden_of_demons:scene:thornwound-wilds",
+          "knowledge_status": "known",
+          "label": "Thornwound Wilds"
+        }
+      ],
+      "schematic_layout": [
+        {
+          "anchor_id": "the_garden_of_demons:entity:gravel-path-cell-a",
+          "column": 0,
+          "label": "path",
+          "row": 0,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:gravel-path-cell-b",
+          "column": 1,
+          "label": "path",
+          "row": 0,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:market-stalls",
+          "column": 2,
+          "label": "threshold",
+          "row": 0,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:stall-boundary-cell-a",
+          "column": 1,
+          "label": "stall_boundary",
+          "row": 1,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:stall-boundary-cell-b",
+          "column": 2,
+          "label": "stall_boundary",
+          "row": 1,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:fogroot-barrow",
+          "column": 1,
+          "label": "barrow",
+          "row": 2,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:barrow-boundary-cell-a",
+          "column": 0,
+          "label": "barrow_terrain",
+          "row": 2,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:barrow-boundary-cell-b",
+          "column": 2,
+          "label": "barrow_terrain",
+          "row": 2,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:stone-ring-cell-a",
+          "column": 1,
+          "label": "usable_space",
+          "row": 3,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:stone-ring-cell-b",
+          "column": 2,
+          "label": "usable_space",
+          "row": 3,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:spectral-child",
+          "column": 0,
+          "label": "spectral_child",
+          "row": 1,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        },
+        {
+          "anchor_id": "the_garden_of_demons:entity:guarded-cache",
+          "column": 0,
+          "label": "guarded_cache",
+          "row": 3,
+          "scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls"
+        }
+      ]
+    },
+    "topology_scope": {
+      "gm_narrator": {
+        "links": [
+          "the_garden_of_demons:fact:connection_h02",
+          "the_garden_of_demons:fact:connection_wilds"
+        ],
+        "scene_nodes": [
+          "the_garden_of_demons:scene:fogroot-barrow-stalls",
+          "the_garden_of_demons:scene:withered-lantern-square",
+          "the_garden_of_demons:scene:thornwound-wilds"
+        ],
+        "schematic_layout": [
+          "the_garden_of_demons:entity:gravel-path-cell-a",
+          "the_garden_of_demons:entity:gravel-path-cell-b",
+          "the_garden_of_demons:entity:market-stalls",
+          "the_garden_of_demons:entity:stall-boundary-cell-a",
+          "the_garden_of_demons:entity:stall-boundary-cell-b",
+          "the_garden_of_demons:entity:fogroot-barrow",
+          "the_garden_of_demons:entity:barrow-boundary-cell-a",
+          "the_garden_of_demons:entity:barrow-boundary-cell-b",
+          "the_garden_of_demons:entity:stone-ring-cell-a",
+          "the_garden_of_demons:entity:stone-ring-cell-b",
+          "the_garden_of_demons:entity:spectral-child",
+          "the_garden_of_demons:entity:guarded-cache"
+        ]
+      },
+      "public": {
+        "links": [
+          "the_garden_of_demons:fact:connection_h02",
+          "the_garden_of_demons:fact:connection_wilds"
+        ],
+        "scene_nodes": [
+          "the_garden_of_demons:scene:fogroot-barrow-stalls",
+          "the_garden_of_demons:scene:withered-lantern-square",
+          "the_garden_of_demons:scene:thornwound-wilds"
+        ],
+        "schematic_layout": [
+          "the_garden_of_demons:entity:gravel-path-cell-a",
+          "the_garden_of_demons:entity:gravel-path-cell-b",
+          "the_garden_of_demons:entity:market-stalls",
+          "the_garden_of_demons:entity:stall-boundary-cell-a",
+          "the_garden_of_demons:entity:stall-boundary-cell-b",
+          "the_garden_of_demons:entity:fogroot-barrow",
+          "the_garden_of_demons:entity:barrow-boundary-cell-a",
+          "the_garden_of_demons:entity:barrow-boundary-cell-b",
+          "the_garden_of_demons:entity:stone-ring-cell-a",
+          "the_garden_of_demons:entity:stone-ring-cell-b",
+          "the_garden_of_demons:entity:spectral-child"
+        ]
+      }
+    }
+  },
+  "status": "DRAFT_UNFROZEN_NOT_OWNER_APPROVED"
+}
