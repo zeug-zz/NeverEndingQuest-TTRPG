@@ -1,5 +1,7 @@
 # Proposal
 
+> **Current execution authority (2026-11-08T00:25Z):** PR114 merged at `f0060910` authorizes only offline tasks 1.1-1.10. The pre-approval narrative below is historical; Section 2 evaluation remains NOT AUTHORIZED. This note changes execution authority only, not acceptance criteria or protocol values.
+
 ## Why
 
 The frozen M1 packet averaged 2.625/5 for legibility and 2.875/5 for usefulness, below its frozen 3.5 thresholds. Owner review identifies actionable mise-en-scene, including a staged arrival, as the goal. This prospective follow-up specifies an offline fixture-authoring/projection prototype and a leakage-controlled evaluation proposal; it does not convert pilot evidence or redesign examples into results.
@@ -9,7 +11,7 @@ The frozen M1 packet averaged 2.625/5 for legibility and 2.875/5 for usefulness,
 - Specify a compact, provider-free prototype that validates and projects supplied fixtures; this does not test whether an LLM Builder can author a scene.
 - Add a Builder-authored staged arrival prose layer to the matched evaluation conditions, bound to the same structured facts, IDs, and provenance.
 - Keep a four-condition comparison and proposed protocol: 6 held-out scenes x 4 conditions produce 24 artifacts and 48 P1/P4 episodes (24 each); proposed gameplay ceilings are 1,152 initial and 2,304 absolute provider attempts, with a distinct advisory maximum of 30 attempts (24 holdout + 6 calibration, one per item) and a 6-hour live ceiling including setup, teardown, and retries. All counts, budgets, thresholds, and limits remain unapproved/unfrozen; recommend offline work before any live evaluation.
-- Record that PR114 is approved in principle with required revisions. After revisions, green CI, and an inbox report, stop for Overseer re-review; only later approval permits merge or offline implementation.
+- Record the current execution authority: PR114 is merged at `f0060910` and authorizes only offline tasks 1.1-1.10; Section 2 evaluation remains NOT AUTHORIZED.
 
 ## Central objective: Narrator-first
 
@@ -40,4 +42,4 @@ None. Existing spatial, scene-authority, Builder, and narrator specs continue to
 
 ## Impact
 
-Future prototype code and tests, if later approved, would use proposed paths under `scripts/mise_en_scene/` and `scripts/test_mise_en_scene_*.py`; these paths and tests are not claimed to exist. No production schema, module, runtime, prompt, persistence, or provider path is in scope. Network retains authorization, transport, and client ownership. Under accepted ADR-0033, Firelight decides legality only for migrated families through the Python bridge; unmigrated families retain Python guards. ADR-0034 remains Proposed; a runtime owner change needs an accepted or revised authority decision, but an offline prototype does not depend on accepting that draft.
+Offline prototype code and tests are confined to `scripts/mise_en_scene/` and `scripts/test_mise_en_scene_*.py` for tasks 1.1-1.10. No production schema, module, runtime, prompt, persistence, or provider path is in scope. Network retains authorization, transport, and client ownership. Under accepted ADR-0033, Firelight decides legality only for migrated families through the Python bridge; unmigrated families retain Python guards. ADR-0034 remains Proposed; a runtime owner change needs an accepted or revised authority decision, but an offline prototype does not depend on accepting that draft.
