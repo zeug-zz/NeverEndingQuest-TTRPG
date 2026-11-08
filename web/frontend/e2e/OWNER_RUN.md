@@ -12,8 +12,12 @@ and port 8360 is available. Never use the installed campaign or port 8357.
 
 - The only campaign tree the managed driver can start or alter is this
   repository's prepared `tmp/combat_capture/`. It validates that exact
-  non-symlink path, `config.py` has exactly `WEB_PORT = 8360`, and the original
-  player manifest/assets match their recorded SHA-256 digests.
+  non-symlink path, `config.py` has exactly one top-level standalone literal
+  `WEB_PORT = 8360` assignment (with an optional trailing Python `#` comment),
+  and the original player manifest/assets match their recorded SHA-256 digests.
+  Config validation parses Python syntax with the repository's fixed
+  `.venv/bin/python` and never imports or executes `config.py`; only a generic
+  pass/fail result is emitted.
 - Do not start a host manually for a managed run. `--manage-sandbox-host`
   refuses occupied ports, starts the prepared sandbox with the repository
   `.venv/bin/python`, fixed loopback ports 8360/8370, and no browser auto-open,
@@ -66,6 +70,93 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   verifier only to the owned host child. Neither is written to argv, logs, or
   evidence. This mode does not change the owner-supplied credential path or the
   default `chrome+firefox` behavior.
+
+## Provider-free full pre-booking preflight
+
+After the fix is merged, run this complete offline preflight from the clean
+merged checkout before any booking. It prepares and checks a fresh 1-PC sandbox,
+then repeats with a fresh 4-PC sandbox. It does not start a host, browser, or
+provider request and creates no evidence. Never print or inspect `config.py`;
+managed validation reads it privately and reports only pass/fail.
+
+Do not call `assertGatePortsFree()` or `isLoopbackPortFree()` during this
+preflight: both use a temporary socket bind. Use read-only `lsof` checks for
+8360 and 8370 instead:
+
+```bash
+command -v lsof >/dev/null || { echo "lsof is required for the offline port check"; exit 1; }
+check_n2_ports() {
+  for port in 8360 8370; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null; then
+      echo "Port $port is occupied; stop before booking"
+      return 1
+    fi
+  done
+}
+check_n2_ports
+```
+
+Run the driver listing/help checks and the in-memory agent credential regression.
+The credential test creates a throwaway password/verifier in memory, passes the
+password only on child stdin, validates it with the real player auth parser, and
+prints neither value:
+
+```sh
+npm --prefix web/frontend run test:e2e -- --list
+npm --prefix web/frontend run test:n2-gate -- --help
+node --test web/frontend/e2e/agent-run-credentials.node-test.mjs
+```
+
+For each party size, prepare a fresh sandbox and run the complete source/bundle/
+identity preflight. `readWorkspaceIdentity()` obtains the clean SHA and
+worktree state; `validateManagedSandboxRoot()`, `validateSandboxPython()`, and
+`readVerifiedBundleSnapshot()` exercise the managed root, fixed project
+interpreter, and bundle digest checks without creating a host. The dry run
+checks the agent-run credential environment guard and prints a plan, but does
+not generate credentials. Keep both inherited credential variables unset.
+
+```bash
+for party in 1 4; do
+  .venv/bin/python scripts/seed_combat_capture.py --prepare --party "$party"
+  node --input-type=module <<'NODE'
+import { resolve } from "node:path";
+import { validateManagedSandboxRoot, validateSandboxPython } from "./web/frontend/e2e/managed-host.mjs";
+import { readVerifiedBundleSnapshot } from "./web/frontend/e2e/managed-lifecycle.mjs";
+import { rejectInheritedAgentCredentials } from "./web/frontend/e2e/agent-run-credentials.mjs";
+import { readWorkspaceIdentity } from "./web/frontend/e2e/workspace-identity.mjs";
+
+const root = process.cwd();
+const sandbox = validateManagedSandboxRoot(root, resolve(root, "tmp/combat_capture"));
+validateSandboxPython(root);
+readVerifiedBundleSnapshot(root, sandbox);
+const identity = readWorkspaceIdentity(root);
+if (identity.git_sha === "unknown" || identity.git_worktree_state !== "clean") {
+  throw new Error("Preflight requires a readable SHA and clean worktree.");
+}
+rejectInheritedAgentCredentials(process.env);
+console.log(JSON.stringify({
+  git_sha: identity.git_sha,
+  worktree: "clean",
+  managed_sandbox: "valid",
+  sandbox_python: "valid",
+  player_bundle: "valid",
+  agent_credentials: "inherited values absent",
+}));
+NODE
+  (
+    unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER
+    npm --prefix web/frontend run test:n2-gate -- \
+      --dry-run --manage-sandbox-host --browsers chrome --agent-run --party-size "$party"
+  )
+  check_n2_ports
+done
+```
+
+Stop on any failure, unknown SHA, dirty worktree, invalid sandbox/interpreter,
+bundle digest mismatch, inherited credential, dry-run error, or occupied port.
+This preflight does not acquire a lock, bind a socket, create credentials, start
+the driver live, or authorize booking. After both party sizes pass, preserve the
+exact SHA and outputs for the owner/Overseer review.
 
 ## Static preflight (no browser, process, or evidence side effects)
 
