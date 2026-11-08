@@ -11,6 +11,10 @@ import {
   statSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  buildProviderAttemptEnvironment,
+  providerAttemptLedgerPath,
+} from "./provider-attempt-budget.mjs";
 
 export const N2_HOST_PORT = 8360;
 export const N2_PLAYER_PORT = 8370;
@@ -155,10 +159,12 @@ function signalOwnedProcessGroup(pid, signal) {
 }
 
 export class SandboxHostManager {
-  constructor({ repositoryRoot, sandboxRoot, pythonPath, environment = process.env }) {
+  constructor({ repositoryRoot, sandboxRoot, pythonPath, runId, environment = process.env }) {
     this.repositoryRoot = resolve(repositoryRoot);
     this.sandboxRoot = validateManagedSandboxRoot(this.repositoryRoot, sandboxRoot);
     this.pythonPath = pythonPath ?? validateSandboxPython(this.repositoryRoot);
+    this.runId = runId;
+    this.providerAttemptLedgerPath = providerAttemptLedgerPath(this.sandboxRoot, runId);
     this.environment = environment;
     this.child = null;
     this.spawnError = null;
@@ -189,7 +195,7 @@ export class SandboxHostManager {
     if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
     await assertGatePortsFree();
     if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
-    const childEnvironment = { ...this.environment };
+    let childEnvironment = { ...this.environment };
     delete childEnvironment.NEQ_N2_PLAYER_PASSWORD;
     delete childEnvironment.NEQ_N2_EVIDENCE_DIR;
     delete childEnvironment.NEQ_N2_HOST_URL;
@@ -197,6 +203,13 @@ export class SandboxHostManager {
     childEnvironment.NEQ_OPEN_BROWSER = "0";
     childEnvironment.NEQ_PLAYER_DEV_LISTENER = "1";
     childEnvironment.PYTHONPATH = this.sandboxRoot;
+    const providerBudgetEnvironment = buildProviderAttemptEnvironment(
+      childEnvironment,
+      this.sandboxRoot,
+      this.runId,
+    );
+    childEnvironment = providerBudgetEnvironment.environment;
+    this.providerAttemptLedgerPath = providerBudgetEnvironment.ledgerPath;
 
     this.spawnError = null;
     const child = spawn(this.pythonPath, ["-c", "import run_web; run_web.main()"], {

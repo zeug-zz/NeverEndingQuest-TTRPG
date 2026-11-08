@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Fair-Source-1.0
 
 import { arch, platform, release } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium, firefox, type Browser } from "playwright";
 import {
   expect,
@@ -12,6 +13,11 @@ import {
   type TestInfo,
 } from "playwright/test";
 import { createN2BrowserInstances } from "./browser-contract.mjs";
+import {
+  providerAttemptLedgerPath,
+  PROVIDER_ATTEMPT_BUDGET,
+  requireProviderAttemptBudgetForGameplay,
+} from "./provider-attempt-budget.mjs";
 import {
   annotation,
   catalogDescription,
@@ -76,6 +82,7 @@ let HOST_URL = "";
 let PARTY_SIZE = 0;
 let PLAYER_PASSWORD = "";
 let RUN_ID = "n2-run-unknown";
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const MANAGED_LIFECYCLE_SCENARIOS = new Set([
   "server-instance-change",
   "missing-bundle",
@@ -130,6 +137,15 @@ test.beforeAll(async () => {
   PLAYER_PASSWORD = requiredEnv("NEQ_N2_PLAYER_PASSWORD");
   RUN_ID = process.env.NEQ_N2_RUN_ID ?? RUN_ID;
   validateFixedEndpoints();
+  requireProviderAttemptBudgetForGameplay({
+    managed: process.env.NEQ_N2_MANAGE_SANDBOX_HOST === "1",
+    ledgerPath: providerAttemptLedgerPath(
+      join(REPOSITORY_ROOT, "tmp", "combat_capture"),
+      RUN_ID,
+    ),
+    budget: PROVIDER_ATTEMPT_BUDGET,
+    runId: RUN_ID,
+  });
   evidenceDirectory();
   ensureEvidenceFolders();
 
