@@ -96,6 +96,12 @@ Managed N2 runs inject `NEQ_PROVIDER_ATTEMPT_BUDGET=30`, a unique ledger path be
 
 The router's `sdk_invocation_limit` is per `llm.call()` and cannot bound independent router calls, direct SDK call sites, background work, or multiple processes. The transport reservation is the run-wide authority. The live driver requires managed mode; it cannot enforce this budget on an externally started host and refuses non-managed live runs before evidence creation or endpoint contact. Current provider SDK egress is OpenAI-over-HTTPX; requests/urllib call sites found in this audit are utility fetches, not model-provider dispatch. Any future provider transport that bypasses HTTPX must be brought under a reviewed guard before N2 use.
 
+#### Chrome-only sandbox runs and agent credentials
+
+The default browser set remains `chrome+firefox`. `--browsers chrome` is an explicit reduced-coverage mode: it launches one Chrome player plus the separate Chrome host context, never a second Chrome player, and does not launch Firefox. Every catalog check declares whether Firefox is required; Chrome assertions retain independent outcomes while every omitted Firefox check is recorded `BLOCKED` with reason `firefox-unavailable-in-sandbox`. The run and summary record requested/run browser sets, actual browser versions, and blocked checks. Any blocked Firefox check prevents an overall PASS.
+
+`--agent-run` is limited to `--manage-sandbox-host --browsers chrome`. Before generating credentials, the driver validates the exact project-local `tmp/combat_capture` root, repository `.venv/bin/python`, and bundle digests. It rejects non-empty inherited owner password/verifier values, generates no credentials in dry-run mode, creates a throwaway password in-process, and asks the repository Python auth helper to create its verifier through stdin (never argv). The password is supplied only to the Playwright child and the verifier only to the owned host child; evidence and output redact both. The existing owner-supplied credential path and default browser set are unchanged, and the 30-attempt managed provider ledger remains mandatory.
+
 ## Risks / Trade-offs
 
 - [Root route differs from plan section 6 `/client`] -> Reuse avoids allowlist growth; obtain Overseer review before implementation and change the capability requirement first if `/client` is required.

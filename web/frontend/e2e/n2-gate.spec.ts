@@ -12,7 +12,14 @@ import {
   type Page,
   type TestInfo,
 } from "playwright/test";
-import { createN2BrowserInstances } from "./browser-contract.mjs";
+import {
+  DEFAULT_N2_BROWSER_SET,
+  FIREFOX_UNAVAILABLE_REASON,
+  createN2BrowserInstances,
+  launchN2Browsers,
+  parseN2BrowserSet,
+} from "./browser-contract.mjs";
+import { compareHostAndPlayerParty } from "./party-coherence.mjs";
 import {
   providerAttemptLedgerPath,
   PROVIDER_ATTEMPT_BUDGET,
@@ -27,6 +34,8 @@ import {
   relativeEvidencePath,
   scenarioAnnotation,
   scenarioBlocked,
+  scenarioCheck,
+  scenarioCheckDefinitions,
   scenarioObservation,
   updateRunMetadata,
   writeConsoleEvidence,
@@ -89,6 +98,10 @@ const MANAGED_LIFECYCLE_SCENARIOS = new Set([
   "broken-bundle",
 ]);
 const MANAGED_SANDBOX_HOST = process.env.NEQ_N2_MANAGE_SANDBOX_HOST === "1";
+const REQUESTED_BROWSERS = parseN2BrowserSet(
+  process.env.NEQ_N2_BROWSERS ?? DEFAULT_N2_BROWSER_SET,
+);
+const FIREFOX_REQUESTED = REQUESTED_BROWSERS.includes("firefox");
 const HOST_ONLY_HTTP_PATHS = ["/toolkit", "/api/toolkit/packs", "/api/settings/browser"] as const;
 const HOST_ONLY_SOCKET_EVENTS = ["request_plot_data", "request_storage_data", "request_module_list"] as const;
 const PRIVILEGED_SOCKET_EMISSIONS = [
@@ -121,10 +134,10 @@ const PLAYER_BUNDLE_MARKERS = [
 let chromeBrowser: Browser | undefined;
 let firefoxBrowser: Browser | undefined;
 let playerContextOne!: BrowserContext;
-let playerContextTwo!: BrowserContext;
+let playerContextTwo: BrowserContext | undefined;
 let hostContext!: BrowserContext;
 let playerOne: Page;
-let playerTwo: Page;
+let playerTwo: Page | undefined;
 let hostPage: Page;
 let activeScenarioId = "setup";
 
@@ -150,36 +163,52 @@ test.beforeAll(async () => {
   ensureEvidenceFolders();
 
   try {
-    const chrome = await chromium.launch({ headless: true, channel: "chrome" });
+    const launched = await launchN2Browsers({ chromium, firefox }, REQUESTED_BROWSERS);
+    const chrome = launched.chromeBrowser;
     chromeBrowser = chrome;
-    const firefoxInstance = await firefox.launch({ headless: true });
+    const firefoxInstance = launched.firefoxBrowser ?? undefined;
     firefoxBrowser = firefoxInstance;
+    updateRunMetadata({
+      browsers_run: REQUESTED_BROWSERS,
+      browser_instances: createN2BrowserInstances(
+        chrome.version(),
+        firefoxInstance?.version() ?? null,
+        REQUESTED_BROWSERS,
+      ),
+    });
     playerContextOne = await chrome.newContext();
-    playerContextTwo = await firefoxInstance.newContext();
+    if (firefoxInstance) playerContextTwo = await firefoxInstance.newContext();
     hostContext = await chrome.newContext();
     playerOne = await playerContextOne.newPage();
-    playerTwo = await playerContextTwo.newPage();
+    if (playerContextTwo) playerTwo = await playerContextTwo.newPage();
     hostPage = await hostContext.newPage();
     attachConsoleEvidence(playerOne, "player-a-chrome");
-    attachConsoleEvidence(playerTwo, "player-b-firefox");
+    if (playerTwo) attachConsoleEvidence(playerTwo, "player-b-firefox");
     attachConsoleEvidence(hostPage, "host-ui-chrome-context");
 
     await Promise.all([
       loginPlayer(playerOne),
-      loginPlayer(playerTwo),
+      ...(playerTwo ? [loginPlayer(playerTwo)] : []),
       loadHostUi(hostPage),
     ]);
 
     const firstVersion = await readPlayerVersion(playerOne);
-    const secondVersion = await readPlayerVersion(playerTwo);
-    expect(secondVersion).toEqual(firstVersion);
-    expect(chrome).not.toBe(firefoxInstance);
-    expect(playerContextOne).not.toBe(playerContextTwo);
+    if (playerTwo && firefoxInstance) {
+      const secondVersion = await readPlayerVersion(playerTwo);
+      expect(secondVersion).toEqual(firstVersion);
+      expect(chrome).not.toBe(firefoxInstance);
+      expect(playerContextOne).not.toBe(playerContextTwo);
+    }
     expect(hostContext).not.toBe(playerContextOne);
 
     updateRunMetadata({
       client_build_id: firstVersion.clientBuildId,
-      browser_instances: createN2BrowserInstances(chrome.version(), firefoxInstance.version()),
+      browsers_run: REQUESTED_BROWSERS,
+      browser_instances: createN2BrowserInstances(
+        chrome.version(),
+        firefoxInstance?.version() ?? null,
+        REQUESTED_BROWSERS,
+      ),
       os: { platform: platform(), release: release(), arch: arch() },
       party_size: PARTY_SIZE,
       scenario_list: N2_SCENARIOS,
@@ -202,9 +231,9 @@ test.afterEach(async ({}, testInfo) => {
   const captureErrors: string[] = [];
   const entries = [
     ["player-a-chrome", playerOne],
-    ["player-b-firefox", playerTwo],
+    ...(playerTwo ? [["player-b-firefox", playerTwo] as const] : []),
     ["host-ui-chrome-context", hostPage],
-  ] as const;
+  ];
 
   for (const [name, page] of entries) {
     if (page && !page.isClosed()) {
@@ -224,17 +253,55 @@ test.afterEach(async ({}, testInfo) => {
     status: testInfo.status,
     note: "See the sanitized Playwright runner output for the observed assertion details.",
   };
-  const verdict = blockedReason
-    ? "BLOCKED"
-    : testInfo.status === "passed" && captureErrors.length === 0
-      ? "PASS"
-      : "FAIL";
+  const recordedChecks = testInfo.annotations
+    .filter((item) => item.type === "n2-check")
+    .map((item) => parseAnnotation(item.description))
+    .filter((item): item is { id: string; expected?: string; observed?: unknown; verdict: "PASS" | "FAIL" | "BLOCKED"; reason?: string } =>
+      item !== undefined && item !== null && typeof item === "object" &&
+      "id" in item && typeof item.id === "string" &&
+      "verdict" in item && ["PASS", "FAIL", "BLOCKED"].includes(String(item.verdict)),
+    );
+  const checks = scenarioCheckDefinitions(id).map((definition) => {
+    const recorded = recordedChecks.find((item) => item.id === definition.id);
+    if (recorded) return { ...recorded, expected: definition.description };
+    if (definition.requires_firefox && !FIREFOX_REQUESTED) {
+      return {
+        id: definition.id,
+        expected: definition.description,
+        observed: { reason: FIREFOX_UNAVAILABLE_REASON },
+        verdict: "BLOCKED" as const,
+        reason: FIREFOX_UNAVAILABLE_REASON,
+      };
+    }
+    if (blockedReason) {
+      return {
+        id: definition.id,
+        expected: definition.description,
+        observed: { reason: blockedReason },
+        verdict: "BLOCKED" as const,
+        reason: blockedReason,
+      };
+    }
+    return {
+      id: definition.id,
+      expected: definition.description,
+      observed: { reason: "required-check-did-not-record-an-outcome" },
+      verdict: "FAIL" as const,
+      reason: "required-check-did-not-record-an-outcome",
+    };
+  });
+  const verdict = checks.some((check) => check.verdict === "FAIL") || captureErrors.length > 0 || testInfo.status !== "passed"
+    ? "FAIL"
+    : blockedReason || checks.some((check) => check.verdict === "BLOCKED")
+      ? "BLOCKED"
+      : "PASS";
 
   writeScenarioEvidence({
     id,
     expected,
     observed: captureErrors.length > 0 ? { result: observed, evidence_errors: captureErrors } : observed,
     verdict,
+    checks,
     artifacts: artifactPaths,
     recorded_at_utc: new Date().toISOString(),
   });
@@ -258,30 +325,45 @@ test("party-coherence: 1-PC and 4-PC projections agree across isolated clients a
   scenarioAnnotation(testInfo, activeScenarioId, {
     party_size: PARTY_SIZE,
     player_a_browser: "Chrome",
-    player_b_browser: "Firefox",
-    expected_distinct_browser_instances: true,
+    player_b_browser: FIREFOX_REQUESTED ? "Firefox" : null,
+    expected_distinct_browser_instances: FIREFOX_REQUESTED,
     host_ui_browser: "Chrome",
     expected_separate_host_context: true,
   });
 
-  const [first, second] = await Promise.all([
-    readPlayerSnapshot(playerOne),
-    readPlayerSnapshot(playerTwo),
-  ]);
+  const first = await readPlayerSnapshot(playerOne);
+  const second = playerTwo ? await readPlayerSnapshot(playerTwo) : undefined;
   const firstNames = first.projection.party.members.map((member) => member.name);
-  const secondNames = second.projection.party.members.map((member) => member.name);
   expect(firstNames).toHaveLength(PARTY_SIZE);
-  expect(secondNames).toEqual(firstNames);
-  expect(second.projection.party.active_character).toBe(first.projection.party.active_character);
   expect(first.projection.party.active_character).toBeTruthy();
   expect(new URL(hostPage.url()).origin).toBe(HOST_URL);
   await expect(hostPage.locator("#game-output")).toBeAttached();
   await expect(hostPage.locator("#user-input")).toBeAttached();
+  const hostParty = await readHostPartyData();
+  const hostComparison = compareHostAndPlayerParty(hostParty, first, PARTY_SIZE);
+  expect(hostComparison.matches, `Host party response differs from player snapshot: ${JSON.stringify(hostComparison)}`).toBe(true);
+  recordCheck(testInfo, "chrome-host-party-consistency", "PASS", {
+    ...hostComparison,
+    host_ui_context: "separate Chrome BrowserContext; request_party_data response verified",
+  });
+
+  if (playerTwo && second) {
+    const secondNames = second.projection.party.members.map((member) => member.name);
+    expect(secondNames).toEqual(firstNames);
+    expect(second.projection.party.active_character).toBe(first.projection.party.active_character);
+    recordCheck(testInfo, "firefox-cross-browser-party-consistency", "PASS", {
+      party_names: secondNames,
+      active_character: second.projection.party.active_character,
+      independent_browser_instance: true,
+    });
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-cross-browser-party-consistency");
+  }
 
   scenarioObservation(testInfo, {
     party_names: firstNames,
     active_character: first.projection.party.active_character,
-    independent_sessions: true,
+    independent_firefox_session: playerTwo !== undefined,
     host_ui_context: "loaded separately",
   });
 });
@@ -320,7 +402,19 @@ test("repeated-request-id: identical command returns its original receipt once",
   expect(receipts).toHaveLength(2);
   expect(receipts.map((receipt) => receipt.status)).toEqual(["accepted", "accepted"]);
   await expect(playerOne.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
-  await expect(playerTwo.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+  recordCheck(testInfo, "chrome-request-id-dedup", "PASS", {
+    receipt_statuses: receipts.map((receipt) => receipt.status),
+    transcript_echo_count: 1,
+  });
+  if (playerTwo) {
+    await expect(playerTwo.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
+    recordCheck(testInfo, "firefox-transcript-receipt-convergence", "PASS", {
+      transcript_echo_count: 1,
+      same_request_id: true,
+    });
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-transcript-receipt-convergence");
+  }
 
   scenarioObservation(testInfo, {
     receipt_statuses: receipts.map((receipt) => receipt.status),
@@ -332,41 +426,57 @@ test("repeated-request-id: identical command returns its original receipt once",
 test("host-transcript-ordering: host UI commit reaches both clients in sequence", async ({}, testInfo) => {
   activeScenarioId = "host-transcript-ordering";
   scenarioAnnotation(testInfo, activeScenarioId, {
-    host_user_input_visible_in_both_player_transcripts: true,
+    host_user_input_visible_in_chrome_player_transcript: true,
+    firefox_player_transcript_requested: FIREFOX_REQUESTED,
     transcript_sequences_strictly_increasing: true,
     duplicate_message_count: 1,
+    firefox_player_requested: FIREFOX_REQUESTED,
   });
 
   const before = await readPlayerSnapshot(playerOne);
+  const beforeFirefox = playerTwo ? await readPlayerSnapshot(playerTwo) : null;
   const previousSequence = before.projection.transcript?.messages.at(-1)?.sequence ?? 0;
   const activeCharacter = before.projection.party.active_character;
   const marker = `N2_HOST_TRANSCRIPT_${RUN_ID}`;
   const hostEcho = await sendHostInput(marker, activeCharacter);
   expect(hostEcho).toBe(true);
   await expect(playerOne.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
-  await expect(playerTwo.locator(".transcript-message").filter({ hasText: marker })).toHaveCount(1);
 
-  const [first, second] = await Promise.all([
-    readPlayerSnapshot(playerOne),
-    readPlayerSnapshot(playerTwo),
-  ]);
+  const first = await readPlayerSnapshot(playerOne);
+  const second = playerTwo ? await readPlayerSnapshot(playerTwo) : undefined;
   const firstMessages = first.projection.transcript?.messages ?? [];
-  const secondMessages = second.projection.transcript?.messages ?? [];
   expectTranscriptOrder(firstMessages);
-  expectTranscriptOrder(secondMessages);
-  expect(firstMessages.map((message) => message.id)).toEqual(secondMessages.map((message) => message.id));
   expect(firstMessages.filter((message) => message.text.includes(marker))).toHaveLength(1);
-  expect(secondMessages.filter((message) => message.text.includes(marker))).toHaveLength(1);
   const firstHostMessage = firstMessages.find((message) => message.text.includes(marker));
-  const secondHostMessage = secondMessages.find((message) => message.text.includes(marker));
   expect(firstHostMessage?.sequence).toBeGreaterThan(previousSequence);
-  expect(secondHostMessage?.sequence).toBe(firstHostMessage?.sequence);
+  recordCheck(testInfo, "chrome-player-transcript-order", "PASS", {
+    host_message_count: 1,
+    host_message_sequence: firstHostMessage?.sequence,
+    previous_sequence: previousSequence,
+  });
+
+  if (playerTwo && second && beforeFirefox) {
+    const secondMessages = second.projection.transcript?.messages ?? [];
+    expectTranscriptOrder(secondMessages);
+    expect(firstMessages.map((message) => message.id)).toEqual(secondMessages.map((message) => message.id));
+    expect(secondMessages.filter((message) => message.text.includes(marker))).toHaveLength(1);
+    const secondHostMessage = secondMessages.find((message) => message.text.includes(marker));
+    expect(secondHostMessage?.sequence).toBe(firstHostMessage?.sequence);
+    recordCheck(testInfo, "firefox-player-transcript-convergence", "PASS", {
+      matching_transcript_ids: true,
+      host_message_count: 1,
+      host_message_sequence: secondHostMessage?.sequence,
+    });
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-player-transcript-convergence");
+  }
 
   scenarioObservation(testInfo, {
     host_echo_observed: true,
     player_transcript_message_count: firstMessages.length,
     sequences: firstMessages.map((message) => message.sequence),
     host_message_position: "after previous cursor; later assistant output may follow",
+    firefox_player_checked: playerTwo !== undefined,
   });
 });
 
@@ -375,16 +485,30 @@ test("active-pc-sync-switch-race: synchronized selection and revision race", asy
   scenarioAnnotation(testInfo, activeScenarioId, {
     party_size: PARTY_SIZE,
     expected_final_revision_delta_for_competing_four_pc_selections: PARTY_SIZE === 4 ? 1 : "not applicable",
+    firefox_player_requested: FIREFOX_REQUESTED,
   });
 
   const initial = await readPlayerSnapshot(playerOne);
   const names = initial.projection.party.members.map((member) => member.name);
   await expect(playerOne.locator("#active-pc option")).toHaveCount(PARTY_SIZE);
-  await expect(playerTwo.locator("#active-pc option")).toHaveCount(PARTY_SIZE);
+  if (playerTwo) await expect(playerTwo.locator("#active-pc option")).toHaveCount(PARTY_SIZE);
   if (PARTY_SIZE === 1) {
     expect(names).toHaveLength(1);
     await expect(playerOne.locator("#active-pc")).toHaveValue(names[0]);
-    await expect(playerTwo.locator("#active-pc")).toHaveValue(names[0]);
+    if (playerTwo) {
+      await expect(playerTwo.locator("#active-pc")).toHaveValue(names[0]);
+      recordCheck(testInfo, "firefox-cross-browser-active-pc-and-race", "PASS", {
+        single_pc_party: true,
+        firefox_active_character: names[0],
+      });
+    } else {
+      recordFirefoxBlocked(testInfo, "firefox-cross-browser-active-pc-and-race");
+    }
+    recordCheck(testInfo, "chrome-active-pc-selection", "PASS", {
+      single_pc_party: true,
+      selectable_options: names.length,
+      active_character: names[0],
+    });
     scenarioObservation(testInfo, {
       one_pc_switch_race: "not applicable; only the canonical single PC is selectable",
       active_character: names[0],
@@ -396,9 +520,24 @@ test("active-pc-sync-switch-race: synchronized selection and revision race", asy
   const sequentialTarget = names.find((name) => name !== current);
   expect(sequentialTarget).toBeTruthy();
   await playerOne.locator("#active-pc").selectOption(sequentialTarget as string);
-  await expect(playerTwo.locator("#active-pc")).toHaveValue(sequentialTarget as string);
+  await expect(playerOne.locator("#active-pc")).toHaveValue(sequentialTarget as string);
   const synchronized = await readPlayerSnapshot(playerOne);
   expect(synchronized.projection.party.active_character).toBe(sequentialTarget);
+  recordCheck(testInfo, "chrome-active-pc-selection", "PASS", {
+    selected_character: sequentialTarget,
+    active_character_revision: synchronized.projection.party.active_character_revision,
+  });
+
+  if (!playerTwo) {
+    recordFirefoxBlocked(testInfo, "firefox-cross-browser-active-pc-and-race");
+    scenarioObservation(testInfo, {
+      sequential_sync: "Chrome Player A authoritative selection verified",
+      cross_client_revision_race: "BLOCKED: firefox-unavailable-in-sandbox",
+      active_character: synchronized.projection.party.active_character,
+    });
+    return;
+  }
+  await expect(playerTwo.locator("#active-pc")).toHaveValue(sequentialTarget as string);
 
   const raceTargets = synchronized.projection.party.members
     .map((member) => member.name)
@@ -451,6 +590,11 @@ test("active-pc-sync-switch-race: synchronized selection and revision race", asy
     final_active_pc: finalOne.projection.party.active_character,
     revision_delta: finalOne.projection.party.active_character_revision - one.projection.party.active_character_revision,
   });
+  recordCheck(testInfo, "firefox-cross-browser-active-pc-and-race", "PASS", {
+    firefox_selection_synchronized: true,
+    final_active_pc: finalOne.projection.party.active_character,
+    revision_delta: finalOne.projection.party.active_character_revision - one.projection.party.active_character_revision,
+  });
 });
 
 test("sheets-initiative-combat-busy-state: safe projection matches the visible UI", async ({}, testInfo) => {
@@ -461,7 +605,8 @@ test("sheets-initiative-combat-busy-state: safe projection matches the visible U
     busy_state: "visible UI label equals projected busy boolean",
   });
 
-  for (const page of [playerOne, playerTwo]) {
+  const pages: Page[] = [playerOne, ...(playerTwo ? [playerTwo] : [])];
+  for (const page of pages) {
     const snapshot = await readPlayerSnapshot(page);
     const activeName = snapshot.projection.party.active_character;
     expect(activeName).toBeTruthy();
@@ -484,6 +629,23 @@ test("sheets-initiative-combat-busy-state: safe projection matches the visible U
   }
 
   const snapshot = await readPlayerSnapshot(playerOne);
+  recordCheck(testInfo, "chrome-sheet-combat-busy-projection", "PASS", {
+    active_pc: snapshot.projection.party.active_character,
+    party_size: snapshot.projection.party.members.length,
+    combatants: snapshot.projection.combat?.turn_order.map((combatant) => combatant.name),
+    busy: snapshot.projection.busy,
+  });
+  if (playerTwo) {
+    const firefoxSnapshot = await readPlayerSnapshot(playerTwo);
+    recordCheck(testInfo, "firefox-sheet-combat-busy-projection", "PASS", {
+      active_pc: firefoxSnapshot.projection.party.active_character,
+      party_size: firefoxSnapshot.projection.party.members.length,
+      combatants: firefoxSnapshot.projection.combat?.turn_order.map((combatant) => combatant.name),
+      busy: firefoxSnapshot.projection.busy,
+    });
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-sheet-combat-busy-projection");
+  }
   scenarioObservation(testInfo, {
     active_pc: snapshot.projection.party.active_character,
     party_size: snapshot.projection.party.members.length,
@@ -495,35 +657,117 @@ test("sheets-initiative-combat-busy-state: safe projection matches the visible U
 test("busy-input: concurrent player inputs surface a busy receipt without appending it", async ({}, testInfo) => {
   activeScenarioId = "busy-input";
   scenarioAnnotation(testInfo, activeScenarioId, {
-    expected_receipts: "at least one busy response across concurrent independent player clients",
+    expected_receipts: "one accepted and one busy response from available concurrent player requests",
     expected_busy_transcript_append_count: 0,
     queue_capacity: 1,
+    independent_firefox_player_requested: FIREFOX_REQUESTED,
   });
 
   const markers = [
     `N2_BUSY_INPUT_ONE_${RUN_ID}`,
     `N2_BUSY_INPUT_TWO_${RUN_ID}`,
   ] as const;
-  const pages = [playerOne, playerTwo] as const;
-  for (const page of pages) {
-    await expect(page.getByText("The game is ready for input.", { exact: true })).toBeVisible();
-  }
-  await Promise.all(pages.map((page, index) => page.locator("#gameplay-input").fill(markers[index])));
-  await Promise.all(pages.map((page) => page.getByRole("button", { name: "Submit input" }).click()));
-
   const busyNotice = /This input was not queued/;
-  await expect(playerOne.getByText(busyNotice).or(playerTwo.getByText(busyNotice))).toBeVisible();
-  const busyPages = await Promise.all(pages.map((page) => page.getByText(busyNotice).isVisible()));
-  const rejectedMarker = markers[busyPages[0] ? 0 : 1];
-  const snapshots = await Promise.all(pages.map((page) => readPlayerSnapshot(page)));
-  expect(snapshots.every((snapshot) =>
-    !snapshot.projection.transcript?.messages.some((message) => message.text.includes(rejectedMarker)),
-  )).toBe(true);
+  let busyCount = 0;
+  let rejectedMarker = markers[1];
+  if (playerTwo) {
+    const pages = [playerOne, playerTwo] as const;
+    for (const page of pages) {
+      await expect(page.getByText("The game is ready for input.", { exact: true })).toBeVisible();
+    }
+    await Promise.all(pages.map((page, index) => page.locator("#gameplay-input").fill(markers[index])));
+    await Promise.all(pages.map((page) => page.getByRole("button", { name: "Submit input" }).click()));
+
+    await expect(playerOne.getByText(busyNotice).or(playerTwo.getByText(busyNotice))).toBeVisible();
+    const busyPages = await Promise.all(pages.map((page) => page.getByText(busyNotice).isVisible()));
+    busyCount = busyPages.filter(Boolean).length;
+    rejectedMarker = markers[busyPages[0] ? 0 : 1];
+    const snapshots = await Promise.all(pages.map((page) => readPlayerSnapshot(page)));
+    expect(snapshots.every((snapshot) =>
+      !snapshot.projection.transcript?.messages.some((message) => message.text.includes(rejectedMarker)),
+    )).toBe(true);
+    recordCheck(testInfo, "firefox-independent-player-concurrency", "PASS", {
+      chrome_and_firefox_sessions_submitted: true,
+      busy_receipt_visible: true,
+      rejected_transcript_append_count: 0,
+    });
+  } else {
+    let injectedAdmissionRequest = false;
+    const fillerMarker = `N2_BUSY_INPUT_ACCEPTED_${RUN_ID}`;
+    await playerContextOne.routeWebSocket("**/socket.io/**", (route) => {
+      const server = route.connectToServer();
+      route.onMessage((message) => {
+        if (injectedAdmissionRequest || typeof message !== "string" || !message.startsWith("42/player,")) {
+          server.send(message);
+          return;
+        }
+        let packet: unknown;
+        try {
+          packet = JSON.parse(message.slice("42/player,".length));
+        } catch {
+          server.send(message);
+          return;
+        }
+        if (!Array.isArray(packet) || packet[0] !== "player.input.submit" ||
+            packet[1] === null || typeof packet[1] !== "object") {
+          server.send(message);
+          return;
+        }
+        const original = packet[1] as Record<string, unknown>;
+        if (typeof original.request_id !== "string" || typeof original.text !== "string") {
+          server.send(message);
+          return;
+        }
+        injectedAdmissionRequest = true;
+        const filler = {
+          ...original,
+          request_id: `n2-${RUN_ID}-busy-filler`.slice(0, 120),
+          text: fillerMarker,
+        };
+        server.send(`42/player,${JSON.stringify(["player.input.submit", filler])}`);
+        server.send(message);
+      });
+      server.onMessage((message) => route.send(message));
+    });
+    await playerOne.reload({ waitUntil: "domcontentloaded" });
+    await expect(playerOne.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
+    await expect(playerOne.getByText("Connected", { exact: true })).toBeVisible();
+    await playerOne.locator("#gameplay-input").fill(markers[0]);
+    await playerOne.getByRole("button", { name: "Submit input" }).click();
+    await expect(playerOne.getByText(busyNotice)).toBeVisible({ timeout: 10_000 });
+    expect(injectedAdmissionRequest).toBe(true);
+    await expect(playerOne.locator(".transcript-message").filter({ hasText: markers[0] })).toHaveCount(0);
+    busyCount = 1;
+    rejectedMarker = markers[0];
+    const acceptedInTranscript = await playerOne.locator(".transcript-message").filter({ hasText: fillerMarker }).count();
+    recordFirefoxBlocked(testInfo, "firefox-independent-player-concurrency");
+    scenarioObservation(testInfo, {
+      visible_busy_receipt: true,
+      accepted_filler_transcript_count: acceptedInTranscript,
+      rejected_transcript_append_count: 0,
+      submissions_from_independent_clients: 1,
+      concurrent_requests_from_chrome_session: true,
+      rejected_marker: rejectedMarker,
+    });
+    recordCheck(testInfo, "chrome-player-admission-and-busy-receipt", "PASS", {
+      busy_receipt_visible_in_chrome_ui: true,
+      rejected_transcript_append_count: 0,
+      single_chrome_player_session: true,
+    });
+    return;
+  }
 
   scenarioObservation(testInfo, {
-    visible_busy_receipts: busyPages.filter(Boolean).length,
+    visible_busy_receipts: busyCount,
     rejected_input_transcript_append_count: 0,
-    submissions_from_independent_clients: 2,
+    submissions_from_independent_clients: playerTwo ? 2 : 1,
+    concurrent_requests_from_chrome_session: !playerTwo,
+    rejected_marker: rejectedMarker,
+  });
+  recordCheck(testInfo, "chrome-player-admission-and-busy-receipt", "PASS", {
+    busy_receipts: busyCount,
+    rejected_transcript_append_count: 0,
+    single_chrome_player_session: !playerTwo,
   });
 });
 
@@ -552,11 +796,42 @@ test("refresh-reconnect: refresh and network reconnect never replay a draft", as
   const refreshed = await readPlayerSnapshot(playerOne);
   expect(refreshed.projection.party.members).toHaveLength(PARTY_SIZE);
   expect(refreshed.projection.party.active_character).toBeTruthy();
+  recordCheck(testInfo, "chrome-refresh-reconnect-no-replay", "PASS", {
+    refresh_party_size: refreshed.projection.party.members.length,
+    reconnect_status: "Connected",
+    unsent_draft_replayed: false,
+  });
+
+  if (playerTwo) {
+    const firefoxMarker = `${marker}_FIREFOX`;
+    await playerTwo.locator("#gameplay-input").fill(firefoxMarker);
+    await playerTwo.reload({ waitUntil: "domcontentloaded" });
+    await expect(playerTwo.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
+    await expect(playerTwo.getByText("Connected", { exact: true })).toBeVisible();
+    await expect(playerTwo.locator("#gameplay-input")).toHaveValue("");
+    expect((await readPlayerSnapshot(playerTwo)).projection.transcript?.messages.some(
+      (message) => message.text.includes(firefoxMarker),
+    )).toBe(false);
+    await playerContextTwo?.setOffline(true);
+    await expect(playerTwo.getByText("Disconnected", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await playerContextTwo?.setOffline(false);
+    await expect(playerTwo.getByText("Connected", { exact: true })).toBeVisible({ timeout: 20_000 });
+    const firefoxRefreshed = await readPlayerSnapshot(playerTwo);
+    expect(firefoxRefreshed.projection.party.members).toHaveLength(PARTY_SIZE);
+    recordCheck(testInfo, "firefox-refresh-reconnect-no-replay", "PASS", {
+      refresh_party_size: firefoxRefreshed.projection.party.members.length,
+      reconnect_status: "Connected",
+      unsent_draft_replayed: false,
+    });
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-refresh-reconnect-no-replay");
+  }
 
   scenarioObservation(testInfo, {
     refresh_snapshot_party_size: refreshed.projection.party.members.length,
     reconnect_status: "Connected",
     unsent_draft_replayed: false,
+    firefox_player_checked: playerTwo !== undefined,
   });
 });
 
@@ -600,56 +875,26 @@ test("host-only-route-event-and-bundle-probes: player origin refuses host surfac
     socket_events: HOST_ONLY_SOCKET_EVENTS,
     privileged_payloads: 0,
     loaded_player_js_host_markers: 0,
+    firefox_player_requested: FIREFOX_REQUESTED,
   });
 
-  const routeResults = await playerOne.evaluate(async (paths) => {
-    const privilegedMarkers = ["plot_data_response", "storage_data_response", "module_list_response", "debug_output"];
-    return Promise.all(paths.map(async (path) => {
-      const response = await fetch(path, {
-        method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: "manual",
-      });
-      const body = await response.text();
-      return {
-        path,
-        status: response.status,
-        privileged_payload: privilegedMarkers.some((marker) => body.includes(marker)),
-      };
-    }));
-  }, [...HOST_ONLY_HTTP_PATHS]);
-  for (const route of routeResults) {
-    expect(route.status).toBe(404);
-    expect(route.privileged_payload).toBe(false);
+  const chromeProbe = await runHostOnlyProbes(playerOne);
+  recordCheck(testInfo, "chrome-player-origin-host-surface-isolation", "PASS", chromeProbe);
+  let firefoxProbe = null;
+  if (playerTwo) {
+    firefoxProbe = await runHostOnlyProbes(playerTwo);
+    recordCheck(testInfo, "firefox-player-origin-host-surface-isolation", "PASS", firefoxProbe);
+  } else {
+    recordFirefoxBlocked(testInfo, "firefox-player-origin-host-surface-isolation");
   }
 
-  const snapshot = await readPlayerSnapshot(playerOne);
-  const version = await readPlayerVersion(playerOne);
-  const socketMessages = await exchangePlayerSocket(playerOne, version, {
-    events: HOST_ONLY_SOCKET_EVENTS.map((name) => ({
-      name,
-      payload: { probe: "N2_HOST_ONLY_PROBE", include_debug: true },
-    })),
-    expectedEventCounts: {},
-    timeoutMs: 1200,
-  });
-  const privilegedMessages = socketMessages.filter((message) =>
-    PRIVILEGED_SOCKET_EMISSIONS.includes(message.event as (typeof PRIVILEGED_SOCKET_EMISSIONS)[number]),
-  );
-  expect(privilegedMessages).toHaveLength(0);
-
-  const bundleScan = await scanLoadedPlayerJavaScript(playerOne);
-  expect(bundleScan.scriptCount).toBeGreaterThan(0);
-  expect(bundleScan.hits).toEqual([]);
-  expect(snapshot.projection.party.members).toHaveLength(PARTY_SIZE);
-
   scenarioObservation(testInfo, {
-    route_statuses: routeResults.map((route) => route.status),
+    chrome_route_statuses: chromeProbe.route_statuses,
     refused_host_socket_events: HOST_ONLY_SOCKET_EVENTS,
-    privileged_socket_payloads: privilegedMessages.length,
-    loaded_js_count: bundleScan.scriptCount,
-    host_marker_hits: bundleScan.hits,
+    chrome_privileged_socket_payloads: chromeProbe.privileged_socket_payloads,
+    chrome_loaded_js_count: chromeProbe.loaded_js_count,
+    chrome_host_marker_hits: chromeProbe.host_marker_hits,
+    firefox_checked: firefoxProbe !== null,
   });
 });
 
@@ -760,6 +1005,67 @@ async function sendHostInput(text: string, character: string | null): Promise<bo
       socket.emit("user_input", { input: inputText, character: activeCharacter });
     });
   }, { inputText: text, activeCharacter: character });
+}
+
+async function readHostPartyData(): Promise<{
+  party_members: readonly string[];
+  active_character: string;
+}> {
+  return hostPage.evaluate(async () => {
+    type HostPartyData = { party_members?: unknown; active_character?: unknown };
+    type HostSocket = {
+      connected: boolean;
+      on: (event: string, callback: (payload?: unknown) => void) => void;
+      off: (event: string, callback: (payload?: unknown) => void) => void;
+      emit: (event: string) => void;
+    };
+    const socket = (window as Window & { socket?: HostSocket }).socket;
+    if (!socket) throw new Error("Host UI Socket.IO client is unavailable.");
+    if (!socket.connected) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          socket.off("connect", onConnect);
+          reject(new Error("Host UI socket did not connect before party-data probe."));
+        }, 10_000);
+        const onConnect = (): void => {
+          window.clearTimeout(timer);
+          socket.off("connect", onConnect);
+          resolve();
+        };
+        socket.on("connect", onConnect);
+      });
+    }
+
+    return await new Promise<{ party_members: string[]; active_character: string }>((resolve, reject) => {
+      const finish = (callback: () => void): void => {
+        window.clearTimeout(timer);
+        socket.off("party_data_response", onResponse);
+        callback();
+      };
+      const onResponse = (payload?: unknown): void => {
+        if (payload === null || typeof payload !== "object") {
+          finish(() => reject(new Error("Host party-data response is not an object.")));
+          return;
+        }
+        const response = payload as HostPartyData;
+        if (!Array.isArray(response.party_members) ||
+            !response.party_members.every((name) => typeof name === "string") ||
+            typeof response.active_character !== "string" || response.active_character.length === 0) {
+          finish(() => reject(new Error("Host party-data response is missing party members or active PC.")));
+          return;
+        }
+        finish(() => resolve({
+          party_members: response.party_members as string[],
+          active_character: response.active_character as string,
+        }));
+      };
+      const timer = window.setTimeout(() => {
+        finish(() => reject(new Error("Host UI did not return party_data_response within 10 seconds.")));
+      }, 10_000);
+      socket.on("party_data_response", onResponse);
+      socket.emit("request_party_data");
+    });
+  });
 }
 
 function activePcEnvelope(snapshot: PlayerSnapshot, characterName: string) {
@@ -878,6 +1184,88 @@ async function scanLoadedPlayerJavaScript(page: Page): Promise<{ scriptCount: nu
     );
     return { scriptCount: loaded.length, hits };
   }, [...PLAYER_BUNDLE_MARKERS]);
+}
+
+async function runHostOnlyProbes(page: Page): Promise<{
+  route_statuses: number[];
+  privileged_socket_payloads: number;
+  loaded_js_count: number;
+  host_marker_hits: readonly string[];
+}> {
+  const routeResults = await page.evaluate(async (paths) => {
+    const privilegedMarkers = ["plot_data_response", "storage_data_response", "module_list_response", "debug_output"];
+    return Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "manual",
+      });
+      const body = await response.text();
+      return {
+        path,
+        status: response.status,
+        privileged_payload: privilegedMarkers.some((marker) => body.includes(marker)),
+      };
+    }));
+  }, [...HOST_ONLY_HTTP_PATHS]);
+  for (const route of routeResults) {
+    expect(route.status).toBe(404);
+    expect(route.privileged_payload).toBe(false);
+  }
+
+  const snapshot = await readPlayerSnapshot(page);
+  const version = await readPlayerVersion(page);
+  const socketMessages = await exchangePlayerSocket(page, version, {
+    events: HOST_ONLY_SOCKET_EVENTS.map((name) => ({
+      name,
+      payload: { probe: "N2_HOST_ONLY_PROBE", include_debug: true },
+    })),
+    expectedEventCounts: {},
+    timeoutMs: 1200,
+  });
+  const privilegedMessages = socketMessages.filter((message) =>
+    PRIVILEGED_SOCKET_EMISSIONS.includes(message.event as (typeof PRIVILEGED_SOCKET_EMISSIONS)[number]),
+  );
+  expect(privilegedMessages).toHaveLength(0);
+
+  const bundleScan = await scanLoadedPlayerJavaScript(page);
+  expect(bundleScan.scriptCount).toBeGreaterThan(0);
+  expect(bundleScan.hits).toEqual([]);
+  expect(snapshot.projection.party.members).toHaveLength(PARTY_SIZE);
+  return {
+    route_statuses: routeResults.map((route) => route.status),
+    privileged_socket_payloads: privilegedMessages.length,
+    loaded_js_count: bundleScan.scriptCount,
+    host_marker_hits: bundleScan.hits,
+  };
+}
+
+function recordCheck(
+  testInfo: TestInfo,
+  id: string,
+  verdict: "PASS" | "FAIL" | "BLOCKED",
+  observed: unknown,
+  reason?: string,
+): void {
+  const expected = scenarioCheckDefinitions(activeScenarioId).find((check) => check.id === id)?.description ?? id;
+  scenarioCheck(testInfo, {
+    id,
+    expected,
+    observed,
+    verdict,
+    ...(reason === undefined ? {} : { reason }),
+  });
+}
+
+function recordFirefoxBlocked(testInfo: TestInfo, id: string): void {
+  recordCheck(
+    testInfo,
+    id,
+    "BLOCKED",
+    { reason: FIREFOX_UNAVAILABLE_REASON },
+    FIREFOX_UNAVAILABLE_REASON,
+  );
 }
 
 function partySizeFromEnv(): number {

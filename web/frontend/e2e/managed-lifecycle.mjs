@@ -18,6 +18,7 @@ import {
   N2_PLAYER_PORT,
   validateManagedSandboxRoot,
 } from "./managed-host.mjs";
+import { FIREFOX_UNAVAILABLE_REASON, launchN2Browsers } from "./browser-contract.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
 
 const LIFECYCLE_IDS = ["server-instance-change", "missing-bundle", "broken-bundle"];
@@ -222,11 +223,11 @@ export function restoreSandboxDist(repositoryRoot, sandboxRoot, backupPath, snap
   return restored;
 }
 
-function safeErrorMessage(error, password) {
+function safeErrorMessage(error, password, verifier = process.env.NEQ_PLAYER_PASSWORD_VERIFIER) {
   const message = error instanceof Error ? error.message : String(error);
   return redactEvidenceText(
     message,
-    [password, process.env.NEQ_PLAYER_PASSWORD_VERIFIER],
+    [password, verifier],
     4096,
   );
 }
@@ -308,21 +309,25 @@ async function assertPlayerListenerClosed(playerContexts) {
     throw new Error("The player listener port remained occupied after asset preflight failed.");
   }
 
-  for (const [index, playerContext] of playerContexts.entries()) {
-    const probePage = await playerContext.newPage();
+  for (const player of playerContexts) {
+    const probePage = await player.context.newPage();
     try {
       const browserResponse = await probePage.goto(PLAYER_URL, {
         waitUntil: "domcontentloaded",
         timeout: 5_000,
       }).catch(() => null);
       if (browserResponse !== null) {
-        throw new Error(`Player browser ${index + 1} received a page while the bundle was invalid.`);
+        throw new Error(`Player browser ${player.browser} received a page while the bundle was invalid.`);
       }
     } finally {
       await probePage.close();
     }
   }
-  return { player_http_unreachable: true, player_port_free: true, player_contexts_probed: playerContexts.length };
+  return {
+    player_http_unreachable: true,
+    player_port_free: true,
+    player_contexts_probed: playerContexts.map((player) => player.browser),
+  };
 }
 
 async function captureScreenshot(page, evidenceDirectory, name) {
@@ -331,7 +336,7 @@ async function captureScreenshot(page, evidenceDirectory, name) {
   return relative(evidenceDirectory, path).split(sep).join("/");
 }
 
-async function recordScenario(id, expected, password, run, signal) {
+async function recordScenario(id, expected, password, verifier, run, signal) {
   const result = {
     id,
     expected,
@@ -344,10 +349,11 @@ async function recordScenario(id, expected, password, run, signal) {
     if (signal?.aborted) throw new Error("The managed lifecycle phase was cancelled by an operator signal.");
     const outcome = await run();
     result.observed = outcome.observed;
+    result.checks = outcome.checks ?? [];
     result.artifacts = outcome.artifacts ?? [];
   } catch (error) {
     result.verdict = "FAIL";
-    result.observed = { error: safeErrorMessage(error, password) };
+    result.observed = { error: safeErrorMessage(error, password, verifier) };
   }
   return result;
 }
@@ -377,22 +383,20 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
   });
 
   const playerPageOne = await playerContextOne.newPage();
-  const playerPageTwo = await playerContextTwo.newPage();
+  const playerPageTwo = playerContextTwo ? await playerContextTwo.newPage() : null;
   const hostPage = await hostContext.newPage();
   await Promise.all([
     playerPageOne.goto(PLAYER_URL, { waitUntil: "domcontentloaded" }),
-    playerPageTwo.goto(PLAYER_URL, { waitUntil: "domcontentloaded" }),
+    ...(playerPageTwo ? [playerPageTwo.goto(PLAYER_URL, { waitUntil: "domcontentloaded" })] : []),
     assertHostUi(hostPage),
   ]);
   await Promise.all([
     loginPlayer(playerPageOne, password),
-    loginPlayer(playerPageTwo, password),
+    ...(playerPageTwo ? [loginPlayer(playerPageTwo, password)] : []),
   ]);
-  const [initialOne, initialTwo] = await Promise.all([
-    readSnapshot(playerPageOne),
-    readSnapshot(playerPageTwo),
-  ]);
-  if (initialOne.instance_id !== initialTwo.instance_id) {
+  const initialOne = await readSnapshot(playerPageOne);
+  const initialTwo = playerPageTwo ? await readSnapshot(playerPageTwo) : null;
+  if (initialTwo && initialOne.instance_id !== initialTwo.instance_id) {
     throw new Error("Chrome and Firefox clients did not hydrate the same server instance.");
   }
   const marker = `N2_INSTANCE_CHANGE_${runId}`;
@@ -414,10 +418,17 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
   await manager.stop();
   await Promise.all([
     playerPageOne.getByText("Disconnected", { exact: true }).waitFor({ state: "visible", timeout: 15_000 }),
-    playerPageTwo.getByText("Disconnected", { exact: true }).waitFor({ state: "visible", timeout: 15_000 }),
+    ...(playerPageTwo
+      ? [playerPageTwo.getByText("Disconnected", { exact: true }).waitFor({ state: "visible", timeout: 15_000 })]
+      : []),
   ]);
   const uncertainNotice = playerPageOne.getByRole("alert").filter({ hasText: "The action may or may not have applied" });
   await uncertainNotice.waitFor({ state: "visible", timeout: 10_000 });
+  if (playerPageTwo) {
+    await playerPageTwo.getByRole("alert")
+      .filter({ hasText: "The action may or may not have applied" })
+      .waitFor({ state: "visible", timeout: 10_000 });
+  }
   const uncertainScreenshot = await captureScreenshot(
     playerPageOne,
     evidenceDirectory,
@@ -427,40 +438,38 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
   await manager.start({ playerExpected: true, signal });
   await Promise.all([
     playerPageOne.reload({ waitUntil: "domcontentloaded" }),
-    playerPageTwo.reload({ waitUntil: "domcontentloaded" }),
+    ...(playerPageTwo ? [playerPageTwo.reload({ waitUntil: "domcontentloaded" })] : []),
   ]);
   await Promise.all([
     loginPlayer(playerPageOne, password),
-    loginPlayer(playerPageTwo, password),
+    ...(playerPageTwo ? [loginPlayer(playerPageTwo, password)] : []),
   ]);
-  const [resynchronizedOne, resynchronizedTwo] = await Promise.all([
-    readSnapshot(playerPageOne),
-    readSnapshot(playerPageTwo),
-  ]);
+  const resynchronizedOne = await readSnapshot(playerPageOne);
+  const resynchronizedTwo = playerPageTwo ? await readSnapshot(playerPageTwo) : null;
   if (resynchronizedOne.instance_id === initialOne.instance_id ||
-      resynchronizedTwo.instance_id === initialTwo.instance_id) {
+      (resynchronizedTwo && resynchronizedTwo.instance_id === initialTwo?.instance_id)) {
     throw new Error("The restarted player listener did not issue a new server instance ID.");
   }
-  if (resynchronizedOne.instance_id !== resynchronizedTwo.instance_id) {
+  if (resynchronizedTwo && resynchronizedOne.instance_id !== resynchronizedTwo.instance_id) {
     throw new Error("Chrome and Firefox clients did not resynchronize to the same server instance.");
   }
   if (resynchronizedOne.projection.party.members.length !== partySize ||
-      resynchronizedTwo.projection.party.members.length !== partySize) {
+      (resynchronizedTwo && resynchronizedTwo.projection.party.members.length !== partySize)) {
     throw new Error("The post-restart snapshot did not resynchronize the expected party shape.");
   }
   if ((await playerPageOne.locator("#gameplay-input").inputValue()) !== "" ||
-      (await playerPageTwo.locator("#gameplay-input").inputValue()) !== "") {
+      (playerPageTwo && (await playerPageTwo.locator("#gameplay-input").inputValue()) !== "")) {
     throw new Error("A pre-restart input draft was replayed after resynchronization.");
   }
   const matchingSubmissions = tracking.requestIds.filter((id) => id === requestId).length;
   if (matchingSubmissions !== 1) {
     throw new Error("The pre-restart request ID was replayed or duplicated after reconnect.");
   }
-  const [markerCountOne, markerCountTwo] = await Promise.all([
-    playerPageOne.locator(".transcript-message").filter({ hasText: marker }).count(),
-    playerPageTwo.locator(".transcript-message").filter({ hasText: marker }).count(),
-  ]);
-  if (markerCountOne !== 1 || markerCountTwo !== 1) {
+  const markerCountOne = await playerPageOne.locator(".transcript-message").filter({ hasText: marker }).count();
+  const markerCountTwo = playerPageTwo
+    ? await playerPageTwo.locator(".transcript-message").filter({ hasText: marker }).count()
+    : null;
+  if (markerCountOne !== 1 || (markerCountTwo !== null && markerCountTwo !== 1)) {
     throw new Error("The transcript did not retain exactly one copy of the pre-restart input.");
   }
   const hostUi = await assertHostUi(hostPage);
@@ -469,20 +478,41 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
     evidenceDirectory,
     "server-instance-change-resynchronized-player",
   );
-  const firefoxResynchronizedScreenshot = await captureScreenshot(
-    playerPageTwo,
-    evidenceDirectory,
-    "server-instance-change-resynchronized-firefox-player",
-  );
+  const firefoxResynchronizedScreenshot = playerPageTwo
+    ? await captureScreenshot(playerPageTwo, evidenceDirectory, "server-instance-change-resynchronized-firefox-player")
+    : null;
   const hostScreenshot = await captureScreenshot(
     hostPage,
     evidenceDirectory,
     "server-instance-change-host-ui",
   );
+  const checks = [{
+    id: "chrome-server-instance-resync",
+    verdict: "PASS",
+    observed: {
+      uncertain_before_restart: true,
+      new_instance_id: resynchronizedOne.instance_id,
+      request_id_submissions: matchingSubmissions,
+      transcript_marker_count: markerCountOne,
+      authoritative_snapshot_resynchronized: true,
+    },
+  }];
+  if (playerPageTwo && resynchronizedTwo && markerCountTwo !== null) {
+    checks.push({
+      id: "firefox-server-instance-resync",
+      verdict: "PASS",
+      observed: {
+        uncertain_before_restart: true,
+        new_instance_id: resynchronizedTwo.instance_id,
+        transcript_marker_count: markerCountTwo,
+        authoritative_snapshot_resynchronized: true,
+      },
+    });
+  }
   return {
     observed: {
       player_a_browser: "Chrome",
-      player_b_browser: "Firefox",
+      player_b_browser: playerPageTwo ? "Firefox" : null,
       old_instance_id: initialOne.instance_id,
       new_instance_id: resynchronizedOne.instance_id,
       uncertainty_visible_before_reload: true,
@@ -495,7 +525,9 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
       party_size: resynchronizedOne.projection.party.members.length,
       host_ui_after_restart: hostUi,
     },
-    artifacts: [uncertainScreenshot, resynchronizedScreenshot, firefoxResynchronizedScreenshot, hostScreenshot],
+    checks,
+    artifacts: [uncertainScreenshot, resynchronizedScreenshot, firefoxResynchronizedScreenshot, hostScreenshot]
+      .filter(Boolean),
   };
 }
 
@@ -509,6 +541,8 @@ async function runBundleScenario({
   evidenceDirectory,
   originalSnapshot,
   corrupt,
+  password,
+  verifier,
   signal,
 }) {
   let backup = null;
@@ -558,26 +592,96 @@ async function runBundleScenario({
   }
   await hostPage.close();
   if (restorationFailure !== null) {
-    const restoreMessage = safeErrorMessage(restorationFailure, process.env.NEQ_N2_PLAYER_PASSWORD);
-    const primaryMessage = failure === null ? null : safeErrorMessage(failure, process.env.NEQ_N2_PLAYER_PASSWORD);
+    const restoreMessage = safeErrorMessage(restorationFailure, password, verifier);
+    const primaryMessage = failure === null ? null : safeErrorMessage(failure, password, verifier);
     throw new Error(`Bundle restoration failed: ${restoreMessage}${primaryMessage ? `; phase error: ${primaryMessage}` : ""}`);
   }
   if (failure !== null) throw failure;
+  const chromeCheckId = id === "missing-bundle"
+    ? "chrome-missing-bundle-host-and-player"
+    : "chrome-broken-bundle-host-and-player";
+  const firefoxCheckId = id === "missing-bundle"
+    ? "firefox-missing-bundle-player"
+    : "firefox-broken-bundle-player";
+  const checks = [{
+    id: chromeCheckId,
+    verdict: "PASS",
+    observed: {
+      host_ui_usable: observed.host_ui_usable,
+      chrome_player_listener_fail_closed: observed.player_listener_fail_closed,
+      original_bundle_restored: true,
+    },
+  }];
+  if (observed.player_listener_fail_closed.player_contexts_probed.includes("Firefox")) {
+    checks.push({
+      id: firefoxCheckId,
+      verdict: "PASS",
+      observed: { firefox_player_listener_fail_closed: true },
+    });
+  }
   return {
     observed: { ...observed, original_manifest_and_asset_digests_restored: true },
+    checks,
     artifacts: backup?.artifacts ?? [],
   };
 }
 
-function failedLifecycleRecord(id, expected, error, password) {
+function failedLifecycleRecord(id, expected, error, password, verifier) {
   return {
     id,
     expected,
-    observed: { error: safeErrorMessage(error, password) },
+    observed: { error: safeErrorMessage(error, password, verifier) },
     verdict: "FAIL",
     artifacts: [],
     recorded_at_utc: new Date().toISOString(),
   };
+}
+
+function completeLifecycleRecords(records, scenarioCatalog, browsers) {
+  const recordById = new Map(records.map((record) => [record.id, record]));
+  const scenarioById = new Map(scenarioCatalog.map((scenario) => [scenario.id, scenario]));
+  return LIFECYCLE_IDS.map((id) => {
+    const scenario = scenarioById.get(id);
+    const record = recordById.get(id) ?? {
+      id,
+      expected: scenario?.description,
+      observed: { reason: "managed-lifecycle-result-missing" },
+      verdict: "FAIL",
+      checks: [],
+      artifacts: [],
+      recorded_at_utc: new Date().toISOString(),
+    };
+    const existingChecks = new Map((record.checks ?? []).map((check) => [check.id, check]));
+    const checks = (scenario?.checks ?? []).map((definition) => {
+      const existing = existingChecks.get(definition.id);
+      if (existing) return { ...existing, expected: definition.description };
+      if (definition.requires_firefox && !browsers.includes("firefox")) {
+        return {
+          id: definition.id,
+          expected: definition.description,
+          observed: { reason: FIREFOX_UNAVAILABLE_REASON },
+          verdict: "BLOCKED",
+          reason: FIREFOX_UNAVAILABLE_REASON,
+        };
+      }
+      const reason = record.verdict === "BLOCKED"
+        ? record.observed?.reason ?? "managed-lifecycle-blocked"
+        : "required-check-did-not-record-an-outcome";
+      return {
+        id: definition.id,
+        expected: definition.description,
+        observed: { reason },
+        verdict: record.verdict === "BLOCKED" ? "BLOCKED" : "FAIL",
+        reason,
+      };
+    });
+    const verdict = record.verdict === "FAIL" || checks.some((check) => check.verdict === "FAIL")
+      ? "FAIL"
+      : record.verdict === "BLOCKED" || checks.some((check) => check.verdict === "BLOCKED")
+        ? "BLOCKED"
+        : "PASS";
+    return { ...record, checks, verdict };
+  });
 }
 
 export async function runManagedLifecycleScenarios({
@@ -588,6 +692,8 @@ export async function runManagedLifecycleScenarios({
   partySize,
   runId,
   password,
+  verifier,
+  browsers,
   scenarioCatalog,
   signal,
 }) {
@@ -596,11 +702,19 @@ export async function runManagedLifecycleScenarios({
   try {
     originalSnapshot = readVerifiedBundleSnapshot(repositoryRoot, sandboxRoot);
   } catch (error) {
-    return LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password));
+    return completeLifecycleRecords(
+      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
+      scenarioCatalog,
+      browsers,
+    );
   }
   if (signal?.aborted) {
     const error = new Error("The managed lifecycle was cancelled by an operator signal.");
-    return LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password));
+    return completeLifecycleRecords(
+      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
+      scenarioCatalog,
+      browsers,
+    );
   }
 
   let chromeBrowser;
@@ -611,8 +725,9 @@ export async function runManagedLifecycleScenarios({
   let closeBrowserOnAbort;
   try {
     const playwright = await import("playwright");
-    chromeBrowser = await playwright.chromium.launch({ headless: true, channel: "chrome" });
-    firefoxBrowser = await playwright.firefox.launch({ headless: true });
+    const launched = await launchN2Browsers(playwright, browsers);
+    chromeBrowser = launched.chromeBrowser;
+    firefoxBrowser = launched.firefoxBrowser ?? undefined;
     closeBrowserOnAbort = () => {
       void Promise.all([
         chromeBrowser?.close().catch(() => {}),
@@ -622,7 +737,7 @@ export async function runManagedLifecycleScenarios({
     signal?.addEventListener("abort", closeBrowserOnAbort, { once: true });
     if (signal?.aborted) closeBrowserOnAbort();
     playerContextOne = await chromeBrowser.newContext();
-    playerContextTwo = await firefoxBrowser.newContext();
+    if (firefoxBrowser) playerContextTwo = await firefoxBrowser.newContext();
     hostContext = await chromeBrowser.newContext();
   } catch (error) {
     await Promise.all([
@@ -630,15 +745,24 @@ export async function runManagedLifecycleScenarios({
       firefoxBrowser?.close().catch(() => {}),
     ]);
     if (closeBrowserOnAbort) signal?.removeEventListener("abort", closeBrowserOnAbort);
-    return LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password));
+    return completeLifecycleRecords(
+      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
+      scenarioCatalog,
+      browsers,
+    );
   }
 
+  const playerContexts = [
+    { browser: "Chrome", context: playerContextOne },
+    ...(playerContextTwo ? [{ browser: "Firefox", context: playerContextTwo }] : []),
+  ];
   const records = [];
   try {
     records.push(await recordScenario(
       "server-instance-change",
       expected.get("server-instance-change"),
       password,
+      verifier,
       () => runServerInstanceScenario({
         manager,
         playerContextOne,
@@ -648,6 +772,7 @@ export async function runManagedLifecycleScenarios({
         partySize,
         runId,
         password,
+        verifier,
         signal,
       }),
       signal,
@@ -656,16 +781,19 @@ export async function runManagedLifecycleScenarios({
       "missing-bundle",
       expected.get("missing-bundle"),
       password,
+      verifier,
       () => runBundleScenario({
         id: "missing-bundle",
         repositoryRoot,
         sandboxRoot,
         manager,
         hostContext,
-        playerContexts: [playerContextOne, playerContextTwo],
+        playerContexts,
         evidenceDirectory,
         originalSnapshot,
         corrupt: false,
+        password,
+        verifier,
         signal,
       }),
       signal,
@@ -674,16 +802,19 @@ export async function runManagedLifecycleScenarios({
       "broken-bundle",
       expected.get("broken-bundle"),
       password,
+      verifier,
       () => runBundleScenario({
         id: "broken-bundle",
         repositoryRoot,
         sandboxRoot,
         manager,
         hostContext,
-        playerContexts: [playerContextOne, playerContextTwo],
+        playerContexts,
         evidenceDirectory,
         originalSnapshot,
         corrupt: true,
+        password,
+        verifier,
         signal,
       }),
       signal,
@@ -697,7 +828,7 @@ export async function runManagedLifecycleScenarios({
         record.verdict = "FAIL";
         record.observed = {
           ...(record.observed && typeof record.observed === "object" ? record.observed : {}),
-          managed_host_teardown_error: safeErrorMessage(error, password),
+          managed_host_teardown_error: safeErrorMessage(error, password, verifier),
         };
       }
     }
@@ -711,11 +842,5 @@ export async function runManagedLifecycleScenarios({
     if (closeBrowserOnAbort) signal?.removeEventListener("abort", closeBrowserOnAbort);
   }
 
-  const byId = new Map(records.map((record) => [record.id, record]));
-  return LIFECYCLE_IDS.map((id) => byId.get(id) ?? failedLifecycleRecord(
-    id,
-    expected.get(id),
-    new Error("The managed lifecycle phase did not produce an evidence record."),
-    password,
-  ));
+  return completeLifecycleRecords(records, scenarioCatalog, browsers);
 }

@@ -25,6 +25,21 @@ export type Verdict = "PASS" | "FAIL" | "BLOCKED";
 export type ScenarioDefinition = Readonly<{
   id: string;
   description: string;
+  checks: readonly ScenarioCheckDefinition[];
+}>;
+
+export type ScenarioCheckDefinition = Readonly<{
+  id: string;
+  description: string;
+  requires_firefox: boolean;
+}>;
+
+export type ScenarioCheckResult = Readonly<{
+  id: string;
+  expected: string;
+  observed: unknown;
+  verdict: Verdict;
+  reason?: string;
 }>;
 
 export type ScenarioResult = Readonly<{
@@ -32,6 +47,7 @@ export type ScenarioResult = Readonly<{
   expected: unknown;
   observed: unknown;
   verdict: Verdict;
+  checks: readonly ScenarioCheckResult[];
   artifacts: readonly string[];
   recorded_at_utc: string;
 }>;
@@ -84,6 +100,22 @@ export function scenarioObservation(testInfo: TestInfo, observed: unknown): void
 export function scenarioBlocked(testInfo: TestInfo, reason: string): void {
   testInfo.annotations.push({ type: "n2-blocked", description: reason });
   scenarioObservation(testInfo, { status: "BLOCKED", reason });
+}
+
+export function scenarioCheck(
+  testInfo: TestInfo,
+  check: ScenarioCheckResult,
+): void {
+  const scenarioId = annotation(testInfo, "n2-scenario-id");
+  const definition = N2_SCENARIOS.find((scenario) => scenario.id === scenarioId);
+  if (!definition?.checks.some((candidate) => candidate.id === check.id)) {
+    throw new Error(`Unknown N2 check id for scenario ${scenarioId ?? "unknown"}: ${check.id}`);
+  }
+  testInfo.annotations.push({ type: "n2-check", description: JSON.stringify(check) });
+}
+
+export function scenarioCheckDefinitions(id: string): readonly ScenarioCheckDefinition[] {
+  return N2_SCENARIOS.find((scenario) => scenario.id === id)?.checks ?? [];
 }
 
 export function updateRunMetadata(patch: Record<string, unknown>): void {
