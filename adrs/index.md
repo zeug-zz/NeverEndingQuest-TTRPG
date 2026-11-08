@@ -45,7 +45,7 @@ Status legend:
 - 0031 Independent Development Fork (Accepted)
 - 0032 Single Tabletop Runtime (Minimum Party Is One PC) (Accepted)
 - 0033 Firelight Rules Engine Under Python Host Authority (Accepted)
-- 0034 Spatial Authority and Projections (Proposed)
+- 0034 Spatial Authority and Projections (Proposed; revised draft 2026-11-09, owner review pending)
 
 ## Supersession Map
 
