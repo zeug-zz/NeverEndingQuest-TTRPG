@@ -1,0 +1,637 @@
+{
+  "source": {
+    "adaptation_lineage": [],
+    "lineage_status": "independent",
+    "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+    "source_field_refs": [],
+    "source_files": [
+      {
+        "path": "modules/Into_the_Deepvault/areas/RF004_BU.json",
+        "sha256": "73645a36281c96b3718aad2c2cba3384afb1185913f5c8a2bd45ed381355d1ec"
+      }
+    ],
+    "source_identity": "published-module:Into_the_Deepvault:RF004:I01",
+    "source_ref": "modules/Into_the_Deepvault/areas/RF004_BU.json#locations[locationId=I01]",
+    "source_spans": [
+      [
+        "modules/Into_the_Deepvault/areas/RF004_BU.json",
+        "locations",
+        "locationId",
+        "I01"
+      ]
+    ],
+    "source_text_sha256": "67a17e8bd101030c56c1659c035063862e265fc2b301e84717dd725e3c89759a"
+  },
+  "spec": {
+    "arrival_segments": [
+      {
+        "fact_ids": [
+          "into_the_deepvault:fact:crossing_approach_builder_feature",
+          "into_the_deepvault:fact:crossing_access",
+          "into_the_deepvault:fact:stage_approach",
+          "into_the_deepvault:fact:east_archway_present"
+        ],
+        "id": "arrival-approach",
+        "role": "approach",
+        "text": "A corridor approach frames the scorched East Archway, its split, blackened keystone bearing faded runes that still faintly pulse."
+      },
+      {
+        "fact_ids": [
+          "into_the_deepvault:fact:stage_threshold",
+          "into_the_deepvault:fact:crossing_floor_appearance",
+          "into_the_deepvault:fact:anvil_central"
+        ],
+        "id": "arrival-threshold",
+        "role": "threshold",
+        "text": "Blackened anvil-stone lies scattered across the floor; the massive shattered anvil rests at the crossing's center, etched with split, steaming runes."
+      },
+      {
+        "fact_ids": [
+          "into_the_deepvault:fact:crossing_vault_appearance",
+          "into_the_deepvault:fact:crossing_hammer_echoes",
+          "into_the_deepvault:fact:crossing_floor_appearance",
+          "into_the_deepvault:fact:anvil_invitation"
+        ],
+        "id": "arrival-focal",
+        "role": "focal",
+        "text": "Jagged vaulting and melted iron beams cast complex shadows in the drifting ash as strange hammer-strike echoes ring from nowhere. The anvil's runes offer a visible detail to inspect."
+      }
+    ],
+    "facts": [
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:anvil_central",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "has_focal_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "The massive remains of an ancient anvil lie broken at the center, its surface etched with runes now split and steaming."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:crossing_access",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:corridor-approach",
+        "predicate": "source_access",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "Normal access to the crossing is via adjoining corridors."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:east_archway_present",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:east-archway",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "The East Archway is a scorched stone archway with a split, blackened keystone; its faded runes still faintly pulse."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:west_door_present",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:west-door",
+        "predicate": "contains_feature",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "A locked West Door is listed as a separate source feature."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:golem_present",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:molten-bone-golem",
+        "predicate": "has_mobile_occupant",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "A hostile Molten Bone Golem patrols the crossing."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:connection_i02",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:ember-scarred-watchpost",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "The source lists a connection to I02 without assigning it to a named door."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:connection_i03",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:forgotten-smiths-refuge",
+        "predicate": "listed_connection",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "The source lists a connection to I03 without assigning it to a named door."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:crossing_floor_appearance",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "visible_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "Chunks of blackened anvil-stone are scattered across the crossing floor, and ash drifts thickly."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:crossing_vault_appearance",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "visible_appearance",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "Jagged vaulting and melted iron beams criss-cross overhead, casting complex shadows in drifting ash."
+      },
+      {
+        "audience": "public",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:crossing_hammer_echoes",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "sound_detail",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "Strange echoes of hammer-strikes ring from nowhere."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:crossing_approach_builder_feature",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "builder_authored_feature",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": "Builder-authored adjoining-corridor approach feature for the initial crossing view."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:stage_approach",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:east-archway",
+        "predicate": "approach_to_threshold",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": "Builder-authored visual approach relation places the source-listed East Archway in the approach view; it is not mapped to either listed connection."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:stage_threshold",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "threshold_to_focal",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:east-archway",
+        "value": "Builder-authored visual relation places the source-described central anvil in the East Archway arrival view; no access claim is added."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:stage_focal",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "focal_anchor_assignment",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "Builder-authored focal relation highlights the shattered anvil."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:anvil_invitation",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "visible_affordance",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:shattered-anvil",
+        "value": "The anvil's split, steaming runes offer a visible detail to inspect."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:golem_start_position",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "initial_schematic_position",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:molten-bone-golem",
+        "value": "Builder-authored initial schematic placement; the source gives no exact patrol position."
+      },
+      {
+        "audience": "public",
+        "authorship": "builder",
+        "id": "into_the_deepvault:fact:schematic_cells_authored",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "schematic_layout_authorship",
+        "provenance": {
+          "class": "builder_authored",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": "Builder-authored schematic cells do not establish compass, connection, access, or mechanics."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:guarded_rune_trap",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:guarded-rune-plate",
+        "predicate": "guarded_trap_effect",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "GM-only: the source lists embers and 2d6 fire damage from a rune-inscribed plate."
+      },
+      {
+        "audience": "gm_only",
+        "authorship": "source",
+        "id": "into_the_deepvault:fact:guarded_compartment",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:guarded-compartment",
+        "predicate": "guarded_discovery",
+        "provenance": {
+          "class": "source_extracted",
+          "source_refs": [
+            "source:modules/Into_the_Deepvault/areas/RF004_BU.json"
+          ]
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "known",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": "GM-only: an Investigation check can locate a concealed compartment beneath the shattered anvil."
+      },
+      {
+        "audience": "gm_only",
+        "id": "into_the_deepvault:fact:guarded_additional_effect_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "additional_guarded_effect",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:entity:guarded-rune-plate",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:compass_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:east-archway",
+        "predicate": "compass_bearing",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:route_distance_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:east-archway",
+        "predicate": "approach_route_length",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:crossing_width_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "predicate": "crossing_width",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:light_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "light_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:sound_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "sound_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": null
+      },
+      {
+        "audience": "public",
+        "id": "into_the_deepvault:fact:weather_gradient_unknown",
+        "knowledge_status": "known",
+        "object_id": "into_the_deepvault:entity:shattered-anvil",
+        "predicate": "weather_gradient",
+        "provenance": {
+          "class": "unknown",
+          "source_refs": []
+        },
+        "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+        "status": "unknown",
+        "subject_id": "into_the_deepvault:entity:corridor-approach",
+        "value": null
+      }
+    ],
+    "fixture_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+    "schema_version": 1,
+    "topology": {
+      "links": [
+        {
+          "from_scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+          "id": "into_the_deepvault:fact:connection_i02",
+          "relation": "listed_connection",
+          "to_scene_id": "into_the_deepvault:scene:ember-scarred-watchpost"
+        },
+        {
+          "from_scene_id": "into_the_deepvault:scene:shattered-anvil-crossing",
+          "id": "into_the_deepvault:fact:connection_i03",
+          "relation": "listed_connection",
+          "to_scene_id": "into_the_deepvault:scene:forgotten-smiths-refuge"
+        }
+      ],
+      "scene_nodes": [
+        {
+          "id": "into_the_deepvault:scene:shattered-anvil-crossing",
+          "knowledge_status": "known",
+          "label": "Shattered Anvil Crossing"
+        },
+        {
+          "id": "into_the_deepvault:scene:ember-scarred-watchpost",
+          "knowledge_status": "known",
+          "label": "Ember-Scarred Watchpost"
+        },
+        {
+          "id": "into_the_deepvault:scene:forgotten-smiths-refuge",
+          "knowledge_status": "known",
+          "label": "Forgotten Smith's Refuge"
+        }
+      ],
+      "schematic_layout": [
+        {
+          "anchor_id": "into_the_deepvault:entity:corridor-approach",
+          "column": 0,
+          "label": "approach",
+          "row": 0,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:east-archway",
+          "column": 1,
+          "label": "east_archway",
+          "row": 0,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:west-door",
+          "column": 2,
+          "label": "west_door",
+          "row": 0,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:shattered-anvil",
+          "column": 1,
+          "label": "anvil",
+          "row": 1,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:molten-bone-golem",
+          "column": 2,
+          "label": "construct",
+          "row": 1,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:guarded-rune-plate",
+          "column": 1,
+          "label": "guarded_plate",
+          "row": 2,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        },
+        {
+          "anchor_id": "into_the_deepvault:entity:guarded-compartment",
+          "column": 2,
+          "label": "guarded_compartment",
+          "row": 2,
+          "scene_id": "into_the_deepvault:scene:shattered-anvil-crossing"
+        }
+      ]
+    },
+    "topology_scope": {
+      "gm_narrator": {
+        "links": [
+          "into_the_deepvault:fact:connection_i02",
+          "into_the_deepvault:fact:connection_i03"
+        ],
+        "scene_nodes": [
+          "into_the_deepvault:scene:shattered-anvil-crossing",
+          "into_the_deepvault:scene:ember-scarred-watchpost",
+          "into_the_deepvault:scene:forgotten-smiths-refuge"
+        ],
+        "schematic_layout": [
+          "into_the_deepvault:entity:corridor-approach",
+          "into_the_deepvault:entity:east-archway",
+          "into_the_deepvault:entity:west-door",
+          "into_the_deepvault:entity:shattered-anvil",
+          "into_the_deepvault:entity:molten-bone-golem",
+          "into_the_deepvault:entity:guarded-rune-plate",
+          "into_the_deepvault:entity:guarded-compartment"
+        ]
+      },
+      "public": {
+        "links": [
+          "into_the_deepvault:fact:connection_i02",
+          "into_the_deepvault:fact:connection_i03"
+        ],
+        "scene_nodes": [
+          "into_the_deepvault:scene:shattered-anvil-crossing",
+          "into_the_deepvault:scene:ember-scarred-watchpost",
+          "into_the_deepvault:scene:forgotten-smiths-refuge"
+        ],
+        "schematic_layout": [
+          "into_the_deepvault:entity:corridor-approach",
+          "into_the_deepvault:entity:east-archway",
+          "into_the_deepvault:entity:west-door",
+          "into_the_deepvault:entity:shattered-anvil",
+          "into_the_deepvault:entity:molten-bone-golem"
+        ]
+      }
+    }
+  },
+  "status": "DRAFT_UNFROZEN_NOT_OWNER_APPROVED"
+}

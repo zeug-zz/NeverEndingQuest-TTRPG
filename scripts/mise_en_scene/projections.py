@@ -52,7 +52,7 @@ _SCENE_ID_RE = re.compile(
 _ENTITY_ID_RE = re.compile(
     r"^[a-z][a-z0-9_-]{0,63}:entity:[a-z0-9][a-z0-9_-]{0,63}$"
 )
-_SOURCE_REF_RE = re.compile(r"^source:[a-z0-9][a-z0-9._/-]{0,127}$")
+_SOURCE_REF_RE = re.compile(r"^source:[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _SEGMENT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -716,7 +716,12 @@ def _render_grid(topology: dict[str, Any]) -> str:
         ]
         lines.append("ASCII cell table for scene " + scene_id + ":")
         lines.append(
-            " | ".join(value.rjust(widths[index]) if index == 0 else value.ljust(widths[index]) for index, value in enumerate(header))
+            " | ".join(
+                value.rjust(widths[index])
+                if index == 0
+                else value.ljust(widths[index])
+                for index, value in enumerate(header)
+            ).rstrip()
         )
         lines.append("-+-".join("-" * width for width in widths))
         for row in rendered_rows:

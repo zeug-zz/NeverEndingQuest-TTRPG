@@ -75,6 +75,9 @@ class MiseEnSceneEvaluationTests(unittest.TestCase):
             cls.fixtures = importlib.import_module("mise_en_scene.fixtures")
             cls.evaluation = importlib.import_module("mise_en_scene.evaluation")
             cls.calibration = importlib.import_module("mise_en_scene.calibration")
+            cls.holdout_fixtures = importlib.import_module(
+                "mise_en_scene.holdout_fixtures"
+            )
 
         cls.catalog = cls.evaluation.load_known_examples()
         cls.scenes = cls._make_scenes()
@@ -128,6 +131,178 @@ class MiseEnSceneEvaluationTests(unittest.TestCase):
                 }
             )
         return scenes
+
+    @staticmethod
+    def _make_projection_pair_spec() -> dict[str, object]:
+        scene_id = "holdout_fixture:scene:arrival"
+        approach_id = "holdout_fixture:entity:approach"
+        threshold_id = "holdout_fixture:entity:threshold"
+        focal_id = "holdout_fixture:entity:focal"
+        module_ref = "source:modules/The_Ancients_Lab/areas/BA001_BU.json"
+
+        def fact(
+            local_id: str,
+            subject_id: str,
+            predicate: str,
+            object_id: str,
+            value: str | None,
+            *,
+            authorship: str | None = None,
+            provenance_class: str,
+            source_refs: list[str],
+            status: str = "known",
+            audience: str = "public",
+        ) -> dict[str, object]:
+            record: dict[str, object] = {
+                "id": "holdout_fixture:fact:" + local_id,
+                "scene_id": scene_id,
+                "subject_id": subject_id,
+                "predicate": predicate,
+                "object_id": object_id,
+                "status": status,
+                "knowledge_status": "known",
+                "audience": audience,
+                "value": value,
+                "provenance": {
+                    "class": provenance_class,
+                    "source_refs": list(source_refs),
+                },
+            }
+            if authorship is not None:
+                record["authorship"] = authorship
+            return record
+
+        facts = [
+            fact(
+                "source-ravine",
+                scene_id,
+                "contains_ravine",
+                scene_id,
+                "A jagged rift splits the moor.",
+                authorship="source",
+                provenance_class="source_extracted",
+                source_refs=[module_ref],
+            ),
+            fact(
+                "approach-threshold",
+                approach_id,
+                "approach_to_threshold",
+                threshold_id,
+                "A narrow path reaches the marked threshold.",
+                authorship="builder",
+                provenance_class="builder_authored",
+                source_refs=[],
+            ),
+            fact(
+                "threshold-focal",
+                threshold_id,
+                "threshold_to_focal",
+                focal_id,
+                "The threshold opens toward a stone focal arch.",
+                authorship="builder",
+                provenance_class="builder_authored",
+                source_refs=[],
+            ),
+            fact(
+                "focal-affordance",
+                focal_id,
+                "visible_affordance",
+                scene_id,
+                "A broad ledge offers room to set an object.",
+                authorship="builder",
+                provenance_class="builder_authored",
+                source_refs=[],
+            ),
+            fact(
+                "weather-unknown",
+                scene_id,
+                "weather_gradient",
+                scene_id,
+                None,
+                provenance_class="unknown",
+                source_refs=[],
+                status="unknown",
+            ),
+            fact(
+                "concealed-hazard",
+                scene_id,
+                "concealed_hazard",
+                scene_id,
+                "The source describes a concealed bramble hazard.",
+                authorship="source",
+                provenance_class="source_extracted",
+                source_refs=[module_ref],
+                audience="gm_only",
+            ),
+        ]
+        topology = {
+            "scene_nodes": [
+                {
+                    "id": scene_id,
+                    "label": "Arrival scene",
+                    "knowledge_status": "known",
+                }
+            ],
+            "links": [],
+            "schematic_layout": [
+                {
+                    "scene_id": scene_id,
+                    "anchor_id": approach_id,
+                    "label": "approach",
+                    "row": 0,
+                    "column": 0,
+                },
+                {
+                    "scene_id": scene_id,
+                    "anchor_id": threshold_id,
+                    "label": "threshold",
+                    "row": 0,
+                    "column": 1,
+                },
+                {
+                    "scene_id": scene_id,
+                    "anchor_id": focal_id,
+                    "label": "focal",
+                    "row": 0,
+                    "column": 2,
+                },
+            ],
+        }
+        all_topology_ids = {
+            "scene_nodes": [scene_id],
+            "links": [],
+            "schematic_layout": [approach_id, threshold_id, focal_id],
+        }
+        return {
+            "schema_version": 1,
+            "fixture_id": scene_id,
+            "facts": facts,
+            "topology": topology,
+            "topology_scope": {
+                "public": copy.deepcopy(all_topology_ids),
+                "gm_narrator": copy.deepcopy(all_topology_ids),
+            },
+            "arrival_segments": [
+                {
+                    "id": "arrival-approach",
+                    "role": "approach",
+                    "text": "A narrow path reaches the marked threshold.",
+                    "fact_ids": ["holdout_fixture:fact:approach-threshold"],
+                },
+                {
+                    "id": "arrival-threshold",
+                    "role": "threshold",
+                    "text": "The threshold opens toward a stone focal arch.",
+                    "fact_ids": ["holdout_fixture:fact:threshold-focal"],
+                },
+                {
+                    "id": "arrival-focal",
+                    "role": "focal",
+                    "text": "A broad ledge offers room to set an object.",
+                    "fact_ids": ["holdout_fixture:fact:focal-affordance"],
+                },
+            ],
+        }
 
     def _build_manifest(
         self,
@@ -267,6 +442,149 @@ class MiseEnSceneEvaluationTests(unittest.TestCase):
         self.assertEqual(
             self.manifest["assignment"]["algorithm"], "sha256-rank-v1"
         )
+
+    def test_unseeded_draft_builds_deterministically_without_an_order(self) -> None:
+        draft = self.evaluation.build_draft_holdout_manifest(
+            copy.deepcopy(self.scenes), **_PROTOCOL_HASHES
+        )
+        repeated = self.evaluation.build_draft_holdout_manifest(
+            copy.deepcopy(self.scenes), **_PROTOCOL_HASHES
+        )
+        self.assertEqual(draft, repeated)
+        self.assertEqual(draft["status"], "DRAFT_UNFROZEN")
+        self.assertEqual(draft["authorization_status"], "NOT_OWNER_APPROVED")
+        self.assertEqual(draft["scoring_status"], "NOT_STARTED")
+        self.assertEqual(draft["counts"]["scenes"], 6)
+        self.assertEqual(draft["counts"]["artifacts"], 24)
+        self.assertEqual(draft["scenes"], self.manifest["scenes"])
+        self.assertEqual(draft["leakage_checks"], self.manifest["leakage_checks"])
+        self.assertEqual(draft["leakage_summary"], self.manifest["leakage_summary"])
+        self.assertEqual(draft["leakage_status"], self.manifest["leakage_status"])
+        self.assertEqual(set(draft["hashes"]), set(self.manifest["hashes"]))
+        for key in (
+            "sources_sha256",
+            "facts_sha256",
+            "artifacts_sha256",
+            "fixtures_sha256",
+            "test_sha256",
+            "rubric_sha256",
+            "assessor_sha256",
+            "catalog_sha256",
+            "leakage_review_sha256",
+            "counts_sha256",
+        ):
+            self.assertEqual(draft["hashes"][key], self.manifest["hashes"][key])
+        self.assertEqual(
+            draft["assignment"],
+            {
+                "algorithm": "sha256-rank-v1",
+                "status": "PENDING_OWNER_SEED",
+                "seed": None,
+                "seed_sha256": None,
+                "artifact_order": None,
+                "episode_order": None,
+                "artifact_order_sha256": None,
+                "episode_order_sha256": None,
+                "order_sha256": None,
+            },
+        )
+        for key in (
+            "assignment_seed_sha256",
+            "artifact_order_sha256",
+            "episode_order_sha256",
+            "order_sha256",
+        ):
+            self.assertIsNone(draft["hashes"][key])
+        report = self.evaluation.verify_draft_holdout_manifest(draft)
+        self.assertTrue(report["is_valid"])
+        self.assertEqual(report["status"], "DRAFT_UNFROZEN")
+        self.assertEqual(report["assignment_status"], "PENDING_OWNER_SEED")
+
+    def test_draft_verifier_detects_tampering_and_freeze_is_blocked(self) -> None:
+        draft = self.evaluation.build_draft_holdout_manifest(
+            copy.deepcopy(self.scenes), **_PROTOCOL_HASHES
+        )
+        tampered = copy.deepcopy(draft)
+        tampered["scenes"][0]["artifacts"][0]["content"] += " changed"
+        with self.assertRaises(self.evaluation.EvaluationManifestError) as caught_tamper:
+            self.evaluation.verify_draft_holdout_manifest(tampered)
+        self.assertEqual(caught_tamper.exception.code, "PROJECTION_ARTIFACT_STALE")
+
+        with self.assertRaises(self.evaluation.EvaluationManifestError) as caught_freeze:
+            self.evaluation.freeze_manifest_binding(draft, {})
+        self.assertEqual(caught_freeze.exception.code, "SEED_PENDING")
+
+    def test_seeded_proposal_api_remains_unchanged(self) -> None:
+        rebuilt = self.evaluation.build_proposed_holdout_manifest(
+            copy.deepcopy(self.scenes),
+            "synthetic-seed-task-1.8",
+            **_PROTOCOL_HASHES,
+        )
+        self.assertEqual(rebuilt, self.manifest)
+        self.assertEqual(rebuilt["status"], "PROPOSED")
+        self.assertEqual(rebuilt["authorization_status"], "NOT_AUTHORIZED")
+        self.assertEqual(
+            self.evaluation.verify_proposed_manifest(rebuilt)["episode_count"], 48
+        )
+
+    def test_hand_authored_projection_pair_is_derived_and_immutable(self) -> None:
+        spec = self._make_projection_pair_spec()
+        original = copy.deepcopy(spec)
+        candidate, reference = self.holdout_fixtures.make_projection_pair(spec)
+        self.assertEqual(spec, original)
+        self.assertIsNot(candidate, reference)
+        self.assertEqual(
+            reference["scope"]["audience_fact_ids"]["public"],
+            [fact["id"] for fact in candidate["facts"] if fact["audience"] == "public"],
+        )
+        self.assertEqual(
+            reference["scope"]["audience_fact_ids"]["gm_narrator"],
+            [fact["id"] for fact in candidate["facts"]],
+        )
+        outputs = self.holdout_fixtures.projections.build_matched_projections(
+            candidate, reference, audience="public"
+        )
+        self.assertEqual(set(outputs), {"A", "B", "C", "D"})
+        self.assertEqual(
+            {output["binding"]["fact_set_sha256"] for output in outputs.values()},
+            {outputs["A"]["binding"]["fact_set_sha256"]},
+        )
+        self.assertNotIn(
+            "holdout_fixture:fact:concealed-hazard",
+            outputs["A"]["binding"]["fact_ids"],
+        )
+        reference_digest = reference["fact_digests"][
+            "holdout_fixture:fact:source-ravine"
+        ]
+        candidate["facts"][0]["value"] = "candidate mutation only"
+        self.assertEqual(
+            reference["fact_digests"]["holdout_fixture:fact:source-ravine"],
+            reference_digest,
+        )
+        self.assertEqual(spec, original)
+
+    def test_hand_authored_projection_pair_rejects_provenance_mislabels(self) -> None:
+        builder_marked_as_source = self._make_projection_pair_spec()
+        builder_marked_as_source["facts"][0]["authorship"] = "builder"
+        with self.assertRaises(self.holdout_fixtures.HoldoutFixtureError) as caught_authorship:
+            self.holdout_fixtures.make_projection_pair(builder_marked_as_source)
+        self.assertEqual(
+            caught_authorship.exception.code, "AUTHORSHIP_PROVENANCE_MISMATCH"
+        )
+
+        source_without_refs = self._make_projection_pair_spec()
+        source_without_refs["facts"][0]["provenance"]["source_refs"] = []
+        with self.assertRaises(self.holdout_fixtures.HoldoutFixtureError) as caught_refs:
+            self.holdout_fixtures.make_projection_pair(source_without_refs)
+        self.assertEqual(caught_refs.exception.code, "MISSING_SOURCE_REF")
+
+        nonexistent_source = self._make_projection_pair_spec()
+        nonexistent_source["facts"][0]["provenance"]["source_refs"] = [
+            "source:modules/nonexistent/areas/scene_BU.json"
+        ]
+        with self.assertRaises(self.holdout_fixtures.HoldoutFixtureError) as caught_path:
+            self.holdout_fixtures.make_projection_pair(nonexistent_source)
+        self.assertEqual(caught_path.exception.code, "MODULE_SOURCE_FILE_MISSING")
 
     def test_rejects_non_six_scene_inputs(self) -> None:
         cases = {
@@ -462,7 +780,16 @@ class MiseEnSceneEvaluationTests(unittest.TestCase):
     def test_network_socket_is_not_used(self) -> None:
         with patch.object(socket, "socket", side_effect=AssertionError("network forbidden")):
             report = self.evaluation.verify_proposed_manifest(self.manifest)
+            draft = self.evaluation.build_draft_holdout_manifest(
+                copy.deepcopy(self.scenes), **_PROTOCOL_HASHES
+            )
+            draft_report = self.evaluation.verify_draft_holdout_manifest(draft)
+            pair = self.holdout_fixtures.make_projection_pair(
+                self._make_projection_pair_spec()
+            )
         self.assertTrue(report["is_valid"])
+        self.assertTrue(draft_report["is_valid"])
+        self.assertEqual(len(pair), 2)
 
     @staticmethod
     def _score_records(count: int = 6) -> list[dict[str, object]]:
