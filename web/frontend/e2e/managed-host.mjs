@@ -16,6 +16,10 @@ import {
   buildProviderAttemptEnvironment,
   providerAttemptLedgerPath,
 } from "./provider-attempt-budget.mjs";
+import {
+  attachManagedHostOutputCapture,
+  ManagedHostOutputCollector,
+} from "./managed-host-output.mjs";
 
 export const N2_HOST_PORT = 8360;
 export const N2_PLAYER_PORT = 8370;
@@ -232,15 +236,39 @@ function signalOwnedProcessGroup(pid, signal) {
 }
 
 export class SandboxHostManager {
-  constructor({ repositoryRoot, sandboxRoot, pythonPath, runId, environment = process.env }) {
+  constructor({
+    repositoryRoot,
+    sandboxRoot,
+    pythonPath,
+    runId,
+    environment = process.env,
+    spawnProcess = spawn,
+    portCheck = assertGatePortsFree,
+    portFreeProbe = isLoopbackPortFree,
+    endpointProbe = endpointAvailable,
+    signalProcessGroup = signalOwnedProcessGroup,
+  }) {
     this.repositoryRoot = resolve(repositoryRoot);
     this.sandboxRoot = validateManagedSandboxRoot(this.repositoryRoot, sandboxRoot);
     this.pythonPath = pythonPath ?? validateSandboxPython(this.repositoryRoot);
     this.runId = runId;
     this.providerAttemptLedgerPath = providerAttemptLedgerPath(this.sandboxRoot, runId);
     this.environment = environment;
+    this.spawnProcess = spawnProcess;
+    this.portCheck = portCheck;
+    this.portFreeProbe = portFreeProbe;
+    this.endpointProbe = endpointProbe;
+    this.signalProcessGroup = signalProcessGroup;
+    this.outputCollector = new ManagedHostOutputCollector();
+    this.outputCloseObserved = true;
+    this.outputClosePromise = Promise.resolve();
+    this.resolveOutputClose = null;
     this.child = null;
     this.spawnError = null;
+  }
+
+  outputSnapshot() {
+    return this.outputCollector.snapshot();
   }
 
   get processInfo() {
@@ -266,7 +294,7 @@ export class SandboxHostManager {
 
     validateManagedSandboxRoot(this.repositoryRoot, this.sandboxRoot);
     if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
-    await assertGatePortsFree();
+    await this.portCheck(this.portFreeProbe);
     if (signal?.aborted) throw new Error("Managed sandbox startup was cancelled.");
     let childEnvironment = { ...this.environment };
     delete childEnvironment.NEQ_N2_PLAYER_PASSWORD;
@@ -285,13 +313,23 @@ export class SandboxHostManager {
     this.providerAttemptLedgerPath = providerBudgetEnvironment.ledgerPath;
 
     this.spawnError = null;
-    const child = spawn(this.pythonPath, ["-c", "import run_web; run_web.main()"], {
+    const child = this.spawnProcess(this.pythonPath, ["-c", "import run_web; run_web.main()"], {
       cwd: this.sandboxRoot,
       detached: true,
       env: childEnvironment,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
     });
     this.child = child;
+    attachManagedHostOutputCapture(child, this.outputCollector);
+    this.outputCloseObserved = false;
+    this.outputClosePromise = new Promise((resolveClose) => {
+      this.resolveOutputClose = resolveClose;
+    });
+    child.once("close", (status, signal) => {
+      this.outputCloseObserved = true;
+      this.resolveOutputClose?.();
+      this.resolveOutputClose = null;
+    });
     child.once("error", (error) => {
       this.spawnError = error;
     });
@@ -308,10 +346,10 @@ export class SandboxHostManager {
         if (child.exitCode !== null || child.signalCode !== null) {
           throw new Error("The managed sandbox host process exited before readiness.");
         }
-        const hostReady = await endpointAvailable(HOST_URL);
+        const hostReady = await this.endpointProbe(HOST_URL);
         if (!hostReady) return false;
-        if (playerExpected) return endpointAvailable(PLAYER_URL);
-        return isLoopbackPortFree(N2_PLAYER_PORT);
+        if (playerExpected) return this.endpointProbe(PLAYER_URL);
+        return this.portFreeProbe(N2_PLAYER_PORT);
       }, START_TIMEOUT_MS);
     } catch (error) {
       await this.stop().catch(() => {});
@@ -336,23 +374,28 @@ export class SandboxHostManager {
       return;
     }
 
-    signalOwnedProcessGroup(pid, "SIGTERM");
+    this.signalProcessGroup(pid, "SIGTERM");
     let stopped = await waitFor(async () => {
       const processExited = child.exitCode !== null || child.signalCode !== null;
       if (!processExited) return false;
-      return (await isLoopbackPortFree(N2_HOST_PORT)) && (await isLoopbackPortFree(N2_PLAYER_PORT));
+      return (await this.portFreeProbe(N2_HOST_PORT)) && (await this.portFreeProbe(N2_PLAYER_PORT));
     }, STOP_TIMEOUT_MS);
     if (!stopped) {
-      signalOwnedProcessGroup(pid, "SIGKILL");
+      this.signalProcessGroup(pid, "SIGKILL");
       stopped = await waitFor(async () => {
         const processExited = child.exitCode !== null || child.signalCode !== null;
         if (!processExited) return false;
-        return (await isLoopbackPortFree(N2_HOST_PORT)) && (await isLoopbackPortFree(N2_PLAYER_PORT));
+        return (await this.portFreeProbe(N2_HOST_PORT)) && (await this.portFreeProbe(N2_PLAYER_PORT));
       }, STOP_TIMEOUT_MS);
     }
     if (!stopped) {
       throw new Error("The owned sandbox process group did not stop with both gate ports released.");
     }
+    const outputDrained = await waitFor(async () => this.outputCloseObserved, STOP_TIMEOUT_MS);
+    if (!outputDrained) {
+      throw new Error("The owned sandbox output streams did not close after process teardown.");
+    }
+    await this.outputClosePromise;
     this.child = null;
     this.spawnError = null;
   }

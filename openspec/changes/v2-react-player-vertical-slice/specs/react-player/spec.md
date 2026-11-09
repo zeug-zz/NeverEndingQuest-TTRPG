@@ -162,6 +162,50 @@ The driver SHALL validate Playwright status and required persisted evidence befo
 - **WHEN** Chrome checks have valid outcomes and the only `BLOCKED` checks are Firefox-dependent checks with reason `firefox-unavailable-in-sandbox`
 - **THEN** applicable Chrome checks and managed lifecycle scenarios continue, while the overall browser coverage remains non-PASS
 
+### Requirement: N2 setup failure evidence SHALL be safe and complete
+
+The Playwright setup hook SHALL persist fixed-stage evidence before browser teardown without arbitrary exception or credential values. The record SHALL include readiness, optional early build identity, screenshot outcomes, and zero gameplay execution. Missing or empty scenario results are excused only by a valid setup record; unexecuted scenarios remain `BLOCKED` with `executed: false`.
+
+#### Scenario: Browser setup fails before gameplay
+- **WHEN** the Playwright `beforeAll` hook fails at any setup stage
+- **THEN** it captures the fixed-stage setup record and safe-or-skipped screenshots before closing pages, records zero executed gameplay scenarios, and the driver records all required scenarios as `BLOCKED`/unexecuted without inventing gameplay observations
+
+#### Scenario: Scenario results are absent after setup failure
+- **WHEN** a valid setup-failure record exists and `scenarios.jsonl` is missing or empty
+- **THEN** the driver preserves the original `missing` or `empty` classification, stops managed lifecycle work, and does not misclassify that state as malformed JSON; malformed, unreadable, or contradictory results still fail closed
+
+#### Scenario: Authenticated player is disconnected during setup
+- **WHEN** a player page has the fixed expected origin, canonical `NeverEndingQuest player` heading, exact `Log out` button, no password field, and a known `Connected`, `Disconnected`, `Connecting...`, or `Loading player snapshot...` status
+- **THEN** the hook masks form/editable and recognized credential-bearing content before capturing the screenshot, even when the status is `Disconnected`
+
+#### Scenario: Player screenshot authentication is unknown
+- **WHEN** the page is a login page, has an unknown status, lacks the canonical authenticated shell, contains a password field, or has the wrong origin
+- **THEN** no screenshot is captured and the setup record contains a bounded skip reason
+
+### Requirement: N2 socket request diagnostics SHALL be bounded and credential-safe
+
+Request diagnostics SHALL retain only allowlisted metadata for exact player-origin `/socket.io/` requests, without query strings, raw URLs, or header/cookie values. Unobservable fields SHALL be `unknown`. The 128-record and 32,768-byte serialized JSONL limits SHALL apply cumulatively for the full run, including records already flushed to disk; excess observations SHALL be counted as omitted.
+
+#### Scenario: Socket request metadata is captured
+- **WHEN** exact player-origin Socket.IO requests are observed
+- **THEN** diagnostics contain only bounded allowlisted metadata and safe booleans/`unknown`, never raw headers, cookies, query strings, or full URLs
+
+### Requirement: Managed N2 host output SHALL discard raw text
+
+The managed host SHALL drain and discard stdout/stderr immediately. Evidence SHALL contain only bounded counters, truncation state, process exit metadata, and bounded process counts across restarts.
+
+#### Scenario: Managed host emits process output
+- **WHEN** the owned host writes stdout or stderr and is stopped or restarted
+- **THEN** raw text is discarded and the evidence retains only bounded counters and process metadata
+
+### Requirement: N2 Playwright driver output evidence SHALL exclude raw text
+
+The driver SHALL attach bounded counters to the actual Playwright child stdout/stderr streams and persist `driver-output.json` with only capped per-stream byte counts/truncation flags, exit status, an allowlisted signal, and a fixed spawn category. Raw child chunks and arbitrary exception text SHALL NOT be persisted in this artifact; existing terminal redaction remains unchanged.
+
+#### Scenario: Playwright child emits failure output
+- **WHEN** the Playwright child writes arbitrary or credential-bearing stdout/stderr and exits or fails to spawn
+- **THEN** the driver output artifact contains only bounded counters and safe exit/spawn metadata, never the emitted text or arbitrary spawn error details
+
 ### Requirement: Agent-run credentials SHALL be confined and ephemeral
 
 `--agent-run` SHALL require `--manage-sandbox-host --browsers chrome`. It SHALL validate the managed sandbox and bundle before credential generation, reject inherited owner credentials, and generate none during dry-run. It SHALL keep the throwaway password and verifier out of argv, logs, and evidence.

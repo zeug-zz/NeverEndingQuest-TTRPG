@@ -20,11 +20,21 @@ import {
   parseN2BrowserSet,
 } from "./browser-contract.mjs";
 import { compareHostAndPlayerParty } from "./party-coherence.mjs";
+import { SocketRequestDiagnosticsCollector } from "./request-diagnostics.mjs";
 import {
   providerAttemptLedgerPath,
   PROVIDER_ATTEMPT_BUDGET,
   requireProviderAttemptBudgetForGameplay,
 } from "./provider-attempt-budget.mjs";
+import {
+  captureCredentialSafeScreenshot,
+  captureSetupFailureBeforeClose,
+  settleSetupOperations,
+  setupFailureStage,
+  SetupStageError,
+  withSetupStage,
+  type SetupFailureStage,
+} from "./setup-evidence.mjs";
 import {
   annotation,
   catalogDescription,
@@ -39,6 +49,8 @@ import {
   scenarioObservation,
   updateRunMetadata,
   writeConsoleEvidence,
+  writeSetupFailureEvidence,
+  writeSocketRequestDiagnostic,
   writeScenarioEvidence,
 } from "./evidence";
 
@@ -140,86 +152,149 @@ let playerOne: Page;
 let playerTwo: Page | undefined;
 let hostPage: Page;
 let activeScenarioId = "setup";
+let setupStage: SetupFailureStage = "setup_evidence_preflight";
+let setupClientVersion: PlayerVersion | null = null;
+let setupHostUiLoaded = false;
+let requestDiagnostics: SocketRequestDiagnosticsCollector | undefined;
 
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  PLAYER_URL = requiredEnv("NEQ_N2_PLAYER_URL");
-  HOST_URL = requiredEnv("NEQ_N2_HOST_URL");
-  PARTY_SIZE = partySizeFromEnv();
-  PLAYER_PASSWORD = requiredEnv("NEQ_N2_PLAYER_PASSWORD");
-  RUN_ID = process.env.NEQ_N2_RUN_ID ?? RUN_ID;
-  validateFixedEndpoints();
-  requireProviderAttemptBudgetForGameplay({
-    managed: process.env.NEQ_N2_MANAGE_SANDBOX_HOST === "1",
-    ledgerPath: providerAttemptLedgerPath(
-      join(REPOSITORY_ROOT, "tmp", "combat_capture"),
-      RUN_ID,
-    ),
-    budget: PROVIDER_ATTEMPT_BUDGET,
-    runId: RUN_ID,
-  });
-  evidenceDirectory();
-  ensureEvidenceFolders();
-
   try {
-    const launched = await launchN2Browsers({ chromium, firefox }, REQUESTED_BROWSERS);
+    setupStage = "setup_evidence_preflight";
+    PLAYER_URL = requiredEnv("NEQ_N2_PLAYER_URL");
+    HOST_URL = requiredEnv("NEQ_N2_HOST_URL");
+    PARTY_SIZE = partySizeFromEnv();
+    PLAYER_PASSWORD = requiredEnv("NEQ_N2_PLAYER_PASSWORD");
+    RUN_ID = process.env.NEQ_N2_RUN_ID ?? RUN_ID;
+    validateFixedEndpoints();
+    requestDiagnostics = new SocketRequestDiagnosticsCollector(PLAYER_URL);
+    requireProviderAttemptBudgetForGameplay({
+      managed: process.env.NEQ_N2_MANAGE_SANDBOX_HOST === "1",
+      ledgerPath: providerAttemptLedgerPath(
+        join(REPOSITORY_ROOT, "tmp", "combat_capture"),
+        RUN_ID,
+      ),
+      budget: PROVIDER_ATTEMPT_BUDGET,
+      runId: RUN_ID,
+    });
+    evidenceDirectory();
+    ensureEvidenceFolders();
+
+    setupStage = "browser_launch";
+    const launched = await withSetupStage("browser_launch", () =>
+      launchN2Browsers({ chromium, firefox }, REQUESTED_BROWSERS));
     const chrome = launched.chromeBrowser;
     chromeBrowser = chrome;
     const firefoxInstance = launched.firefoxBrowser ?? undefined;
     firefoxBrowser = firefoxInstance;
-    updateRunMetadata({
-      browsers_run: REQUESTED_BROWSERS,
-      browser_instances: createN2BrowserInstances(
-        chrome.version(),
-        firefoxInstance?.version() ?? null,
-        REQUESTED_BROWSERS,
-      ),
+
+    setupStage = "browser_context_create";
+    await withSetupStage("browser_context_create", async () => {
+      updateRunMetadata({
+        browsers_run: REQUESTED_BROWSERS,
+        browser_instances: createN2BrowserInstances(
+          chrome.version(),
+          firefoxInstance?.version() ?? null,
+          REQUESTED_BROWSERS,
+        ),
+      });
+      playerContextOne = await chrome.newContext();
+      if (firefoxInstance) playerContextTwo = await firefoxInstance.newContext();
+      hostContext = await chrome.newContext();
     });
-    playerContextOne = await chrome.newContext();
-    if (firefoxInstance) playerContextTwo = await firefoxInstance.newContext();
-    hostContext = await chrome.newContext();
-    playerOne = await playerContextOne.newPage();
-    if (playerContextTwo) playerTwo = await playerContextTwo.newPage();
-    hostPage = await hostContext.newPage();
+
+    setupStage = "page_create";
+    await withSetupStage("page_create", async () => {
+      playerOne = await playerContextOne.newPage();
+      if (playerContextTwo) playerTwo = await playerContextTwo.newPage();
+      hostPage = await hostContext.newPage();
+    });
     attachConsoleEvidence(playerOne, "player-a-chrome");
+    requestDiagnostics?.attach(playerOne, "player-a-chrome");
     if (playerTwo) attachConsoleEvidence(playerTwo, "player-b-firefox");
+    if (playerTwo) requestDiagnostics?.attach(playerTwo, "player-b-firefox");
     attachConsoleEvidence(hostPage, "host-ui-chrome-context");
 
-    await Promise.all([
-      loginPlayer(playerOne),
-      ...(playerTwo ? [loginPlayer(playerTwo)] : []),
+    const firstPlayerSetup = loginPlayer(playerOne);
+    const secondPlayerSetup = playerTwo ? loginPlayer(playerTwo) : null;
+    await settleSetupOperations([
+      firstPlayerSetup,
+      ...(secondPlayerSetup ? [secondPlayerSetup] : []),
       loadHostUi(hostPage),
     ]);
+    const firstVersion = await firstPlayerSetup;
+    const secondVersion = secondPlayerSetup ? await secondPlayerSetup : undefined;
+    setupClientVersion = firstVersion;
 
-    const firstVersion = await readPlayerVersion(playerOne);
-    if (playerTwo && firefoxInstance) {
-      const secondVersion = await readPlayerVersion(playerTwo);
-      expect(secondVersion).toEqual(firstVersion);
-      expect(chrome).not.toBe(firefoxInstance);
-      expect(playerContextOne).not.toBe(playerContextTwo);
-    }
-    expect(hostContext).not.toBe(playerContextOne);
+    setupStage = "client_metadata";
+    await withSetupStage("client_metadata", async () => {
+      if (playerTwo && firefoxInstance) {
+        if (secondVersion === undefined) throw new SetupStageError("client_metadata");
+        expect(secondVersion).toEqual(firstVersion);
+        expect(chrome).not.toBe(firefoxInstance);
+        expect(playerContextOne).not.toBe(playerContextTwo);
+      }
+      expect(hostContext).not.toBe(playerContextOne);
 
-    updateRunMetadata({
-      client_build_id: firstVersion.clientBuildId,
-      browsers_run: REQUESTED_BROWSERS,
-      browser_instances: createN2BrowserInstances(
-        chrome.version(),
-        firefoxInstance?.version() ?? null,
-        REQUESTED_BROWSERS,
-      ),
-      os: { platform: platform(), release: release(), arch: arch() },
-      party_size: PARTY_SIZE,
-      scenario_list: N2_SCENARIOS,
-      provider_identity: "not-observed-by-browser-driver; operator review required if runtime invokes provider",
+      updateRunMetadata({
+        client_build_id: firstVersion.clientBuildId,
+        browsers_run: REQUESTED_BROWSERS,
+        browser_instances: createN2BrowserInstances(
+          chrome.version(),
+          firefoxInstance?.version() ?? null,
+          REQUESTED_BROWSERS,
+        ),
+        os: { platform: platform(), release: release(), arch: arch() },
+        party_size: PARTY_SIZE,
+        scenario_list: N2_SCENARIOS,
+        provider_identity: "not-observed-by-browser-driver; operator review required if runtime invokes provider",
+      });
     });
   } catch (error) {
-    await Promise.all([
-      chromeBrowser?.close().catch(() => {}),
-      firefoxBrowser?.close().catch(() => {}),
-    ]);
-    throw error;
+    const stage = setupFailureStage(error, setupStage);
+    const observed = await observeSetupState();
+    const pages = [
+      { role: "player-a-chrome", page: playerOne },
+      ...(FIREFOX_REQUESTED ? [{ role: "player-b-firefox", page: playerTwo }] : []),
+      { role: "host-ui-chrome-context", page: hostPage },
+    ];
+    try {
+      const capture = await captureSetupFailureBeforeClose({
+        stage,
+        observed,
+        pages,
+        flushRequestDiagnostics: () => requestDiagnostics?.flush(writeSocketRequestDiagnostic) ?? ({
+          artifact: null,
+          records_written: 0,
+          records_omitted: 0,
+          record_write_failures: 0,
+          truncated: false,
+        }),
+        captureScreenshot: async (page, role) => {
+          if (!page) return { status: "skipped", reason: "page-unavailable" };
+          const path = join(evidenceDirectory(), "screenshots", `setup-${role}.png`);
+          const result = await captureCredentialSafeScreenshot(
+            page,
+            role,
+            path,
+            role.startsWith("player-") ? PLAYER_URL : HOST_URL,
+          );
+          return result.status === "captured"
+            ? { status: "captured", path: relativeEvidencePath(path) }
+            : result;
+        },
+        writeRecord: writeSetupFailureEvidence,
+        closePages: closeSetupBrowsers,
+      });
+      if (capture.record_write_status !== "written") {
+        console.error("N2 setup failure evidence record could not be written.");
+      }
+    } catch {
+      await closeSetupBrowsers();
+      console.error("N2 setup failure evidence capture failed.");
+    }
+    throw new Error("N2 browser setup failed before gameplay scenarios.");
   }
 });
 
@@ -229,6 +304,7 @@ test.afterEach(async ({}, testInfo) => {
   activeScenarioId = id;
   const artifactPaths: string[] = [];
   const captureErrors: string[] = [];
+  const screenshotOutcomes: Record<string, { status: string; reason?: string }> = {};
   const entries = [
     ["player-a-chrome", playerOne],
     ...(playerTwo ? [["player-b-firefox", playerTwo] as const] : []),
@@ -239,10 +315,24 @@ test.afterEach(async ({}, testInfo) => {
     if (page && !page.isClosed()) {
       const screenshotPath = join(evidenceDirectory(), "screenshots", `${id}-${name}.png`);
       try {
-        await page.screenshot({ path: screenshotPath, fullPage: true, animations: "disabled" });
-        artifactPaths.push(relativeEvidencePath(screenshotPath));
+        const screenshot = await captureCredentialSafeScreenshot(
+          page,
+          name,
+          screenshotPath,
+          name.startsWith("player-") ? PLAYER_URL : HOST_URL,
+        );
+        if (screenshot.status === "captured") {
+          artifactPaths.push(relativeEvidencePath(screenshotPath));
+          screenshotOutcomes[name] = { status: "captured" };
+        } else if (screenshot.status === "skipped") {
+          screenshotOutcomes[name] = { status: "skipped", reason: String(screenshot.reason ?? "page-safety-check-unavailable") };
+        } else {
+          screenshotOutcomes[name] = { status: "failed", reason: "screenshot-failed" };
+          captureErrors.push(`${name} screenshot failed`);
+        }
       } catch {
-        captureErrors.push(`${name} screenshot was not captured`);
+        screenshotOutcomes[name] = { status: "failed", reason: "screenshot-failed" };
+        captureErrors.push(`${name} screenshot failed`);
       }
     }
   }
@@ -299,7 +389,11 @@ test.afterEach(async ({}, testInfo) => {
   writeScenarioEvidence({
     id,
     expected,
-    observed: captureErrors.length > 0 ? { result: observed, evidence_errors: captureErrors } : observed,
+    observed: {
+      ...(observed && typeof observed === "object" ? observed as Record<string, unknown> : { result: observed }),
+      screenshot_outcomes: screenshotOutcomes,
+      ...(captureErrors.length > 0 ? { evidence_errors: captureErrors } : {}),
+    },
     verdict,
     checks,
     artifacts: artifactPaths,
@@ -311,13 +405,19 @@ test.afterEach(async ({}, testInfo) => {
 });
 
 test.afterAll(async () => {
-  await Promise.all([
-    playerContextOne?.close().catch(() => {}),
-    playerContextTwo?.close().catch(() => {}),
-    hostContext?.close().catch(() => {}),
-    chromeBrowser?.close().catch(() => {}),
-    firefoxBrowser?.close().catch(() => {}),
-  ]);
+  let diagnosticsWriteFailed = false;
+  try {
+    if (requestDiagnostics) {
+      const summary = await requestDiagnostics.flush(writeSocketRequestDiagnostic);
+      updateRunMetadata({ request_diagnostics: summary });
+      diagnosticsWriteFailed = summary.record_write_failures > 0;
+    }
+  } finally {
+    await closeSetupBrowsers();
+  }
+  if (diagnosticsWriteFailed) {
+    throw new Error("N2 socket request diagnostic evidence could not be fully written.");
+  }
 });
 
 test("party-coherence: 1-PC and 4-PC projections agree across isolated clients and host", async ({}, testInfo) => {
@@ -898,19 +998,93 @@ test("host-only-route-event-and-bundle-probes: player origin refuses host surfac
   });
 });
 
-async function loginPlayer(page: Page): Promise<void> {
-  await page.goto(PLAYER_URL, { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "Player login" })).toBeVisible();
-  await page.getByLabel("Password").fill(PLAYER_PASSWORD);
-  await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
-  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+async function loginPlayer(page: Page): Promise<PlayerVersion> {
+  await withSetupStage("player_shell_load", async () => {
+    await page.goto(PLAYER_URL, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Player login" })).toBeVisible();
+  });
+  await withSetupStage("player_authentication", async () => {
+    await page.getByLabel("Password").fill(PLAYER_PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
+  });
+  await withSetupStage("player_connection_wait", async () => {
+    await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  });
+  return withSetupStage("client_metadata", () => readPlayerVersion(page));
 }
 
 async function loadHostUi(page: Page): Promise<void> {
-  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
-  await expect(page.locator("#game-output")).toBeAttached();
-  await expect(page.locator("#user-input")).toBeAttached();
+  await withSetupStage("host_ui_load", async () => {
+    await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#game-output")).toBeAttached();
+    await expect(page.locator("#user-input")).toBeAttached();
+  });
+  setupHostUiLoaded = true;
+}
+
+async function observeSetupState(): Promise<Record<string, unknown>> {
+  const [player, playerB, host] = await Promise.all([
+    observePageSetupState(playerOne, "player-a-chrome"),
+    observePageSetupState(playerTwo, "player-b-firefox"),
+    observePageSetupState(hostPage, "host-ui-chrome-context"),
+  ]);
+  return {
+    player_connection_state: player.connection_state,
+    player_b_connection_state: FIREFOX_REQUESTED ? playerB.connection_state : "not_requested",
+    player_shell_loaded: player.shell_loaded,
+    host_ui_loaded: setupHostUiLoaded || host.host_ui_loaded,
+    client_build_id: player.client_build_id ?? setupClientVersion?.clientBuildId ?? null,
+  };
+}
+
+async function observePageSetupState(
+  page: Page | undefined,
+  role: "player-a-chrome" | "player-b-firefox" | "host-ui-chrome-context",
+): Promise<{
+  connection_state: "connected" | "connecting" | "disconnected" | "unknown" | "not_requested";
+  shell_loaded: boolean;
+  host_ui_loaded: boolean;
+  client_build_id: string | null;
+}> {
+  if (role === "player-b-firefox" && !FIREFOX_REQUESTED) {
+    return { connection_state: "not_requested", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+  }
+  if (!page || page.isClosed()) {
+    return { connection_state: "unknown", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+  }
+  try {
+    return await page.evaluate((pageRole) => {
+      const connected = document.querySelector("[role='status']")?.textContent?.trim();
+      const connectionState = connected === "Connected"
+        ? "connected"
+        : connected === "Connecting..." || connected === "Loading player snapshot..."
+          ? "connecting"
+          : connected === "Disconnected"
+            ? "disconnected"
+            : "unknown";
+      const build = document.querySelector<HTMLMetaElement>('meta[name="neq-client-build"]')?.content;
+      return {
+        connection_state: pageRole.startsWith("player-") ? connectionState : "unknown",
+        shell_loaded: pageRole.startsWith("player-") && document.querySelector("h1")?.textContent?.trim() === "NeverEndingQuest player",
+        host_ui_loaded: pageRole === "host-ui-chrome-context" &&
+          Boolean(document.querySelector("#game-output") && document.querySelector("#user-input")),
+        client_build_id: typeof build === "string" ? build : null,
+      };
+    }, role);
+  } catch {
+    return { connection_state: "unknown", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+  }
+}
+
+async function closeSetupBrowsers(): Promise<void> {
+  await Promise.all([
+    playerContextOne?.close().catch(() => {}),
+    playerContextTwo?.close().catch(() => {}),
+    hostContext?.close().catch(() => {}),
+    chromeBrowser?.close().catch(() => {}),
+    firefoxBrowser?.close().catch(() => {}),
+  ]);
 }
 
 function attachConsoleEvidence(page: Page, contextName: string): void {

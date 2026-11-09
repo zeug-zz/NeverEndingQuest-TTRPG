@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Fair-Source-1.0
 
 import { FIREFOX_UNAVAILABLE_REASON } from "./browser-contract.mjs";
+import { normalizeSetupFailureRecord } from "./setup-evidence.mjs";
 
 export const N2_MANAGED_LIFECYCLE_IDS = Object.freeze([
   "server-instance-change",
@@ -211,6 +212,7 @@ export function assessPlaywrightCompletion({
   child,
   records,
   evidenceErrors = [],
+  setupFailureEvidence = null,
   scenarioCatalog,
   browsers,
   lifecycleScenarioIds = N2_MANAGED_LIFECYCLE_IDS,
@@ -252,6 +254,15 @@ export function assessPlaywrightCompletion({
   if (cause === null && evidenceErrors.length > 0) {
     cause = stopCause("playwright-evidence-malformed", "FAIL", "The persisted Playwright scenario file contains malformed evidence.");
   }
+  if (cause === null && setupFailureEvidence?.status === "invalid") {
+    cause = stopCause("playwright-setup-evidence-invalid", "FAIL", "Playwright setup failure evidence is invalid.");
+  }
+  if (cause === null && setupFailureEvidence?.status === "valid") {
+    const setupRecord = normalizeSetupFailureRecord(setupFailureEvidence.record);
+    cause = setupRecord === null
+      ? stopCause("playwright-setup-evidence-invalid", "FAIL", "Playwright setup failure evidence is invalid.")
+      : stopCause("playwright-setup-failed", "FAIL", "Playwright beforeAll setup failed before gameplay scenarios.");
+  }
   if (cause === null) cause = inspectBudgetDecision(providerBudgetDecision);
   if (cause === null) cause = inspectChildResult(child, requestedSignal);
   if (cause === null) {
@@ -279,6 +290,7 @@ export async function runLifecycleAfterPlaywright({
   child,
   records,
   evidenceErrors = [],
+  setupFailureEvidence = null,
   scenarioCatalog,
   browsers,
   lifecycleScenarioIds = N2_MANAGED_LIFECYCLE_IDS,
@@ -291,6 +303,7 @@ export async function runLifecycleAfterPlaywright({
     child,
     records,
     evidenceErrors,
+    setupFailureEvidence,
     scenarioCatalog,
     browsers,
     lifecycleScenarioIds,

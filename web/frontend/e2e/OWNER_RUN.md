@@ -42,7 +42,10 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   roles, and blocked checks. WebKit cannot replace either player engine. The
   gate writes no browser storage state, HAR, or trace archive. Console text is
   bounded and redacts password, verifier, cookie, authorization, and CSRF
-  values. Do not add raw network or storage artifacts.
+  values. Request diagnostics retain only bounded metadata for exact
+  player-origin `/socket.io/` requests; they never retain query strings, full
+  URLs, or header/cookie values, and inaccessible header observations are
+  `unknown`. Do not add raw network or storage artifacts.
 - Gameplay probes submit player and host inputs. The sandbox may process them
   through its configured provider path. Run only when that provider execution
   is separately authorized. If any provider is invoked, run the provider-identity
@@ -90,6 +93,32 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   evidence. Review the stop cause and all evidence before deciding what to do
   next. The driver does not automatically retry or resume; any separately
   authorized later invocation requires a new reviewed run and evidence path.
+- If Playwright `beforeAll` fails, `setup-failure.json` is captured before page,
+  context, or browser teardown. It contains only a fixed setup stage/category,
+  expected/observed readiness, an optional early build ID, safe-or-skipped
+  screenshot outcomes, and bounded request-diagnostic counts; never copy an
+  exception string into evidence. Player screenshots require the fixed player
+  origin, canonical `NeverEndingQuest player` heading, exact `Log out` button,
+  no password field, and a known Connected/Disconnected/Connecting/loading
+  status; disconnected but authenticated is eligible. Mask form/editable
+  contents and recognized credential-bearing controls before capture. Login,
+  unknown, or wrong-origin pages are explicitly skipped. Host screenshots still
+  require the loaded host UI. A missing or empty
+  `scenarios.jsonl` is expected only alongside a valid setup-failure record;
+  malformed, unreadable, or contradictory results still fail closed. All
+  required gameplay scenarios remain BLOCKED and unexecuted.
+- The managed host's stdout/stderr streams are drained and discarded rather
+  than retained. `managed-host-output.json` contains only bounded per-stream
+  byte counters/truncation flags and process exit metadata accumulated across
+  host restarts. Never add raw child output to run records, console output, or
+  other evidence. The historical browser handshake root cause remains
+  unconfirmed; an in-process missing-Origin reproducer does not establish what
+  headers the historical browser sent.
+- The actual Playwright child streams feed a bounded counter-only collector.
+  `driver-output.json` contains capped stdout/stderr byte counts and truncation,
+  exit status/signal, and a fixed spawn category; raw text and exception details
+  are not persisted. Existing terminal output still uses its established
+  credential-redaction path; do not add a raw driver log to evidence.
 
 ## Provider-free full pre-booking preflight
 
@@ -622,6 +651,15 @@ Chrome-only `--agent-run` evidence root is
   sets, launched-role versions, blocked checks, and the reviewed run identity.
 - `scenarios.jsonl`: expected and observed assertions, per-check and per-scenario
   verdicts, UTC timestamps, and evidence paths.
+- `setup-failure.json` when `beforeAll` fails: a fixed-stage, credential-safe
+  setup record. Missing/empty scenario-results status is separately retained in
+  `run.json`; it is not confused with malformed JSON.
+- `request-diagnostics.jsonl` when exact player-origin `/socket.io/` events are
+  observable, plus their bounded counts/truncation summary in `run.json`.
+- `managed-host-output.json` for managed runs: counters-only stdout/stderr
+  observations and bounded process metadata; raw host output is discarded.
+- `driver-output.json`: bounded counters for the actual Playwright child streams
+  and safe exit/spawn metadata only; raw driver text is not persisted.
 - `screenshots/`: separate player/host UI snapshots, including uncertainty and
   post-restart resynchronization for the instance-change phase.
 - `console.jsonl` and `playwright-test-results/`: bounded diagnostics; no HAR,
