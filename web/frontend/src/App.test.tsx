@@ -133,6 +133,14 @@ function makeSocketHarness() {
   };
 }
 
+function assertWebsocketOnlyTransport(options: unknown): void {
+  if (typeof options !== "object" || options === null ||
+      !Array.isArray((options as { transports?: unknown }).transports) ||
+      JSON.stringify((options as { transports: unknown[] }).transports) !== '["websocket"]') {
+    throw new Error("player Socket.IO transport must be websocket-only");
+  }
+}
+
 function renderApp(fetcher: typeof fetch, socketHarness = makeSocketHarness()) {
   container = document.createElement("div");
   document.body.append(container);
@@ -291,19 +299,48 @@ describe("player login and session bootstrap", () => {
     expect(container?.textContent).toContain("Merisiel");
     expect(container?.textContent).toContain("Active PC: Acheron");
     expect(container?.textContent).toContain("Welcome to the table.");
-    expect(mocks.io).toHaveBeenCalledWith(
-      "/player",
-      expect.objectContaining({
-        path: "/socket.io",
-        withCredentials: true,
-        autoConnect: false,
-        auth: {
-          client_build_id: CLIENT_VERSION.clientBuildId,
-          protocol_version: 1,
-        },
-      }),
-    );
+    expect(mocks.io).toHaveBeenCalledWith("/player", {
+      path: "/socket.io",
+      transports: ["websocket"],
+      withCredentials: true,
+      autoConnect: false,
+      reconnection: true,
+      auth: {
+        client_build_id: CLIENT_VERSION.clientBuildId,
+        protocol_version: 1,
+      },
+    });
     expect(socket.socket.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a player Socket.IO configuration that restores polling", () => {
+    expect(() => assertWebsocketOnlyTransport({
+      transports: ["polling", "websocket"],
+    })).toThrow("player Socket.IO transport must be websocket-only");
+    expect(() => assertWebsocketOnlyTransport({ transports: ["polling"] }))
+      .toThrow("player Socket.IO transport must be websocket-only");
+  });
+
+  it("fails closed after a WebSocket connection error without polling or gameplay input", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { csrf_token: SESSION_CSRF, expires_at: 1000 }))
+      .mockResolvedValueOnce(jsonResponse(200, makeSnapshot()));
+    const socket = makeSocketHarness();
+    renderApp(fetcher, socket);
+    await submitLogin();
+
+    const options = mocks.io.mock.calls[0]?.[1];
+    expect(() => assertWebsocketOnlyTransport(options)).not.toThrow();
+
+    act(() => socket.fire("connect_error", new Error("WebSocket handshake failed")));
+    expect(container?.textContent).toContain("Disconnected");
+    changeGameplayInput("This must stay local while disconnected.");
+    submitGameplayInput();
+
+    expect(socket.emit.mock.calls.filter(([event]) => event === "player.input.submit")).toHaveLength(0);
+    expect(mocks.io).toHaveBeenCalledTimes(1);
+    expect(mocks.io.mock.calls[0]?.[1]?.transports).toEqual(["websocket"]);
   });
 
   it("shows a user-visible bounded message for CSRF, rate-limit, and invalid credentials", async () => {

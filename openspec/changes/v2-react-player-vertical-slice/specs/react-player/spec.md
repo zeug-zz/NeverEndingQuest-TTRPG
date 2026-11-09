@@ -164,7 +164,9 @@ The driver SHALL validate Playwright status and required persisted evidence befo
 
 ### Requirement: N2 setup failure evidence SHALL be safe and complete
 
-The Playwright setup hook SHALL persist fixed-stage evidence before browser teardown without arbitrary exception or credential values. The record SHALL include readiness, optional early build identity, screenshot outcomes, and zero gameplay execution. Missing or empty scenario results are excused only by a valid setup record; unexecuted scenarios remain `BLOCKED` with `executed: false`.
+The setup hook SHALL persist fixed-stage evidence before teardown without arbitrary exception or credential values. It SHALL record readiness, nullable early build/protocol metadata, screenshot outcomes, and zero gameplay execution. Missing or empty scenario results require valid setup evidence; unexecuted scenarios remain `BLOCKED` with `executed: false`.
+
+**Guidance (SHOULD):** Use the shared player-version reader; test the production screenshot sanitizer through its real DOM/evaluate path.
 
 #### Scenario: Browser setup fails before gameplay
 - **WHEN** the Playwright `beforeAll` hook fails at any setup stage
@@ -177,6 +179,10 @@ The Playwright setup hook SHALL persist fixed-stage evidence before browser tear
 #### Scenario: Authenticated player is disconnected during setup
 - **WHEN** a player page has the fixed expected origin, canonical `NeverEndingQuest player` heading, exact `Log out` button, no password field, and a known `Connected`, `Disconnected`, `Connecting...`, or `Loading player snapshot...` status
 - **THEN** the hook masks form/editable and recognized credential-bearing content before capturing the screenshot, even when the status is `Disconnected`
+
+#### Scenario: Early connection failure preserves protocol metadata
+- **WHEN** the authenticated player shell is available but the normal `Connected` wait fails
+- **THEN** evidence records `protocol_version` when readable and null when unknown, without bypassing the wait or executing gameplay
 
 #### Scenario: Player screenshot authentication is unknown
 - **WHEN** the page is a login page, has an unknown status, lacks the canonical authenticated shell, contains a password field, or has the wrong origin
@@ -265,3 +271,21 @@ Observation evidence SHALL reuse the existing allowlisted Socket.IO diagnostics 
 #### Scenario: Runtime module cannot be resolved
 - **WHEN** an import required by the observation mode is unresolved
 - **THEN** the dry-run exits nonzero and side-effect tripwires confirm that no observation or setup side effect occurred
+
+### Requirement: Player Socket.IO handshakes SHALL use WebSocket only
+
+The browser player SHALL use exactly `transports: ["websocket"]` for `/player` Socket.IO, preserving existing connection and client-auth options. It SHALL NOT use HTTP polling initially or as fallback. Server Host, Origin, CSRF, session, and client-auth checks SHALL remain unchanged. WebSocket failure SHALL fail closed.
+
+**Guidance (SHOULD):** Cover blocked-WebSocket behavior in N4 network checks.
+
+#### Scenario: Same-origin player connection uses WebSocket with existing authentication
+- **WHEN** an authenticated player connects through the browser client
+- **THEN** its first and only Socket.IO transport is WebSocket, with the existing session cookie and client-build/protocol auth, and no polling request or fallback
+
+#### Scenario: WebSocket authority or authentication checks reject invalid handshakes
+- **WHEN** an Engine.IO WebSocket handshake has valid Origin, Host, session cookie, and client auth, or has missing/wrong Origin, wrong Host, or invalid existing authentication
+- **THEN** the valid handshake is accepted and each invalid handshake is refused by the unchanged player-server checks
+
+#### Scenario: Network blocks WebSocket
+- **WHEN** the network cannot establish the player's WebSocket connection
+- **THEN** the client remains disconnected/fails closed and does not attempt HTTP polling; N4 public-tunnel/network checks exercise this condition

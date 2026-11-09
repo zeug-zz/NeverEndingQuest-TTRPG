@@ -89,6 +89,10 @@ export class SocketRequestDiagnosticsCollector {
     this.omittedCount = 0;
     this.writeErrorCount = 0;
     this.flushedCount = 0;
+    this.pendingWebsocketCount = 0;
+    this.pendingWebsocketBytes = 0;
+    this.cdpStates = new Set();
+    this.cdpSetupPromises = [];
   }
 
   attach(page, context) {
@@ -98,9 +102,10 @@ export class SocketRequestDiagnosticsCollector {
     const safeContext = context;
     page.on("response", (response) => this.track(() => this.recordResponse(response, safeContext)));
     page.on("requestfailed", (request) => this.track(() => this.recordRequestFailed(request, safeContext)));
+    const cdpState = this.createCdpState(page, safeContext);
     page.on("websocket", (socket) => {
       try {
-        this.add(this.createRecord({
+        const record = this.createRecord({
           eventType: "websocket",
           context: safeContext,
           url: socket.url(),
@@ -108,14 +113,43 @@ export class SocketRequestDiagnosticsCollector {
           status: "unknown",
           failureCategory: null,
           headers: null,
-        }));
+        });
+        if (record === null) return;
+        if (cdpState === null || cdpState.status === "failed") {
+          this.add(record);
+        } else if (cdpState.status === "pending") {
+          this.reserveWebsocketFallback(cdpState, record);
+        }
       } catch {
         this.omittedCount = incrementCounter(this.omittedCount);
       }
     });
   }
 
+  async whenReady() {
+    await Promise.all(this.cdpSetupPromises);
+  }
+
+  async detach() {
+    await this.whenReady();
+    this.flushPendingWebsocketRecords();
+    let success = true;
+    for (const state of this.cdpStates) {
+      if (state.session === null) continue;
+      try {
+        await state.session.detach();
+      } catch {
+        success = false;
+      }
+      state.session = null;
+      state.status = "detached";
+    }
+    return success;
+  }
+
   async flush(writeRecord) {
+    await this.whenReady();
+    this.flushPendingWebsocketRecords();
     await Promise.all([...this.pending]);
     const pendingRecords = this.records.splice(0);
     for (const record of pendingRecords) {
@@ -140,6 +174,152 @@ export class SocketRequestDiagnosticsCollector {
       raw_headers_retained: false,
       raw_urls_retained: false,
     };
+  }
+
+  createCdpState(page, context) {
+    if (context !== "player-a-chrome" || typeof page.context !== "function") return null;
+    if (this.cdpStates.size >= this.maxRecords) return null;
+    let browserContext;
+    try {
+      browserContext = page.context();
+    } catch {
+      return null;
+    }
+    if (typeof browserContext?.newCDPSession !== "function") return null;
+
+    const state = {
+      context,
+      status: "pending",
+      session: null,
+      pending: new Map(),
+      fallbacks: [],
+    };
+    this.cdpStates.add(state);
+    const setup = Promise.resolve().then(async () => {
+      const session = await browserContext.newCDPSession(page);
+      state.session = session;
+      session.on("Network.webSocketCreated", (event) => {
+        this.recordCdpWebsocketCreated(state, event);
+      });
+      session.on("Network.webSocketWillSendHandshakeRequest", (event) => {
+        this.recordCdpWebsocketHandshakeRequest(state, event);
+      });
+      session.on("Network.webSocketHandshakeResponseReceived", (event) => {
+        this.recordCdpWebsocketResponse(state, event);
+      });
+      await session.send("Network.enable");
+      state.status = "ready";
+      this.releaseWebsocketFallbacks(state, false);
+    }).catch(() => {
+      state.status = "failed";
+      this.releaseWebsocketFallbacks(state, true);
+    });
+    this.cdpSetupPromises.push(setup);
+    return state;
+  }
+
+  reserveWebsocketFallback(state, record) {
+    if (this.recordsTotal + this.pendingWebsocketCount >= this.maxRecords) {
+      this.omittedCount = incrementCounter(this.omittedCount);
+      return;
+    }
+    const bytes = Buffer.byteLength(JSON.stringify(record), "utf8") + 1;
+    if (this.bytesTotal + this.pendingWebsocketBytes + bytes > this.maxBytes) {
+      this.omittedCount = incrementCounter(this.omittedCount);
+      return;
+    }
+    state.fallbacks.push(record);
+    this.pendingWebsocketCount += 1;
+    this.pendingWebsocketBytes += bytes;
+  }
+
+  releaseWebsocketFallbacks(state, emit) {
+    for (const record of state.fallbacks) {
+      this.pendingWebsocketCount = Math.max(0, this.pendingWebsocketCount - 1);
+      this.pendingWebsocketBytes = Math.max(
+        0,
+        this.pendingWebsocketBytes - Buffer.byteLength(JSON.stringify(record), "utf8") - 1,
+      );
+      if (emit) this.add(record);
+    }
+    state.fallbacks = [];
+  }
+
+  recordCdpWebsocketCreated(state, event) {
+    try {
+      if (!isApprovedWebsocketUrl(event?.url, this.expectedOrigin)) return;
+      const requestId = boundedCdpRequestId(event?.requestId);
+      if (requestId === null) {
+        this.omittedCount = incrementCounter(this.omittedCount);
+        return;
+      }
+      if (state.pending.has(requestId)) return;
+      if (state.pending.size >= this.maxRecords ||
+          this.recordsTotal + this.pendingWebsocketCount >= this.maxRecords) {
+        this.omittedCount = incrementCounter(this.omittedCount);
+        return;
+      }
+      const record = createCdpWebsocketPlaceholder(state.context);
+      const bytes = Buffer.byteLength(JSON.stringify(record), "utf8") + 1 +
+        Buffer.byteLength(requestId, "utf8");
+      if (this.bytesTotal + this.pendingWebsocketBytes + bytes > this.maxBytes) {
+        this.omittedCount = incrementCounter(this.omittedCount);
+        return;
+      }
+      state.pending.set(requestId, { record, bytes, handshakeStarted: false });
+      this.pendingWebsocketCount += 1;
+      this.pendingWebsocketBytes += bytes;
+    } catch {
+      this.omittedCount = incrementCounter(this.omittedCount);
+    }
+  }
+
+  recordCdpWebsocketHandshakeRequest(state, event) {
+    try {
+      const requestId = boundedCdpRequestId(event?.requestId);
+      if (requestId === null) return;
+      const pending = state.pending.get(requestId);
+      if (pending === undefined) return;
+
+      pending.handshakeStarted = true;
+      const headers = event?.request?.headers;
+      pending.record = applyCdpWebsocketHeaders(
+        { ...pending.record, method: "GET" },
+        headers,
+        this.expectedOrigin,
+        this.expectedHost,
+      );
+    } catch {
+      this.omittedCount = incrementCounter(this.omittedCount);
+    }
+  }
+
+  recordCdpWebsocketResponse(state, event) {
+    const requestId = boundedCdpRequestId(event?.requestId);
+    if (requestId === null) return;
+    const pending = state.pending.get(requestId);
+    if (pending === undefined || !pending.handshakeStarted) return;
+    state.pending.delete(requestId);
+    this.pendingWebsocketCount = Math.max(0, this.pendingWebsocketCount - 1);
+    this.pendingWebsocketBytes = Math.max(0, this.pendingWebsocketBytes - pending.bytes);
+    const responseStatus = event?.response?.status;
+    this.add({
+      ...pending.record,
+      status: Number.isInteger(responseStatus) && responseStatus >= 100 && responseStatus <= 599
+        ? responseStatus
+        : "unknown",
+    });
+  }
+
+  flushPendingWebsocketRecords() {
+    for (const state of this.cdpStates) {
+      for (const [requestId, pending] of state.pending) {
+        state.pending.delete(requestId);
+        this.pendingWebsocketCount = Math.max(0, this.pendingWebsocketCount - 1);
+        this.pendingWebsocketBytes = Math.max(0, this.pendingWebsocketBytes - pending.bytes);
+        this.add(pending.record);
+      }
+    }
   }
 
   track(operation) {
@@ -245,6 +425,57 @@ export class SocketRequestDiagnosticsCollector {
     this.recordsTotal += 1;
     this.bytesTotal += bytes;
   }
+}
+
+function createCdpWebsocketPlaceholder(context) {
+  return normalizeSocketRequestDiagnostic({
+    schema: REQUEST_DIAGNOSTIC_SCHEMA,
+    event_type: "websocket",
+    context,
+    method: "unknown",
+    path: "/socket.io/",
+    status: "unknown",
+    transport: "websocket",
+    origin_present: "unknown",
+    origin_matches_expected: "unknown",
+    host_matches_expected: "unknown",
+    session_cookie_present: "unknown",
+    failure_category: null,
+    recorded_at_utc: new Date().toISOString(),
+  });
+}
+
+function applyCdpWebsocketHeaders(record, headers, expectedOrigin, expectedHost) {
+  if (!isRecord(headers)) return record;
+  const headerOrigin = safeHeader(headers, "origin");
+  const headerHost = safeHeader(headers, "host");
+  const cookie = safeHeader(headers, "cookie");
+  return {
+    ...record,
+    origin_present: headerOrigin !== null,
+    origin_matches_expected: headerOrigin === expectedOrigin,
+    host_matches_expected: headerHost?.toLowerCase() === expectedHost,
+    session_cookie_present: hasSessionCookie(cookie),
+  };
+}
+
+function isApprovedWebsocketUrl(value, expectedOrigin) {
+  if (typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value);
+    return !parsed.username && !parsed.password && !parsed.hash &&
+      socketRequestOrigin(parsed) === expectedOrigin && parsed.pathname === "/socket.io/";
+  } catch {
+    return false;
+  }
+}
+
+function boundedCdpRequestId(value) {
+  if (typeof value !== "string" || value.length === 0 ||
+      Buffer.byteLength(value, "utf8") > 128) {
+    return null;
+  }
+  return value;
 }
 
 async function observeHeaders(request) {

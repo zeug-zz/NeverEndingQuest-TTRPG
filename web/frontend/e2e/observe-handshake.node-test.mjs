@@ -89,7 +89,16 @@ function makeRuntime(scratch, config = {}) {
   const pages = [];
   const contexts = [];
   const browsers = [];
-  const calls = { launches: 0, contexts: 0, pages: 0, login: 0, probes: [], fetches: [] };
+  const calls = {
+    launches: 0,
+    contexts: 0,
+    pages: 0,
+    login: 0,
+    probes: [],
+    fetches: [],
+    cdpCommands: [],
+    cdpDetached: 0,
+  };
   const fixtureRoot = join(scratch, `fixture-${fixtureCounter++}`);
   const sandboxRoot = join(fixtureRoot, "sandbox");
   const evidenceDirectory = join(fixtureRoot, "evidence");
@@ -97,6 +106,36 @@ function makeRuntime(scratch, config = {}) {
   const summaryFile = join(evidenceDirectory, "summary.json");
   const ledgerPath = providerAttemptLedgerPath(sandboxRoot, VALID_RUN_ID);
   const atomicWriteCounts = new Map();
+  const cdpSession = new EventEmitter();
+  cdpSession.send = async (method) => {
+    calls.cdpCommands.push(method);
+    if (method !== "Network.enable" || config.noSocketDiagnostics) return {};
+    cdpSession.emit("Network.webSocketCreated", {
+      requestId: "private-request-correlation-id",
+      url: "ws://127.0.0.1:8370/socket.io/?EIO=4&transport=websocket&sid=private-query-value",
+      initiator: { type: "script" },
+    });
+    cdpSession.emit("Network.webSocketWillSendHandshakeRequest", {
+      requestId: "private-request-correlation-id",
+      request: {
+        headers: {
+          Origin: "http://127.0.0.1:8370",
+          Host: "127.0.0.1:8370",
+          Cookie: "neq_player_session=private-cookie-value",
+          Authorization: "Bearer private-authorization-value",
+        },
+      },
+    });
+    cdpSession.emit("Network.webSocketHandshakeResponseReceived", {
+      requestId: "private-request-correlation-id",
+      response: { status: 101, statusText: "Switching Protocols", headers: {} },
+    });
+    return {};
+  };
+  cdpSession.detach = async () => {
+    calls.cdpDetached += 1;
+    events.push("cdp-detach");
+  };
 
   class FakeSandboxHostManager {
     constructor(options) {
@@ -184,20 +223,11 @@ function makeRuntime(scratch, config = {}) {
     evaluateCount: 0,
     on(eventName, handler) {
       this.handlers.set(eventName, handler);
-      if (eventName === "response" && !config.noSocketDiagnostics) {
+      if (eventName === "response" && config.degradedSocketDiagnostics) {
         queueMicrotask(() => this.emit("response", {
-          request: () => ({
-            url: () => "http://127.0.0.1:8370/socket.io/?transport=polling&private=query-value",
-            method: () => "GET",
-          }),
+          request: () => ({ url: () => { throw new Error("synthetic diagnostic omission"); } }),
           status: () => 200,
         }));
-        if (config.degradedSocketDiagnostics) {
-          queueMicrotask(() => this.emit("response", {
-            request: () => ({ url: () => { throw new Error("synthetic diagnostic omission"); } }),
-            status: () => 200,
-          }));
-        }
       }
     },
     emit(eventName, value) {
@@ -234,7 +264,9 @@ function makeRuntime(scratch, config = {}) {
       const source = String(script);
       if (source.includes("neq-protocol-version")) {
         calls.evaluateKind = "client-version";
-        return { clientBuildId: "build-abc", protocolVersion: 1 };
+        events.push("read-player-version");
+        if (config.pageVersionError) throw new Error("synthetic metadata unavailable");
+        return config.pageVersion ?? { clientBuildId: "build-abc", protocolVersion: 1 };
       }
       calls.evaluateKind = "player-dom-state";
       return config.pageState ?? {
@@ -251,6 +283,7 @@ function makeRuntime(scratch, config = {}) {
       this.closed = true;
       if (config.pageCloseFailure) throw new Error("synthetic page close failure");
     },
+    context() { return context; },
   };
   const context = {
     async newPage() {
@@ -258,6 +291,11 @@ function makeRuntime(scratch, config = {}) {
       pages.push(page);
       events.push("page-create");
       return page;
+    },
+    async newCDPSession(pageValue) {
+      assert.equal(pageValue, page);
+      calls.cdpSessions = (calls.cdpSessions ?? 0) + 1;
+      return cdpSession;
     },
     async close() {
       events.push("context-close");
@@ -427,6 +465,8 @@ test("one-pass observer uses the shared login chain, one Chrome player, and TCP-
     assert.equal(fixture.calls.launches, 1);
     assert.equal(fixture.calls.contexts, 1);
     assert.equal(fixture.calls.pages, 1);
+    assert.equal(fixture.calls.cdpSessions, 1);
+    assert.deepEqual(fixture.calls.cdpCommands, ["Network.enable"]);
     assert.deepEqual(fixture.calls.tcpOptions, { host: "127.0.0.1", port: 8360 });
     assert.deepEqual(fixture.calls.fetches, ["http://127.0.0.1:8370/"]);
     assert.deepEqual(fixture.calls.probes, [8360, 8370]);
@@ -452,11 +492,18 @@ test("one-pass observer uses the shared login chain, one Chrome player, and TCP-
     assert.equal(observation.provider_attempt_ledger.final_copied.state, "active_zero");
     const diagnostics = readFileSync(join(fixture.evidenceDirectory, "request-diagnostics.jsonl"), "utf8");
     assert.match(diagnostics, /"path":"\/socket.io\/"/);
-    assert.match(diagnostics, /"origin_present":"unknown"/);
-    assert.match(diagnostics, /"origin_matches_expected":"unknown"/);
-    assert.match(diagnostics, /"host_matches_expected":"unknown"/);
-    assert.match(diagnostics, /"session_cookie_present":"unknown"/);
-    assert.doesNotMatch(diagnostics, /private=query-value|synthetic-player-password|synthetic-verifier/);
+    assert.match(diagnostics, /"transport":"websocket"/);
+    assert.match(diagnostics, /"status":101/);
+    assert.match(diagnostics, /"origin_present":true/);
+    assert.match(diagnostics, /"origin_matches_expected":true/);
+    assert.match(diagnostics, /"host_matches_expected":true/);
+    assert.match(diagnostics, /"session_cookie_present":true/);
+    assert.doesNotMatch(
+      diagnostics,
+      /private-query-value|private-request-correlation-id|private-cookie-value|private-authorization-value|synthetic-player-password|synthetic-verifier/,
+    );
+    assert.ok(fixture.events.indexOf("cdp-detach") < fixture.events.indexOf("page-close"));
+    assert.equal(fixture.calls.cdpDetached, 1);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -472,6 +519,7 @@ test("Connected assertion failure records diagnostics and safe setup before brow
         shell_loaded: true,
         client_build_id: "build-early",
       },
+      pageVersion: { clientBuildId: "build-early", protocolVersion: 1 },
     });
     const result = await runObserveHandshake(fixture.runConfig, fixture.runtime);
     assert.equal(result.observation_status, "FAIL");
@@ -490,9 +538,46 @@ test("Connected assertion failure records diagnostics and safe setup before brow
     assert.equal(evidence.setup.connection_state, "disconnected");
     assert.equal(evidence.setup.shell_loaded, true);
     assert.equal(evidence.setup.client_build_id, "build-early");
+    assert.equal(evidence.setup.protocol_version, 1);
+    assert.ok(fixture.events.indexOf("expect:Connected") < fixture.events.indexOf("read-player-version"));
     assert.equal(evidence.n2_gate_result, "NOT_N2_GATE");
     const allEvidence = readEvidenceText(fixture.evidenceDirectory);
-    assert.doesNotMatch(allEvidence, /synthetic-player-password|synthetic-verifier|private=query-value/);
+    assert.doesNotMatch(
+      allEvidence,
+      /synthetic-player-password|synthetic-verifier|private-query-value|private-request-correlation-id|private-cookie-value|private-authorization-value/,
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("unknown early protocol metadata stays null without bypassing the Connected wait", async () => {
+  const scratch = makeScratch();
+  try {
+    const fixture = makeRuntime(scratch, {
+      connectedFailure: true,
+      pageState: {
+        connection_state: "disconnected",
+        shell_loaded: true,
+        client_build_id: "build-early",
+      },
+      pageVersionError: true,
+    });
+    const result = await runObserveHandshake(fixture.runConfig, fixture.runtime);
+    assert.equal(result.observation_status, "FAIL");
+    assert.deepEqual(fixture.events.filter((event) => event.startsWith("expect:")), [
+      "expect:Player login",
+      "expect:NeverEndingQuest player",
+      "expect:Connected",
+    ]);
+    assert.ok(fixture.events.indexOf("expect:Connected") < fixture.events.indexOf("read-player-version"));
+    const evidence = JSON.parse(
+      readFileSync(join(fixture.evidenceDirectory, "handshake-observation.json"), "utf8"),
+    );
+    assert.equal(evidence.setup.status, "FAIL");
+    assert.equal(evidence.setup.stage, "player_connection_wait");
+    assert.equal(evidence.setup.connection_state, "disconnected");
+    assert.equal(evidence.setup.protocol_version, null);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
