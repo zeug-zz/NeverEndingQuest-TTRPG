@@ -20,8 +20,13 @@ import {
 } from "./managed-host.mjs";
 import { FIREFOX_UNAVAILABLE_REASON, launchN2Browsers } from "./browser-contract.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
+import {
+  makeBlockedScenarioResult,
+  N2_MANAGED_LIFECYCLE_IDS,
+  runFailFastScenarioSequence,
+} from "./n2-execution-control.mjs";
 
-const LIFECYCLE_IDS = ["server-instance-change", "missing-bundle", "broken-bundle"];
+const LIFECYCLE_IDS = N2_MANAGED_LIFECYCLE_IDS;
 const HOST_URL = "http://127.0.0.1:8360";
 const PLAYER_URL = "http://127.0.0.1:8370";
 
@@ -626,62 +631,58 @@ async function runBundleScenario({
   };
 }
 
-function failedLifecycleRecord(id, expected, error, password, verifier) {
-  return {
-    id,
-    expected,
-    observed: { error: safeErrorMessage(error, password, verifier) },
+function completeLifecycleRecord(record, scenario, browsers) {
+  const baseRecord = record ?? {
+    id: scenario.id,
+    expected: scenario.description,
+    observed: { reason: "managed-lifecycle-result-missing" },
     verdict: "FAIL",
+    checks: [],
     artifacts: [],
     recorded_at_utc: new Date().toISOString(),
   };
-}
-
-function completeLifecycleRecords(records, scenarioCatalog, browsers) {
-  const recordById = new Map(records.map((record) => [record.id, record]));
-  const scenarioById = new Map(scenarioCatalog.map((scenario) => [scenario.id, scenario]));
-  return LIFECYCLE_IDS.map((id) => {
-    const scenario = scenarioById.get(id);
-    const record = recordById.get(id) ?? {
-      id,
-      expected: scenario?.description,
-      observed: { reason: "managed-lifecycle-result-missing" },
-      verdict: "FAIL",
-      checks: [],
-      artifacts: [],
-      recorded_at_utc: new Date().toISOString(),
-    };
-    const existingChecks = new Map((record.checks ?? []).map((check) => [check.id, check]));
-    const checks = (scenario?.checks ?? []).map((definition) => {
-      const existing = existingChecks.get(definition.id);
-      if (existing) return { ...existing, expected: definition.description };
-      if (definition.requires_firefox && !browsers.includes("firefox")) {
-        return {
-          id: definition.id,
-          expected: definition.description,
-          observed: { reason: FIREFOX_UNAVAILABLE_REASON },
-          verdict: "BLOCKED",
-          reason: FIREFOX_UNAVAILABLE_REASON,
-        };
-      }
-      const reason = record.verdict === "BLOCKED"
-        ? record.observed?.reason ?? "managed-lifecycle-blocked"
-        : "required-check-did-not-record-an-outcome";
+  const existingChecks = new Map(
+    (Array.isArray(baseRecord.checks) ? baseRecord.checks : [])
+      .filter((check) => check !== null && typeof check === "object" && typeof check.id === "string")
+      .map((check) => [check.id, check]),
+  );
+  const checks = (scenario.checks ?? []).map((definition) => {
+    const existing = existingChecks.get(definition.id);
+    if (existing) return { ...existing, expected: definition.description };
+    if (definition.requires_firefox && !browsers.includes("firefox")) {
       return {
         id: definition.id,
         expected: definition.description,
-        observed: { reason },
-        verdict: record.verdict === "BLOCKED" ? "BLOCKED" : "FAIL",
-        reason,
+        observed: { reason: FIREFOX_UNAVAILABLE_REASON },
+        verdict: "BLOCKED",
+        reason: FIREFOX_UNAVAILABLE_REASON,
       };
-    });
-    const verdict = record.verdict === "FAIL" || checks.some((check) => check.verdict === "FAIL")
-      ? "FAIL"
-      : record.verdict === "BLOCKED" || checks.some((check) => check.verdict === "BLOCKED")
-        ? "BLOCKED"
-        : "PASS";
-    return { ...record, checks, verdict };
+    }
+    const reason = baseRecord.verdict === "BLOCKED"
+      ? baseRecord.observed?.reason ?? "managed-lifecycle-blocked"
+      : "required-check-did-not-record-an-outcome";
+    return {
+      id: definition.id,
+      expected: definition.description,
+      observed: { reason },
+      verdict: baseRecord.verdict === "BLOCKED" ? "BLOCKED" : "FAIL",
+      reason,
+    };
   });
+  const verdict = baseRecord.verdict === "FAIL" || checks.some((check) => check.verdict === "FAIL")
+    ? "FAIL"
+    : baseRecord.verdict === "BLOCKED" || checks.some((check) => check.verdict === "BLOCKED")
+      ? "BLOCKED"
+      : baseRecord.verdict;
+  return { ...baseRecord, checks, verdict };
+}
+
+function blockedLifecycleResults(scenarioCatalog, cause) {
+  const scenarioById = new Map(scenarioCatalog.map((scenario) => [scenario.id, scenario]));
+  return LIFECYCLE_IDS
+    .map((id) => scenarioById.get(id))
+    .filter(Boolean)
+    .map((scenario) => makeBlockedScenarioResult(scenario, cause));
 }
 
 export async function runManagedLifecycleScenarios({
@@ -696,25 +697,30 @@ export async function runManagedLifecycleScenarios({
   browsers,
   scenarioCatalog,
   signal,
+  beforeScenario = async () => null,
+  onResult = async () => {},
 }) {
+  const scenarioById = new Map(scenarioCatalog.map((scenario) => [scenario.id, scenario]));
+  const lifecycleScenarios = LIFECYCLE_IDS.map((id) => scenarioById.get(id)).filter(Boolean);
   const expected = new Map(scenarioCatalog.map((scenario) => [scenario.id, scenario.description]));
   let originalSnapshot;
   try {
     originalSnapshot = readVerifiedBundleSnapshot(repositoryRoot, sandboxRoot);
   } catch (error) {
-    return completeLifecycleRecords(
-      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
-      scenarioCatalog,
-      browsers,
-    );
+    const cause = {
+      kind: "managed-lifecycle-bundle-preflight-failed",
+      severity: "BLOCKED",
+      reason: safeErrorMessage(error, password, verifier),
+    };
+    return { results: blockedLifecycleResults(scenarioCatalog, cause), stop_cause: cause, evidence_errors: [] };
   }
   if (signal?.aborted) {
-    const error = new Error("The managed lifecycle was cancelled by an operator signal.");
-    return completeLifecycleRecords(
-      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
-      scenarioCatalog,
-      browsers,
-    );
+    const cause = {
+      kind: "managed-lifecycle-interrupted",
+      severity: "BLOCKED",
+      reason: "The managed lifecycle was cancelled by an operator signal.",
+    };
+    return { results: blockedLifecycleResults(scenarioCatalog, cause), stop_cause: cause, evidence_errors: [] };
   }
 
   let chromeBrowser;
@@ -745,102 +751,88 @@ export async function runManagedLifecycleScenarios({
       firefoxBrowser?.close().catch(() => {}),
     ]);
     if (closeBrowserOnAbort) signal?.removeEventListener("abort", closeBrowserOnAbort);
-    return completeLifecycleRecords(
-      LIFECYCLE_IDS.map((id) => failedLifecycleRecord(id, expected.get(id), error, password, verifier)),
-      scenarioCatalog,
-      browsers,
-    );
+    const cause = {
+      kind: "managed-lifecycle-browser-unavailable",
+      severity: "BLOCKED",
+      reason: safeErrorMessage(error, password, verifier),
+    };
+    return { results: blockedLifecycleResults(scenarioCatalog, cause), stop_cause: cause, evidence_errors: [] };
   }
 
   const playerContexts = [
     { browser: "Chrome", context: playerContextOne },
     ...(playerContextTwo ? [{ browser: "Firefox", context: playerContextTwo }] : []),
   ];
-  const records = [];
-  try {
-    records.push(await recordScenario(
-      "server-instance-change",
-      expected.get("server-instance-change"),
+  const lifecycle = await runFailFastScenarioSequence({
+    scenarios: lifecycleScenarios,
+    browsers,
+    beforeScenario,
+    getInterruption: () => signal?.aborted ? "operator-signal" : null,
+    onResult,
+    runScenario: async (scenario) => recordScenario(
+      scenario.id,
+      expected.get(scenario.id),
       password,
       verifier,
-      () => runServerInstanceScenario({
-        manager,
-        playerContextOne,
-        playerContextTwo,
-        hostContext,
-        evidenceDirectory,
-        partySize,
-        runId,
-        password,
-        verifier,
-        signal,
-      }),
+      () => {
+        if (scenario.id === "server-instance-change") {
+          return runServerInstanceScenario({
+            manager,
+            playerContextOne,
+            playerContextTwo,
+            hostContext,
+            evidenceDirectory,
+            partySize,
+            runId,
+            password,
+            verifier,
+            signal,
+          });
+        }
+        return runBundleScenario({
+          id: scenario.id,
+          repositoryRoot,
+          sandboxRoot,
+          manager,
+          hostContext,
+          playerContexts,
+          evidenceDirectory,
+          originalSnapshot,
+          corrupt: scenario.id === "broken-bundle",
+          password,
+          verifier,
+          signal,
+        });
+      },
       signal,
-    ));
-    records.push(await recordScenario(
-      "missing-bundle",
-      expected.get("missing-bundle"),
-      password,
-      verifier,
-      () => runBundleScenario({
-        id: "missing-bundle",
-        repositoryRoot,
-        sandboxRoot,
-        manager,
-        hostContext,
-        playerContexts,
-        evidenceDirectory,
-        originalSnapshot,
-        corrupt: false,
-        password,
-        verifier,
-        signal,
-      }),
-      signal,
-    ));
-    records.push(await recordScenario(
-      "broken-bundle",
-      expected.get("broken-bundle"),
-      password,
-      verifier,
-      () => runBundleScenario({
-        id: "broken-bundle",
-        repositoryRoot,
-        sandboxRoot,
-        manager,
-        hostContext,
-        playerContexts,
-        evidenceDirectory,
-        originalSnapshot,
-        corrupt: true,
-        password,
-        verifier,
-        signal,
-      }),
-      signal,
-    ));
-  } finally {
-    try {
-      await manager.stop();
-    } catch (error) {
-      const record = records.find((item) => item.id === "broken-bundle") ?? records.at(-1);
-      if (record) {
-        record.verdict = "FAIL";
-        record.observed = {
-          ...(record.observed && typeof record.observed === "object" ? record.observed : {}),
-          managed_host_teardown_error: safeErrorMessage(error, password, verifier),
-        };
+    ),
+    normalizeResult: (record, scenario) => completeLifecycleRecord(record, scenario, browsers),
+    finalize: async ({ results }) => {
+      let teardownError = null;
+      try {
+        await manager.stop();
+      } catch (error) {
+        teardownError = error;
+        const record = results.find((item) => item.id === "broken-bundle") ?? results.at(-1);
+        if (record) {
+          record.verdict = "FAIL";
+          record.observed = {
+            ...(record.observed && typeof record.observed === "object" ? record.observed : {}),
+            managed_host_teardown_error: safeErrorMessage(error, password, verifier),
+          };
+        }
       }
-    }
-    await Promise.all([
-      playerContextOne?.close().catch(() => {}),
-      playerContextTwo?.close().catch(() => {}),
-      hostContext?.close().catch(() => {}),
-      chromeBrowser?.close().catch(() => {}),
-      firefoxBrowser?.close().catch(() => {}),
-    ]);
-    if (closeBrowserOnAbort) signal?.removeEventListener("abort", closeBrowserOnAbort);
-  }
+      await Promise.all([
+        playerContextOne?.close().catch(() => {}),
+        playerContextTwo?.close().catch(() => {}),
+        hostContext?.close().catch(() => {}),
+        chromeBrowser?.close().catch(() => {}),
+        firefoxBrowser?.close().catch(() => {}),
+      ]);
+      if (closeBrowserOnAbort) signal?.removeEventListener("abort", closeBrowserOnAbort);
+      if (teardownError !== null) throw new Error("Managed host teardown failed.");
+    },
+  });
 
-  return completeLifecycleRecords(records, scenarioCatalog, browsers);
+  return lifecycle;
 }
