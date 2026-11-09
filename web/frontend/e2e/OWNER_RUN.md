@@ -684,3 +684,49 @@ does not replace review.
   failure occurred.
 - `2`: at least one lifecycle scenario is BLOCKED because managed mode was not
   enabled. BLOCKED is not a PASS.
+
+## Inert P1 handshake observation
+
+The committed `--observe-handshake` mode is a single P1 Chrome player login and
+Socket.IO handshake observation. It is not the N2 gate, does not run gameplay,
+host UI, or lifecycle scenarios, and cannot produce an N2 PASS. It infers the
+managed Chrome `--agent-run` path; inherited owner credentials are refused.
+Require a routine reviewed PR, green CI, and protected merge. Before any live
+booking, run this dry-run on the clean protected-merged SHA:
+
+```sh
+npm --prefix web/frontend run test:n2-gate -- --dry-run --observe-handshake
+```
+
+The dry-run imports the complete observer runtime, including the official
+`playwright/test` `expect` export and the shared `loginPlayer` helper, but does
+not generate credentials, contact endpoints, bind ports, start processes or
+browsers, seed the sandbox, or create evidence. Stop if any import or tripwire
+check fails. The primary then performs exclusive bind-and-close probes for
+8360/8370 and acquires the existing coordination lock with holder `N agent-run`,
+gate `N2-handshake-observe`, this ruling, and a maximum 60-minute window. Do not
+change the shared booking/lock implementation.
+
+For the sole authorized live observation, prepare a fresh isolated P1
+`tmp/combat_capture` sandbox, keep both owner credential variables unset, and
+use a unique run ID under
+`tmp/router-rollout/v2-network/n2-handshake-observe/<run-id>/`:
+
+```sh
+RUN_ID="n2-$(date -u +%Y%m%dT%H%M%S)000Z-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(4).toString("hex"))')"
+unset NEQ_N2_PLAYER_PASSWORD NEQ_PLAYER_PASSWORD_VERIFIER
+export NEQ_N2_HOST_URL=http://127.0.0.1:8360
+export NEQ_N2_PLAYER_URL=http://127.0.0.1:8370
+npm --prefix web/frontend run test:n2-gate -- \
+  --observe-handshake \
+  --evidence-dir "tmp/router-rollout/v2-network/n2-handshake-observe/${RUN_ID}"
+```
+
+The mode uses only the player page and TCP-only readiness for host port 8360.
+Any provider reservation/refusal is FAIL; an absent, invalid, or inactive
+ledger is BLOCKED, never zero. No retry is allowed. After teardown, confirm the
+driver's final bind-and-close probes and preserve all evidence. The primary
+releases the existing booking/lock only after cleanup and port review, then
+reports the observed booleans exactly (`unknown` remains `unknown`) and STOPs.
+Preserve the historical Chrome setup FAIL and unknown image outcome; this
+observation does not retry the N2 gate or close task 6.2.
