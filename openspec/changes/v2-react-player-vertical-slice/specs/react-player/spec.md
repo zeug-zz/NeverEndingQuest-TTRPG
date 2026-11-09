@@ -146,6 +146,22 @@ The catalog SHALL identify Firefox-dependent checks. Chrome results SHALL remain
 - **WHEN** the driver completes a Chrome-only run
 - **THEN** it records each Chrome check and each Firefox-dependent check separately, preserves the Firefox block reason and actual Chrome/host versions in both run records, and reports overall BLOCKED rather than PASS
 
+### Requirement: N2 gate execution SHALL stop on the first unsafe outcome
+
+The driver SHALL validate Playwright status and required persisted evidence before managed lifecycle work. Lifecycle scenarios SHALL run serially and stop after failure, timeout, interruption, malformed/missing evidence, non-Firefox block, or provider-budget stop. Unexecuted scenarios/checks SHALL be `BLOCKED` with the stop cause. Expected Firefox-only blocks SHALL NOT stop valid Chrome checks or lifecycle execution. Automatic retry/resume is forbidden.
+
+#### Scenario: Failed Playwright result stops managed lifecycle
+- **WHEN** the Playwright child fails, or a required persisted Playwright scenario/check is missing, malformed, failed, or blocked outside the expected Firefox-only case
+- **THEN** no managed lifecycle scenario is dispatched, each unexecuted lifecycle scenario/check is recorded `BLOCKED` with the stop cause, and cleanup plus final evidence are still attempted
+
+#### Scenario: Managed lifecycle stops at the first failure
+- **WHEN** a managed lifecycle scenario fails, times out, has a non-Firefox block, or cannot safely continue under the provider-attempt budget
+- **THEN** no later lifecycle scenario is dispatched, the remaining required scenario/check evidence is recorded `BLOCKED`, and bundle restoration, teardown, and final evidence are still attempted
+
+#### Scenario: Firefox-only blocks do not stop Chrome coverage
+- **WHEN** Chrome checks have valid outcomes and the only `BLOCKED` checks are Firefox-dependent checks with reason `firefox-unavailable-in-sandbox`
+- **THEN** applicable Chrome checks and managed lifecycle scenarios continue, while the overall browser coverage remains non-PASS
+
 ### Requirement: Agent-run credentials SHALL be confined and ephemeral
 
 `--agent-run` SHALL require `--manage-sandbox-host --browsers chrome`. It SHALL validate the managed sandbox and bundle before credential generation, reject inherited owner credentials, and generate none during dry-run. It SHALL keep the throwaway password and verifier out of argv, logs, and evidence.

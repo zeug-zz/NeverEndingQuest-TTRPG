@@ -23,18 +23,23 @@ import {
 } from "./browser-contract.mjs";
 import {
   browserBlockedChecks,
-  missingScenarioChecks,
   summarizeN2Results,
 } from "./browser-coverage.mjs";
 import { createAgentRunCredentials, rejectInheritedAgentCredentials } from "./agent-run-credentials.mjs";
 import { SandboxHostManager, validateManagedSandboxRoot, validateSandboxPython } from "./managed-host.mjs";
 import { readVerifiedBundleSnapshot, runManagedLifecycleScenarios } from "./managed-lifecycle.mjs";
+import {
+  makeBlockedScenarioResult,
+  N2_MANAGED_LIFECYCLE_IDS,
+  runLifecycleAfterPlaywright,
+} from "./n2-execution-control.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import {
   copyProviderAttemptLedger,
   parseProviderAttemptLedger,
   providerAttemptLedgerPath,
+  providerAttemptBudgetVerdict,
   PROVIDER_ATTEMPT_BUDGET,
   requireProviderAttemptBudgetForGameplay,
 } from "./provider-attempt-budget.mjs";
@@ -228,11 +233,26 @@ function appendScenario(path, result) {
 }
 
 function readScenarioResults(path) {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  if (!existsSync(path)) {
+    return { records: [], errors: [{ line: 0, reason: "scenario-results-file-missing" }] };
+  }
+  let contents;
+  try {
+    contents = readFileSync(path, "utf8");
+  } catch {
+    return { records: [], errors: [{ line: 0, reason: "scenario-results-file-unreadable" }] };
+  }
+  const records = [];
+  const errors = [];
+  for (const [index, line] of contents.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch {
+      errors.push({ line: index + 1, reason: "malformed-json" });
+    }
+  }
+  return { records, errors };
 }
 
 function sanitizeOutput(text, password, verifier = process.env.NEQ_PLAYER_PASSWORD_VERIFIER) {
@@ -405,11 +425,40 @@ let providerBudgetStatus = "pending";
 let providerBudgetCopyError = null;
 let providerBudgetLedgerCopy = { copied: false, destination: null };
 let providerBudgetRefusals = [];
+let providerBudgetReadError = null;
 let managedTeardownStatus = options.manageSandboxHost ? "not-started" : "not-applicable";
 let requestedSignal = null;
 let signalStopError = null;
 let signalStopPromise = null;
 const shutdownController = new AbortController();
+
+function readCurrentProviderBudgetDecision() {
+  try {
+    providerBudgetReport = parseProviderAttemptLedger(
+      readFileSync(expectedProviderAttemptLedger, "utf8"),
+      { budget: PROVIDER_ATTEMPT_BUDGET, runId },
+    );
+    providerBudgetRefusals = providerBudgetReport.refusals;
+    providerBudgetReadError = null;
+    const decision = providerAttemptBudgetVerdict(providerBudgetReport);
+    return {
+      ...decision,
+      kind: decision.verdict === "FAIL"
+        ? "provider-budget-refusal"
+        : decision.verdict === "BLOCKED"
+          ? "provider-budget-unavailable"
+          : null,
+    };
+  } catch (error) {
+    providerBudgetReadError = error;
+    return {
+      verdict: "BLOCKED",
+      kind: "provider-budget-unavailable",
+      reason: "provider-attempt-ledger-invalid-or-unavailable",
+    };
+  }
+}
+
 const handleSignal = (signal) => {
   requestedSignal ??= signal;
   if (!shutdownController.signal.aborted) shutdownController.abort();
@@ -503,56 +552,55 @@ if (startupError === null && !shutdownController.signal.aborted) {
   child = { status: 130, error: null, stdout: "", stderr: "runner interrupted before launch" };
 }
 
+let scenarioEvidence = readScenarioResults(scenarioFile);
+let lifecycleExecution = null;
+let executionStopCause = null;
+const persistedLifecycleIds = new Set();
+const lifecycleEvidenceErrors = [];
 if (options.manageSandboxHost) {
-  if (startupError !== null || managedHost === null || shutdownController.signal.aborted) {
-    const lifecycleError = startupError ?? new Error("The managed lifecycle was interrupted by an operator signal.");
-    lifecycleResults = SCENARIO_CATALOG
-      .filter((scenario) => ["server-instance-change", "missing-bundle", "broken-bundle"].includes(scenario.id))
-      .map((scenario) => ({
-        id: scenario.id,
-        expected: scenario.description,
-        observed: providerBudgetBlocker !== null
-          ? { blocked: sanitizeOutput(String(providerBudgetBlocker), playerPassword, playerVerifier) }
-          : { error: sanitizeOutput(String(lifecycleError), playerPassword, playerVerifier) },
-        verdict: providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
-        checks: missingScenarioChecks(
-          scenario,
-          options.browsers,
-          providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
-          providerBudgetBlocker !== null ? "provider-attempt-budget-inactive" : "managed-lifecycle-did-not-run",
-        ),
-        artifacts: [],
-        recorded_at_utc: utcNow(),
-      }));
-  } else {
-    try {
-      lifecycleResults = await runManagedLifecycleScenarios({
-        repositoryRoot: REPOSITORY_ROOT,
-        sandboxRoot: join(REPOSITORY_ROOT, "tmp", "combat_capture"),
-        evidenceDirectory: options.evidenceDir,
-        manager: managedHost,
-        partySize: Number(options.partySize),
-        runId,
-        password: playerPassword,
-        verifier: playerVerifier,
-        browsers: options.browsers,
-        scenarioCatalog: SCENARIO_CATALOG,
-        signal: shutdownController.signal,
-      });
-    } catch (error) {
-      lifecycleResults = SCENARIO_CATALOG
-        .filter((scenario) => ["server-instance-change", "missing-bundle", "broken-bundle"].includes(scenario.id))
-        .map((scenario) => ({
-          id: scenario.id,
-          expected: scenario.description,
-          observed: { error: sanitizeOutput(String(error), playerPassword, playerVerifier) },
-          verdict: "FAIL",
-          checks: missingScenarioChecks(scenario, options.browsers, "FAIL", "managed-lifecycle-did-not-run"),
-          artifacts: [],
-          recorded_at_utc: utcNow(),
-        }));
-    }
-  }
+  const budgetDecision = readCurrentProviderBudgetDecision();
+  lifecycleExecution = await runLifecycleAfterPlaywright({
+    child,
+    records: scenarioEvidence.records,
+    evidenceErrors: scenarioEvidence.errors,
+    scenarioCatalog: SCENARIO_CATALOG,
+    browsers: options.browsers,
+    lifecycleScenarioIds: N2_MANAGED_LIFECYCLE_IDS,
+    providerBudgetDecision: budgetDecision,
+    requestedSignal,
+    runLifecycle: () => runManagedLifecycleScenarios({
+      repositoryRoot: REPOSITORY_ROOT,
+      sandboxRoot: join(REPOSITORY_ROOT, "tmp", "combat_capture"),
+      evidenceDirectory: options.evidenceDir,
+      manager: managedHost,
+      partySize: Number(options.partySize),
+      runId,
+      password: playerPassword,
+      verifier: playerVerifier,
+      browsers: options.browsers,
+      scenarioCatalog: SCENARIO_CATALOG,
+      signal: shutdownController.signal,
+      beforeScenario: () => shutdownController.signal.aborted
+        ? {
+          verdict: "BLOCKED",
+          kind: "managed-lifecycle-interrupted",
+          reason: "The managed lifecycle was interrupted by an operator signal.",
+        }
+        : readCurrentProviderBudgetDecision(),
+      onResult: async (record) => {
+        try {
+          appendScenario(scenarioFile, record);
+          persistedLifecycleIds.add(record.id);
+          scenarioEvidence.records.push(record);
+        } catch {
+          lifecycleEvidenceErrors.push("managed-lifecycle-scenario-evidence-write-failed");
+          throw new Error("The managed lifecycle scenario evidence could not be preserved.");
+        }
+      },
+    }),
+  });
+  lifecycleResults = lifecycleExecution.lifecycleResults;
+  executionStopCause = lifecycleExecution.stopCause ?? lifecycleExecution.lifecycleStopCause;
 }
 
 if (managedHost !== null) {
@@ -605,31 +653,34 @@ try {
   providerBudgetStatus = "ledger_evidence_invalid_or_unavailable";
 }
 
-for (const result of lifecycleResults) appendScenario(scenarioFile, result);
+for (const result of lifecycleResults) {
+  if (persistedLifecycleIds.has(result.id)) continue;
+  try {
+    appendScenario(scenarioFile, result);
+    persistedLifecycleIds.add(result.id);
+  } catch {
+    lifecycleEvidenceErrors.push("managed-lifecycle-scenario-evidence-write-failed");
+  }
+  scenarioEvidence.records.push(result);
+}
 
-let results = readScenarioResults(scenarioFile);
-const presentIds = new Set(results.map((result) => result.id));
+let results = scenarioEvidence.records;
+const presentIds = new Set(results
+  .filter((record) => record !== null && typeof record === "object" && !Array.isArray(record) && typeof record.id === "string")
+  .map((record) => record.id));
 for (const scenario of SCENARIO_CATALOG) {
   if (!presentIds.has(scenario.id)) {
-    appendScenario(scenarioFile, {
-      id: scenario.id,
-      expected: scenario.description,
-      observed: providerBudgetBlocker !== null
-        ? { blocked: "Provider attempt budget was not active before gameplay; no browser inputs were dispatched." }
-        : "Playwright did not produce a scenario result; see the sanitized runner output.",
-      verdict: providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
-      checks: missingScenarioChecks(
-        scenario,
-        options.browsers,
-        providerBudgetBlocker !== null ? "BLOCKED" : "FAIL",
-        providerBudgetBlocker !== null ? "provider-attempt-budget-inactive" : "scenario-result-missing",
-      ),
-      artifacts: [],
-      recorded_at_utc: utcNow(),
-    });
+    executionStopCause ??= {
+      kind: "required-scenario-result-missing",
+      severity: "BLOCKED",
+      reason: "A required scenario did not produce a persisted result.",
+      scenario_id: scenario.id,
+    };
+    const blockedResult = makeBlockedScenarioResult(scenario, executionStopCause);
+    appendScenario(scenarioFile, blockedResult);
+    results.push(blockedResult);
   }
 }
-results = readScenarioResults(scenarioFile);
 
 let finalRunRecord = JSON.parse(readFileSync(runFile, "utf8"));
 const result = summarizeN2Results(results, options.browsers);
@@ -657,6 +708,11 @@ finalRunRecord.browsers_run = Array.isArray(finalRunRecord.browsers_run)
   : [];
 finalRunRecord.blocked = result.blocked;
 finalRunRecord.browser_coverage_status = result.browser_coverage_status;
+finalRunRecord.scenario_execution = {
+  lifecycle_started: lifecycleExecution?.lifecycleStarted === true,
+  stop_cause: executionStopCause,
+  evidence_errors: [...scenarioEvidence.errors, ...lifecycleEvidenceErrors],
+};
 finalRunRecord.verdict_scope = "driver-assertions-only; Overseer owns the live N2 verdict";
 if (!finalRunRecord.client_build_id) {
   finalRunRecord.metadata_error = "Player shell did not provide client_build_id from the manifest.";
@@ -667,12 +723,24 @@ if (!hasN2BrowserVersions(finalRunRecord.browser_instances, options.browsers)) {
     : "Chrome and host-context browser versions were not recorded.";
 }
 result.provider_attempt_budget = finalRunRecord.provider_attempt_budget;
+result.scenario_execution = finalRunRecord.scenario_execution;
 if (providerBudgetBlocker !== null) {
   if (result.verdict !== "FAIL") result.verdict = "BLOCKED";
   result.runner_error = "The managed host did not prove active provider-attempt enforcement before gameplay.";
 } else if (startupError || child?.error || child?.status !== 0 || finalRunRecord.metadata_error || providerBudgetCopyError) {
   result.verdict = "FAIL";
   result.runner_error = "Playwright runner or required run metadata failed; see sanitized output.";
+}
+if (providerBudgetReadError !== null && result.verdict !== "FAIL") {
+  result.verdict = "BLOCKED";
+}
+if (executionStopCause?.severity === "FAIL") {
+  result.verdict = "FAIL";
+} else if (executionStopCause !== null && result.verdict === "PASS") {
+  result.verdict = "BLOCKED";
+}
+if (lifecycleEvidenceErrors.length > 0) {
+  result.verdict = "FAIL";
 }
 if (providerBudgetRefusals.length > 0) {
   result.verdict = "FAIL";

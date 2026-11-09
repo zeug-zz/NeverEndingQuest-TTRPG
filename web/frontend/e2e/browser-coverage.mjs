@@ -15,13 +15,22 @@ export function browserBlockedChecks(scenarios, browsers) {
 }
 
 export function blockedChecksFromResults(results) {
-  return results.flatMap((scenario) => (scenario.checks ?? [])
-    .filter((check) => check.verdict === "BLOCKED")
-    .map((check) => ({
+  if (!Array.isArray(results)) return [];
+  return results.flatMap((scenario) => {
+    if (scenario === null || typeof scenario !== "object" || Array.isArray(scenario) ||
+        !Array.isArray(scenario.checks)) return [];
+    return scenario.checks
+      .filter((check) => check !== null && typeof check === "object" && check.verdict === "BLOCKED")
+      .map((check) => ({
       scenario_id: scenario.id,
       check_id: check.id,
-      reason: check.reason ?? check.observed?.reason ?? "blocked-check-without-reason",
-    })));
+      reason: check.reason ?? (
+        check.observed !== null && typeof check.observed === "object"
+          ? check.observed.reason
+          : null
+      ) ?? "blocked-check-without-reason",
+      }));
+  });
 }
 
 export function missingScenarioChecks(scenario, browsers, scenarioVerdict, reason) {
@@ -51,12 +60,26 @@ export function missingScenarioChecks(scenario, browsers, scenarioVerdict, reaso
 
 export function summarizeN2Results(results, browsers) {
   const counts = { PASS: 0, FAIL: 0, BLOCKED: 0 };
-  for (const result of results) {
-    if (Object.hasOwn(counts, result.verdict)) counts[result.verdict] += 1;
+  const safeResults = Array.isArray(results) ? results : [];
+  let invalidEvidence = !Array.isArray(results);
+  for (const result of safeResults) {
+    if (result === null || typeof result !== "object" || Array.isArray(result) ||
+        !Object.hasOwn(counts, result.verdict) || !Array.isArray(result.checks) ||
+        result.checks.some((check) => check === null || typeof check !== "object" ||
+          Array.isArray(check) || !Object.hasOwn(counts, check.verdict))) {
+      invalidEvidence = true;
+      counts.FAIL += 1;
+      continue;
+    }
+    counts[result.verdict] += 1;
   }
-  const blocked = blockedChecksFromResults(results);
-  const checkVerdicts = results.flatMap((result) => (result.checks ?? []).map((check) => check.verdict));
-  let verdict = counts.FAIL > 0 || checkVerdicts.includes("FAIL")
+  const blocked = blockedChecksFromResults(safeResults);
+  const checkVerdicts = safeResults.flatMap((result) =>
+    result !== null && typeof result === "object" && Array.isArray(result.checks)
+      ? result.checks.filter((check) => check !== null && typeof check === "object").map((check) => check.verdict)
+      : [],
+  );
+  let verdict = invalidEvidence || counts.FAIL > 0 || checkVerdicts.includes("FAIL")
     ? "FAIL"
     : counts.BLOCKED > 0 || blocked.length > 0
       ? "BLOCKED"
@@ -74,7 +97,7 @@ export function summarizeN2Results(results, browsers) {
   return {
     verdict,
     counts,
-    scenarios: results,
+    scenarios: safeResults,
     blocked,
     browser_coverage_status: blocked.length > 0 ? "incomplete" : "complete",
   };

@@ -71,6 +71,26 @@ and port 8360 is available. Never use the installed campaign or port 8357.
   evidence. This mode does not change the owner-supplied credential path or the
   default `chrome+firefox` behavior.
 
+## Fail-fast and stopped-run handling
+
+- The driver validates the Playwright child exit/signal/error result and every
+  required persisted scenario/check record before starting managed lifecycle
+  scenarios. A failed child, timeout, missing/malformed required evidence,
+  failed Chrome check, non-Firefox BLOCKED check, operator interruption, or
+  provider-budget refusal/exhaustion stops further scenario dispatch.
+- `server-instance-change`, `missing-bundle`, and `broken-bundle` run serially.
+  After the first stop, every required scenario/check not executed is written as
+  `BLOCKED` with the bounded stop cause; do not infer PASS from omitted records.
+  The only expected non-stopping block is `firefox-unavailable-in-sandbox` on a
+  Firefox-only check in an explicit Chrome-only run. Valid Chrome checks and
+  managed lifecycle scenarios continue, but Firefox blocks still prevent an
+  overall PASS.
+- A stop does not skip cleanup: the driver still attempts bundle restoration,
+  owned host/browser teardown, provider-ledger copy, and final run/summary
+  evidence. Review the stop cause and all evidence before deciding what to do
+  next. The driver does not automatically retry or resume; any separately
+  authorized later invocation requires a new reviewed run and evidence path.
+
 ## Provider-free full pre-booking preflight
 
 After the fix is merged, run this complete offline preflight from the clean
