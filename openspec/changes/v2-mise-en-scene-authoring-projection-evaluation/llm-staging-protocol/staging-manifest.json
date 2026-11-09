@@ -5,10 +5,10 @@
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af",
-    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/generation-parameters.json": "050af35685e9c6cc42a897087aaf2ee1db0974995e20d732a9f8226d9a2a26da",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/generation-parameters.json": "ba74ef4c76e65944dcdfdbe129505b01c5c59f876822043742e1a2505822ec37",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/output-contract.schema.json": "9ff913e38368c4269902ea79e4cc230a8c25194e1f60d7c3e9b7f3325ef7a318",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.draft.md": "72f7a40f90e0e1bc8d7147f6ad0443d37662f5997c2ed6774f26447dd12fe94e",
-    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md": "b2d512545ddceb8e9b3eaca9ba75fdf577fdf9ca7ffdf951c0321847692ab882",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md": "ffacf9c9dfdc98d3e940ba8f2ead6ad6a547901ea78c6452879f983bcb9b0f44",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/scenes.json": "47829e42a1843f4f01c8742e1238869d99b6a22ed5ff52b8424fd47819fddf55",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
@@ -25,8 +25,8 @@
     "scripts/mise_en_scene/llm_staging/client.py": "d93e95edb1f6f941e2cc63cfcf7d0baef39ecbc984924f2dfcec33d8e70ba824",
     "scripts/mise_en_scene/llm_staging/materialize.py": "9ce5d9f540e3fab23249362c1c54a9596fc6e07d847a4ca0d343a40506354c5f",
     "scripts/mise_en_scene/llm_staging/output_gates.py": "3569c6adafb63dca7cc4ca0d1bc247009e32505bb1e8b4bd94de6851bb2a0ed4",
-    "scripts/mise_en_scene/llm_staging/transport.py": "9cab28d4ce1e23f693eb856c3489b4106240480b7128962e273d558b7c07750a",
-    "scripts/test_mise_en_scene_llm_staging.py": "1a2ff1790a8e49065a62d5e64a42e03f5171226b87f07542125c7c42a6dd0bbf"
+    "scripts/mise_en_scene/llm_staging/transport.py": "0ddec26c74b93cf4a2f2c31f79d69bd7ca3c0b63c7808a4b410b7d4165c98783",
+    "scripts/test_mise_en_scene_llm_staging.py": "cda6203b1ece6a4c7ef1fe35201f606a15ee56cb94041dd77fc3ea447feaec4a"
   },
   "attempt_order": [
     "into_the_deepvault:scene:ha003-i02",

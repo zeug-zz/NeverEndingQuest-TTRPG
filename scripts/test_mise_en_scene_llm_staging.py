@@ -462,6 +462,9 @@ class StagingClientTests(unittest.TestCase):
         self.assertEqual(current["requested_model_id"], MODEL_ID)
         self.assertEqual(current["request_count"], 1)
         self.assertEqual(current["raw_listing_sha256"], "d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13")
+        parameters = json.loads((FROZEN_ROOT / "generation-parameters.json").read_text(encoding="utf-8"))
+        self.assertEqual(REQUEST_TIMEOUT_SECONDS, 180.0)
+        self.assertEqual(parameters["transport_policy"]["request_timeout_seconds"], 180.0)
         self.assertEqual(client_module.MANIFEST_PATH, FROZEN_ROOT / "staging-manifest.json")
         self.assertNotEqual(client_module.MANIFEST_PATH.parent, STAGING_ROOT)
 

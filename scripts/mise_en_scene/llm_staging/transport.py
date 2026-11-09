@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_ID = "openai/gpt-6-luna"
-REQUEST_TIMEOUT_SECONDS = 30.0
+REQUEST_TIMEOUT_SECONDS = 180.0
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _USAGE_KEY_RE = re.compile(r"^[a-z_]{1,40}$")
