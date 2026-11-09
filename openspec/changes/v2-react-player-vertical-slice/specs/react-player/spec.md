@@ -217,3 +217,51 @@ The driver SHALL attach bounded counters to the actual Playwright child stdout/s
 #### Scenario: Unsafe agent-run or dry-run refuses credential generation
 - **WHEN** agent-run is requested without managed Chrome-only mode, with a non-empty inherited owner credential, with failed confinement preflight, or in dry-run mode
 - **THEN** the driver refuses the incompatible live mode or prints only the dry-run plan, without generating a credential or starting a child process
+
+### Requirement: N2 handshake observation SHALL be a single inert player pass
+
+The existing N2 harness SHALL provide an opt-in `--observe-handshake` mode for one real player login and Socket.IO handshake observation with a P1 party. The mode SHALL use one Chrome player only and SHALL NOT run gate scenarios, gameplay, or lifecycle work; the default N2 gate behavior SHALL remain unchanged.
+
+#### Scenario: Handshake observation runs without host UI or gameplay
+- **WHEN** the managed handshake-observation mode runs
+- **THEN** it uses only the P1 Chrome player, performs no host browser or host UI HTTP request (host readiness is TCP-only), submits no gameplay input, and runs no P4 or N2 gate/lifecycle scenario
+
+#### Scenario: Default N2 gate remains unchanged
+- **WHEN** the driver runs without `--observe-handshake`
+- **THEN** it retains the existing default browser set and full N2 gate flow, independently of the one-pass observation mode
+
+### Requirement: Handshake observation SHALL prove zero provider dispatches
+
+The observation SHALL require an active managed provider ledger before login and SHALL prove zero reservations and zero refusals before login, after the pass, and in the final ledger. Any reservation, refusal, or missing, invalid, or inactive ledger SHALL prevent a PASS.
+
+#### Scenario: Active ledger remains at zero
+- **WHEN** the active ledger is checked before login, after the observation, and after owned-host teardown
+- **THEN** each check records zero reservations and zero refusals and the evidence distinguishes active-zero from a guard that did not start
+
+#### Scenario: Ledger is inactive or a dispatch is reserved
+- **WHEN** the ledger is absent, invalid, inactive, records any reservation, or records any refusal
+- **THEN** a reservation or refusal is recorded as FAIL, an absent/invalid/inactive ledger is BLOCKED without claiming zero use, the observed guard state is retained, evidence and owned teardown are attempted, and the mode does not retry
+
+### Requirement: Handshake evidence SHALL be bounded and teardown-safe
+
+Observation evidence SHALL reuse the existing allowlisted Socket.IO diagnostics and evidence writer, preserve unobservable booleans as `unknown`, and exclude credential/header values. Setup evidence and pending diagnostics SHALL be written before the player page/browser closes; owned teardown and final port probes SHALL be attempted on every outcome.
+
+#### Scenario: Handshake diagnostics are persisted
+- **WHEN** the player-origin Socket.IO handshake is observed
+- **THEN** evidence contains only bounded method, path, status, transport, and safe Origin/Host/session-cookie booleans, with unobservable values recorded as `unknown`
+
+#### Scenario: Setup, teardown, or port verification fails
+- **WHEN** setup, evidence writing, owned-host teardown, final bind-and-close port probing, or existing booking release fails
+- **THEN** the failure is recorded when possible, cleanup and release are attempted, and the run stops without retry
+
+### Requirement: Handshake dry-run SHALL preflight the full runtime import graph
+
+`--dry-run --observe-handshake` SHALL import and resolve every runtime module used by the mode without endpoint access, port binding, process/browser/listener launch, provider dispatch, credential generation, sandbox seeding, or evidence-file creation. An unresolved import SHALL fail the preflight.
+
+#### Scenario: Full import preflight succeeds without side effects
+- **WHEN** the mode is run with `--dry-run --observe-handshake`
+- **THEN** its complete runtime import graph is loaded and no endpoint, listener, provider, credential, seed, or evidence-file side effect occurs
+
+#### Scenario: Runtime module cannot be resolved
+- **WHEN** an import required by the observation mode is unresolved
+- **THEN** the dry-run exits nonzero and side-effect tripwires confirm that no observation or setup side effect occurred

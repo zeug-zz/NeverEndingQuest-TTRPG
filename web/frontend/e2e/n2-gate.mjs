@@ -7,10 +7,9 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_N2_BROWSER_SET,
@@ -49,6 +48,7 @@ import {
   writePlaywrightDriverOutputEvidence,
 } from "./playwright-driver-output.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
+import { atomicJsonWrite } from "./evidence-writer.mjs";
 import {
   copyProviderAttemptLedger,
   parseProviderAttemptLedger,
@@ -86,6 +86,7 @@ Options:
   --agent-run                Generate throwaway credentials for managed tmp/combat_capture only;
                              requires --manage-sandbox-host --browsers chrome
   --manage-sandbox-host      Start/restart/stop only this run's verified tmp/combat_capture host
+  --observe-handshake        Observe one P1 Chrome player login only; never runs N2 scenarios
   --dry-run                  Print the plan without contacting endpoints or creating files
   --help                     Show this help
 
@@ -133,6 +134,8 @@ function parseArguments(argv) {
     manageSandboxHost: false,
     agentRun: false,
     dryRun: false,
+    observeHandshake: false,
+    browserSetExplicit: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -152,13 +155,22 @@ function parseArguments(argv) {
       options.agentRun = true;
       continue;
     }
+    if (token === "--observe-handshake") {
+      options.observeHandshake = true;
+      continue;
+    }
     if (["--party-size", "--evidence-dir", "--browsers"].includes(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) usageError(`${token} requires a value`);
       index += 1;
-      if (token === "--party-size") options.partySize = value;
+      if (token === "--party-size") {
+        options.partySize = value;
+      }
       if (token === "--evidence-dir") options.evidenceDir = value;
-      if (token === "--browsers") options.browserSet = value;
+      if (token === "--browsers") {
+        options.browserSet = value;
+        options.browserSetExplicit = true;
+      }
       continue;
     }
     usageError(`Unknown option: ${token}`);
@@ -169,16 +181,28 @@ function parseArguments(argv) {
   } catch (error) {
     usageError(error.message);
   }
-  if (options.agentRun && !options.manageSandboxHost) {
-    usageError("--agent-run requires --manage-sandbox-host");
-  }
-  if (options.agentRun && options.browserSet !== "chrome") {
-    usageError("--agent-run requires --browsers chrome");
-  }
-
   options.partySize ??= process.env.NEQ_N2_PARTY_SIZE ?? null;
   if (options.partySize !== null && !["1", "4"].includes(options.partySize)) {
     usageError("--party-size and NEQ_N2_PARTY_SIZE must be 1 or 4");
+  }
+  if (options.observeHandshake) {
+    if (options.partySize === "4") usageError("--observe-handshake supports only P1; --party-size 4 is refused");
+    if (options.browserSetExplicit && options.browserSet !== "chrome") {
+      usageError("--observe-handshake supports only --browsers chrome");
+    }
+    options.partySize = "1";
+    options.browserSet = "chrome";
+    options.browsers = parseN2BrowserSet("chrome");
+    options.manageSandboxHost = true;
+    options.agentRun = true;
+    if (options.dryRun) options.evidenceDir = null;
+  } else {
+    if (options.agentRun && !options.manageSandboxHost) {
+      usageError("--agent-run requires --manage-sandbox-host");
+    }
+    if (options.agentRun && options.browserSet !== "chrome") {
+      usageError("--agent-run requires --browsers chrome");
+    }
   }
   if (options.evidenceDir !== null) {
     options.evidenceDir = resolveEvidenceDirectory(options.evidenceDir);
@@ -236,12 +260,6 @@ function makeRunId() {
   return `n2-${timestamp}-${suffix}`;
 }
 
-function atomicJsonWrite(path, payload) {
-  const temporary = `${path}.pending`;
-  writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  renameSync(temporary, path);
-}
-
 function appendScenario(path, result) {
   writeFileSync(path, `${JSON.stringify(result)}\n`, { encoding: "utf8", flag: "a" });
 }
@@ -255,6 +273,99 @@ function sanitizeOutput(text, password, verifier = process.env.NEQ_PLAYER_PASSWO
 }
 
 const options = parseArguments(process.argv.slice(2));
+if (options.observeHandshake) {
+  try {
+    rejectInheritedAgentCredentials(process.env);
+  } catch (error) {
+    usageError(error.message);
+  }
+  let observerModule;
+  let observerRuntime;
+  try {
+    observerModule = await import("./observe-handshake.mjs");
+    observerRuntime = await observerModule.loadObserveHandshakeRuntime();
+  } catch {
+    console.error("[N2] Handshake observation runtime import preflight failed.");
+    process.exit(1);
+  }
+  if (options.dryRun) {
+    console.log(JSON.stringify({
+      mode: "dry-run",
+      observation_mode: "N2_HANDSHAKE_OBSERVATION",
+      n2_gate_result: "NOT_N2_GATE",
+      party_size: 1,
+      player_count: 1,
+      browser: "Chrome",
+      managed_sandbox_host: true,
+      agent_run: true,
+      runtime_import_preflight: "passed",
+      runtime_modules: observerModule.OBSERVE_HANDSHAKE_RUNTIME_IMPORTS.map(([, specifier]) => specifier),
+      credentials_generated: false,
+      endpoint_accessed: false,
+      ports_bound: false,
+      process_started: false,
+      browser_started: false,
+      listener_started: false,
+      provider_dispatched: false,
+      sandbox_seeded: false,
+      evidence_created: false,
+    }, null, 2));
+    process.exit(0);
+  }
+
+  if (options.partySize !== "1" || options.browsers.join("+") !== "chrome" ||
+      !options.manageSandboxHost || !options.agentRun) {
+    usageError("--observe-handshake requires exactly one managed P1 Chrome agent-run player");
+  }
+  if (!options.evidenceDir) usageError("Live --observe-handshake requires --evidence-dir");
+  const observationEvidenceRoot = join(TMP_ROOT, "router-rollout", "v2-network", "n2-handshake-observe");
+  const runId = relative(observationEvidenceRoot, options.evidenceDir);
+  if (!runId || runId === "." || runId.includes(sep) || runId.startsWith("..") ||
+      !/^n2-[0-9]{8}T[0-9]{9}Z-[a-f0-9]{8}$/.test(runId) || basename(options.evidenceDir) !== runId) {
+    usageError("Handshake observation evidence must be tmp/router-rollout/v2-network/n2-handshake-observe/<run-id>");
+  }
+  if (!options.manageSandboxHost) usageError("Live --observe-handshake requires managed sandbox mode");
+  const hostUrl = validateEndpoint("NEQ_N2_HOST_URL", process.env.NEQ_N2_HOST_URL ?? "", 8360);
+  const playerUrl = validateEndpoint("NEQ_N2_PLAYER_URL", process.env.NEQ_N2_PLAYER_URL ?? "", 8370);
+  const workspaceIdentity = readWorkspaceIdentity(REPOSITORY_ROOT);
+  if (workspaceIdentity.git_sha === "unknown") usageError("A readable git commit SHA is required for a live handshake observation");
+  if (workspaceIdentity.git_worktree_state !== "clean") {
+    usageError("Live handshake observation requires a clean merged checkout; no evidence or server was started");
+  }
+  if (!existsSync(join(REPOSITORY_ROOT, "tmp"))) usageError("Repository tmp/ directory is required for evidence");
+  if (existsSync(options.evidenceDir)) usageError("Handshake observation evidence directory already exists");
+
+  const sandboxRoot = resolve(REPOSITORY_ROOT, "tmp", "combat_capture");
+  let pythonPath;
+  try {
+    validateManagedSandboxRoot(REPOSITORY_ROOT, sandboxRoot);
+    pythonPath = validateSandboxPython(REPOSITORY_ROOT);
+    readVerifiedBundleSnapshot(REPOSITORY_ROOT, sandboxRoot);
+    rejectInheritedAgentCredentials(process.env);
+  } catch {
+    usageError("Handshake observation managed-sandbox or credential preflight failed");
+  }
+
+  const result = await observerModule.runObserveHandshake({
+    repositoryRoot: REPOSITORY_ROOT,
+    sandboxRoot,
+    pythonPath,
+    hostUrl,
+    playerUrl,
+    evidenceDirectory: options.evidenceDir,
+    runId,
+    environment: process.env,
+    workspaceIdentity,
+  }, observerRuntime);
+  console.log(JSON.stringify({
+    mode: "N2_HANDSHAKE_OBSERVATION",
+    n2_gate_result: result.n2_gate_result,
+    observation_status: result.observation_status,
+    run_id: result.run_id,
+    failure_categories: result.failure_categories,
+  }));
+  process.exit(result.exit_code);
+}
 if (options.agentRun) {
   try {
     rejectInheritedAgentCredentials(process.env);

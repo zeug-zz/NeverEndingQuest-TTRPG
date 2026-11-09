@@ -178,18 +178,29 @@ export function validateSandboxPython(repositoryRoot) {
   return python;
 }
 
-export function isLoopbackPortFree(port) {
+export function isLoopbackPortFree(port, onProbe = () => {}) {
   return new Promise((resolveResult) => {
     const server = createServer();
     let settled = false;
-    const finish = (isFree) => {
+    const finish = (isFree, error = null) => {
       if (settled) return;
       settled = true;
+      try {
+        onProbe({
+          port,
+          status: isFree ? "free" : "error",
+          error_code: error && typeof error.code === "string" && /^[A-Z0-9_]{1,32}$/.test(error.code)
+            ? error.code
+            : null,
+        });
+      } catch {
+        // Probe reporting must not change the port-check result.
+      }
       resolveResult(isFree);
     };
-    server.once("error", () => finish(false));
+    server.once("error", (error) => finish(false, error));
     server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
-      server.close((error) => finish(!error));
+      server.close((error) => finish(!error, error));
     });
   });
 }

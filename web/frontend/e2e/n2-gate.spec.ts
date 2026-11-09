@@ -20,6 +20,7 @@ import {
   parseN2BrowserSet,
 } from "./browser-contract.mjs";
 import { compareHostAndPlayerParty } from "./party-coherence.mjs";
+import { loginPlayer, readPlayerVersion, type PlayerVersion } from "./login-player.mjs";
 import { SocketRequestDiagnosticsCollector } from "./request-diagnostics.mjs";
 import {
   providerAttemptLedgerPath,
@@ -89,7 +90,6 @@ type PlayerSnapshot = Readonly<{
   }>;
 }>;
 
-type PlayerVersion = Readonly<{ clientBuildId: string; protocolVersion: number }>;
 type SocketPacket = Readonly<{ event: string; payload: unknown }>;
 type BrowserSocketRequest = Readonly<{
   events: readonly Readonly<{ name: string; payload: unknown }>[];
@@ -216,8 +216,18 @@ test.beforeAll(async () => {
     if (playerTwo) requestDiagnostics?.attach(playerTwo, "player-b-firefox");
     attachConsoleEvidence(hostPage, "host-ui-chrome-context");
 
-    const firstPlayerSetup = loginPlayer(playerOne);
-    const secondPlayerSetup = playerTwo ? loginPlayer(playerTwo) : null;
+    const firstPlayerSetup = loginPlayer(playerOne, {
+      playerUrl: PLAYER_URL,
+      password: PLAYER_PASSWORD,
+      expect,
+      withSetupStage,
+    });
+    const secondPlayerSetup = playerTwo ? loginPlayer(playerTwo, {
+      playerUrl: PLAYER_URL,
+      password: PLAYER_PASSWORD,
+      expect,
+      withSetupStage,
+    }) : null;
     await settleSetupOperations([
       firstPlayerSetup,
       ...(secondPlayerSetup ? [secondPlayerSetup] : []),
@@ -998,22 +1008,6 @@ test("host-only-route-event-and-bundle-probes: player origin refuses host surfac
   });
 });
 
-async function loginPlayer(page: Page): Promise<PlayerVersion> {
-  await withSetupStage("player_shell_load", async () => {
-    await page.goto(PLAYER_URL, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Player login" })).toBeVisible();
-  });
-  await withSetupStage("player_authentication", async () => {
-    await page.getByLabel("Password").fill(PLAYER_PASSWORD);
-    await page.getByRole("button", { name: "Log in" }).click();
-    await expect(page.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
-  });
-  await withSetupStage("player_connection_wait", async () => {
-    await expect(page.getByText("Connected", { exact: true })).toBeVisible();
-  });
-  return withSetupStage("client_metadata", () => readPlayerVersion(page));
-}
-
 async function loadHostUi(page: Page): Promise<void> {
   await withSetupStage("host_ui_load", async () => {
     await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
@@ -1093,19 +1087,6 @@ function attachConsoleEvidence(page: Page, contextName: string): void {
   });
   page.on("pageerror", (error) => {
     writeConsoleEvidence(activeScenarioId, contextName, "pageerror", error.message);
-  });
-}
-
-async function readPlayerVersion(page: Page): Promise<PlayerVersion> {
-  return page.evaluate(() => {
-    const buildMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-client-build"]');
-    const protocolMeta = document.querySelector<HTMLMetaElement>('meta[name="neq-protocol-version"]');
-    if (!buildMeta?.content || !protocolMeta?.content) {
-      throw new Error("Player shell is missing manifest build/protocol metadata.");
-    }
-    const protocolVersion = Number(protocolMeta.content);
-    if (!Number.isInteger(protocolVersion)) throw new Error("Player protocol metadata is invalid.");
-    return { clientBuildId: buildMeta.content, protocolVersion };
   });
 }
 
