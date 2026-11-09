@@ -217,6 +217,8 @@ These are recommendations, not decisions. None authorizes production work.
   `d1_owner_audit.csv`; `plans/v2-spatial.md`, S3; owner feedback, IMPORTANT
   section.
 
+  Owner-approved clarification: open facts are TITAN hooks, resolved only by Python-validated campaign commits (never Narrator narration); see [ADR-0034, "Open facts and TITAN resolution"](../../../../adrs/0034-spatial-authority-and-projections.md#open-facts-and-titan-resolution).
+
 ### S4 - shared player map
 
 - **Recommendation:** Treat the player map as a secondary, cumulative,

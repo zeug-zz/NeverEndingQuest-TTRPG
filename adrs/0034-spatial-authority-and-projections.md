@@ -59,6 +59,32 @@ the owner explicitly accepts it.
 - Runtime narration may enrich atmosphere but may not relocate committed
   anchors, change topology, or commit a new actionable fact by assertion.
 
+### Open facts and TITAN resolution
+
+- Established facts are source-extracted or validated Builder decisions; they
+  are canonically fixed. Open facts are deliberately undecided and explicitly
+  unknown from Builder authoring or source extraction (known unknowns), and are
+  TITAN hooks. Undeclared facts are unknown unknowns that TITAN may
+  introduce as the world evolves.
+- Only TITAN at runtime, or the Builder during authoring, may resolve an open
+  fact through a Python-validated commit. The Narrator never resolves one by
+  narration. Once committed, the resolution is canonical and stable thereafter.
+- TITAN resolutions are campaign-instance facts, never published module truth;
+  campaigns may resolve the same open fact differently. A resolution may not
+  contradict established facts, topology, or knowledge boundaries. Mechanics
+  remain governed by Firelight/Python under ADR-0033.
+- Hidden GM facts, such as a campfire-pit trigger or effect, are established,
+  not open, and are not re-decidable by TITAN. Optional Builder hints or
+  constraints may guide resolution, including tone, candidate choices, or seeds.
+- The conceptual provenance class `resolved_by_titan` carries `campaign_id`,
+  `commit_reference`, and `time`. This runtime resolution extends the
+  authoring-mode provenance discussion above; the source/Builder-only unknown
+  rule there does not prohibit a TITAN commit. See
+  [the TITAN game engine plan](../plans/v2-titan-game-engine.md): runtime world
+  evolution remains TITAN's responsibility and does not transfer module
+  authoring to TITAN. This is a documentation decision only; no runtime or
+  schema implementation is made here.
+
 ### Projections by audience
 
 - Keep one spatial truth and project it separately for each audience. A
