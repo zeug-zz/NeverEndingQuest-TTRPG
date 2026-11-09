@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neq.llm-staging-output.v1",
+  "title": "NEQ LLM staging output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "scene_id", "fixture", "arrival"],
+  "properties": {
+    "schema": {"const": "neq.llm_staging_output.v1"},
+    "scene_id": {"type": "string", "minLength": 1},
+    "fixture": {"$ref": "#/$defs/fixture"},
+    "arrival": {"$ref": "#/$defs/arrival"}
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "source_refs"],
+      "properties": {
+        "class": {"enum": ["source_extracted", "builder_authored", "unknown"]},
+        "source_refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "orientation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "frame", "provenance"],
+      "properties": {
+        "status": {"enum": ["known", "unknown"]},
+        "frame": {"type": ["string", "null"]},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {"id": {"type": "string"}, "kind": {"type": "string"}}
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subject_id", "predicate", "object_id", "status", "value", "provenance"],
+      "properties": {
+        "id": {"type": "string"},
+        "subject_id": {"type": "string"},
+        "predicate": {"type": "string"},
+        "object_id": {"type": ["string", "null"]},
+        "status": {"enum": ["known", "unknown", "not_applicable"]},
+        "value": {},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "module_id", "topology_id", "scene", "fixed_anchors", "initial_mobile_occupants", "facts", "extension_seams"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "module_id": {"type": "string"},
+        "topology_id": {"type": "string"},
+        "scene": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "scope", "orientation"],
+          "properties": {
+            "id": {"type": "string"},
+            "scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "kind"],
+              "properties": {"id": {"type": "string"}, "kind": {"type": "string"}}
+            },
+            "orientation": {"$ref": "#/$defs/orientation"}
+          }
+        },
+        "fixed_anchors": {"type": "array", "items": {"$ref": "#/$defs/entity"}, "uniqueItems": true},
+        "initial_mobile_occupants": {"type": "array", "items": {"$ref": "#/$defs/entity"}, "uniqueItems": true},
+        "facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}, "uniqueItems": true},
+        "extension_seams": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["multi_cell_extents", "stage_relations", "unknown_metrics", "audience_knowledge", "arrival_claims"],
+          "properties": {
+            "multi_cell_extents": {"type": "array", "items": {"type": "object"}},
+            "stage_relations": {"type": "array", "items": {"type": "object"}},
+            "unknown_metrics": {"type": "array", "items": {"type": "object"}},
+            "audience_knowledge": {"type": "array", "items": {"type": "object"}},
+            "arrival_claims": {"type": "array", "items": {"type": "object"}}
+          }
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "fact_id", "predicate", "subject_id", "object_id", "status", "value", "provenance", "span", "choice", "success"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "fact_id": {"type": "string"},
+        "predicate": {"type": "string"},
+        "subject_id": {"type": "string"},
+        "object_id": {"type": ["string", "null"]},
+        "status": {"enum": ["known", "unknown", "not_applicable"]},
+        "value": {},
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "span": {"type": "string", "minLength": 1},
+        "choice": {"type": ["string", "null"]},
+        "success": {"type": ["string", "null"]}
+      }
+    },
+    "arrival": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_id", "topology", "arrival_segments", "source_provenance", "metadata", "orientation", "cue_states", "next_section", "claims"],
+      "properties": {
+        "fixture_id": {"type": "string"},
+        "topology": {"type": "object"},
+        "arrival_segments": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "role", "text", "fact_ids"],
+              "properties": {
+                "id": {"type": "string"},
+                "role": {"const": "approach"},
+                "text": {"type": "string", "minLength": 1, "maxLength": 512},
+                "fact_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "role", "text", "fact_ids"],
+              "properties": {
+                "id": {"type": "string"},
+                "role": {"const": "threshold"},
+                "text": {"type": "string", "minLength": 1, "maxLength": 512},
+                "fact_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "role", "text", "fact_ids"],
+              "properties": {
+                "id": {"type": "string"},
+                "role": {"const": "focal"},
+                "text": {"type": "string", "minLength": 1, "maxLength": 512},
+                "fact_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+              }
+            }
+          ],
+          "items": false
+        },
+        "source_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_ref", "path", "section", "sha256", "source_kind", "legacy_truth_verified"],
+          "properties": {
+            "source_ref": {"type": "string"},
+            "path": {"type": "string"},
+            "section": {"type": "string"},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "source_kind": {"const": "published_module"},
+            "legacy_truth_verified": {"const": false}
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authorship", "development_only", "held_out", "legacy_truth_verified", "llm_builder_tested"],
+          "properties": {
+            "authorship": {"const": "builder_authored_initial_scene"},
+            "development_only": {"const": true},
+            "held_out": {"const": false},
+            "legacy_truth_verified": {"const": false},
+            "llm_builder_tested": {"const": true}
+          }
+        },
+        "orientation": {"$ref": "#/$defs/orientation"},
+        "cue_states": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cue", "status", "fact_id", "reason"],
+            "properties": {
+              "cue": {"enum": ["light", "sound", "weather"]},
+              "status": {"enum": ["known", "unknown", "not_applicable"]},
+              "fact_id": {"type": ["string", "null"]},
+              "reason": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "next_section": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "from_scene_id", "to_scene_id", "transition_fact_id", "perception_fact_id", "provenance", "reason"],
+          "properties": {
+            "status": {"enum": ["known", "unknown", "not_applicable"]},
+            "from_scene_id": {"type": ["string", "null"]},
+            "to_scene_id": {"type": ["string", "null"]},
+            "transition_fact_id": {"type": ["string", "null"]},
+            "perception_fact_id": {"type": ["string", "null"]},
+            "provenance": {"$ref": "#/$defs/provenance"},
+            "reason": {"type": ["string", "null"]}
+          }
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["segment_id", "claims"],
+            "properties": {
+              "segment_id": {"type": "string"},
+              "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

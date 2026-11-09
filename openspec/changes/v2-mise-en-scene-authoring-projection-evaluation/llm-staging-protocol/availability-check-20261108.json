@@ -1,0 +1,12 @@
+{
+  "check": "openrouter public model listing, single read-only GET (permitted by S ruling 2026-11-08T20:41:09Z item 2; not a generation call)",
+  "url": "https://openrouter.ai/api/v1/models",
+  "method": "GET via context-mode ctx_fetch_and_index (sandboxed, unauthenticated, no credentials)",
+  "performed_utc": "2026-11-08T20:43Z",
+  "requested_model": "openai/gpt-6-luna",
+  "observed": "Listing fetched (377 indexed sections, 1285.3KB). Indexed search surfaced openai/gpt-6-luna-pro and openai/gpt-6-luna-pro:batch, whose descriptions reference the base model page https://openrouter.ai/openai/gpt-6-luna. The exact base-id entry was NOT surfaced by the indexed search tool.",
+  "verdict": "UNCONFIRMED",
+  "raw_payload_preserved": false,
+  "note": "No second GET was made. Exact availability must be confirmed from a preserved raw listing before any generation call; requesting Overseer permission for one script-based GET that saves the raw JSON and its SHA-256.",
+  "generation_calls": 0
+}

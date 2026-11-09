@@ -1,0 +1,845 @@
+{
+  "approved_topology": {
+    "builder_authored_relation_policy": {
+      "approach_to_threshold": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported",
+      "coordinates_are_metric_or_compass_evidence": false,
+      "may_add_nodes_or_source_connections": false,
+      "threshold_to_focal": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported"
+    },
+    "builder_authored_role_slots": [
+      {
+        "id": "xhalruuns_masquerade:entity:usable-space-ao02",
+        "role": "usable_space",
+        "scope": "schematic only; no metric extent"
+      }
+    ],
+    "compass_frames": [],
+    "explicit_map_directions": [
+      {
+        "direction": "east",
+        "from": "xhalruuns_masquerade:entity:location-ao02",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "to": "xhalruuns_masquerade:entity:room-ao03"
+      },
+      {
+        "direction": "west",
+        "from": "xhalruuns_masquerade:entity:location-ao02",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "to": "xhalruuns_masquerade:entity:room-ao01"
+      }
+    ],
+    "fixed_anchor_ids": [
+      "xhalruuns_masquerade:entity:location-ao02",
+      "xhalruuns_masquerade:entity:room-ao01",
+      "xhalruuns_masquerade:entity:room-ao03",
+      "xhalruuns_masquerade:entity:narrow-passage",
+      "xhalruuns_masquerade:entity:grand-archway",
+      "xhalruuns_masquerade:entity:circular-sigil",
+      "xhalruuns_masquerade:entity:usable-space-ao02"
+    ],
+    "internal_layout_edges": [],
+    "mobile_occupant_ids": [
+      "xhalruuns_masquerade:entity:veil-wraith"
+    ],
+    "module_id": "xhalruuns_masquerade",
+    "nodes": [
+      {
+        "id": "xhalruuns_masquerade:entity:location-ao02",
+        "kind": "threshold",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:room-ao01",
+        "kind": "approach",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "source_status": "connected_room_id_only"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:room-ao03",
+        "kind": "approach",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "source_status": "connected_room_id_only"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:narrow-passage",
+        "kind": "feature",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:grand-archway",
+        "kind": "feature",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:circular-sigil",
+        "kind": "feature",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:veil-wraith",
+        "kind": "monster",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+      },
+      {
+        "id": "xhalruuns_masquerade:entity:usable-space-ao02",
+        "kind": "usable_space",
+        "source_ref": null,
+        "source_status": "builder_authored_role_slot_not_a_source_entity"
+      }
+    ],
+    "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+    "scene_node_id": "xhalruuns_masquerade:entity:location-ao02",
+    "schema": "neq.llm_staging_approved_topology.v1",
+    "scope_id": "xhalruuns_masquerade:scope:tsu001",
+    "source_connections": [
+      {
+        "from": "xhalruuns_masquerade:entity:location-ao02",
+        "relation": "map_connected",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "to": "xhalruuns_masquerade:entity:room-ao01"
+      },
+      {
+        "from": "xhalruuns_masquerade:entity:location-ao02",
+        "relation": "map_connected",
+        "source_ref": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+        "to": "xhalruuns_masquerade:entity:room-ao03"
+      }
+    ],
+    "stage_role_bindings": {
+      "approach": [
+        "xhalruuns_masquerade:entity:room-ao01",
+        "xhalruuns_masquerade:entity:room-ao03"
+      ],
+      "focal_anchor": [
+        "xhalruuns_masquerade:entity:grand-archway",
+        "xhalruuns_masquerade:entity:circular-sigil"
+      ],
+      "threshold": [
+        "xhalruuns_masquerade:entity:location-ao02"
+      ],
+      "usable_space": [
+        "xhalruuns_masquerade:entity:usable-space-ao02"
+      ]
+    },
+    "stage_role_entity_kinds": {
+      "approach": "approach",
+      "focal_anchor": "focal_anchor",
+      "threshold": "threshold",
+      "usable_space": "usable_space"
+    },
+    "topology_id": "xhalruuns_masquerade:topology:ao02"
+  },
+  "protected_unknowns": {
+    "guarded_content_markers": [
+      {
+        "exact_value": "Main entrance to the Warrens; the corridor is narrow but navigable. Trap and spatial confusion present hazards.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=AO02].accessibility"
+      },
+      {
+        "exact_value": "The Veilsplit Threshold sets the tone for the Warrens, introducing reality-warping hazards, environmental confusion, and hints of the dangers to come.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=AO02].adventureSummary"
+      },
+      {
+        "exact_value": "Perception DC 13: Notice the faint outline of the pressure plate.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=AO02].dcChecks[0]"
+      },
+      {
+        "exact_value": "Arcana DC 15: Identify the runes' connection to planar boundaries.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=AO02].dcChecks[1]"
+      },
+      {
+        "exact_value": "This is the main entry point. The trap is visible to careful investigation. The Veil Wraith is a minor but memorable encounter. Environmental hazards (shifting gravity, spatial loops) can be introduced here.",
+        "marker_id": "dmInstructions-5",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=AO02].dmInstructions"
+      },
+      {
+        "exact_value": "A massive arch inscribed with shimmering fractal sigils, the boundary between the mundane and the warped.",
+        "marker_id": "doors-6",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].description"
+      },
+      {
+        "exact_value": "Grand Archway",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].type"
+      },
+      {
+        "exact_value": "A Veil Wraith emerges if the party lingers or makes noise. Unsettling echoes may force Wisdom saving throws (DC 12) to avoid mild confusion.",
+        "marker_id": "encounters-9",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=AO02].encounters[0].description"
+      },
+      {
+        "exact_value": "Crystaline lens (acts as a one-use Detect Magic)",
+        "marker_id": "lootTable-10",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[0]"
+      },
+      {
+        "exact_value": "Fragment of a mask with shifting patterns",
+        "marker_id": "lootTable-11",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[1]"
+      },
+      {
+        "exact_value": "Scroll of Misty Step (written in mirrored script)",
+        "marker_id": "lootTable-12",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[2]"
+      },
+      {
+        "exact_value": "A slithering, translucent aberration that phases in and out of existence, seeking to drag intruders into the cracks between worlds.",
+        "marker_id": "monsters-13",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].description"
+      },
+      {
+        "exact_value": "Veil Wraith",
+        "marker_id": "monsters-14",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].name"
+      },
+      {
+        "exact_value": "Use Wraith or Shadow with teleport ability (bonus action, 15 ft.)",
+        "marker_id": "monsters-15",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].stats"
+      },
+      {
+        "exact_value": "The threshold's runes hint at a ritual to stabilize the passage--potentially useful deeper within.",
+        "marker_id": "plotHooks-16",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[0]"
+      },
+      {
+        "exact_value": "Scraps of clothing and a dropped insignia suggest someone recently passed through in haste.",
+        "marker_id": "plotHooks-17",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[1]"
+      },
+      {
+        "exact_value": "A psychic echo reveals a moment of betrayal connected to the deeper shrine.",
+        "marker_id": "plotHooks-18",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[2]"
+      },
+      {
+        "exact_value": "1d6 piercing damage from hidden spikes",
+        "marker_id": "traps-19",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].damage"
+      },
+      {
+        "exact_value": "A hidden pressure plate that triggers when stepped on.",
+        "marker_id": "traps-20",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].description"
+      },
+      {
+        "exact_value": "Simple Pressure Plate",
+        "marker_id": "traps-21",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].name"
+      }
+    ],
+    "protected_unknowns_must_not_be_promoted": true,
+    "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+    "schema": "neq.llm_staging_protected_unknowns.v1",
+    "source_packet_sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+    "unknowns": [
+      {
+        "predicate": "interior_compass_bearings",
+        "reason": "No selected source field establishes compass bearings within the room.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "metric_distance_and_scale",
+        "reason": "Room coordinates and tactical-grid labels are schematic and establish no metric.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "access_beyond_explicit_records",
+        "reason": "Connections do not establish a door, access, or traversability; use only explicit source door/access facts.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "visibility_and_sensory_range",
+        "reason": "The selected source packet does not establish range, line of sight, audibility, or sensory reach.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "sensory_gradients",
+        "reason": "Ambient description does not by itself establish a light, sound, or weather gradient.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "movement_cost_and_legality",
+        "reason": "This study makes no movement-cost or mechanical-legality ruling.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "prior_runtime_party",
+        "reason": "Prior-play PCs and their positions are not supplied and must not be authored.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "public_paraphrase_of_guarded_content",
+        "reason": "Exact marker scans do not detect semantic paraphrases; Overseer semantic review is mandatory.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "linked_view_or_frontage",
+        "reason": "The approved sample has no linked-view/frontage test.",
+        "status": "not_tested"
+      }
+    ]
+  },
+  "reference_coverage": {
+    "extents": {
+      "boundary": [
+        {
+          "id": "scene_boundary",
+          "reason": "The selected packet establishes no multi-cell boundary or schematic extent.",
+          "status": "not_applicable"
+        }
+      ],
+      "path": [
+        {
+          "id": "scene_path",
+          "reason": "The selected packet establishes no multi-cell path extent; a map connection alone has no internal path or traversal semantics.",
+          "status": "not_applicable"
+        }
+      ],
+      "terrain": [
+        {
+          "id": "scene_terrain",
+          "reason": "The selected packet lists features but establishes no multi-cell terrain placement or extent.",
+          "status": "not_applicable"
+        }
+      ]
+    },
+    "schema_version": 1,
+    "stage_relations": {
+      "approach_to_threshold": {
+        "from_id": "xhalruuns_masquerade:entity:room-ao01",
+        "status": "required",
+        "to_id": "xhalruuns_masquerade:entity:location-ao02"
+      },
+      "threshold_to_focal": {
+        "from_id": "xhalruuns_masquerade:entity:location-ao02",
+        "status": "required",
+        "to_id": "xhalruuns_masquerade:entity:grand-archway"
+      }
+    },
+    "usable_spaces": [
+      {
+        "entity_id": "xhalruuns_masquerade:entity:usable-space-ao02",
+        "id": "scene_usable_space",
+        "schematic_cells": [
+          [
+            0,
+            0
+          ]
+        ],
+        "status": "required"
+      }
+    ]
+  },
+  "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+  "schema": "neq.llm_staging_expected_inputs.v1",
+  "source_facts": {
+    "facts": [
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-cf7be2382363",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].locationId",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-locationid",
+        "status": "source_extracted",
+        "value": "AO02"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-5f6943545cda",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].name",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-name",
+        "status": "source_extracted",
+        "value": "Veilsplit Threshold"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-25c126998b1e",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].type",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-type",
+        "status": "source_extracted",
+        "value": "entrance"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-faa312867799",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].description",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-description",
+        "status": "source_extracted",
+        "value": "A twisting, narrow corridor opens into a vast stone archway carved with fractal runes. The air here is thick with shimmering distortion, as if the fabric of reality is thin. Subtle vibrations can be felt through the floor, and voices sometimes echo--your own, but warped and unfamiliar. The ground is broken by a simple, deceptive pressure plate and the faint outline of a circular sigil. Beyond the arch, the path leads deeper into the unreality of the Warrens."
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-d892ddaceba8",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].coordinates",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-coordinates",
+        "status": "source_extracted",
+        "value": "X11Y10"
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-e9fbc217c760",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].connectivity",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-connectivity",
+        "status": "source_extracted",
+        "value": [
+          "AO01",
+          "AO03"
+        ]
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-c65659c87512",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].areaConnectivity",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-areaconnectivity",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-b1ea7856643e",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].areaConnectivityId",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-areaconnectivityid",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-baf93acf8d1f",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].aliases",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-aliases",
+        "status": "source_extracted",
+        "value": [
+          "Veilsplit Threshold",
+          "AO02"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-909ba3f79100",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].tactical_grid",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-tactical-grid",
+        "status": "source_extracted",
+        "value": [
+          "northwest:cover",
+          "north:approach",
+          "northeast:cover",
+          "west:approach",
+          "center_entrance:Veilsplit Threshold",
+          "east:approach",
+          "southwest:cover",
+          "south:approach",
+          "southeast:cover"
+        ]
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-7f059293c22a",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].npcs",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-npcs",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-127bbb492aaf",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].monsters",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-monsters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "A slithering, translucent aberration that phases in and out of existence, seeking to drag intruders into the cracks between worlds.",
+            "name": "Veil Wraith",
+            "stats": "Use Wraith or Shadow with teleport ability (bonus action, 15 ft.)"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-852b72cf668f",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].lootTable",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-loottable",
+        "status": "source_extracted",
+        "value": [
+          "Crystaline lens (acts as a one-use Detect Magic)",
+          "Fragment of a mask with shifting patterns",
+          "Scroll of Misty Step (written in mirrored script)"
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-03f78ae67afa",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].plotHooks",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-plothooks",
+        "status": "source_extracted",
+        "value": [
+          "The threshold's runes hint at a ritual to stabilize the passage--potentially useful deeper within.",
+          "Scraps of clothing and a dropped insignia suggest someone recently passed through in haste.",
+          "A psychic echo reveals a moment of betrayal connected to the deeper shrine."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-bcafa05c3d41",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].dmInstructions",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-dminstructions",
+        "status": "source_extracted",
+        "value": "This is the main entry point. The trap is visible to careful investigation. The Veil Wraith is a minor but memorable encounter. Environmental hazards (shifting gravity, spatial loops) can be introduced here."
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-964ea4b006bb",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].doors",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-doors",
+        "status": "source_extracted",
+        "value": [
+          {
+            "breakDC": 20,
+            "description": "A massive arch inscribed with shimmering fractal sigils, the boundary between the mundane and the warped.",
+            "keyname": "",
+            "lockDC": 0,
+            "locked": false,
+            "name": "Grand Archway",
+            "trap": "",
+            "trapped": false,
+            "type": "regular"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-49e62d202161",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].traps",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-traps",
+        "status": "source_extracted",
+        "value": [
+          {
+            "damage": "1d6 piercing damage from hidden spikes",
+            "description": "A hidden pressure plate that triggers when stepped on.",
+            "detectDC": 13,
+            "disableDC": 15,
+            "name": "Simple Pressure Plate",
+            "triggerDC": 12
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-e3962eb2a77a",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].dcChecks",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-dcchecks",
+        "status": "source_extracted",
+        "value": [
+          "Perception DC 13: Notice the faint outline of the pressure plate.",
+          "Arcana DC 15: Identify the runes' connection to planar boundaries."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-72e6b00bf365",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].accessibility",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-accessibility",
+        "status": "source_extracted",
+        "value": "Main entrance to the Warrens; the corridor is narrow but navigable. Trap and spatial confusion present hazards."
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-a86f6e18a1ee",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].dangerLevel",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-dangerlevel",
+        "status": "source_extracted",
+        "value": "High"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-bf566a2c9e94",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].features",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-features",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "A cramped, winding corridor where the walls seem to flex and breathe.",
+            "name": "Narrow Passage"
+          },
+          {
+            "description": "A monumental stone arch inscribed with fractal runes, shimmering with unstable energy.",
+            "name": "Grand Archway"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-66b07b7bcef7",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].encounters",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-encounters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "A Veil Wraith emerges if the party lingers or makes noise. Unsettling echoes may force Wisdom saving throws (DC 12) to avoid mild confusion."
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-e79717856150",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02].adventureSummary",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-locations-locationid-ao02-adventuresummary",
+        "status": "source_extracted",
+        "value": "The Veilsplit Threshold sets the tone for the Warrens, introducing reality-warping hazards, environmental confusion, and hints of the dangers to come."
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-ffbd08dd3b74",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].id",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-id",
+        "status": "source_extracted",
+        "value": "AO02"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-b2f7b5ad72df",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].type",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-type",
+        "status": "source_extracted",
+        "value": "entrance"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-c3dee1f8176f",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].connections",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-connections",
+        "status": "source_extracted",
+        "value": [
+          "AO01",
+          "AO03"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-6e3cf276c340",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].coordinates",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-coordinates",
+        "status": "source_extracted",
+        "value": "X11Y10"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-d421ffefa79d",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].directions",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-directions",
+        "status": "source_extracted",
+        "value": {
+          "east": "AO03",
+          "west": "AO01"
+        }
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-5b283f96762c",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].tags",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-tags",
+        "status": "source_extracted",
+        "value": [
+          "hub"
+        ]
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-3aaac5c52c34",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].purpose",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-purpose",
+        "status": "source_extracted",
+        "value": "transition"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-6d764ce8c545",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].landmark",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-landmark",
+        "status": "source_extracted",
+        "value": false
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-600c38a7420f",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].dangerLevel",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-dangerlevel",
+        "status": "source_extracted",
+        "value": "high"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "xhalruuns_masquerade:fact:tsu001-ao02-1a622d1d2f92",
+        "source_pointer": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#map.rooms[id=AO02].name",
+        "source_ref": "source:modules/xhalruuns_masquerade/areas/tsu001/tsu001-ao02-map-rooms-id-ao02-name",
+        "status": "source_extracted",
+        "value": "Veilsplit Threshold"
+      }
+    ],
+    "guarded_content_markers": [
+      {
+        "exact_value": "Main entrance to the Warrens; the corridor is narrow but navigable. Trap and spatial confusion present hazards.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=AO02].accessibility"
+      },
+      {
+        "exact_value": "The Veilsplit Threshold sets the tone for the Warrens, introducing reality-warping hazards, environmental confusion, and hints of the dangers to come.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=AO02].adventureSummary"
+      },
+      {
+        "exact_value": "Perception DC 13: Notice the faint outline of the pressure plate.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=AO02].dcChecks[0]"
+      },
+      {
+        "exact_value": "Arcana DC 15: Identify the runes' connection to planar boundaries.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=AO02].dcChecks[1]"
+      },
+      {
+        "exact_value": "This is the main entry point. The trap is visible to careful investigation. The Veil Wraith is a minor but memorable encounter. Environmental hazards (shifting gravity, spatial loops) can be introduced here.",
+        "marker_id": "dmInstructions-5",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=AO02].dmInstructions"
+      },
+      {
+        "exact_value": "A massive arch inscribed with shimmering fractal sigils, the boundary between the mundane and the warped.",
+        "marker_id": "doors-6",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].description"
+      },
+      {
+        "exact_value": "Grand Archway",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=AO02].doors[0].type"
+      },
+      {
+        "exact_value": "A Veil Wraith emerges if the party lingers or makes noise. Unsettling echoes may force Wisdom saving throws (DC 12) to avoid mild confusion.",
+        "marker_id": "encounters-9",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=AO02].encounters[0].description"
+      },
+      {
+        "exact_value": "Crystaline lens (acts as a one-use Detect Magic)",
+        "marker_id": "lootTable-10",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[0]"
+      },
+      {
+        "exact_value": "Fragment of a mask with shifting patterns",
+        "marker_id": "lootTable-11",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[1]"
+      },
+      {
+        "exact_value": "Scroll of Misty Step (written in mirrored script)",
+        "marker_id": "lootTable-12",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=AO02].lootTable[2]"
+      },
+      {
+        "exact_value": "A slithering, translucent aberration that phases in and out of existence, seeking to drag intruders into the cracks between worlds.",
+        "marker_id": "monsters-13",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].description"
+      },
+      {
+        "exact_value": "Veil Wraith",
+        "marker_id": "monsters-14",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].name"
+      },
+      {
+        "exact_value": "Use Wraith or Shadow with teleport ability (bonus action, 15 ft.)",
+        "marker_id": "monsters-15",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=AO02].monsters[0].stats"
+      },
+      {
+        "exact_value": "The threshold's runes hint at a ritual to stabilize the passage--potentially useful deeper within.",
+        "marker_id": "plotHooks-16",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[0]"
+      },
+      {
+        "exact_value": "Scraps of clothing and a dropped insignia suggest someone recently passed through in haste.",
+        "marker_id": "plotHooks-17",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[1]"
+      },
+      {
+        "exact_value": "A psychic echo reveals a moment of betrayal connected to the deeper shrine.",
+        "marker_id": "plotHooks-18",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=AO02].plotHooks[2]"
+      },
+      {
+        "exact_value": "1d6 piercing damage from hidden spikes",
+        "marker_id": "traps-19",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].damage"
+      },
+      {
+        "exact_value": "A hidden pressure plate that triggers when stepped on.",
+        "marker_id": "traps-20",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].description"
+      },
+      {
+        "exact_value": "Simple Pressure Plate",
+        "marker_id": "traps-21",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=AO02].traps[0].name"
+      }
+    ],
+    "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+    "schema": "neq.llm_staging_source_facts.v1",
+    "source_file": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json",
+    "source_file_sha256": "1f77e3c4598efddf0db3f9a6f52015b98e00f03f4a37fe2e91882813e4a97b2d",
+    "source_identity": "Xhalruuns_Masquerade:TSU001:AO02",
+    "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json",
+    "source_packet_sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+    "source_reference": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+  }
+}

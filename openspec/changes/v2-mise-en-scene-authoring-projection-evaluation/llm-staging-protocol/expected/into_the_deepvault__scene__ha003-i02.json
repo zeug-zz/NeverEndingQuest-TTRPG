@@ -1,0 +1,1037 @@
+{
+  "approved_topology": {
+    "builder_authored_relation_policy": {
+      "approach_to_threshold": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported",
+      "coordinates_are_metric_or_compass_evidence": false,
+      "may_add_nodes_or_source_connections": false,
+      "threshold_to_focal": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported"
+    },
+    "builder_authored_role_slots": [
+      {
+        "id": "into_the_deepvault:entity:usable-space-i02",
+        "role": "usable_space",
+        "scope": "schematic only; no metric extent"
+      }
+    ],
+    "compass_frames": [],
+    "explicit_map_directions": [
+      {
+        "direction": "east",
+        "from": "into_the_deepvault:entity:location-i02",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "to": "into_the_deepvault:entity:room-i03"
+      },
+      {
+        "direction": "west",
+        "from": "into_the_deepvault:entity:location-i02",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "to": "into_the_deepvault:entity:room-i01"
+      }
+    ],
+    "fixed_anchor_ids": [
+      "into_the_deepvault:entity:location-i02",
+      "into_the_deepvault:entity:room-i01",
+      "into_the_deepvault:entity:room-i03",
+      "into_the_deepvault:entity:chains",
+      "into_the_deepvault:entity:cell-bars",
+      "into_the_deepvault:entity:runic-pleas",
+      "into_the_deepvault:entity:cell-door-derval-s-cell",
+      "into_the_deepvault:entity:west-door-from-alchemy-vault",
+      "into_the_deepvault:entity:east-door-to-shatterglass-experimentum",
+      "into_the_deepvault:entity:usable-space-i02"
+    ],
+    "internal_layout_edges": [],
+    "mobile_occupant_ids": [
+      "into_the_deepvault:entity:trapped-miner-derval",
+      "into_the_deepvault:entity:ironbound-guardian"
+    ],
+    "module_id": "into_the_deepvault",
+    "nodes": [
+      {
+        "id": "into_the_deepvault:entity:location-i02",
+        "kind": "threshold",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:room-i01",
+        "kind": "approach",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "source_status": "connected_room_id_only"
+      },
+      {
+        "id": "into_the_deepvault:entity:room-i03",
+        "kind": "approach",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "source_status": "connected_room_id_only"
+      },
+      {
+        "id": "into_the_deepvault:entity:chains",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:cell-bars",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:runic-pleas",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:cell-door-derval-s-cell",
+        "kind": "door",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:west-door-from-alchemy-vault",
+        "kind": "door",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:east-door-to-shatterglass-experimentum",
+        "kind": "door",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:trapped-miner-derval",
+        "kind": "npc",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:ironbound-guardian",
+        "kind": "monster",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+      },
+      {
+        "id": "into_the_deepvault:entity:usable-space-i02",
+        "kind": "usable_space",
+        "source_ref": null,
+        "source_status": "builder_authored_role_slot_not_a_source_entity"
+      }
+    ],
+    "scene_id": "into_the_deepvault:scene:ha003-i02",
+    "scene_node_id": "into_the_deepvault:entity:location-i02",
+    "schema": "neq.llm_staging_approved_topology.v1",
+    "scope_id": "into_the_deepvault:scope:ha003",
+    "source_connections": [
+      {
+        "from": "into_the_deepvault:entity:location-i02",
+        "relation": "map_connected",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "to": "into_the_deepvault:entity:room-i01"
+      },
+      {
+        "from": "into_the_deepvault:entity:location-i02",
+        "relation": "map_connected",
+        "source_ref": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+        "to": "into_the_deepvault:entity:room-i03"
+      }
+    ],
+    "stage_role_bindings": {
+      "approach": [
+        "into_the_deepvault:entity:room-i01",
+        "into_the_deepvault:entity:room-i03"
+      ],
+      "focal_anchor": [
+        "into_the_deepvault:entity:runic-pleas"
+      ],
+      "threshold": [
+        "into_the_deepvault:entity:location-i02"
+      ],
+      "usable_space": [
+        "into_the_deepvault:entity:usable-space-i02"
+      ]
+    },
+    "stage_role_entity_kinds": {
+      "approach": "approach",
+      "focal_anchor": "focal_anchor",
+      "threshold": "threshold",
+      "usable_space": "usable_space"
+    },
+    "topology_id": "into_the_deepvault:topology:i02"
+  },
+  "protected_unknowns": {
+    "guarded_content_markers": [
+      {
+        "exact_value": "Normal access, but cells and eastern door are locked and/or trapped.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=I02].accessibility"
+      },
+      {
+        "exact_value": "The Ironbound Soul Cells challenge the party with a powerful guardian, a prisoner who can reveal valuable information, and runic messages that connect to the broader mysteries of the catacombs.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=I02].adventureSummary"
+      },
+      {
+        "exact_value": "Insight DC 12: Sense Derval’s fear and desperation.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[0]"
+      },
+      {
+        "exact_value": "Perception DC 13: Notice faint spectral movement between cells.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[1]"
+      },
+      {
+        "exact_value": "History DC 14: Recognize the ancient runes as binding soul magic.",
+        "marker_id": "dcChecks-5",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[2]"
+      },
+      {
+        "exact_value": "If the party tries to free Derval, the Ironbound Guardian animates and attacks. Derval can provide information on both the cells and the Shatterglass Experimentum if convinced to trust the party.",
+        "marker_id": "dmInstructions-6",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=I02].dmInstructions"
+      },
+      {
+        "exact_value": "An iron-barred door reinforced with silver runes and a heavy deadbolt.",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].description"
+      },
+      {
+        "exact_value": "Soul-Shackle Keys",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].keyname"
+      },
+      {
+        "exact_value": "Cell Door (Derval's Cell)",
+        "marker_id": "doors-9",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-10",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].type"
+      },
+      {
+        "exact_value": "A rune-inscribed stone door, slightly ajar but held by a magical locking mechanism.",
+        "marker_id": "doors-11",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].description"
+      },
+      {
+        "exact_value": "West Door from Alchemy Vault",
+        "marker_id": "doors-12",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].name"
+      },
+      {
+        "exact_value": "heavy",
+        "marker_id": "doors-13",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].type"
+      },
+      {
+        "exact_value": "A heavy metal door etched with shattered glass motifs; light glimmers in the etchings.",
+        "marker_id": "doors-14",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].description"
+      },
+      {
+        "exact_value": "Cell Inscription (secret phrase)",
+        "marker_id": "doors-15",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].keyname"
+      },
+      {
+        "exact_value": "East Door to Shatterglass Experimentum",
+        "marker_id": "doors-16",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].name"
+      },
+      {
+        "exact_value": "Glass shards spray out if the door is forced open (DC 14 Dexterity save, 2d4 slashing damage).",
+        "marker_id": "doors-17",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].trap"
+      },
+      {
+        "exact_value": "Ironbound Guardian",
+        "marker_id": "encounters-18",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].enemies[0]"
+      },
+      {
+        "exact_value": "Attempting to open any cell or free a prisoner.",
+        "marker_id": "encounters-19",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].trigger"
+      },
+      {
+        "exact_value": "combat",
+        "marker_id": "encounters-20",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].type"
+      },
+      {
+        "exact_value": "Interacting with Trapped Miner Derval.",
+        "marker_id": "encounters-21",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[1].trigger"
+      },
+      {
+        "exact_value": "roleplay",
+        "marker_id": "encounters-22",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[1].type"
+      },
+      {
+        "exact_value": "Soul-Shackle Keys (open any cell)",
+        "marker_id": "lootTable-23",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[0]"
+      },
+      {
+        "exact_value": "Cell Inscription (hidden clue to Shatterglass Experimentum)",
+        "marker_id": "lootTable-24",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[1]"
+      },
+      {
+        "exact_value": "Derval's Amulet (family keepsake, minor protective charm)",
+        "marker_id": "lootTable-25",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[2]"
+      },
+      {
+        "exact_value": "Pouch of Old Coinage (30 gp, ancient dwarven mint)",
+        "marker_id": "lootTable-26",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[3]"
+      },
+      {
+        "exact_value": "Hostile",
+        "marker_id": "monsters-27",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].attitude"
+      },
+      {
+        "exact_value": "A massive animated suit of dwarven armor, powered by the souls of former prisoners. Patrols the corridor, attacking intruders on sight.",
+        "marker_id": "monsters-28",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].description"
+      },
+      {
+        "exact_value": "Ironbound Guardian",
+        "marker_id": "monsters-29",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].name"
+      },
+      {
+        "exact_value": "Derval claims to have seen a spectral figure passing through the walls at night, possibly linked to deeper catacomb secrets.",
+        "marker_id": "plotHooks-30",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I02].plotHooks[0]"
+      },
+      {
+        "exact_value": "The runic pleas scratched into the walls reference a forbidden experiment in the next chamber.",
+        "marker_id": "plotHooks-31",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I02].plotHooks[1]"
+      },
+      {
+        "exact_value": "2d4 slashing (shattered glass shards)",
+        "marker_id": "traps-32",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=I02].traps[0].damage"
+      }
+    ],
+    "protected_unknowns_must_not_be_promoted": true,
+    "scene_id": "into_the_deepvault:scene:ha003-i02",
+    "schema": "neq.llm_staging_protected_unknowns.v1",
+    "source_packet_sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+    "unknowns": [
+      {
+        "predicate": "interior_compass_bearings",
+        "reason": "No selected source field establishes compass bearings within the room.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "metric_distance_and_scale",
+        "reason": "Room coordinates and tactical-grid labels are schematic and establish no metric.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "access_beyond_explicit_records",
+        "reason": "Connections do not establish a door, access, or traversability; use only explicit source door/access facts.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "visibility_and_sensory_range",
+        "reason": "The selected source packet does not establish range, line of sight, audibility, or sensory reach.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "sensory_gradients",
+        "reason": "Ambient description does not by itself establish a light, sound, or weather gradient.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "movement_cost_and_legality",
+        "reason": "This study makes no movement-cost or mechanical-legality ruling.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "prior_runtime_party",
+        "reason": "Prior-play PCs and their positions are not supplied and must not be authored.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "public_paraphrase_of_guarded_content",
+        "reason": "Exact marker scans do not detect semantic paraphrases; Overseer semantic review is mandatory.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "linked_view_or_frontage",
+        "reason": "The approved sample has no linked-view/frontage test.",
+        "status": "not_tested"
+      }
+    ]
+  },
+  "reference_coverage": {
+    "extents": {
+      "boundary": [
+        {
+          "id": "scene_boundary",
+          "reason": "The selected packet establishes no multi-cell boundary or schematic extent.",
+          "status": "not_applicable"
+        }
+      ],
+      "path": [
+        {
+          "id": "scene_path",
+          "reason": "The selected packet establishes no multi-cell path extent; a map connection alone has no internal path or traversal semantics.",
+          "status": "not_applicable"
+        }
+      ],
+      "terrain": [
+        {
+          "id": "scene_terrain",
+          "reason": "The selected packet lists features but establishes no multi-cell terrain placement or extent.",
+          "status": "not_applicable"
+        }
+      ]
+    },
+    "schema_version": 1,
+    "stage_relations": {
+      "approach_to_threshold": {
+        "from_id": "into_the_deepvault:entity:room-i01",
+        "status": "required",
+        "to_id": "into_the_deepvault:entity:location-i02"
+      },
+      "threshold_to_focal": {
+        "from_id": "into_the_deepvault:entity:location-i02",
+        "status": "required",
+        "to_id": "into_the_deepvault:entity:runic-pleas"
+      }
+    },
+    "usable_spaces": [
+      {
+        "entity_id": "into_the_deepvault:entity:usable-space-i02",
+        "id": "scene_usable_space",
+        "schematic_cells": [
+          [
+            0,
+            0
+          ]
+        ],
+        "status": "required"
+      }
+    ]
+  },
+  "scene_id": "into_the_deepvault:scene:ha003-i02",
+  "schema": "neq.llm_staging_expected_inputs.v1",
+  "source_facts": {
+    "facts": [
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-c6dc3b944946",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].locationId",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-locationid",
+        "status": "source_extracted",
+        "value": "I02"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-6cb902adcf5c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].name",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-name",
+        "status": "source_extracted",
+        "value": "Ironbound Soul Cells"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-42ebb68067cc",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].type",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-type",
+        "status": "source_extracted",
+        "value": "prison"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-092a569e68b3",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].description",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-description",
+        "status": "source_extracted",
+        "value": "Rows of heavy iron-barred cells line this cold, echoing hall. Each cell is rimmed with silvery runes and furnished with only a stone bench. Chains dangle from the ceilings, some still holding spectral manacles. Murmured voices drift from empty cells, and a chill pervades the air. The walls are scarred with desperate scratchings—runic pleas for freedom, some answered in blood."
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-d7b0ab187b65",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].coordinates",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-coordinates",
+        "status": "source_extracted",
+        "value": "X11Y10"
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-79f0feaa4c56",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].connectivity",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-connectivity",
+        "status": "source_extracted",
+        "value": [
+          "I01",
+          "I03"
+        ]
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-383ba303935c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].areaConnectivity",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-areaconnectivity",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-5f122ed5a4a2",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].areaConnectivityId",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-areaconnectivityid",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-135b1e7ba36e",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].aliases",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-aliases",
+        "status": "source_extracted",
+        "value": [
+          "Ironbound Soul Cells",
+          "I02"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-a92e76354370",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].tactical_grid",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-tactical-grid",
+        "status": "source_extracted",
+        "value": [
+          "northwest:cover",
+          "north:approach",
+          "northeast:cover",
+          "west:approach",
+          "center_prison:Ironbound Soul Cells",
+          "east:approach",
+          "southwest:cover",
+          "south:approach",
+          "southeast:cover"
+        ]
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-0cdba3af609d",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].npcs",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-npcs",
+        "status": "source_extracted",
+        "value": [
+          {
+            "attitude": "Frightened, desperate for help but hesitant to trust fully.",
+            "description": "A gaunt, frightened dwarven miner clings to the bars of one cell. He is disoriented and haunted by ghostly whispers, but desperate for rescue.",
+            "name": "Trapped Miner Derval"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-10619b295f94",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].monsters",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-monsters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "attitude": "Hostile",
+            "description": "A massive animated suit of dwarven armor, powered by the souls of former prisoners. Patrols the corridor, attacking intruders on sight.",
+            "name": "Ironbound Guardian"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-edf387601514",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].lootTable",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-loottable",
+        "status": "source_extracted",
+        "value": [
+          "Soul-Shackle Keys (open any cell)",
+          "Cell Inscription (hidden clue to Shatterglass Experimentum)",
+          "Derval's Amulet (family keepsake, minor protective charm)",
+          "Pouch of Old Coinage (30 gp, ancient dwarven mint)"
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-278f3577510c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].plotHooks",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-plothooks",
+        "status": "source_extracted",
+        "value": [
+          "Derval claims to have seen a spectral figure passing through the walls at night, possibly linked to deeper catacomb secrets.",
+          "The runic pleas scratched into the walls reference a forbidden experiment in the next chamber."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-c6b755eb4989",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].dmInstructions",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-dminstructions",
+        "status": "source_extracted",
+        "value": "If the party tries to free Derval, the Ironbound Guardian animates and attacks. Derval can provide information on both the cells and the Shatterglass Experimentum if convinced to trust the party."
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-a235caa081b8",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].doors",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-doors",
+        "status": "source_extracted",
+        "value": [
+          {
+            "breakDC": 18,
+            "description": "An iron-barred door reinforced with silver runes and a heavy deadbolt.",
+            "keyname": "Soul-Shackle Keys",
+            "lockDC": 15,
+            "locked": true,
+            "name": "Cell Door (Derval's Cell)",
+            "trap": "",
+            "trapped": false,
+            "type": "regular"
+          },
+          {
+            "breakDC": 13,
+            "description": "A rune-inscribed stone door, slightly ajar but held by a magical locking mechanism.",
+            "keyname": "",
+            "lockDC": 0,
+            "locked": false,
+            "name": "West Door from Alchemy Vault",
+            "trap": "",
+            "trapped": false,
+            "type": "heavy"
+          },
+          {
+            "breakDC": 19,
+            "description": "A heavy metal door etched with shattered glass motifs; light glimmers in the etchings.",
+            "keyname": "Cell Inscription (secret phrase)",
+            "lockDC": 16,
+            "locked": true,
+            "name": "East Door to Shatterglass Experimentum",
+            "trap": "Glass shards spray out if the door is forced open (DC 14 Dexterity save, 2d4 slashing damage).",
+            "trapped": true,
+            "type": "regular"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-d4a08dfa9c80",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].traps",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-traps",
+        "status": "source_extracted",
+        "value": [
+          {
+            "damage": "2d4 slashing (shattered glass shards)",
+            "detectDC": 12,
+            "disableDC": 15,
+            "triggerDC": 0
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-0599e736f702",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].dcChecks",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-dcchecks",
+        "status": "source_extracted",
+        "value": [
+          "Insight DC 12: Sense Derval’s fear and desperation.",
+          "Perception DC 13: Notice faint spectral movement between cells.",
+          "History DC 14: Recognize the ancient runes as binding soul magic."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-d4ff4168cd41",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].accessibility",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-accessibility",
+        "status": "source_extracted",
+        "value": "Normal access, but cells and eastern door are locked and/or trapped."
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-93f4ec0748aa",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].dangerLevel",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-dangerlevel",
+        "status": "source_extracted",
+        "value": "High"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-8c5427e27a10",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].features",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-features",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "Heavy iron chains, some ending in spectral manacles, hang from the ceiling—remnants of magical imprisonment.",
+            "name": "Chains"
+          },
+          {
+            "description": "Bars reinforced with rune-etched silver, faintly humming with suppressed magic.",
+            "name": "Cell Bars"
+          },
+          {
+            "description": "Desperate pleas and warnings scratched into the walls by former inmates.",
+            "name": "Runic Pleas"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-a377fc34e9fc",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].encounters",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-encounters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "enemies": [
+              "Ironbound Guardian"
+            ],
+            "trigger": "Attempting to open any cell or free a prisoner.",
+            "type": "combat"
+          },
+          {
+            "trigger": "Interacting with Trapped Miner Derval.",
+            "type": "roleplay"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-f9b8cba7bf8c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02].adventureSummary",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-locations-locationid-i02-adventuresummary",
+        "status": "source_extracted",
+        "value": "The Ironbound Soul Cells challenge the party with a powerful guardian, a prisoner who can reveal valuable information, and runic messages that connect to the broader mysteries of the catacombs."
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-23dc79ec7c07",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].id",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-id",
+        "status": "source_extracted",
+        "value": "I02"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-ee714fb28102",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].type",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-type",
+        "status": "source_extracted",
+        "value": "prison"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-dce11810858b",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].connections",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-connections",
+        "status": "source_extracted",
+        "value": [
+          "I01",
+          "I03"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-30eec87f6ba7",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].coordinates",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-coordinates",
+        "status": "source_extracted",
+        "value": "X11Y10"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-20192389e408",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].directions",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-directions",
+        "status": "source_extracted",
+        "value": {
+          "east": "I03",
+          "west": "I01"
+        }
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-8f5c3417fb31",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].tags",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-tags",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-fa6df778aec2",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].purpose",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-purpose",
+        "status": "source_extracted",
+        "value": "encounter"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-64202aa447f5",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].landmark",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-landmark",
+        "status": "source_extracted",
+        "value": false
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-4dbde07f395b",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].dangerLevel",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-dangerlevel",
+        "status": "source_extracted",
+        "value": "high"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:ha003-i02-4a57234d980d",
+        "source_pointer": "modules/Into_the_Deepvault/areas/HA003_BU.json#map.rooms[id=I02].name",
+        "source_ref": "source:modules/into_the_deepvault/areas/ha003/ha003-i02-map-rooms-id-i02-name",
+        "status": "source_extracted",
+        "value": "Ironbound Soul Cells"
+      }
+    ],
+    "guarded_content_markers": [
+      {
+        "exact_value": "Normal access, but cells and eastern door are locked and/or trapped.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=I02].accessibility"
+      },
+      {
+        "exact_value": "The Ironbound Soul Cells challenge the party with a powerful guardian, a prisoner who can reveal valuable information, and runic messages that connect to the broader mysteries of the catacombs.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=I02].adventureSummary"
+      },
+      {
+        "exact_value": "Insight DC 12: Sense Derval’s fear and desperation.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[0]"
+      },
+      {
+        "exact_value": "Perception DC 13: Notice faint spectral movement between cells.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[1]"
+      },
+      {
+        "exact_value": "History DC 14: Recognize the ancient runes as binding soul magic.",
+        "marker_id": "dcChecks-5",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I02].dcChecks[2]"
+      },
+      {
+        "exact_value": "If the party tries to free Derval, the Ironbound Guardian animates and attacks. Derval can provide information on both the cells and the Shatterglass Experimentum if convinced to trust the party.",
+        "marker_id": "dmInstructions-6",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=I02].dmInstructions"
+      },
+      {
+        "exact_value": "An iron-barred door reinforced with silver runes and a heavy deadbolt.",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].description"
+      },
+      {
+        "exact_value": "Soul-Shackle Keys",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].keyname"
+      },
+      {
+        "exact_value": "Cell Door (Derval's Cell)",
+        "marker_id": "doors-9",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-10",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[0].type"
+      },
+      {
+        "exact_value": "A rune-inscribed stone door, slightly ajar but held by a magical locking mechanism.",
+        "marker_id": "doors-11",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].description"
+      },
+      {
+        "exact_value": "West Door from Alchemy Vault",
+        "marker_id": "doors-12",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].name"
+      },
+      {
+        "exact_value": "heavy",
+        "marker_id": "doors-13",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[1].type"
+      },
+      {
+        "exact_value": "A heavy metal door etched with shattered glass motifs; light glimmers in the etchings.",
+        "marker_id": "doors-14",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].description"
+      },
+      {
+        "exact_value": "Cell Inscription (secret phrase)",
+        "marker_id": "doors-15",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].keyname"
+      },
+      {
+        "exact_value": "East Door to Shatterglass Experimentum",
+        "marker_id": "doors-16",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].name"
+      },
+      {
+        "exact_value": "Glass shards spray out if the door is forced open (DC 14 Dexterity save, 2d4 slashing damage).",
+        "marker_id": "doors-17",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I02].doors[2].trap"
+      },
+      {
+        "exact_value": "Ironbound Guardian",
+        "marker_id": "encounters-18",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].enemies[0]"
+      },
+      {
+        "exact_value": "Attempting to open any cell or free a prisoner.",
+        "marker_id": "encounters-19",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].trigger"
+      },
+      {
+        "exact_value": "combat",
+        "marker_id": "encounters-20",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[0].type"
+      },
+      {
+        "exact_value": "Interacting with Trapped Miner Derval.",
+        "marker_id": "encounters-21",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[1].trigger"
+      },
+      {
+        "exact_value": "roleplay",
+        "marker_id": "encounters-22",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I02].encounters[1].type"
+      },
+      {
+        "exact_value": "Soul-Shackle Keys (open any cell)",
+        "marker_id": "lootTable-23",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[0]"
+      },
+      {
+        "exact_value": "Cell Inscription (hidden clue to Shatterglass Experimentum)",
+        "marker_id": "lootTable-24",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[1]"
+      },
+      {
+        "exact_value": "Derval's Amulet (family keepsake, minor protective charm)",
+        "marker_id": "lootTable-25",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[2]"
+      },
+      {
+        "exact_value": "Pouch of Old Coinage (30 gp, ancient dwarven mint)",
+        "marker_id": "lootTable-26",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I02].lootTable[3]"
+      },
+      {
+        "exact_value": "Hostile",
+        "marker_id": "monsters-27",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].attitude"
+      },
+      {
+        "exact_value": "A massive animated suit of dwarven armor, powered by the souls of former prisoners. Patrols the corridor, attacking intruders on sight.",
+        "marker_id": "monsters-28",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].description"
+      },
+      {
+        "exact_value": "Ironbound Guardian",
+        "marker_id": "monsters-29",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I02].monsters[0].name"
+      },
+      {
+        "exact_value": "Derval claims to have seen a spectral figure passing through the walls at night, possibly linked to deeper catacomb secrets.",
+        "marker_id": "plotHooks-30",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I02].plotHooks[0]"
+      },
+      {
+        "exact_value": "The runic pleas scratched into the walls reference a forbidden experiment in the next chamber.",
+        "marker_id": "plotHooks-31",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I02].plotHooks[1]"
+      },
+      {
+        "exact_value": "2d4 slashing (shattered glass shards)",
+        "marker_id": "traps-32",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=I02].traps[0].damage"
+      }
+    ],
+    "scene_id": "into_the_deepvault:scene:ha003-i02",
+    "schema": "neq.llm_staging_source_facts.v1",
+    "source_file": "modules/Into_the_Deepvault/areas/HA003_BU.json",
+    "source_file_sha256": "b90e6348d361d2978103af88a2b9b6b064f0a7d759b001585b7227e7c327a159",
+    "source_identity": "Into_the_Deepvault:HA003:I02",
+    "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json",
+    "source_packet_sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+    "source_reference": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+  }
+}
