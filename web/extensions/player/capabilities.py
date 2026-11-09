@@ -240,12 +240,15 @@ _HOST_ONLY_EMISSIONS = (
     "version_status",
 )
 
-# Dynamic event names stay visible as call-site inventory entries. The
-# compression callback emits host-only telemetry; the narration callback can
-# become a typed player projection, while the chat wrapper mirrors arbitrary
-# host emissions and therefore remains host-only.
+# Dynamic event names stay visible as exact call-site inventory entries. The
+# compression callback emits through the host Flask-SocketIO object's default
+# namespace ("/"). The player listener owns a separate AsyncServer limited to
+# /player; its host bridge accepts only typed, payload-free transcript,
+# active-PC, and combat notices and rebuilds projections from canonical state.
+# Compression payloads do not enter that bridge. Keep this exact source-site
+# classification; do not classify dynamic emissions by name or pattern.
 _DYNAMIC_EVENT_CALLSITES = {
-    "dynamic:emit:web/web_interface.py:emit_compression_event:648": HOST_ONLY,
+    "dynamic:emit:web/web_interface.py:emit_compression_event:655": HOST_ONLY,
     "dynamic:emit:web/extensions/live_chat_monitor.py:setup_live_chat_monitor._tabletop_mode_emit_wrapper:91": HOST_ONLY,
     "dynamic:emit:web/extensions/streaming_events.py:_emit:164": PLAYER_PROJECTION_OR_TYPED_COMMAND,
 }
