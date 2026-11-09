@@ -144,3 +144,20 @@ The report uses only the historical, hash-verified availability listing and
 labels its three-scene dollar amount `ESTIMATE`. No provider or HTTP call was
 made. Materialization is not owner cap approval, Overseer step-(a) approval, or
 generation authorization.
+
+## Owner-approved envelope amendment (2026-11-10)
+
+Ruling `neq-study2-owner-cap-20261110` approves the active generation envelope
+of `max_tokens=16384` and `timeout_seconds=720`, overriding the earlier
+formula-derived proposal of 6144/360. The formula remains recorded as a sizing
+proposal only. The cap remains exactly three attempts, one each for
+`ha003-i02`, `sd005-i03`, and `tsu001-ao02`, using `openai/gpt-6-luna` via
+OpenRouter, with no fallback, retries, reruns, or tools. Overseer step-(a)
+approval is recorded separately as `neq-study2-step-a-approved-20261110`.
+
+The existing conservative STOP behavior remains for identity failures,
+transport errors, and non-200 responses; remaining attempts are unspent. A 200
+response with invalid, truncated, or gate-failing content consumes that scene's
+attempt and the study continues with the next scene, as clarified by
+`neq-study2-gh-restored-20261110`. These recorded rulings do not themselves
+create or record approval-fence files or executed calls.
