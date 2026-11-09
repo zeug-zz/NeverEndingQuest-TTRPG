@@ -214,6 +214,7 @@ class StagingClient:
         self.run_dir = _safe_path(self.run_root / run_id, root=self.staging_root)
         self.run_root_relative = self.run_root.relative_to(self.staging_root).as_posix()
         self.ledger_path = _safe_path(STUDY_LEDGER_PATH, root=self.staging_root)
+        self._transport_owner_token = object()
         self._manifest, self._manifest_bytes = _read_json(self.manifest_path, root=REPO_ROOT)
         self._validate_manifest()
         self._base_study_binding = {
@@ -421,7 +422,37 @@ class StagingClient:
 
         if not callable(transport):
             raise StagingError("a one-shot transport must be explicitly injected")
+        return self._send_once(scene_id, injected_transport=transport)
+
+    def send_once_with_openrouter(
+        self,
+        scene_id: str,
+        *,
+        transport: object | None = None,
+    ) -> AttemptReceipt:
+        """Use OpenRouter only through this client's reserved ledger path."""
+
+        from .transport import OpenRouterTransport
+
+        adapter = transport if transport is not None else OpenRouterTransport()
+        if type(adapter) is not OpenRouterTransport:
+            raise StagingError("a study OpenRouter transport is required")
+        return self._send_once(scene_id, openrouter_transport=adapter)
+
+    def _send_once(
+        self,
+        scene_id: str,
+        *,
+        injected_transport: Callable[[str, dict[str, Any]], TransportResult] | None = None,
+        openrouter_transport: object | None = None,
+    ) -> AttemptReceipt:
+        if (injected_transport is None) == (openrouter_transport is None):
+            raise StagingError("exactly one one-shot transport path is required")
+
         request = self.build_request(scene_id)
+        endpoint = self.endpoint()
+        if endpoint != "https://openrouter.ai/api/v1/chat/completions":
+            raise StagingError("frozen endpoint mismatch")
         availability_hash = self._verify_availability()
         approval_hash = self._verify_execution_approval()
         self._verify_live_frozen_inputs()
@@ -441,7 +472,23 @@ class StagingClient:
 
         self._prepare_run_directory()
         try:
-            result = transport(self.endpoint(), request)
+            if openrouter_transport is not None:
+                from .transport import _create_reserved_dispatch_context
+
+                context = _create_reserved_dispatch_context(
+                    self._transport_owner_token,
+                    attempt_number,
+                    scene_id,
+                    request_hash,
+                )
+                result = openrouter_transport._dispatch_reserved(
+                    context,
+                    endpoint,
+                    request,
+                    owner_token=self._transport_owner_token,
+                )
+            else:
+                result = injected_transport(endpoint, request)
         except Exception:
             self._append_ledger_event({
                 "event": "result",
