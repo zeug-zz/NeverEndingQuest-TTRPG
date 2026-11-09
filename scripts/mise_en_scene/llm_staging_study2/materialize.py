@@ -22,6 +22,9 @@ S1 = f"{BASE}/llm-staging-protocol"
 RAW = Path("tmp/router-rollout/mapping-pilot/mise-en-scene-offline/llm-staging/availability-check/model-listing.json")
 RAW_HASH = "d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13"
 RAW_SIZE = 829400
+OWNER_APPROVED_MAX_TOKENS = 16384
+OWNER_APPROVED_TIMEOUT_SECONDS = 720
+OWNER_ENVELOPE_AUTHORITY = "neq-study2-owner-cap-20261110"
 SCENES = [
     "into_the_deepvault:scene:ha003-i02",
     "into_the_deepvault:scene:sd005-i03",
@@ -117,12 +120,12 @@ def generate(check: bool = False) -> dict[str, bytes]:
         reference_hashes[scene_id] = digest(raw_reference)
         input_counts[scene_id] = approximate_tokens(system_prompt) + approximate_tokens(rendered)
     proposal = sizing_proposal(estimates)
-    config_template["max_tokens"] = proposal["max_tokens"]
-    config_template["timeout_seconds"] = proposal["timeout_seconds"]
+    config_template["max_tokens"] = OWNER_APPROVED_MAX_TOKENS
+    config_template["timeout_seconds"] = OWNER_APPROVED_TIMEOUT_SECONDS
     config = canonical(config_template) + b"\n"
     # Cost uses the configured completion cap as a conservative per-scene output envelope.
     costs = {
-        scene: cost_estimate(input_counts[scene], proposal["max_tokens"], prompt_rate, completion_rate)
+        scene: cost_estimate(input_counts[scene], OWNER_APPROVED_MAX_TOKENS, prompt_rate, completion_rate)
         for scene in SCENES
     }
     total = sum(costs.values())
@@ -152,9 +155,12 @@ def generate(check: bool = False) -> dict[str, bytes]:
         "scenes": {sid: {"reference_file": f"{P}/references/{REF_NAMES[index]}",
                          "reference_utf8_bytes": reference_byte_counts[sid], "reference_sha256": reference_hashes[sid],
                          "reference_estimated_tokens": estimates[sid], "request_input_estimated_tokens": input_counts[sid],
-                         "output_tokens_upper_envelope": proposal["max_tokens"], "cost_usd": str(costs[sid])}
-                   for index, sid in enumerate(SCENES)},
-        **proposal,
+                          "output_tokens_upper_envelope": OWNER_APPROVED_MAX_TOKENS, "cost_usd": str(costs[sid])}
+                    for index, sid in enumerate(SCENES)},
+        "formula_proposal": proposal,
+        "max_tokens": OWNER_APPROVED_MAX_TOKENS,
+        "timeout_seconds": OWNER_APPROVED_TIMEOUT_SECONDS,
+        "envelope_authority": OWNER_ENVELOPE_AUTHORITY,
         "cost": {"status": "ESTIMATE", "total_usd": str(total), "prompt_usd_per_token": prompt_rate,
                   "completion_usd_per_token": completion_rate,
                   "rate_source": "historical listing pricing fields bound by the confirmed attestation; check-mode stored provenance is not fresh availability confirmation",
@@ -173,9 +179,10 @@ def generate(check: bool = False) -> dict[str, bytes]:
         f"{P}/sizing-report.json": canonical(report) + b"\n",
         f"{P}/sizing-report.md": ("# Study 2 Offline Sizing and Step-(a) Packet\n\n" +
             f"Status: ESTIMATE. Largest reference estimate L={proposal['largest_estimate']}; " +
-            f"proposed max_tokens={proposal['max_tokens']}, timeout_seconds={proposal['timeout_seconds']}.\n\n" +
+            f"owner-approved max_tokens={OWNER_APPROVED_MAX_TOKENS}, timeout_seconds={OWNER_APPROVED_TIMEOUT_SECONDS}; " +
+            f"formula proposal remains max_tokens={proposal['max_tokens']}, timeout_seconds={proposal['timeout_seconds']}.\n\n" +
             "Counts use the documented UTF-8-bytes/3 approximation, not a model tokenizer. " +
-            "Cost is a three-scene estimate from the hash-verified historical listing; no calls were made.\n\n" +
+             "Cost is a three-scene estimate from the hash-verified historical listing; no calls were made.\n\n" +
             "Per-scene estimates (reference bytes; reference L; request input tokens; cost USD):\n" + "\n".join(
                 f"- {sid}: {reference_byte_counts[sid]}; {estimates[sid]}; {input_counts[sid]}; {costs[sid]}" for sid in SCENES) +
             f"\n\nTotal ESTIMATE: ${total}. Rates: prompt {prompt_rate} USD/token; completion {completion_rate} USD/token.\n").encode("utf-8"),

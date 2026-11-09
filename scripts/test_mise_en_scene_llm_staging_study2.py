@@ -2079,6 +2079,8 @@ class Study2ExecutionFenceTests(unittest.TestCase):
             sizing_proposal({"a": 1000, "b": 900, "c": 1100}),
             {"largest_estimate": 1100, "max_tokens": 6144, "timeout_seconds": 360},
         )
+        self.assertEqual(study2_materialize_module.OWNER_APPROVED_MAX_TOKENS, 16384)
+        self.assertEqual(study2_materialize_module.OWNER_APPROVED_TIMEOUT_SECONDS, 720)
         self.assertEqual(
             cost_estimate(10, 20, "0.0000001", "0.0000005"),
             Decimal("0.0000110"),
@@ -2112,6 +2114,14 @@ class Study2ExecutionFenceTests(unittest.TestCase):
             )
         report_path = manifest_path.parent / "sizing-report.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(generation_config["max_tokens"], 16384)
+        self.assertEqual(generation_config["timeout_seconds"], 720)
+        self.assertEqual(manifest["attempt_cap"], 3)
+        self.assertEqual(report["formula_proposal"]["max_tokens"], 6144)
+        self.assertEqual(report["formula_proposal"]["timeout_seconds"], 360)
+        self.assertEqual(report["max_tokens"], 16384)
+        self.assertEqual(report["timeout_seconds"], 720)
+        self.assertEqual(report["cost"]["total_usd"], "0.0298980")
         for scene_id in STUDY2_SCENE_ORDER:
             reference_path = STUDY2_REFERENCE_ROOT / (scene_id.replace(":", "__") + ".json")
             raw_reference = reference_path.read_bytes()
@@ -2123,6 +2133,7 @@ class Study2ExecutionFenceTests(unittest.TestCase):
             self.assertEqual(request["model"], "openai/gpt-6-luna")
             self.assertEqual(len(request["messages"]), 2)
             self.assertEqual(request["max_tokens"], generation_config["max_tokens"])
+            self.assertEqual(request["max_tokens"], 16384)
             self.assertEqual(
                 row["request_input_estimated_tokens"],
                 sum(approximate_tokens(message["content"]) for message in request["messages"]),
