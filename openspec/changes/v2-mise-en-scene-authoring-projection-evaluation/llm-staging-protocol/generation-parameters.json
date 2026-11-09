@@ -20,6 +20,7 @@
     "justification": "Route-specific reasoning controls and an owner-approved effort are unconfirmed; do not guess or alter the selected model default."
   },
   "transport_policy": {
+    "request_timeout_seconds": 180.0,
     "generation_dispatches_per_scene": 1,
     "automatic_retries": 0,
     "redirects": false,

@@ -1,11 +1,13 @@
 # LLM Builder Mise-en-Scene Staging Study Protocol
 
 **Status: protocol package frozen for Overseer review; no generation call is
-made or permitted by this implementation step.** The required handoff status is
-recorded in [`protocol.draft.md`](protocol.draft.md). Ruling
+made by this implementation step.** The required handoff status is recorded in
+[`protocol.draft.md`](protocol.draft.md). Ruling
 `neq-staging-step-a-review-20261109` authorizes one replacement availability GET,
-now completed and CONFIRMED for the exact model. Step (b) remains unauthorized;
-the companion draft file is the required handoff status record.
+now completed and CONFIRMED for the exact model. Step (b) is conditionally
+authorized by ruling `neq-staging-step-b-20261109` after the timeout update and
+green CI. The ruling also requires the timeout test; this update does not claim
+CI has passed or make a generation call.
 
 ## 1. Scope and decision boundary
 
@@ -159,11 +161,13 @@ because its enforced root is `tmp/combat_capture` and its ledger path is scoped
 to `tmp/n2`; this fixed study-wide ledger is the bounded alternative allowed
 by the owner ruling.
 
-The study-local OpenRouter transport has now been implemented, but remains
-**UNREVIEWED**. It posts only to
+The study-local OpenRouter transport has now been implemented and was
+**ACCEPTED** by ruling `neq-staging-step-b-20261109`, subject to its timeout
+condition. It posts only to
 `https://openrouter.ai/api/v1/chat/completions` with the frozen
 `openai/gpt-6-luna` request, `allow_fallbacks=false`, no model list/tools,
-retries, redirects, streaming, or continuation, and a bounded timeout. The
+retries, redirects, streaming, or continuation, and a bounded 180-second
+timeout. The
 client's reserve-before-send path supplies a one-use reservation context;
 calling the adapter directly is refused before credential lookup or HTTP. The
 existing `config.OPENROUTER_API_KEY` name is read at dispatch time only. No
@@ -270,9 +274,8 @@ three-attempt cap, rating threshold, review order, and no-linked-view scope are
 fixed by ruling S, item 2. Ruling `neq-staging-step-a-review-20261109` accepted
 the frozen step (a) envelope and authorized the replacement GET, which is now
 CONFIRMED as recorded in section 4. Step (a) is submitted for planner/Overseer
-verification. The real OpenRouter transport is implemented but **UNREVIEWED**;
-no request was dispatched and no credential was accessed. Step (b), including
-all three generation calls, is NOT authorized. Before any generation call, the
-transport must be reviewed, the separate step (b) approval obtained, and all
-frozen hashes and manual-lineage checks must agree. No generation call is
-permitted by this evidence update.
+verification. The real OpenRouter transport was ACCEPTED by ruling
+`neq-staging-step-b-20261109`; step (b) is conditionally authorized after the
+180-second timeout and parameter/manifest update, timeout test, and green CI.
+This update does not claim CI has passed and makes no generation call. All
+frozen hashes and manual-lineage checks must also agree before dispatch.
