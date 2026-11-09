@@ -1,0 +1,32 @@
+Prepare the initial scene for scene ID {{SCENE_ID}}.
+
+APPROVED_SOURCE_PACKET:
+{{SOURCE_PACKET_JSON}}
+
+INDEPENDENT_EXPECTED_INPUTS:
+{{EXPECTED_INPUTS_JSON}}
+
+OUTPUT_CONTRACT:
+{{OUTPUT_SCHEMA_JSON}}
+
+Use only these inputs for this scene. Preserve every protected unknown. Return
+one JSON value only.
+
+The expected-input bundle contains independent source facts, the approved
+topology, reference coverage, and protected unknowns. Include every declared
+fixed anchor and mobile occupant with its supplied ID. Use the stage role's
+entity kind for approach, threshold, focal_anchor, and usable_space endpoints;
+for other anchors/occupants, retain the topology node kind. The usable_space ID
+is the only permitted Builder-authored abstract role slot; represent its one
+local schematic placeholder cell exactly as [[0, 0]] with Builder-authored
+provenance. Include the exact protected_unknowns.unknowns records unchanged in
+fixture.extension_seams.unknown_metrics. Do not treat a neighbor room ID as
+proof of a door, access, or traversal. Preserve the supplied approved topology
+exactly in arrival.topology; add no links, nodes, or source connections.
+
+Because this selected packet supplies no independently approved next-section
+transition and perception binding, arrival.next_section must remain unknown,
+with null endpoints/fact IDs and unknown provenance. Provide one unknown or
+not_applicable cue state for each of light, sound, and weather; do not invent a
+gradient. Bind every checkable claim to one fixture fact and keep each segment's
+fact_ids equal to its claims' fact IDs.

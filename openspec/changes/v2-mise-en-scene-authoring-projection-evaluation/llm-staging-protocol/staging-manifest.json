@@ -1,0 +1,124 @@
+{
+  "artifacts": {
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check-20261108.json": "6219a5814297b3f5f3aa957e99ca91aeedfa8eb2248f54c0ff6cbd05cf528240",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/generation-parameters.json": "050af35685e9c6cc42a897087aaf2ee1db0974995e20d732a9f8226d9a2a26da",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/output-contract.schema.json": "9ff913e38368c4269902ea79e4cc230a8c25194e1f60d7c3e9b7f3325ef7a318",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.draft.md": "cb8f01d0b222dbee4d86b2fc2883983b6b0e0c9c902554b987c5d05ff99914d9",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md": "d95e0f8c1a00bd4fc0d55f05b2f1e82e89971b6934d47512a5e3aeed5266ca87",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/scenes.json": "47829e42a1843f4f01c8742e1238869d99b6a22ed5ff52b8424fd47819fddf55",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/system-prompt.txt": "9cef9dd22d3054d94f00bb2fe943809792a25a429c7e4f9c16bb847e04846a24",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/task-prompt.txt": "70fc3a5db0eb84bb921ce067cb13a51d95138f28764a498cec55e31ecc8c9174",
+    "scripts/mise_en_scene/arrival.py": "4bed0e17f9d522b6308e1862aaf8c8e0bca2fc0ae988bd6f3517ab38f274d9a6",
+    "scripts/mise_en_scene/contract.py": "68205cee0ab727bb537085740de041471555382ff9dabfa94d95f6239277cb5a",
+    "scripts/mise_en_scene/coverage.py": "459134bcc199cf2a9eb518d0b1c951daa04badcb054a14f038ae0ca9d6818753",
+    "scripts/mise_en_scene/diagnostics.py": "e4aca79450a43bba67d74b91ef83f09bde04ddd1a95383f5aa4f8cc03d7eb206",
+    "scripts/mise_en_scene/identity.py": "b5f1859cfd11f79c23305ee328d1df831304c81b585775091af6b3eaf9cbf2bd",
+    "scripts/mise_en_scene/llm_staging/__init__.py": "55794eeca4bba388c3b9b725b86388b335e16d19c1aca35b02cc68d71a992b64",
+    "scripts/mise_en_scene/llm_staging/availability.py": "0fb3b8b5ae1938cdf97eb0434414a607824f1d6ec0c6af19a64f412e6fb40ae7",
+    "scripts/mise_en_scene/llm_staging/client.py": "a2b0c8ece8823db99a85035e65075d41fd2c7069afdf8785fb5d1a70365eabba",
+    "scripts/mise_en_scene/llm_staging/materialize.py": "c50dd17aa4f5edb7b3a5fa709784078ba275914fd9b20073122d5658430ff2da",
+    "scripts/mise_en_scene/llm_staging/output_gates.py": "3569c6adafb63dca7cc4ca0d1bc247009e32505bb1e8b4bd94de6851bb2a0ed4",
+    "scripts/test_mise_en_scene_llm_staging.py": "ef001bf965684a4b7e10a028d1917716a5b57f2fcc878be3e6ffda64e6f34e05"
+  },
+  "attempt_order": [
+    "into_the_deepvault:scene:ha003-i02",
+    "into_the_deepvault:scene:sd005-i03",
+    "xhalruuns_masquerade:scene:tsu001-ao02"
+  ],
+  "availability": {
+    "generation_calls": 0,
+    "historical_check_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check-20261108.json",
+    "historical_check_sha256": "6219a5814297b3f5f3aa957e99ca91aeedfa8eb2248f54c0ff6cbd05cf528240",
+    "replacement_get_authority_confirmed": false,
+    "replacement_script_get_required": true,
+    "status": "UNCONFIRMED"
+  },
+  "calls_made": 0,
+  "execution_authorized": false,
+  "execution_status": "NOT_STARTED",
+  "last_updated": "2026-11-09",
+  "owner_ruling": {
+    "both_owner_rating_axes_minimum": 4,
+    "fallbacks_retries_tools_disabled": true,
+    "generation_attempt_cap": 3,
+    "linked_view_frontage_tested": false,
+    "model": "openai/gpt-6-luna",
+    "one_attempt_per_scene": true,
+    "other_27_attempts_authorized": false,
+    "overseer_review_before_owner_access": true,
+    "provider": "openrouter",
+    "reference": "S ruling 2026-11-08T20:41:09Z item 2",
+    "selected_scene_ids": [
+      "into_the_deepvault:scene:ha003-i02",
+      "into_the_deepvault:scene:sd005-i03",
+      "xhalruuns_masquerade:scene:tsu001-ao02"
+    ],
+    "study_pass_requires_all_three_scenes": true
+  },
+  "privacy": {
+    "credentials_logged_or_stored": false,
+    "credentials_read_by_client": false,
+    "ledger_mode": "0600",
+    "raw_output_access_order": [
+      "overseer",
+      "owner_after_semantic_review"
+    ],
+    "run_directory_mode": "0700"
+  },
+  "scenes": [
+    {
+      "expected_inputs_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json",
+      "expected_inputs_sha256": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258",
+      "manual_lineage_review": "PENDING",
+      "manual_lineage_review_required_before_call": true,
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "source_file_path": "modules/Into_the_Deepvault/areas/HA003_BU.json",
+      "source_file_sha256": "b90e6348d361d2978103af88a2b9b6b064f0a7d759b001585b7227e7c327a159",
+      "source_identity": "Into_the_Deepvault:HA003:I02",
+      "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json",
+      "source_packet_sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+      "source_reference": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]"
+    },
+    {
+      "expected_inputs_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json",
+      "expected_inputs_sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b",
+      "manual_lineage_review": "PENDING",
+      "manual_lineage_review_required_before_call": true,
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "source_file_path": "modules/Into_the_Deepvault/areas/SD005_BU.json",
+      "source_file_sha256": "d625edb639b9ee935709afdc39a31f5929db52699b3ee14d819202da80adbb9a",
+      "source_identity": "Into_the_Deepvault:SD005:I03",
+      "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json",
+      "source_packet_sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+      "source_reference": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+    },
+    {
+      "expected_inputs_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json",
+      "expected_inputs_sha256": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af",
+      "manual_lineage_review": "PENDING",
+      "manual_lineage_review_required_before_call": true,
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "source_file_path": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json",
+      "source_file_sha256": "1f77e3c4598efddf0db3f9a6f52015b98e00f03f4a37fe2e91882813e4a97b2d",
+      "source_identity": "Xhalruuns_Masquerade:TSU001:AO02",
+      "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json",
+      "source_packet_sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+      "source_reference": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]"
+    }
+  ],
+  "schema": "neq.llm_staging_manifest.v1",
+  "status": "FROZEN_FOR_OVERSEER_REVIEW",
+  "validator_interfaces": {
+    "scripts/mise_en_scene/arrival.py": "4bed0e17f9d522b6308e1862aaf8c8e0bca2fc0ae988bd6f3517ab38f274d9a6",
+    "scripts/mise_en_scene/contract.py": "68205cee0ab727bb537085740de041471555382ff9dabfa94d95f6239277cb5a",
+    "scripts/mise_en_scene/coverage.py": "459134bcc199cf2a9eb518d0b1c951daa04badcb054a14f038ae0ca9d6818753",
+    "scripts/mise_en_scene/diagnostics.py": "e4aca79450a43bba67d74b91ef83f09bde04ddd1a95383f5aa4f8cc03d7eb206",
+    "scripts/mise_en_scene/identity.py": "b5f1859cfd11f79c23305ee328d1df831304c81b585775091af6b3eaf9cbf2bd"
+  }
+}

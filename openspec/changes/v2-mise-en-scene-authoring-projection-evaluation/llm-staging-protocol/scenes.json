@@ -1,0 +1,227 @@
+{
+  "schema": "neq.llm_staging_scene_leakage.v1",
+  "status": "DRAFT_NOT_OWNER_APPROVED",
+  "authorization": {
+    "provider_calls_authorized": false,
+    "calls_made": 0,
+    "scene_selection_finalized": false,
+    "model_route_selected": false,
+    "cap_allocation_finalized": false
+  },
+  "source_packet_method": {
+    "description": "Canonical JSON serialization of exactly the full location object and its matching map-room object.",
+    "expression": "json.dumps({\"location\": location, \"map_room\": map_room}, ensure_ascii=False, sort_keys=True, separators=(\",\", \":\"))",
+    "encoding": "UTF-8",
+    "source_reference_format": "<source-file>#locations[locationId=<id>]+map.rooms[id=<id>]"
+  },
+  "screen": {
+    "helper_path": "scripts/mise_en_scene/evaluation.py",
+    "helper_sha256": "7e2cd50962dd24db5806cffaa32a79304c65cea7cd75938fe3f45e78d24dbf67",
+    "helper_functions": ["fingerprint_source_text", "_make_pair_check"],
+    "tokenizer": "mise-en-scene-lexical-fingerprint-v1",
+    "catalog": {
+      "path": "scripts/mise_en_scene/known_examples.json",
+      "file_sha256": "f441cc1da547a85e0055e5edacda4ddafba13ec9a9bc17a28cab60a3d119545c",
+      "canonical_content_sha256": "7defa824776c8a08dd5c2669148563680d08bd466bfb45483825703bb1634165",
+      "record_count": 25
+    },
+    "item1_manifest": {
+      "path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/holdout-draft/manifest.draft.json",
+      "file_sha256": "835d1c2bd2daf9c314ff80fb665ece325cd393e4008ae15a56573cf97a6c17e2",
+      "scene_count": 6
+    },
+    "published_modules_catalog": {
+      "path": "modules/published_modules.json",
+      "file_sha256": "8f33f709fdcc227eb654074f4ab33592e13ab864a8b82e8b1bc6fc04bea80634"
+    },
+    "thresholds": {
+      "source_text": {"minimum_shared_tokens": 3, "minimum_jaccard_ppm": 200000, "exact_nonempty_token_set": "REVIEW_REQUIRED"},
+      "layout": {"minimum_shared_tokens": 2, "minimum_jaccard_ppm": 250000, "exact_nonempty_token_set": "REVIEW_REQUIRED"},
+      "features": {"minimum_shared_tokens": 3, "minimum_jaccard_ppm": 250000, "exact_nonempty_token_set": "REVIEW_REQUIRED"},
+      "identity_reference_hash_and_declared_ancestry": "REJECT_ON_EXACT_MATCH",
+      "unresolved_declared_derivative": "REJECT",
+      "semantic_detection_claim": "NONE"
+    },
+    "known_record_order": [
+      {"id": "m1:fixture-interior_tavern-MPV2_LOC_TAVERN-start-1b2c19ae8c47", "kind": "original_m1"},
+      {"id": "m1:fixture-landscape_village-MPV2_LOC_VILLAGE_GREEN-start-5035a149fc68", "kind": "original_m1"},
+      {"id": "m1:fixture-transition_tower_approach-MPV2_LOC_TOWER_APPROACH-start-45f89e279035", "kind": "original_m1"},
+      {"id": "m1:fixture-combat_stage_tavern_zones-MPV2_LOC_TAVERN-P1-3eef50e1733d", "kind": "original_m1"},
+      {"id": "m1:fixture-combat_stage_tavern_zones-MPV2_LOC_TAVERN-P4-147cc61822ee", "kind": "original_m1"},
+      {"id": "m1:d1-Keep_of_Doom-AA01-D1-review-start-e1f0b1cdde26", "kind": "original_m1"},
+      {"id": "m1:d1-Keep_of_Doom-AL01-D1-review-start-22fddc6eb767", "kind": "original_m1"},
+      {"id": "m1:d1-The_Thornwood_Watch-NC01-D1-review-start-c006660c84d4", "kind": "original_m1"},
+      {"id": "m1:d1-The_Thornwood_Watch-NC04-D1-review-start-cc9f57501237", "kind": "original_m1"},
+      {"id": "m1:d1-The_Thornwood_Watch-NC05-D1-review-start-40c08ae46c2b", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-AD01-D1-review-start-d7a580f44c4e", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-AB01-D1-review-start-9a3f3a19cebe", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-V01-D1-review-start-5fa169079dd9", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-AB02-D1-review-start-fc5bfc09cc82", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-V02-D1-review-start-37243b1f8a0c", "kind": "original_m1"},
+      {"id": "m1:d1-The_Pumpkin_Kings_Curse-AB03-D1-review-start-122b55e14ca2", "kind": "original_m1"},
+      {"id": "owner:A", "kind": "expanded_owner_example"},
+      {"id": "owner:B", "kind": "expanded_owner_example"},
+      {"id": "owner:C", "kind": "expanded_owner_example"},
+      {"id": "owner:D", "kind": "expanded_owner_example"},
+      {"id": "owner:E", "kind": "expanded_owner_example"},
+      {"id": "owner:F", "kind": "expanded_owner_example"},
+      {"id": "owner:G", "kind": "expanded_owner_example"},
+      {"id": "owner:H", "kind": "expanded_owner_example"},
+      {"id": "owner:I", "kind": "expanded_owner_example"},
+      {"id": "item1:murder_at_the_drowning_lass:scene:shrouded-lantern-encampment", "kind": "item1_holdout_scene"},
+      {"id": "item1:the_ancients_lab:scene:abyssal-fracture", "kind": "item1_holdout_scene"},
+      {"id": "item1:into_the_deepvault:scene:shattered-anvil-crossing", "kind": "item1_holdout_scene"},
+      {"id": "item1:xhalruuns_masquerade:scene:sanctum-of-fractured-truths", "kind": "item1_holdout_scene"},
+      {"id": "item1:the_garden_of_demons:scene:fogroot-barrow-stalls", "kind": "item1_holdout_scene"},
+      {"id": "item1:the_hidden_city_of_numillian:scene:trial-at-the-door", "kind": "item1_holdout_scene"}
+    ],
+    "item1_source_records": [
+      {"scene_id": "murder_at_the_drowning_lass:scene:shrouded-lantern-encampment", "identity": "published-module:Murder_at_the_Drowning_Lass:WM001:H01", "reference": "modules/Murder_at_the_Drowning_Lass/areas/WM001_BU.json#locations[locationId=H01]", "source_text_sha256": "2c3d4bc25fac9a645533d942021b95d315ef255dec5913ec87ba0bc3c597d261"},
+      {"scene_id": "the_ancients_lab:scene:abyssal-fracture", "identity": "published-module:The_Ancients_Lab:BA001:I02", "reference": "modules/The_Ancients_Lab/areas/BA001_BU.json#locations[locationId=I02]", "source_text_sha256": "97b698883f33c62d653402b6a5593a7d294e1f8cba22674673e3bd7cc2eacd8f"},
+      {"scene_id": "into_the_deepvault:scene:shattered-anvil-crossing", "identity": "published-module:Into_the_Deepvault:RF004:I01", "reference": "modules/Into_the_Deepvault/areas/RF004_BU.json#locations[locationId=I01]", "source_text_sha256": "67a17e8bd101030c56c1659c035063862e265fc2b301e84717dd725e3c89759a"},
+      {"scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths", "identity": "published-module:Xhalruuns_Masquerade:TPG001:AK01", "reference": "modules/Xhalruuns_Masquerade/areas/TPG001_BU.json#locations[locationId=AK01]", "source_text_sha256": "a9239061ad1981e68eaef0d1611283cae9c79514802d6f3d3ceb952d7fd37d98"},
+      {"scene_id": "the_garden_of_demons:scene:fogroot-barrow-stalls", "identity": "published-module:The_Garden_of_Demons:GV001:H03", "reference": "modules/The_Garden_of_Demons/areas/GV001_BU.json#locations[locationId=H03]", "source_text_sha256": "945728477f2ac06ea120463cb31486ff88cc019d98127b291ca85de1d7d1bda5"},
+      {"scene_id": "the_hidden_city_of_numillian:scene:trial-at-the-door", "identity": "published-module:The_Hidden_City_of_Numillian:A000:A01:TRIAL000", "reference": "modules/The_Hidden_City_of_Numillian/areas/A000_BU.json#map.rooms[id=A01];modules/The_Hidden_City_of_Numillian/areas/A000_BU.json#locations[locationId=A01];modules/The_Hidden_City_of_Numillian/module_plot_BU.json#plotPoints[id=TRIAL000]", "source_text_sha256": "96d0ef1579a7a80d05df443f375acbb1030e28825af546e2c8776f8b78c9fce9"}
+    ],
+    "pair_metrics_columns": ["text_shared_count", "text_similarity_ppm", "layout_shared_count", "layout_similarity_ppm", "feature_shared_count", "feature_similarity_ppm"],
+    "pair_matrix_contract": "Each candidate pair_metrics array has one row per known_record_order entry. pair_flags lists every non-empty identity/review flag; omitted pair flags are empty. Verdict is NO_MATCH_WITHIN_BOUNDED_CHECKS when flags and review_flags are empty, REVIEW_REQUIRED when only review_flags are set, and REJECT when flags are set.",
+    "status_codes": {"N": "NO_MATCH_WITHIN_BOUNDED_CHECKS", "R": "REVIEW_REQUIRED", "X": "REJECT"},
+    "summary": {
+      "candidate_count": 4,
+      "known_record_count": 31,
+      "pair_check_count": 124,
+      "no_match_within_bounded_checks": 122,
+      "review_required": 2,
+      "rejected": 0,
+      "artifact_text_overlap": "NOT_RUN; no generated artifacts exist"
+    },
+    "module_tree_snapshot_before": {
+      "file_count": 1317,
+      "canonical_path_and_file_sha256_sha256": "b339bd6dbb251297cb82ab146867bf022f9c7de847e1ef5f02d30c14490962f1"
+    },
+    "module_tree_snapshot_method": "SHA-256 of UTF-8 compact JSON for a path-sorted list of [project-relative path, per-file SHA-256] rows.",
+    "module_tree_snapshot_after": {
+      "file_count": 1317,
+      "canonical_path_and_file_sha256_sha256": "b339bd6dbb251297cb82ab146867bf022f9c7de847e1ef5f02d30c14490962f1",
+      "unchanged": true
+    }
+  },
+  "protocol_prompt_skeleton_sha256": "23f76ea1e26fe53084283f3ad03b32087a19965169f50b9699ac0586112d8fcc",
+  "scenes": [
+    {
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "status": "PROPOSED_PENDING_MANUAL_LINEAGE_REVIEW",
+      "module_slug": "Into_the_Deepvault",
+      "area_id": "HA003",
+      "area_name": "The Ancestral Catacombs",
+      "location_id": "I02",
+      "name": "Ironbound Soul Cells",
+      "source_identity": "Into_the_Deepvault:HA003:I02",
+      "source_reference": "modules/Into_the_Deepvault/areas/HA003_BU.json#locations[locationId=I02]+map.rooms[id=I02]",
+      "source_file_sha256": "b90e6348d361d2978103af88a2b9b6b064f0a7d759b001585b7227e7c327a159",
+      "source_packet_sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+      "lineage_status_for_helper": "independent",
+      "declared_adaptation_lineage": [],
+      "exact_identity_reference_hash_or_declared_ancestry_matches": 0,
+      "manual_source_lineage_review": "PENDING",
+      "fingerprints": {
+        "text_tokens": ["approach", "bars", "breakdc", "but", "cell", "cells", "chains", "cover", "dc", "derval", "description", "desperate", "door", "dwarven", "east", "experimentum", "false", "glass", "guardian", "heavy", "i01", "i02", "ironbound", "locked", "name", "pleas", "runic", "soul", "spectral", "trapped", "type", "walls"],
+        "text_fingerprint_sha256": "428af48dded4384b07ad2a6d8d111b28ef80c5d656f297db4fd567e0bdb3df78",
+        "layout_tokens": ["approach", "cell", "cells", "east"],
+        "layout_fingerprint_sha256": "9daaaff6e20a3aead697c8186482dd56fa147be3133d10c41cfc03312ae6f6b9",
+        "feature_tokens": ["bars", "breakdc", "but", "chains", "cover", "dc", "derval", "description", "desperate", "door", "dwarven", "experimentum", "false", "glass", "guardian", "heavy", "i01", "i02", "ironbound", "locked", "name", "pleas", "runic", "soul", "spectral", "trapped", "type", "walls"],
+        "feature_fingerprint_sha256": "2dd2fbe905286044c706130eceaf6152e509d2b2c746ce7e40a2e5921dc844aa"
+      },
+      "pair_metrics": [[2,33898,1,200000,1,18518],[0,0,0,0,0,0],[1,20408,1,142857,0,0],[2,32258,1,200000,1,17543],[2,32258,1,200000,1,17543],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,0,0,1,17857],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,0,0,1,17857],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,19607,0,0,1,22727],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,0,0,1,18867],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,1,111111,0,0],[1,15873,1,76923,0,0],[6,103448,1,250000,5,92592],[7,122807,1,166666,6,117647],[9,163636,1,200000,8,160000],[9,163636,1,142857,8,166666],[9,163636,1,200000,8,160000],[5,84745,1,250000,4,72727]],
+      "pair_flags": [],
+      "pair_verdict_counts": {"NO_MATCH_WITHIN_BOUNDED_CHECKS": 31, "REVIEW_REQUIRED": 0, "REJECT": 0}
+    },
+    {
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "status": "PROPOSED_PENDING_MANUAL_LINEAGE_REVIEW",
+      "module_slug": "Into_the_Deepvault",
+      "area_id": "SD005",
+      "area_name": "The Sundered Depths",
+      "location_id": "I03",
+      "name": "Hall of Echoing Stone",
+      "source_identity": "Into_the_Deepvault:SD005:I03",
+      "source_reference": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]",
+      "source_file_sha256": "d625edb639b9ee935709afdc39a31f5929db52699b3ee14d819202da80adbb9a",
+      "source_packet_sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+      "lineage_status_for_helper": "independent",
+      "declared_adaptation_lineage": [],
+      "exact_identity_reference_hash_or_declared_ancestry_matches": 0,
+      "manual_source_lineage_review": "PENDING",
+      "fingerprints": {
+        "text_tokens": ["ancient", "approach", "attacks", "banner", "banners", "blocked", "chamber", "collapsed", "coordinates", "cover", "cracked", "dais", "dangerlevel", "dc", "deepvault", "description", "dwarven", "east", "echo", "echoes", "echoing", "end", "every", "false", "hall", "hidden", "i03", "name", "silence", "stone", "type", "wraith"],
+        "text_fingerprint_sha256": "b59b71530376bc70b66bea09b181715980719f68cb64bbb76cac9ca9744a3ed4",
+        "layout_tokens": ["approach", "east"],
+        "layout_fingerprint_sha256": "2bc95ab4a49c36758b2f7ff2c48c9d154b0e6d11fd59b4b6c0533549d4ad2acb",
+        "feature_tokens": ["ancient", "attacks", "banner", "banners", "blocked", "chamber", "collapsed", "coordinates", "cover", "cracked", "dais", "dangerlevel", "dc", "deepvault", "description", "dwarven", "echo", "echoes", "echoing", "end", "every", "false", "hall", "hidden", "i03", "name", "silence", "stone", "type", "wraith"],
+        "feature_fingerprint_sha256": "889606b6e666ed4c1c8111dfefe89906216556f51522b2b5f03310c1f104c998"
+      },
+      "pair_metrics": [[2,33898,1,333333,1,17857],[0,0,0,0,0,0],[1,20408,1,200000,0,0],[2,32258,1,333333,1,16949],[2,32258,1,333333,1,16949],[1,15873,0,0,1,17543],[1,15873,0,0,1,17241],[2,32258,0,0,2,35087],[0,0,0,0,0,0],[2,32786,0,0,2,35714],[0,0,0,0,0,0],[0,0,0,0,0,0],[2,32258,0,0,2,35087],[1,20408,0,0,1,21739],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,16949,0,0,1,22222],[0,0,0,0,0,0],[1,15873,0,0,1,17857],[2,32258,1,142857,1,18181],[2,32258,1,90909,1,19607],[7,122807,1,500000,6,109090],[8,142857,1,250000,7,134615],[8,142857,1,333333,7,132075],[8,142857,1,200000,7,137254],[8,142857,1,333333,7,132075],[7,122807,1,500000,6,109090]],
+      "pair_flags": [],
+      "pair_verdict_counts": {"NO_MATCH_WITHIN_BOUNDED_CHECKS": 31, "REVIEW_REQUIRED": 0, "REJECT": 0}
+    },
+    {
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "status": "PROPOSED_PENDING_MANUAL_LINEAGE_REVIEW",
+      "module_slug": "Xhalruuns_Masquerade",
+      "area_id": "TSU001",
+      "area_name": "The Netherwoven Warrens",
+      "location_id": "AO02",
+      "name": "Veilsplit Threshold",
+      "source_identity": "Xhalruuns_Masquerade:TSU001:AO02",
+      "source_reference": "modules/Xhalruuns_Masquerade/areas/TSU001_BU.json#locations[locationId=AO02]+map.rooms[id=AO02]",
+      "source_file_sha256": "1f77e3c4598efddf0db3f9a6f52015b98e00f03f4a37fe2e91882813e4a97b2d",
+      "source_packet_sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+      "lineage_status_for_helper": "independent",
+      "declared_adaptation_lineage": [],
+      "exact_identity_reference_hash_or_declared_ancestry_matches": 0,
+      "manual_source_lineage_review": "PENDING",
+      "fingerprints": {
+        "text_tokens": ["ao01", "ao02", "ao03", "approach", "arch", "archway", "between", "but", "confusion", "coordinates", "corridor", "cover", "dc", "deeper", "description", "entrance", "false", "fractal", "hazards", "name", "narrow", "plate", "pressure", "runes", "shimmering", "threshold", "trap", "type", "veil", "veilsplit", "warrens", "wraith"],
+        "text_fingerprint_sha256": "29a67d77b46240966ab18fbb7d5375d45a9f8e7315faee3f694bb58d92138e77",
+        "layout_tokens": ["approach", "between", "entrance", "threshold"],
+        "layout_fingerprint_sha256": "c9747830ccc2d7ab006a28b26e17351314734b78d3b740b2489cb5155d7e7b7f",
+        "feature_tokens": ["ao01", "ao02", "ao03", "arch", "archway", "but", "confusion", "coordinates", "corridor", "cover", "dc", "deeper", "description", "false", "fractal", "hazards", "name", "narrow", "plate", "pressure", "runes", "shimmering", "trap", "type", "veil", "veilsplit", "warrens", "wraith"],
+        "feature_fingerprint_sha256": "c041283f81d20e39473651ac5d0d8ec284138839cbe7b09173d70b620e58c0c4"
+      },
+      "pair_metrics": [[1,16666,1,200000,0,0],[0,0,0,0,0,0],[1,20408,1,142857,0,0],[1,15873,1,200000,0,0],[1,15873,1,200000,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[2,32258,1,166666,1,17857],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,0,0,1,18181],[1,19607,1,166666,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,15873,1,111111,0,0],[1,16949,1,66666,0,0],[0,0,0,0,0,0],[1,15873,0,0,1,18518],[1,15873,1,111111,0,0],[2,32258,2,166666,0,0],[6,103448,1,250000,5,92592],[8,142857,1,166666,7,140000],[10,185185,1,200000,9,183673],[7,122807,1,142857,6,120000],[8,142857,1,200000,7,137254],[4,66666,1,250000,3,53571]],
+      "pair_flags": [],
+      "pair_verdict_counts": {"NO_MATCH_WITHIN_BOUNDED_CHECKS": 31, "REVIEW_REQUIRED": 0, "REJECT": 0}
+    },
+    {
+      "scene_id": "murder_at_the_drowning_lass:scene:rme001-h03",
+      "status": "PROPOSED_REVIEW_REQUIRED_PENDING_MANUAL_ADJUDICATION_AND_LINEAGE_REVIEW",
+      "module_slug": "Murder_at_the_Drowning_Lass",
+      "area_id": "RME001",
+      "area_name": "The Red Maw Wilds",
+      "location_id": "H03",
+      "name": "Duskmire Hollow",
+      "source_identity": "Murder_at_the_Drowning_Lass:RME001:H03",
+      "source_reference": "modules/Murder_at_the_Drowning_Lass/areas/RME001_BU.json#locations[locationId=H03]+map.rooms[id=H03]",
+      "source_file_sha256": "eab1cee44c5a45ea95ba8783ae2f8e118218c12af2a4aeaac56837068c9ee1b2",
+      "source_packet_sha256": "1a9b1f2c91a60b2ab88e0c37304fb5a281ae95a4ba7e3378e720d82c819f5a6c",
+      "lineage_status_for_helper": "independent",
+      "declared_adaptation_lineage": [],
+      "exact_identity_reference_hash_or_declared_ancestry_matches": 0,
+      "manual_source_lineage_review": "PENDING",
+      "fingerprints": {
+        "text_tokens": ["altar", "approach", "area", "attack", "blood", "cover", "dc", "description", "duskmire", "enforcer", "gp", "h01", "h03", "hidden", "high", "hollow", "map", "maw", "name", "old", "pools", "recent", "red", "ritual", "room", "site", "someone", "stone", "stones", "wolf", "wolfpack", "wolves"],
+        "text_fingerprint_sha256": "8fd57444a451c5714159f86a0e8ca471c31d137165d44a5462b75db9eb67b8e8",
+        "layout_tokens": ["approach"],
+        "layout_fingerprint_sha256": "2ee24a99baf89f3826219a4f888c05966e1db3ac259498253c07bedb877fc4bc",
+        "feature_tokens": ["altar", "area", "attack", "blood", "cover", "dc", "description", "duskmire", "enforcer", "gp", "h01", "h03", "hidden", "high", "hollow", "map", "maw", "name", "old", "pools", "recent", "red", "ritual", "room", "site", "someone", "stone", "stones", "wolf", "wolfpack", "wolves"],
+        "feature_fingerprint_sha256": "f896eb3f70ba63469aae8b0e7e8ea88098178cf79e5ce87ac2e1ff18042dfeca"
+      },
+      "pair_metrics": [[1,16666,0,0,1,17543],[0,0,0,0,0,0],[1,20408,1,250000,0,0],[1,15873,0,0,1,16666],[1,15873,0,0,1,16666],[2,32258,0,0,2,35087],[1,15873,0,0,1,16949],[1,15873,0,0,1,16949],[1,16129,0,0,1,17857],[2,32786,0,0,2,35087],[1,15873,0,0,1,17241],[0,0,0,0,0,0],[1,15873,0,0,1,16949],[0,0,0,0,0,0],[2,32258,0,0,2,35087],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[1,16949,0,0,1,21739],[0,0,0,0,0,0],[1,15873,0,0,1,17543],[2,32258,1,166666,1,17857],[4,66666,1,100000,3,60000],[8,142857,1,1000000,7,127272],[6,103448,1,333333,5,90909],[5,84745,1,500000,4,70175],[8,142857,1,250000,7,134615],[7,122807,1,500000,6,109090],[5,84745,1,1000000,4,68965]],
+      "pair_flags": [
+        {"known_index": 25, "known_record_id": "item1:murder_at_the_drowning_lass:scene:shrouded-lantern-encampment", "flags": [], "review_flags": ["LAYOUT_FINGERPRINT_REVIEW"], "shared_layout_tokens": ["approach"], "verdict": "REVIEW_REQUIRED"},
+        {"known_index": 30, "known_record_id": "item1:the_hidden_city_of_numillian:scene:trial-at-the-door", "flags": [], "review_flags": ["LAYOUT_FINGERPRINT_REVIEW"], "shared_layout_tokens": ["approach"], "verdict": "REVIEW_REQUIRED"}
+      ],
+      "pair_verdict_counts": {"NO_MATCH_WITHIN_BOUNDED_CHECKS": 29, "REVIEW_REQUIRED": 2, "REJECT": 0}
+    }
+  ]
+}

@@ -1,0 +1,785 @@
+{
+  "approved_topology": {
+    "builder_authored_relation_policy": {
+      "approach_to_threshold": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported",
+      "coordinates_are_metric_or_compass_evidence": false,
+      "may_add_nodes_or_source_connections": false,
+      "threshold_to_focal": "required staging claim; must use listed nodes and be marked builder_authored unless directly source-supported"
+    },
+    "builder_authored_role_slots": [
+      {
+        "id": "into_the_deepvault:entity:usable-space-i03",
+        "role": "usable_space",
+        "scope": "schematic only; no metric extent"
+      }
+    ],
+    "compass_frames": [],
+    "explicit_map_directions": [],
+    "fixed_anchor_ids": [
+      "into_the_deepvault:entity:location-i03",
+      "into_the_deepvault:entity:room-i01",
+      "into_the_deepvault:entity:banners",
+      "into_the_deepvault:entity:echoing-chamber",
+      "into_the_deepvault:entity:cracked-dais",
+      "into_the_deepvault:entity:collapsed-east-passage",
+      "into_the_deepvault:entity:usable-space-i03"
+    ],
+    "internal_layout_edges": [],
+    "mobile_occupant_ids": [
+      "into_the_deepvault:entity:echo-wraith"
+    ],
+    "module_id": "into_the_deepvault",
+    "nodes": [
+      {
+        "id": "into_the_deepvault:entity:location-i03",
+        "kind": "threshold",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:room-i01",
+        "kind": "approach",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]",
+        "source_status": "connected_room_id_only"
+      },
+      {
+        "id": "into_the_deepvault:entity:banners",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:echoing-chamber",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:cracked-dais",
+        "kind": "feature",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:collapsed-east-passage",
+        "kind": "door",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:echo-wraith",
+        "kind": "monster",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+      },
+      {
+        "id": "into_the_deepvault:entity:usable-space-i03",
+        "kind": "usable_space",
+        "source_ref": null,
+        "source_status": "builder_authored_role_slot_not_a_source_entity"
+      }
+    ],
+    "scene_id": "into_the_deepvault:scene:sd005-i03",
+    "scene_node_id": "into_the_deepvault:entity:location-i03",
+    "schema": "neq.llm_staging_approved_topology.v1",
+    "scope_id": "into_the_deepvault:scope:sd005",
+    "source_connections": [
+      {
+        "from": "into_the_deepvault:entity:location-i03",
+        "relation": "map_connected",
+        "source_ref": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]",
+        "to": "into_the_deepvault:entity:room-i01"
+      }
+    ],
+    "stage_role_bindings": {
+      "approach": [
+        "into_the_deepvault:entity:room-i01"
+      ],
+      "focal_anchor": [
+        "into_the_deepvault:entity:cracked-dais",
+        "into_the_deepvault:entity:banners"
+      ],
+      "threshold": [
+        "into_the_deepvault:entity:location-i03"
+      ],
+      "usable_space": [
+        "into_the_deepvault:entity:usable-space-i03"
+      ]
+    },
+    "stage_role_entity_kinds": {
+      "approach": "approach",
+      "focal_anchor": "focal_anchor",
+      "threshold": "threshold",
+      "usable_space": "usable_space"
+    },
+    "topology_id": "into_the_deepvault:topology:i03"
+  },
+  "protected_unknowns": {
+    "guarded_content_markers": [
+      {
+        "exact_value": "Accessible only via the west corridor; other exits are blocked by rubble or magical ward.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=I03].accessibility"
+      },
+      {
+        "exact_value": "A place of lost glory, haunted by echoes—both real and spectral—and hiding the first clues to the fate of the dwarven defenders.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=I03].adventureSummary"
+      },
+      {
+        "exact_value": "History DC 13: Learn the significance of the banners and their connection to the Deepvault.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I03].dcChecks[0]"
+      },
+      {
+        "exact_value": "Perception DC 15: Notice a hidden pressure plate near the dais.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I03].dcChecks[1]"
+      },
+      {
+        "exact_value": "The Echo Wraith is highly sensitive to noise—loud actions or combat draw its immediate attention. Roleplay opportunities exist if the party attempts to communicate in respectful silence or dwarven. Clever use of the echoes can allow the party to navigate or disorient the Wraith.",
+        "marker_id": "dmInstructions-5",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=I03].dmInstructions"
+      },
+      {
+        "exact_value": "A blocked archway choked with rubble and fallen banners.",
+        "marker_id": "doors-6",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].description"
+      },
+      {
+        "exact_value": "Collapsed East Passage",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].type"
+      },
+      {
+        "exact_value": "The Echo Wraith attacks those who make noise, but can be placated or questioned if approached with silence and respect.",
+        "marker_id": "encounters-9",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I03].encounters[0].summary"
+      },
+      {
+        "exact_value": "social/combative",
+        "marker_id": "encounters-10",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I03].encounters[0].type"
+      },
+      {
+        "exact_value": "Worn Banner of the Deepvault (historical value, 40 gp)",
+        "marker_id": "lootTable-11",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[0]"
+      },
+      {
+        "exact_value": "Stone-Carved Ring (engraved with dwarven runes)",
+        "marker_id": "lootTable-12",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[1]"
+      },
+      {
+        "exact_value": "Potion of Mind Shielding (advantage on saves vs. charm for 1 hour)",
+        "marker_id": "lootTable-13",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[2]"
+      },
+      {
+        "exact_value": "A spectral entity drawn to sound, its form shifting with every word uttered. Attacks those who break the silence with shrieks that can stun.",
+        "marker_id": "monsters-14",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I03].monsters[0].description"
+      },
+      {
+        "exact_value": "Echo Wraith",
+        "marker_id": "monsters-15",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I03].monsters[0].name"
+      },
+      {
+        "exact_value": "A hidden message in the banner's embroidery reveals the location of a concealed vault beneath the Sundered Depths.",
+        "marker_id": "plotHooks-16",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I03].plotHooks[0]"
+      },
+      {
+        "exact_value": "Whispers from the Echo Wraith, if calmed, mention a dwarven spirit trapped further within.",
+        "marker_id": "plotHooks-17",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I03].plotHooks[1]"
+      },
+      {
+        "exact_value": "2d10 bludgeoning (falling debris if the collapsed passage is forced open unsafely)",
+        "marker_id": "traps-18",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=I03].traps[0].damage"
+      }
+    ],
+    "protected_unknowns_must_not_be_promoted": true,
+    "scene_id": "into_the_deepvault:scene:sd005-i03",
+    "schema": "neq.llm_staging_protected_unknowns.v1",
+    "source_packet_sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+    "unknowns": [
+      {
+        "predicate": "interior_compass_bearings",
+        "reason": "No selected source field establishes compass bearings within the room.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "metric_distance_and_scale",
+        "reason": "Room coordinates and tactical-grid labels are schematic and establish no metric.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "access_beyond_explicit_records",
+        "reason": "Connections do not establish a door, access, or traversability; use only explicit source door/access facts.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "visibility_and_sensory_range",
+        "reason": "The selected source packet does not establish range, line of sight, audibility, or sensory reach.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "sensory_gradients",
+        "reason": "Ambient description does not by itself establish a light, sound, or weather gradient.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "movement_cost_and_legality",
+        "reason": "This study makes no movement-cost or mechanical-legality ruling.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "prior_runtime_party",
+        "reason": "Prior-play PCs and their positions are not supplied and must not be authored.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "public_paraphrase_of_guarded_content",
+        "reason": "Exact marker scans do not detect semantic paraphrases; Overseer semantic review is mandatory.",
+        "status": "unknown"
+      },
+      {
+        "predicate": "linked_view_or_frontage",
+        "reason": "The approved sample has no linked-view/frontage test.",
+        "status": "not_tested"
+      }
+    ]
+  },
+  "reference_coverage": {
+    "extents": {
+      "boundary": [
+        {
+          "id": "scene_boundary",
+          "reason": "The selected packet establishes no multi-cell boundary or schematic extent.",
+          "status": "not_applicable"
+        }
+      ],
+      "path": [
+        {
+          "id": "scene_path",
+          "reason": "The selected packet establishes no multi-cell path extent; a map connection alone has no internal path or traversal semantics.",
+          "status": "not_applicable"
+        }
+      ],
+      "terrain": [
+        {
+          "id": "scene_terrain",
+          "reason": "The selected packet lists features but establishes no multi-cell terrain placement or extent.",
+          "status": "not_applicable"
+        }
+      ]
+    },
+    "schema_version": 1,
+    "stage_relations": {
+      "approach_to_threshold": {
+        "from_id": "into_the_deepvault:entity:room-i01",
+        "status": "required",
+        "to_id": "into_the_deepvault:entity:location-i03"
+      },
+      "threshold_to_focal": {
+        "from_id": "into_the_deepvault:entity:location-i03",
+        "status": "required",
+        "to_id": "into_the_deepvault:entity:cracked-dais"
+      }
+    },
+    "usable_spaces": [
+      {
+        "entity_id": "into_the_deepvault:entity:usable-space-i03",
+        "id": "scene_usable_space",
+        "schematic_cells": [
+          [
+            0,
+            0
+          ]
+        ],
+        "status": "required"
+      }
+    ]
+  },
+  "scene_id": "into_the_deepvault:scene:sd005-i03",
+  "schema": "neq.llm_staging_expected_inputs.v1",
+  "source_facts": {
+    "facts": [
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-50116a7d910d",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].locationId",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-locationid",
+        "status": "source_extracted",
+        "value": "I03"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-d6eb16488c38",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].name",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-name",
+        "status": "source_extracted",
+        "value": "Hall of Echoing Stone"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-c9f3c8a3594d",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].type",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-type",
+        "status": "source_extracted",
+        "value": "hall"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-2bb9fedaaf3b",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].description",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-description",
+        "status": "source_extracted",
+        "value": "Once a grand audience hall, this expansive stone chamber is now fractured by seismic upheavals. The floor is uneven and treacherous, with stalagmites thrusting upward where the ground split. Ancient banners, faded nearly to gray, hang between cracked pillars. Every word spoken here seems to multiply, echoing through the darkness."
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-201bb84845df",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].coordinates",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-coordinates",
+        "status": "source_extracted",
+        "value": "X12Y10"
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-b5cbace2412d",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].connectivity",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-connectivity",
+        "status": "source_extracted",
+        "value": [
+          "I01"
+        ]
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-1294e0269a17",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].areaConnectivity",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-areaconnectivity",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-a8b51fca6f5b",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].areaConnectivityId",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-areaconnectivityid",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-fa9681843b69",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].aliases",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-aliases",
+        "status": "source_extracted",
+        "value": [
+          "Hall of Echoing Stone",
+          "I03"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-e76f904dc895",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].tactical_grid",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-tactical-grid",
+        "status": "source_extracted",
+        "value": [
+          "northwest:cover",
+          "north:approach",
+          "northeast:cover",
+          "west:approach",
+          "center_hall:Hall of Echoing Stone",
+          "east:approach",
+          "southwest:cover",
+          "south:approach",
+          "southeast:cover"
+        ]
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-ecddbbd8cb64",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].npcs",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-npcs",
+        "status": "source_extracted",
+        "value": []
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-8079d8080ed7",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].monsters",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-monsters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "A spectral entity drawn to sound, its form shifting with every word uttered. Attacks those who break the silence with shrieks that can stun.",
+            "name": "Echo Wraith",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-696c1101b9c7",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].lootTable",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-loottable",
+        "status": "source_extracted",
+        "value": [
+          "Worn Banner of the Deepvault (historical value, 40 gp)",
+          "Stone-Carved Ring (engraved with dwarven runes)",
+          "Potion of Mind Shielding (advantage on saves vs. charm for 1 hour)"
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-4cda4825e59c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].plotHooks",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-plothooks",
+        "status": "source_extracted",
+        "value": [
+          "A hidden message in the banner's embroidery reveals the location of a concealed vault beneath the Sundered Depths.",
+          "Whispers from the Echo Wraith, if calmed, mention a dwarven spirit trapped further within."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-027a5252bebb",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].dmInstructions",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-dminstructions",
+        "status": "source_extracted",
+        "value": "The Echo Wraith is highly sensitive to noise—loud actions or combat draw its immediate attention. Roleplay opportunities exist if the party attempts to communicate in respectful silence or dwarven. Clever use of the echoes can allow the party to navigate or disorient the Wraith."
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-acb7b49e39ee",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].doors",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-doors",
+        "status": "source_extracted",
+        "value": [
+          {
+            "breakDC": 18,
+            "description": "A blocked archway choked with rubble and fallen banners.",
+            "keyname": "",
+            "lockDC": 0,
+            "locked": false,
+            "name": "Collapsed East Passage",
+            "trap": "",
+            "trapped": false,
+            "type": "regular"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-461ce5a2d6d6",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].traps",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-traps",
+        "status": "source_extracted",
+        "value": [
+          {
+            "damage": "2d10 bludgeoning (falling debris if the collapsed passage is forced open unsafely)",
+            "detectDC": 13,
+            "disableDC": 12,
+            "triggerDC": 0
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-2cfb7a1b30d0",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].dcChecks",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-dcchecks",
+        "status": "source_extracted",
+        "value": [
+          "History DC 13: Learn the significance of the banners and their connection to the Deepvault.",
+          "Perception DC 15: Notice a hidden pressure plate near the dais."
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-e80d0d458f68",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].accessibility",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-accessibility",
+        "status": "source_extracted",
+        "value": "Accessible only via the west corridor; other exits are blocked by rubble or magical ward."
+      },
+      {
+        "audience": "source_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-6adb751c08ba",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].dangerLevel",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-dangerlevel",
+        "status": "source_extracted",
+        "value": "High"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-b0e96257f30a",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].features",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-features",
+        "status": "source_extracted",
+        "value": [
+          {
+            "description": "Tattered dwarven banners, some embroidered with cryptic warnings and ancient oaths.",
+            "name": "Banners"
+          },
+          {
+            "description": "The chamber magnifies all sounds, creating a disorienting, near-illusory effect.",
+            "name": "Echoing Chamber"
+          },
+          {
+            "description": "A shattered stone platform at the far end, stained with ancient blood.",
+            "name": "Cracked Dais"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-bf12e54e8448",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].encounters",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-encounters",
+        "status": "source_extracted",
+        "value": [
+          {
+            "summary": "The Echo Wraith attacks those who make noise, but can be placated or questioned if approached with silence and respect.",
+            "type": "social/combative"
+          }
+        ]
+      },
+      {
+        "audience": "gm_guarded",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-3a30c2db891a",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03].adventureSummary",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-locations-locationid-i03-adventuresummary",
+        "status": "source_extracted",
+        "value": "A place of lost glory, haunted by echoes—both real and spectral—and hiding the first clues to the fate of the dwarven defenders."
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-21d41f41d550",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].id",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-id",
+        "status": "source_extracted",
+        "value": "I03"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-ff5e97b850c3",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].type",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-type",
+        "status": "source_extracted",
+        "value": "hall"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-cd164f8f8ef0",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].connections",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-connections",
+        "status": "source_extracted",
+        "value": [
+          "I01"
+        ]
+      },
+      {
+        "audience": "schematic_reference_only",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-69023d3133e8",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].coordinates",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-coordinates",
+        "status": "source_extracted",
+        "value": "X12Y10"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-3c943a73fb5a",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].directions",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-directions",
+        "status": "source_extracted",
+        "value": {}
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-a250fdbefe7c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].tags",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-tags",
+        "status": "source_extracted",
+        "value": [
+          "dead_end"
+        ]
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-ead7f500728f",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].purpose",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-purpose",
+        "status": "source_extracted",
+        "value": "encounter"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-747a17fefffd",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].landmark",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-landmark",
+        "status": "source_extracted",
+        "value": true
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-ef04a8034902",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].dangerLevel",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-dangerlevel",
+        "status": "source_extracted",
+        "value": "high"
+      },
+      {
+        "audience": "public_candidate_subject_to_semantic_review",
+        "fact_id": "into_the_deepvault:fact:sd005-i03-084dd01a326c",
+        "source_pointer": "modules/Into_the_Deepvault/areas/SD005_BU.json#map.rooms[id=I03].name",
+        "source_ref": "source:modules/into_the_deepvault/areas/sd005/sd005-i03-map-rooms-id-i03-name",
+        "status": "source_extracted",
+        "value": "Hall of Echoing Stone"
+      }
+    ],
+    "guarded_content_markers": [
+      {
+        "exact_value": "Accessible only via the west corridor; other exits are blocked by rubble or magical ward.",
+        "marker_id": "accessibility-1",
+        "source_field": "accessibility",
+        "source_pointer": "locations[locationId=I03].accessibility"
+      },
+      {
+        "exact_value": "A place of lost glory, haunted by echoes—both real and spectral—and hiding the first clues to the fate of the dwarven defenders.",
+        "marker_id": "adventureSummary-2",
+        "source_field": "adventureSummary",
+        "source_pointer": "locations[locationId=I03].adventureSummary"
+      },
+      {
+        "exact_value": "History DC 13: Learn the significance of the banners and their connection to the Deepvault.",
+        "marker_id": "dcChecks-3",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I03].dcChecks[0]"
+      },
+      {
+        "exact_value": "Perception DC 15: Notice a hidden pressure plate near the dais.",
+        "marker_id": "dcChecks-4",
+        "source_field": "dcChecks",
+        "source_pointer": "locations[locationId=I03].dcChecks[1]"
+      },
+      {
+        "exact_value": "The Echo Wraith is highly sensitive to noise—loud actions or combat draw its immediate attention. Roleplay opportunities exist if the party attempts to communicate in respectful silence or dwarven. Clever use of the echoes can allow the party to navigate or disorient the Wraith.",
+        "marker_id": "dmInstructions-5",
+        "source_field": "dmInstructions",
+        "source_pointer": "locations[locationId=I03].dmInstructions"
+      },
+      {
+        "exact_value": "A blocked archway choked with rubble and fallen banners.",
+        "marker_id": "doors-6",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].description"
+      },
+      {
+        "exact_value": "Collapsed East Passage",
+        "marker_id": "doors-7",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].name"
+      },
+      {
+        "exact_value": "regular",
+        "marker_id": "doors-8",
+        "source_field": "doors",
+        "source_pointer": "locations[locationId=I03].doors[0].type"
+      },
+      {
+        "exact_value": "The Echo Wraith attacks those who make noise, but can be placated or questioned if approached with silence and respect.",
+        "marker_id": "encounters-9",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I03].encounters[0].summary"
+      },
+      {
+        "exact_value": "social/combative",
+        "marker_id": "encounters-10",
+        "source_field": "encounters",
+        "source_pointer": "locations[locationId=I03].encounters[0].type"
+      },
+      {
+        "exact_value": "Worn Banner of the Deepvault (historical value, 40 gp)",
+        "marker_id": "lootTable-11",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[0]"
+      },
+      {
+        "exact_value": "Stone-Carved Ring (engraved with dwarven runes)",
+        "marker_id": "lootTable-12",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[1]"
+      },
+      {
+        "exact_value": "Potion of Mind Shielding (advantage on saves vs. charm for 1 hour)",
+        "marker_id": "lootTable-13",
+        "source_field": "lootTable",
+        "source_pointer": "locations[locationId=I03].lootTable[2]"
+      },
+      {
+        "exact_value": "A spectral entity drawn to sound, its form shifting with every word uttered. Attacks those who break the silence with shrieks that can stun.",
+        "marker_id": "monsters-14",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I03].monsters[0].description"
+      },
+      {
+        "exact_value": "Echo Wraith",
+        "marker_id": "monsters-15",
+        "source_field": "monsters",
+        "source_pointer": "locations[locationId=I03].monsters[0].name"
+      },
+      {
+        "exact_value": "A hidden message in the banner's embroidery reveals the location of a concealed vault beneath the Sundered Depths.",
+        "marker_id": "plotHooks-16",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I03].plotHooks[0]"
+      },
+      {
+        "exact_value": "Whispers from the Echo Wraith, if calmed, mention a dwarven spirit trapped further within.",
+        "marker_id": "plotHooks-17",
+        "source_field": "plotHooks",
+        "source_pointer": "locations[locationId=I03].plotHooks[1]"
+      },
+      {
+        "exact_value": "2d10 bludgeoning (falling debris if the collapsed passage is forced open unsafely)",
+        "marker_id": "traps-18",
+        "source_field": "traps",
+        "source_pointer": "locations[locationId=I03].traps[0].damage"
+      }
+    ],
+    "scene_id": "into_the_deepvault:scene:sd005-i03",
+    "schema": "neq.llm_staging_source_facts.v1",
+    "source_file": "modules/Into_the_Deepvault/areas/SD005_BU.json",
+    "source_file_sha256": "d625edb639b9ee935709afdc39a31f5929db52699b3ee14d819202da80adbb9a",
+    "source_identity": "Into_the_Deepvault:SD005:I03",
+    "source_packet_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json",
+    "source_packet_sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+    "source_reference": "modules/Into_the_Deepvault/areas/SD005_BU.json#locations[locationId=I03]+map.rooms[id=I03]"
+  }
+}
