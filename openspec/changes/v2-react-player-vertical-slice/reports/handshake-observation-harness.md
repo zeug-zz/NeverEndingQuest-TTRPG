@@ -69,3 +69,43 @@ stop. No retry is authorized.
 Historical Chrome P1 setup remains FAIL and its image outcome remains unknown;
 historical Firefox remains BLOCKED. Neither is changed or resolved here, and
 no historical Origin behavior is inferred. The proposed CI job was not applied.
+
+## Dated primary observation result — 2026-11-09
+
+The single authorized primary observation ran from a clean worktree at
+`d47bb72f9b4305013778d9cf28aff757af05bd9f` (Chrome 156.0.8078.80; client build
+`e03cfac3a4f80cce1d4ad5a34259fe1d`). Evidence is under
+`tmp/router-rollout/v2-network/n2-handshake-observe/n2-20261109T205225000Z-30d640e9/`.
+The observation verdict is **FAIL**: setup reached `player_connection_wait`,
+with the authenticated shell loaded but the player disconnected. The five
+observed `GET /socket.io/` polling responses were HTTP 403; each diagnostic
+records `origin_present=false`, `origin_matches_expected=false`,
+`host_matches_expected=true`, and `session_cookie_present=true`. These describe
+only the current request observations; raw headers were not retained, so they
+do not establish historical browser headers or root cause and do not authorize
+weakening Origin enforcement. Protocol version is null/unknown.
+
+The active provider ledger was zero at every checkpoint (zero reservations and
+refusals before login, after observation while active, and in the final copy);
+the final ledger contains only its header and activation records, and the
+monitor was active-zero. Provider identity was not invoked, observed as a zero
+ledger after activation; this is not an unknown dispatch/outcome. The historical
+image outcome remains unknown. Screenshot capture was skipped because the page
+safety check was unavailable; there is no image, an explicit evidence gap.
+Therefore this is not a PASS or completed N2 gate.
+
+Managed owned-host stop was verified; driver and independent-primary exclusive
+bind-close probes passed for ports 8360 and 8370, and the booking was released.
+Optional `ps` PID corroboration was denied (`nono why /bin/ps read ALLOWED`),
+which leaves the nono sandbox cause unconfirmed; no workaround or retry was
+performed. Port proof and managed-stop evidence are retained. No host page/UI
+HTTP, gameplay, P4, lifecycle, or operator manual retry occurred. Automatic
+client polling during the configured 15-second Connected wait is part of the
+observation, not an operator retry.
+
+Preflight evidence copied into the run records clean merged 84 Node tests,
+scenario listing, help/import dry run, P1 managed-bundle preparation checks,
+and P1 managed-agent dry run as passing before booking. Tasks 6.2 and 6.9 remain
+unchecked. No new gate is authorized and N3 remains forbidden. **STOP for the
+owner's compatibility decision** on the current request/Origin boundary; no
+fix or retry is authorized, and no ADR change is claimed as accepted.

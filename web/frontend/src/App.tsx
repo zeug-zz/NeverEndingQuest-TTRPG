@@ -55,6 +55,7 @@ export function App({
     if (!readyForSocket || state.status === "reload-required") return;
     const socket = io("/player", {
       path: "/socket.io",
+      transports: ["websocket"],
       withCredentials: true,
       autoConnect: false,
       reconnection: true,

@@ -5,12 +5,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import {
   captureCredentialSafeScreenshot,
   captureSetupFailureBeforeClose,
   createSetupFailureRecord,
+  normalizeSetupFailureRecord,
   readSetupFailureEvidence,
   sanitizeSetupScreenshotPage,
   settleSetupOperations,
@@ -20,6 +22,13 @@ import {
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const TEST_ROOT = join(PROJECT_ROOT, "tmp", "n2", "setup-evidence");
+
+function evaluateSerializedSanitizer(callback, role, documentRef) {
+  return runInNewContext(`(${callback.toString()})(role)`, {
+    role,
+    document: documentRef,
+  });
+}
 
 test("setup stage errors retain only a fixed stage and discard exception text", async () => {
   const original = new Error("password=setup-secret; Cookie: setup-cookie");
@@ -60,6 +69,7 @@ test("setup failure capture flushes diagnostics, screenshots, persists, then clo
       player_shell_loaded: true,
       host_ui_loaded: false,
       client_build_id: "build-123",
+      protocol_version: 1,
       exception: secret,
       cookie: secret,
     },
@@ -86,6 +96,7 @@ test("setup failure capture flushes diagnostics, screenshots, persists, then clo
       order.push("write");
       assert.equal(record.stage, "player_connection_wait");
       assert.equal(record.observed.client_build_id, "build-123");
+      assert.equal(record.observed.protocol_version, 1);
       assert.equal(record.observed.player_connection_state, "connected");
       assert.equal(record.observed.cookie, undefined);
       assert.equal(record.observed.exception, undefined);
@@ -106,6 +117,7 @@ test("setup failure capture flushes diagnostics, screenshots, persists, then clo
   assert.equal(result.page_close_status, "closed");
   assert.equal(result.record.gameplay_scenarios.status, "BLOCKED");
   assert.equal(result.record.gameplay_scenarios.executed, false);
+  assert.equal(result.record.observed.protocol_version, 1);
   assert.equal(result.record.screenshots[1].reason, "page-unavailable");
   assert.deepEqual(result.record.request_diagnostics, {
     artifact: "request-diagnostics.jsonl",
@@ -206,7 +218,7 @@ test("credential-safe screenshot capture skips unsafe pages and masks before cap
   const skipped = await captureCredentialSafeScreenshot({
     isClosed: () => false,
     url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => callback(role, login.window.document),
+    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, login.window.document),
     screenshot: async () => { screenshotCalled = true; },
   }, "player-a-chrome", "screenshots/login.png", "http://127.0.0.1:8370");
   assert.equal(skipped.status, "skipped");
@@ -215,31 +227,76 @@ test("credential-safe screenshot capture skips unsafe pages and masks before cap
   const authenticated = new JSDOM(`<!doctype html>
     <h1>NeverEndingQuest player</h1>
     <button type="button">Log out</button>
-    <p role="status">Connected</p>
-    <input value="draft-secret">`);
+    <p role="status">Disconnected</p>
+    <input type="hidden" name="csrf_token" value="csrf-secret">
+    <textarea>typed-secret</textarea>
+    <select><option selected>private-character</option></select>
+    <div contenteditable="true">editable-secret</div>
+    <button aria-label="Show session token">session-token-secret</button>`);
   let inputValueAtCapture = "not-captured";
+  let maskedAtCapture = false;
   const captured = await captureCredentialSafeScreenshot({
     isClosed: () => false,
     url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => callback(role, authenticated.window.document),
+    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, authenticated.window.document),
     screenshot: async () => {
       screenshotCalled = true;
       inputValueAtCapture = authenticated.window.document.querySelector("input")?.value ?? "missing";
+      maskedAtCapture =
+        authenticated.window.document.querySelector("input")?.getAttribute("value") === "" &&
+        authenticated.window.document.querySelector("textarea")?.value === "" &&
+        authenticated.window.document.querySelector("select")?.selectedIndex === -1 &&
+        authenticated.window.document.querySelector("[contenteditable]")?.textContent === "" &&
+        authenticated.window.document.querySelector("button[aria-label]")?.textContent === "[REDACTED]";
     },
   }, "player-a-chrome", "screenshots/player.png", "http://127.0.0.1:8370");
   assert.equal(captured.status, "captured");
   assert.equal(screenshotCalled, true);
   assert.equal(inputValueAtCapture, "");
+  assert.equal(maskedAtCapture, true);
 
   screenshotCalled = false;
   const wrongOrigin = await captureCredentialSafeScreenshot({
     isClosed: () => false,
     url: () => "http://127.0.0.1:8360/",
-    evaluate: (callback, role) => callback(role, authenticated.window.document),
+    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, authenticated.window.document),
     screenshot: async () => { screenshotCalled = true; },
   }, "player-a-chrome", "screenshots/foreign.png", "http://127.0.0.1:8370");
   assert.deepEqual(wrongOrigin, { status: "skipped", reason: "page-not-ready" });
   assert.equal(screenshotCalled, false);
+});
+
+test("serialized screenshot safety skips login, unknown status, missing logout, and password pages", async () => {
+  const pages = [
+    {
+      path: "login",
+      html: `<!doctype html><h1>Player login</h1><input type="password" value="secret">`,
+    },
+    {
+      path: "unknown-status",
+      html: `<!doctype html><h1>NeverEndingQuest player</h1><button>Log out</button><p role="status">Not connected</p>`,
+    },
+    {
+      path: "missing-logout",
+      html: `<!doctype html><h1>NeverEndingQuest player</h1><button>Log out now</button><p role="status">Disconnected</p>`,
+    },
+    {
+      path: "password-field",
+      html: `<!doctype html><h1>NeverEndingQuest player</h1><button>Log out</button><p role="status">Disconnected</p><input type="password">`,
+    },
+  ];
+  for (const entry of pages) {
+    const dom = new JSDOM(entry.html);
+    let screenshotCalled = false;
+    const result = await captureCredentialSafeScreenshot({
+      isClosed: () => false,
+      url: () => "http://127.0.0.1:8370/",
+      evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, dom.window.document),
+      screenshot: async () => { screenshotCalled = true; },
+    }, "player-a-chrome", `screenshots/${entry.path}.png`, "http://127.0.0.1:8370");
+    assert.equal(result.status, "skipped", entry.path);
+    assert.equal(screenshotCalled, false, entry.path);
+  }
 });
 
 test("historic authenticated Disconnected DOM is captured before setup pages close", async () => {
@@ -255,7 +312,7 @@ test("historic authenticated Disconnected DOM is captured before setup pages clo
   const page = {
     isClosed: () => false,
     url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => callback(role, historicPage.window.document),
+    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, historicPage.window.document),
     screenshot: async () => { order.push("screenshot"); },
   };
   const result = await captureSetupFailureBeforeClose({
@@ -298,8 +355,13 @@ test("setup failure evidence reader distinguishes missing, valid, invalid, and o
       screenshots: [{ role: "setup", status: "skipped", reason: "page-unavailable" }],
       recordedAt: "2026-11-09T12:00:00.000Z",
     });
+    assert.equal(record.observed.protocol_version, null);
     writeFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
     assert.equal(readSetupFailureEvidence(path).status, "valid");
+    const legacyRecord = { ...record, observed: { ...record.observed } };
+    delete legacyRecord.observed.protocol_version;
+    const normalizedLegacyRecord = normalizeSetupFailureRecord(legacyRecord);
+    assert.equal(normalizedLegacyRecord?.observed.protocol_version, null);
     writeFileSync(path, "{bad json", { encoding: "utf8" });
     assert.deepEqual(readSetupFailureEvidence(path), { status: "invalid", record: null });
     writeFileSync(path, "x".repeat(16_385), { encoding: "utf8" });

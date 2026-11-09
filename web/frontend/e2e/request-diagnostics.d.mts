@@ -24,6 +24,8 @@ export const MAX_REQUEST_DIAGNOSTIC_BYTES: number;
 export class SocketRequestDiagnosticsCollector {
   constructor(expectedOrigin: string, options?: { maxRecords?: number; maxBytes?: number });
   attach(page: import("playwright").Page, context: string): void;
+  whenReady(): Promise<void>;
+  detach(): Promise<boolean>;
   flush(writeRecord: (record: SocketRequestDiagnostic) => Promise<void> | void): Promise<{
     schema: string;
     artifact: string | null;

@@ -45,6 +45,8 @@ export async function loadObserveHandshakeRuntime(importer = (specifier) => impo
       typeof runtime.providerBudget?.copyProviderAttemptLedger !== "function" ||
       typeof runtime.requestDiagnostics?.SocketRequestDiagnosticsCollector !== "function" ||
       typeof runtime.requestDiagnostics.SocketRequestDiagnosticsCollector.prototype?.attach !== "function" ||
+      typeof runtime.requestDiagnostics.SocketRequestDiagnosticsCollector.prototype?.whenReady !== "function" ||
+      typeof runtime.requestDiagnostics.SocketRequestDiagnosticsCollector.prototype?.detach !== "function" ||
       typeof runtime.setupEvidence?.withSetupStage !== "function" ||
       typeof runtime.setupEvidence?.setupFailureStage !== "function" ||
       typeof runtime.setupEvidence?.captureCredentialSafeScreenshot !== "function" ||
@@ -186,13 +188,19 @@ export async function runObserveHandshake(config, runtime) {
     evidence_dir: path.relative(repositoryRoot, evidenceDirectory).split(path.sep).join("/"),
   });
   const closeBrowserResources = async () => {
+    let diagnosticsDetached = true;
+    try {
+      diagnosticsDetached = await diagnostics?.detach() ?? true;
+    } catch {
+      diagnosticsDetached = false;
+    }
     const actions = [
       () => playerPage?.close(),
       () => browserContext?.close(),
       () => browser?.close(),
     ];
     const results = await Promise.allSettled(actions.map((action) => Promise.resolve().then(action)));
-    return results.every((result) => result.status === "fulfilled");
+    return diagnosticsDetached && results.every((result) => result.status === "fulfilled");
   };
   const writeDiagnostics = async () => {
     if (!diagnostics) return runRecord.request_diagnostics;
@@ -211,10 +219,16 @@ export async function runObserveHandshake(config, runtime) {
   };
   const observePageState = async () => {
     if (!playerPage || playerPage.isClosed()) {
-      return { connection_state: "unknown", shell_loaded: "unknown", client_build_id: null };
+      return {
+        connection_state: "unknown",
+        shell_loaded: "unknown",
+        client_build_id: null,
+        protocol_version: null,
+      };
     }
+    let state = null;
     try {
-      const state = await playerPage.evaluate(() => {
+      state = await playerPage.evaluate(() => {
         const status = document.querySelector("[role='status']")?.textContent?.trim();
         const heading = document.querySelector("h1")?.textContent?.trim();
         const buildId = document.querySelector('meta[name="neq-client-build"]')?.content;
@@ -230,14 +244,25 @@ export async function runObserveHandshake(config, runtime) {
           client_build_id: typeof buildId === "string" ? buildId : null,
         };
       });
-      return {
-        connection_state: CONNECTION_STATES.has(state.connection_state) ? state.connection_state : "unknown",
-        shell_loaded: typeof state.shell_loaded === "boolean" ? state.shell_loaded : "unknown",
-        client_build_id: safeBuildId(state.client_build_id),
-      };
     } catch {
-      return { connection_state: "unknown", shell_loaded: "unknown", client_build_id: null };
+      state = null;
     }
+    let playerVersion = null;
+    try {
+      playerVersion = await runtime.login.readPlayerVersion(playerPage);
+    } catch {
+      playerVersion = null;
+    }
+    return {
+      connection_state: CONNECTION_STATES.has(state?.connection_state)
+        ? state.connection_state
+        : "unknown",
+      shell_loaded: typeof state?.shell_loaded === "boolean" ? state.shell_loaded : "unknown",
+      client_build_id: safeBuildId(playerVersion?.clientBuildId) ?? safeBuildId(state?.client_build_id),
+      protocol_version: Number.isInteger(playerVersion?.protocolVersion)
+        ? playerVersion.protocolVersion
+        : null,
+    };
   };
   const captureScreenshot = async () => {
     if (!playerPage) {
@@ -363,6 +388,7 @@ export async function runObserveHandshake(config, runtime) {
             if (shutdownController.signal.aborted) throw new Error("N2 observation stopped before login.");
             diagnostics = new runtime.requestDiagnostics.SocketRequestDiagnosticsCollector(playerUrl);
             diagnostics.attach(playerPage, "player-a-chrome");
+            await diagnostics.whenReady();
 
             ledgerMonitor = setInterval(() => {
               if (monitorCheckpoint !== null) return;
@@ -434,6 +460,7 @@ export async function runObserveHandshake(config, runtime) {
                 connection_state: state.connection_state,
                 shell_loaded: state.shell_loaded,
                 client_build_id: runRecord.setup.client_build_id ?? state.client_build_id,
+                protocol_version: runRecord.setup.protocol_version ?? state.protocol_version,
               };
               await captureScreenshot();
               await writeDiagnostics();
@@ -482,6 +509,7 @@ export async function runObserveHandshake(config, runtime) {
           connection_state: state.connection_state,
           shell_loaded: state.shell_loaded,
           client_build_id: state.client_build_id,
+          protocol_version: state.protocol_version,
         };
       }
       try {

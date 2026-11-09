@@ -51,12 +51,6 @@ const SCREENSHOT_REASONS = new Set([
   "page-safety-check-unavailable",
   "screenshot-failed",
 ]);
-const AUTHENTICATED_PLAYER_STATUSES = new Set([
-  "Connected",
-  "Disconnected",
-  "Connecting...",
-  "Loading player snapshot...",
-]);
 const ARTIFACT_PATH_PATTERN = /^screenshots\/[A-Za-z0-9._-]{1,128}\.png$/;
 const BUILD_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -102,6 +96,9 @@ export function createSetupFailureRecord({
     BUILD_ID_PATTERN.test(observedRecord.client_build_id)
     ? observedRecord.client_build_id
     : null;
+  const safeProtocolVersion = isProtocolVersion(observedRecord.protocol_version)
+    ? observedRecord.protocol_version
+    : null;
   const safeScreenshots = normalizeScreenshots(screenshots);
   return {
     schema: SETUP_FAILURE_SCHEMA,
@@ -122,6 +119,7 @@ export function createSetupFailureRecord({
       player_shell_loaded: observedRecord.player_shell_loaded === true,
       host_ui_loaded: observedRecord.host_ui_loaded === true,
       client_build_id: safeBuildId,
+      protocol_version: safeProtocolVersion,
     },
     gameplay_scenarios: {
       status: "BLOCKED",
@@ -149,19 +147,22 @@ export function normalizeSetupFailureRecord(value) {
   const observedKeys = Object.keys(value.observed).sort();
   const scenarioKeys = Object.keys(value.gameplay_scenarios).sort();
   const requestKeys = Object.keys(value.request_diagnostics).sort();
+  const currentObservedKeys = [
+    "client_build_id",
+    "host_ui_loaded",
+    "player_b_connection_state",
+    "player_connection_state",
+    "player_shell_loaded",
+    "protocol_version",
+  ].sort();
+  const previousObservedKeys = currentObservedKeys.filter((key) => key !== "protocol_version");
   if (!sameKeys(expectedKeys, [
     "client_build_id",
     "host_ui_loaded",
     "player_b_connection_state",
     "player_connection_state",
   ].sort()) ||
-      !sameKeys(observedKeys, [
-        "client_build_id",
-        "host_ui_loaded",
-        "player_b_connection_state",
-        "player_connection_state",
-        "player_shell_loaded",
-      ].sort()) ||
+      !(sameKeys(observedKeys, currentObservedKeys) || sameKeys(observedKeys, previousObservedKeys)) ||
       !sameKeys(scenarioKeys, ["executed", "reason", "status"].sort()) ||
       !sameKeys(requestKeys, [
         "artifact",
@@ -184,7 +185,9 @@ export function normalizeSetupFailureRecord(value) {
       typeof value.observed.player_shell_loaded !== "boolean" ||
       typeof value.observed.host_ui_loaded !== "boolean" ||
       (value.observed.client_build_id !== null &&
-        (typeof value.observed.client_build_id !== "string" || !BUILD_ID_PATTERN.test(value.observed.client_build_id)))) {
+        (typeof value.observed.client_build_id !== "string" || !BUILD_ID_PATTERN.test(value.observed.client_build_id))) ||
+      (Object.prototype.hasOwnProperty.call(value.observed, "protocol_version") &&
+        value.observed.protocol_version !== null && !isProtocolVersion(value.observed.protocol_version))) {
     return null;
   }
 
@@ -264,6 +267,12 @@ export async function captureSetupFailureBeforeClose({
 }
 
 export function sanitizeSetupScreenshotPage(role, documentRef = globalThis.document) {
+  const authenticatedPlayerStatuses = new Set([
+    "Connected",
+    "Disconnected",
+    "Connecting...",
+    "Loading player snapshot...",
+  ]);
   if (![
     "player-a-chrome",
     "player-b-firefox",
@@ -322,7 +331,7 @@ export function sanitizeSetupScreenshotPage(role, documentRef = globalThis.docum
     const logoutButton = [...documentRef.querySelectorAll("button")]
       .some((button) => button.textContent?.trim() === "Log out");
     if (heading !== "NeverEndingQuest player" || !logoutButton ||
-        !AUTHENTICATED_PLAYER_STATUSES.has(connectionStatus) || passwordField) {
+        !authenticatedPlayerStatuses.has(connectionStatus) || passwordField) {
       return { safe: false, reason: "login-or-authentication-not-confirmed" };
     }
   } else if (role === "host-ui-chrome-context") {
@@ -457,6 +466,10 @@ function safeConnectionState(value) {
 
 function isConnectionState(value) {
   return typeof value === "string" && CONNECTION_STATES.has(value);
+}
+
+function isProtocolVersion(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function safeTimestamp(value) {

@@ -215,6 +215,7 @@ test.beforeAll(async () => {
     if (playerTwo) attachConsoleEvidence(playerTwo, "player-b-firefox");
     if (playerTwo) requestDiagnostics?.attach(playerTwo, "player-b-firefox");
     attachConsoleEvidence(hostPage, "host-ui-chrome-context");
+    await requestDiagnostics?.whenReady();
 
     const firstPlayerSetup = loginPlayer(playerOne, {
       playerUrl: PLAYER_URL,
@@ -1029,6 +1030,7 @@ async function observeSetupState(): Promise<Record<string, unknown>> {
     player_shell_loaded: player.shell_loaded,
     host_ui_loaded: setupHostUiLoaded || host.host_ui_loaded,
     client_build_id: player.client_build_id ?? setupClientVersion?.clientBuildId ?? null,
+    protocol_version: player.protocol_version ?? setupClientVersion?.protocolVersion ?? null,
   };
 }
 
@@ -1040,15 +1042,34 @@ async function observePageSetupState(
   shell_loaded: boolean;
   host_ui_loaded: boolean;
   client_build_id: string | null;
+  protocol_version: number | null;
 }> {
   if (role === "player-b-firefox" && !FIREFOX_REQUESTED) {
-    return { connection_state: "not_requested", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+    return {
+      connection_state: "not_requested",
+      shell_loaded: false,
+      host_ui_loaded: false,
+      client_build_id: null,
+      protocol_version: null,
+    };
   }
   if (!page || page.isClosed()) {
-    return { connection_state: "unknown", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+    return {
+      connection_state: "unknown",
+      shell_loaded: false,
+      host_ui_loaded: false,
+      client_build_id: null,
+      protocol_version: null,
+    };
   }
+  let state: {
+    connection_state: "connected" | "connecting" | "disconnected" | "unknown";
+    shell_loaded: boolean;
+    host_ui_loaded: boolean;
+    client_build_id: string | null;
+  } | null = null;
   try {
-    return await page.evaluate((pageRole) => {
+    state = await page.evaluate((pageRole) => {
       const connected = document.querySelector("[role='status']")?.textContent?.trim();
       const connectionState = connected === "Connected"
         ? "connected"
@@ -1067,8 +1088,25 @@ async function observePageSetupState(
       };
     }, role);
   } catch {
-    return { connection_state: "unknown", shell_loaded: false, host_ui_loaded: false, client_build_id: null };
+    state = null;
   }
+  let playerVersion: PlayerVersion | null = null;
+  if (role.startsWith("player-")) {
+    try {
+      playerVersion = await readPlayerVersion(page);
+    } catch {
+      playerVersion = null;
+    }
+  }
+  return {
+    connection_state: state?.connection_state ?? "unknown",
+    shell_loaded: state?.shell_loaded ?? false,
+    host_ui_loaded: state?.host_ui_loaded ?? false,
+    client_build_id: playerVersion?.clientBuildId ?? state?.client_build_id ?? null,
+    protocol_version: Number.isSafeInteger(playerVersion?.protocolVersion)
+      ? playerVersion.protocolVersion
+      : null,
+  };
 }
 
 async function closeSetupBrowsers(): Promise<void> {
