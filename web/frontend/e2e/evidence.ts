@@ -14,6 +14,11 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestInfo } from "playwright/test";
 import { isSensitiveEvidenceField, redactEvidenceText } from "./redaction.mjs";
+import { normalizeSetupFailureRecord } from "./setup-evidence.mjs";
+import {
+  MAX_REQUEST_DIAGNOSTIC_BYTES,
+  normalizeSocketRequestDiagnostic,
+} from "./request-diagnostics.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const TMP_ROOT = resolve(REPOSITORY_ROOT, "tmp");
@@ -143,6 +148,29 @@ export function writeConsoleEvidence(
     recorded_at_utc: new Date().toISOString(),
   });
   appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
+}
+
+export function writeSetupFailureEvidence(value: unknown): void {
+  const safe = normalizeSetupFailureRecord(value);
+  if (safe === null) throw new Error("N2 setup failure evidence is invalid.");
+  atomicJsonWrite(join(evidenceDirectory(), "setup-failure.json"), safe);
+}
+
+export function writeSocketRequestDiagnostic(value: unknown): void {
+  const safe = normalizeSocketRequestDiagnostic(value);
+  if (safe === null) throw new Error("N2 socket request diagnostic is invalid.");
+  const path = join(evidenceDirectory(), "request-diagnostics.jsonl");
+  const line = `${JSON.stringify(safe)}\n`;
+  const nextBytes = Buffer.byteLength(line, "utf8");
+  if (existsSync(path)) {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size + nextBytes > MAX_REQUEST_DIAGNOSTIC_BYTES) {
+      throw new Error("N2 socket request diagnostic evidence path or size is invalid.");
+    }
+  } else if (nextBytes > MAX_REQUEST_DIAGNOSTIC_BYTES) {
+    throw new Error("N2 socket request diagnostic evidence exceeds its size limit.");
+  }
+  appendFileSync(path, line, { encoding: "utf8", flag: "a" });
 }
 
 export function writeScenarioEvidence(result: ScenarioResult): void {

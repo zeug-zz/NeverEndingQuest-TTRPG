@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { FIREFOX_UNAVAILABLE_REASON } from "./browser-contract.mjs";
+import { createSetupFailureRecord } from "./setup-evidence.mjs";
 import {
   N2_MANAGED_LIFECYCLE_IDS,
   runFailFastScenarioSequence,
@@ -102,6 +103,46 @@ test("a failed Playwright child blocks all managed lifecycle scenarios", async (
   assert.ok(result.lifecycleResults.every((record) => record.execution_status === "BLOCKED_UNEXECUTED"));
   assert.ok(result.lifecycleResults.every((record) =>
     record.checks.every((check) => check.verdict === "BLOCKED" && check.reason === result.stopCause.reason),
+  ));
+});
+
+test("a recorded beforeAll setup failure preserves zero gameplay records and blocks every lifecycle scenario", async () => {
+  const setupRecord = createSetupFailureRecord({
+    stage: "player_connection_wait",
+    observed: {
+      player_connection_state: "disconnected",
+      player_b_connection_state: "not_requested",
+      player_shell_loaded: true,
+      host_ui_loaded: true,
+      client_build_id: "n2-build-123",
+    },
+    screenshots: [
+      { role: "player-a-chrome", status: "skipped", reason: "login-or-authentication-not-confirmed" },
+      { role: "host-ui-chrome-context", status: "captured", path: "screenshots/setup-host.png" },
+    ],
+  });
+  let lifecycleCalls = 0;
+  const result = await runLifecycleAfterPlaywright({
+    child: { ...successChild(), status: 1 },
+    records: [],
+    setupFailureEvidence: { status: "valid", record: setupRecord },
+    scenarioCatalog: SCENARIO_CATALOG,
+    browsers: ["chrome"],
+    providerBudgetDecision: providerBudgetPass,
+    runLifecycle: async () => {
+      lifecycleCalls += 1;
+      return successfulLifecycleOutput(["chrome"]);
+    },
+  });
+
+  assert.equal(setupRecord.gameplay_scenarios.executed, false);
+  assert.equal(setupRecord.gameplay_scenarios.status, "BLOCKED");
+  assert.equal(lifecycleCalls, 0);
+  assert.equal(result.stopCause.kind, "playwright-setup-failed");
+  assert.equal(result.stopCause.severity, "FAIL");
+  assert.deepEqual(result.lifecycleResults.map((record) => record.id), N2_MANAGED_LIFECYCLE_IDS);
+  assert.ok(result.lifecycleResults.every((record) =>
+    record.verdict === "BLOCKED" && record.execution_status === "BLOCKED_UNEXECUTED",
   ));
 });
 

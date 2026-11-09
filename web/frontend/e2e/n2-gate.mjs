@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 MoonlightByte
 // SPDX-License-Identifier: Fair-Source-1.0
 
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -34,6 +33,21 @@ import {
   runLifecycleAfterPlaywright,
 } from "./n2-execution-control.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
+import { readSetupFailureEvidence } from "./setup-evidence.mjs";
+import {
+  applySetupFailureScenarioResultPolicy,
+  readN2ScenarioResults,
+} from "./n2-scenario-results.mjs";
+import {
+  ManagedHostOutputCollector,
+  writeManagedHostOutputEvidence,
+} from "./managed-host-output.mjs";
+import {
+  createPlaywrightSpawnFailureOutput,
+  createUnstartedPlaywrightDriverOutput,
+  runPlaywrightProcess,
+  writePlaywrightDriverOutputEvidence,
+} from "./playwright-driver-output.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import {
   copyProviderAttemptLedger,
@@ -232,60 +246,12 @@ function appendScenario(path, result) {
   writeFileSync(path, `${JSON.stringify(result)}\n`, { encoding: "utf8", flag: "a" });
 }
 
-function readScenarioResults(path) {
-  if (!existsSync(path)) {
-    return { records: [], errors: [{ line: 0, reason: "scenario-results-file-missing" }] };
-  }
-  let contents;
-  try {
-    contents = readFileSync(path, "utf8");
-  } catch {
-    return { records: [], errors: [{ line: 0, reason: "scenario-results-file-unreadable" }] };
-  }
-  const records = [];
-  const errors = [];
-  for (const [index, line] of contents.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
-    try {
-      records.push(JSON.parse(line));
-    } catch {
-      errors.push({ line: index + 1, reason: "malformed-json" });
-    }
-  }
-  return { records, errors };
-}
-
 function sanitizeOutput(text, password, verifier = process.env.NEQ_PLAYER_PASSWORD_VERIFIER) {
   return redactEvidenceText(
     text,
     [password, verifier],
     120_000,
   ).slice(-120_000);
-}
-
-function runPlaywright(playwrightPath, args, environment) {
-  return new Promise((resolveRun) => {
-    const runner = spawn(playwrightPath, args, {
-      cwd: FRONTEND_ROOT,
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    activePlaywrightProcess = runner;
-    let stdout = "";
-    let stderr = "";
-    let spawnError = null;
-    const maxBuffer = 2 * 1024 * 1024;
-    const collect = (current, chunk) => `${current}${chunk}`.slice(-maxBuffer);
-    runner.stdout.setEncoding("utf8");
-    runner.stderr.setEncoding("utf8");
-    runner.stdout.on("data", (chunk) => { stdout = collect(stdout, chunk); });
-    runner.stderr.on("data", (chunk) => { stderr = collect(stderr, chunk); });
-    runner.once("error", (error) => { spawnError = error; });
-    runner.once("close", (status, signal) => {
-      if (activePlaywrightProcess === runner) activePlaywrightProcess = null;
-      resolveRun({ status, signal, error: spawnError, stdout, stderr });
-    });
-  });
 }
 
 const options = parseArguments(process.argv.slice(2));
@@ -408,6 +374,7 @@ const runRecord = {
   endpoints: { host: hostUrl, player: playerUrl },
   agent_run: options.agentRun,
   evidence_dir: relativeEvidenceDir,
+  driver_output: null,
   managed_sandbox_host: options.manageSandboxHost ? { enabled: true, sandbox_root: "tmp/combat_capture" } : { enabled: false },
   verdict: "PENDING",
 };
@@ -417,6 +384,7 @@ const playwright = join(FRONTEND_ROOT, "node_modules", ".bin", "playwright");
 let child = null;
 let managedHost = null;
 let startupError = null;
+let startupFailureCategory = null;
 let lifecycleResults = [];
 let providerBudgetReport = null;
 let providerBudgetBlocker = null;
@@ -507,6 +475,7 @@ if (options.manageSandboxHost) {
     } catch (error) {
       if (providerBudgetRefusals.length === 0) providerBudgetBlocker = error;
       startupError = error;
+      startupFailureCategory = "provider-budget-preflight-failed";
       providerBudgetStatus = providerBudgetRefusals.length > 0
         ? "refused_before_gameplay"
         : "blocked_inactive_or_exhausted";
@@ -521,6 +490,7 @@ if (options.manageSandboxHost) {
     atomicJsonWrite(runFile, runRecord);
   } catch (error) {
     startupError = error;
+    startupFailureCategory = "managed-host-startup-failed";
     providerBudgetStatus = "startup_failed";
   }
 }
@@ -530,7 +500,7 @@ if (startupError === null && !shutdownController.signal.aborted) {
     const playwrightEnvironment = { ...process.env };
     delete playwrightEnvironment.NEQ_PLAYER_PASSWORD_VERIFIER;
     playwrightEnvironment.NEQ_N2_PLAYER_PASSWORD = playerPassword;
-    child = await runPlaywright(playwright, [
+    child = await runPlaywrightProcess(playwright, [
       "test",
       "--config=playwright.config.ts",
       `--project=${N2_PLAYWRIGHT_PROJECT}`,
@@ -544,15 +514,65 @@ if (startupError === null && !shutdownController.signal.aborted) {
       NEQ_N2_EVIDENCE_DIR: options.evidenceDir,
       NEQ_N2_BROWSERS: options.browserSet,
       ...(options.manageSandboxHost ? { NEQ_N2_MANAGE_SANDBOX_HOST: "1" } : {}),
+    }, {
+      cwd: FRONTEND_ROOT,
+      onSpawn: (runner) => { activePlaywrightProcess = runner; },
+      onClose: (runner) => {
+        if (activePlaywrightProcess === runner) activePlaywrightProcess = null;
+      },
     });
-  } catch (error) {
-    child = { status: 1, error, stdout: "", stderr: "" };
+  } catch {
+    child = {
+      status: 1,
+      error: true,
+      stdout: "",
+      stderr: "",
+      driverOutput: createPlaywrightSpawnFailureOutput(),
+    };
+    startupFailureCategory = "playwright-runner-failed";
   }
 } else if (startupError === null) {
-  child = { status: 130, error: null, stdout: "", stderr: "runner interrupted before launch" };
+  child = {
+    status: 130,
+    error: null,
+    stdout: "",
+    stderr: "runner interrupted before launch",
+    driverOutput: createUnstartedPlaywrightDriverOutput(),
+  };
 }
 
-let scenarioEvidence = readScenarioResults(scenarioFile);
+let driverOutputEvidence = null;
+let driverOutputWriteFailed = false;
+try {
+  driverOutputEvidence = writePlaywrightDriverOutputEvidence(
+    child?.driverOutput ?? createUnstartedPlaywrightDriverOutput(),
+    options.evidenceDir,
+  );
+} catch {
+  driverOutputWriteFailed = true;
+  startupFailureCategory ??= "driver-output-evidence-write-failed";
+}
+
+const setupFailureEvidence = readSetupFailureEvidence(join(options.evidenceDir, "setup-failure.json"));
+const scenarioEvidence = applySetupFailureScenarioResultPolicy(
+  readN2ScenarioResults(scenarioFile),
+  setupFailureEvidence.status,
+);
+if (setupFailureEvidence.status === "valid") {
+  runRecord.setup_failure = {
+    status: "FAIL",
+    stage: setupFailureEvidence.record.stage,
+    failure_category: setupFailureEvidence.record.failure_category,
+    artifact: "setup-failure.json",
+  };
+} else {
+  runRecord.setup_failure = {
+    status: setupFailureEvidence.status,
+    stage: null,
+    failure_category: null,
+    artifact: null,
+  };
+}
 let lifecycleExecution = null;
 let executionStopCause = null;
 const persistedLifecycleIds = new Set();
@@ -563,6 +583,7 @@ if (options.manageSandboxHost) {
     child,
     records: scenarioEvidence.records,
     evidenceErrors: scenarioEvidence.errors,
+    setupFailureEvidence,
     scenarioCatalog: SCENARIO_CATALOG,
     browsers: options.browsers,
     lifecycleScenarioIds: N2_MANAGED_LIFECYCLE_IDS,
@@ -615,15 +636,17 @@ if (managedHost !== null) {
       record.verdict = "FAIL";
       record.observed = {
         ...(record.observed && typeof record.observed === "object" ? record.observed : {}),
-        managed_host_teardown_error: sanitizeOutput(String(error), playerPassword, playerVerifier),
+        managed_host_teardown_failure_category: "managed-host-teardown-failed",
       };
     } else {
       startupError ??= error;
+      startupFailureCategory ??= "managed-host-teardown-failed";
     }
   }
 }
 if (signalStopError !== null) {
   startupError ??= signalStopError;
+  startupFailureCategory ??= "managed-host-teardown-failed";
 }
 
 try {
@@ -650,7 +673,22 @@ try {
   }
 } catch (error) {
   providerBudgetCopyError = error;
+  startupFailureCategory ??= "provider-ledger-copy-failed";
   providerBudgetStatus = "ledger_evidence_invalid_or_unavailable";
+}
+
+let managedHostOutputEvidence = null;
+let managedHostOutputWriteFailed = false;
+if (options.manageSandboxHost) {
+  try {
+    managedHostOutputEvidence = writeManagedHostOutputEvidence(
+      managedHost?.outputSnapshot() ?? new ManagedHostOutputCollector().snapshot(),
+      options.evidenceDir,
+    );
+  } catch {
+    managedHostOutputWriteFailed = true;
+    startupFailureCategory ??= "managed-host-output-evidence-write-failed";
+  }
 }
 
 for (const result of lifecycleResults) {
@@ -698,10 +736,28 @@ finalRunRecord.provider_attempt_budget = {
   reservation_count: providerBudgetReport?.reservation_count ?? null,
   refusal_count: providerBudgetReport?.refusal_count ?? null,
   refusal_reason: providerBudgetRefusals.length > 0 ? "budget_exhausted" : null,
-  copy_error: providerBudgetCopyError === null
-    ? null
-     : sanitizeOutput(String(providerBudgetCopyError), playerPassword, playerVerifier),
+  copy_error_category: providerBudgetCopyError === null ? null : "provider-ledger-copy-failed",
 };
+finalRunRecord.setup_failure = runRecord.setup_failure;
+finalRunRecord.setup_failure_evidence_status = setupFailureEvidence.status;
+finalRunRecord.scenario_results_file_status = scenarioEvidence.fileStatus;
+finalRunRecord.driver_output = driverOutputEvidence;
+finalRunRecord.request_diagnostics = setupFailureEvidence.status === "valid"
+  ? setupFailureEvidence.record.request_diagnostics
+  : finalRunRecord.request_diagnostics ?? null;
+finalRunRecord.managed_host_output = options.manageSandboxHost
+  ? managedHostOutputEvidence ?? {
+    artifact: null,
+    total_process_starts: managedHost?.outputSnapshot().total_process_starts ?? 0,
+    process_records_written: 0,
+    omitted_process_records: 0,
+    raw_output_retained: false,
+    retention_status: "failed",
+  }
+  : null;
+if (finalRunRecord.managed_sandbox_host && options.manageSandboxHost) {
+  finalRunRecord.managed_sandbox_host.output_evidence = managedHostOutputEvidence?.artifact ?? null;
+}
 finalRunRecord.browsers_requested = options.browsers;
 finalRunRecord.browsers_run = Array.isArray(finalRunRecord.browsers_run)
   ? finalRunRecord.browsers_run
@@ -727,9 +783,10 @@ result.scenario_execution = finalRunRecord.scenario_execution;
 if (providerBudgetBlocker !== null) {
   if (result.verdict !== "FAIL") result.verdict = "BLOCKED";
   result.runner_error = "The managed host did not prove active provider-attempt enforcement before gameplay.";
-} else if (startupError || child?.error || child?.status !== 0 || finalRunRecord.metadata_error || providerBudgetCopyError) {
+} else if (startupError || child?.error || child?.status !== 0 || finalRunRecord.metadata_error ||
+    providerBudgetCopyError || managedHostOutputWriteFailed || driverOutputWriteFailed) {
   result.verdict = "FAIL";
-  result.runner_error = "Playwright runner or required run metadata failed; see sanitized output.";
+  result.runner_error = "Playwright runner or required run metadata failed; see sanitized output and driver-output evidence.";
 }
 if (providerBudgetReadError !== null && result.verdict !== "FAIL") {
   result.verdict = "BLOCKED";
@@ -754,6 +811,12 @@ result.browser_coverage_status = finalRunRecord.browser_coverage_status;
 result.verdict_scope = finalRunRecord.verdict_scope;
 result.browser_instances = finalRunRecord.browser_instances;
 result.agent_run = options.agentRun;
+result.setup_failure = finalRunRecord.setup_failure;
+result.setup_failure_evidence_status = finalRunRecord.setup_failure_evidence_status;
+result.scenario_results_file_status = finalRunRecord.scenario_results_file_status;
+result.managed_host_output = finalRunRecord.managed_host_output;
+result.driver_output = finalRunRecord.driver_output;
+result.request_diagnostics = finalRunRecord.request_diagnostics ?? null;
 finalRunRecord.verdict = result.verdict;
 result.run_id = runId;
 result.started_at_utc = runRecord.started_at_utc;
@@ -767,7 +830,7 @@ result.evidence_dir = relativeEvidenceDir;
 atomicJsonWrite(runFile, finalRunRecord);
 atomicJsonWrite(summaryFile, result);
 
-const output = `${startupError ? `${String(startupError)}\n` : ""}${child?.stdout ?? ""}${child?.stderr ?? ""}`;
+const output = `${startupFailureCategory ? `[N2] ${startupFailureCategory}\n` : ""}${child?.stdout ?? ""}${child?.stderr ?? ""}`;
 if (output) process.stdout.write(sanitizeOutput(output, playerPassword, playerVerifier));
 console.log(`N2 gate ${result.verdict}: PASS=${result.counts.PASS} FAIL=${result.counts.FAIL} BLOCKED=${result.counts.BLOCKED}`);
 console.log(`Browsers: requested=${options.browserSet} run=${finalRunRecord.browsers_run.join("+") || "none"}`);
