@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import builtins
+import copy
 import hashlib
 import importlib
 import json
@@ -154,12 +155,49 @@ class MiseEnSceneHoldoutDraftTests(unittest.TestCase):
     def test_manifest_has_six_scenes_24_artifacts_and_pending_order(self) -> None:
         with patch.object(socket, "socket", side_effect=AssertionError("network forbidden")):
             files, manifest = self.builder._render_files()
+        checks = manifest["leakage_checks"]
+        expected_adjudications = [
+            {
+                "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+                "known_record_id": "owner:G",
+                "automated_verdict": "REVIEW_REQUIRED",
+                "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+                "adjudication": "ACCEPTED-NOT-DERIVED",
+                "owner": "repository owner",
+                "adjudicated_on": "2026-11-08",
+                "ruling_timestamp": "2026-11-08T21:14:44Z",
+            },
+            {
+                "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+                "known_record_id": "owner:H",
+                "automated_verdict": "REVIEW_REQUIRED",
+                "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+                "adjudication": "ACCEPTED-NOT-DERIVED",
+                "owner": "repository owner",
+                "adjudicated_on": "2026-11-08",
+                "ruling_timestamp": "2026-11-08T21:14:44Z",
+            },
+        ]
         self.assertEqual(manifest["status"], "DRAFT_UNFROZEN")
         self.assertEqual(manifest["authorization_status"], "NOT_OWNER_APPROVED")
         self.assertEqual(manifest["scoring_status"], "NOT_STARTED")
         self.assertEqual(manifest["counts"]["scenes"], 6)
         self.assertEqual(manifest["counts"]["artifacts"], 24)
         self.assertEqual(manifest["leakage_summary"]["pair_checks"], 150)
+        self.assertEqual(manifest["leakage_status"], "REVIEW_REQUIRED")
+        self.assertEqual(len(checks), 150)
+        self.assertEqual(sum(check["verdict"] == "REJECT" for check in checks), 0)
+        self.assertEqual(
+            sum(check["verdict"] == "REVIEW_REQUIRED" for check in checks), 2
+        )
+        self.assertEqual(
+            sum(
+                check["verdict"] == "NO_MATCH_WITHIN_BOUNDED_CHECKS"
+                for check in checks
+            ),
+            148,
+        )
+        self.assertEqual(manifest["leakage_adjudications"], expected_adjudications)
         self.assertEqual(manifest["assignment"]["status"], "PENDING_OWNER_SEED")
         self.assertIsNone(manifest["assignment"]["seed"])
         self.assertIsNone(manifest["assignment"]["artifact_order"])
@@ -196,6 +234,52 @@ class MiseEnSceneHoldoutDraftTests(unittest.TestCase):
                 self.assertEqual(line, line.rstrip())
         self.assertIsNone(manifest["hashes"]["assignment_seed_sha256"])
 
+        output_root = self.builder._output_directory()
+        baseline = self.evaluation.build_draft_holdout_manifest(
+            self.specs.build_scene_inputs(),
+            test_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            rubric_sha256=hashlib.sha256(
+                (output_root / "rubric.md").read_bytes()
+            ).hexdigest(),
+            assessor_sha256=hashlib.sha256(
+                (output_root / "assessor-config.draft.md").read_bytes()
+            ).hexdigest(),
+        )
+        for hash_name in (
+            "sources_sha256",
+            "facts_sha256",
+            "artifacts_sha256",
+            "fixtures_sha256",
+            "rubric_sha256",
+            "assessor_sha256",
+            "catalog_sha256",
+            "counts_sha256",
+        ):
+            self.assertEqual(
+                manifest["hashes"][hash_name], baseline["hashes"][hash_name]
+            )
+        self.assertEqual(
+            manifest["leakage_summary"]["policy"],
+            baseline["leakage_summary"]["policy"],
+        )
+        baseline_artifacts = {
+            "artifacts/"
+            + scene["scene_id"].split(":scene:", 1)[1]
+            + "/"
+            + artifact["condition"]
+            + ".txt": artifact["content"].encode("ascii")
+            for scene in baseline["scenes"]
+            for artifact in scene["artifacts"]
+        }
+        self.assertEqual(
+            {
+                name: content
+                for name, content in files.items()
+                if name.startswith("artifacts/")
+            },
+            baseline_artifacts,
+        )
+
         def assert_no_rating_records(value: object) -> None:
             if type(value) is dict:
                 for key, child in value.items():
@@ -211,6 +295,46 @@ class MiseEnSceneHoldoutDraftTests(unittest.TestCase):
         self.assertTrue(
             self.evaluation.verify_draft_holdout_manifest(manifest)["is_valid"]
         )
+        with self.assertRaises(self.evaluation.EvaluationManifestError) as caught_freeze:
+            self.evaluation.freeze_manifest_binding(manifest, {})
+        self.assertEqual(caught_freeze.exception.code, "SEED_PENDING")
+        review_text = files["leakage-review.draft.md"].decode("ascii")
+        self.assertIn("Manual owner adjudication (2026-11-08)", review_text)
+        self.assertIn(
+            "generic approach-to-threshold-to-focal staging vocabulary", review_text
+        )
+        self.assertIn("no text or lineage overlap", review_text)
+        self.assertIn("automated `REVIEW_REQUIRED`", review_text)
+        self.assertIn("The repository owner, under ruling `2026-11-08T21:14:44Z`", review_text)
+        self.assertIn("by `repository owner`", review_text)
+        self.assertIn("`DRAFT_UNFROZEN` / `NOT_OWNER_APPROVED`", review_text)
+
+    def test_default_generic_draft_without_adjudication_still_verifies(self) -> None:
+        _files, canonical_manifest = self.builder._render_files()
+        generic_draft = self.evaluation.build_draft_holdout_manifest(
+            self.specs.build_scene_inputs(),
+            **canonical_manifest["protocol_hashes"],
+        )
+        self.assertNotIn("leakage_adjudications", generic_draft)
+        self.assertEqual(generic_draft["leakage_status"], "REVIEW_REQUIRED")
+        self.assertEqual(generic_draft["leakage_summary"]["review_required_pairs"], 2)
+        self.assertTrue(
+            self.evaluation.verify_draft_holdout_manifest(generic_draft)["is_valid"]
+        )
+
+    def test_canonical_adjudication_tampering_and_removal_fail_without_rehash(self) -> None:
+        _files, manifest = self.builder._render_files()
+        tampered = copy.deepcopy(manifest)
+        tampered["leakage_adjudications"][0]["known_record_id"] = "owner:I"
+        with self.assertRaises(self.evaluation.EvaluationManifestError) as caught:
+            self.evaluation.verify_draft_holdout_manifest(tampered)
+        self.assertEqual(caught.exception.code, "LEAKAGE_ADJUDICATION_INVALID")
+
+        removed = copy.deepcopy(manifest)
+        del removed["leakage_adjudications"]
+        with self.assertRaises(self.evaluation.EvaluationManifestError) as caught_remove:
+            self.evaluation.verify_draft_holdout_manifest(removed)
+        self.assertEqual(caught_remove.exception.code, "HASH_ENVELOPE_STALE")
 
     def test_public_artifacts_exclude_guarded_fact_values(self) -> None:
         files, _manifest = self.builder._render_files()

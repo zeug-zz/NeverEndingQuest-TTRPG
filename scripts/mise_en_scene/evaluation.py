@@ -63,6 +63,28 @@ _EXPECTED_OWNER_LINEAGE = {
     "owner:I": "m1:d1-The_Thornwood_Watch-NC05-D1-review-start-40c08ae46c2b",
 }
 _EXPECTED_OWNER_RECORD_IDS = tuple("owner:" + letter for letter in "ABCDEFGHI")
+_DRAFT_OWNER_LEAKAGE_ADJUDICATIONS: tuple[dict[str, str], ...] = (
+    {
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "known_record_id": "owner:G",
+        "automated_verdict": "REVIEW_REQUIRED",
+        "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+        "adjudication": "ACCEPTED-NOT-DERIVED",
+        "owner": "repository owner",
+        "adjudicated_on": "2026-11-08",
+        "ruling_timestamp": "2026-11-08T21:14:44Z",
+    },
+    {
+        "scene_id": "xhalruuns_masquerade:scene:sanctum-of-fractured-truths",
+        "known_record_id": "owner:H",
+        "automated_verdict": "REVIEW_REQUIRED",
+        "automated_review_flag": "LAYOUT_FINGERPRINT_REVIEW",
+        "adjudication": "ACCEPTED-NOT-DERIVED",
+        "owner": "repository owner",
+        "adjudicated_on": "2026-11-08",
+        "ruling_timestamp": "2026-11-08T21:14:44Z",
+    },
+)
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _SCENE_ID_RE = re.compile(
     r"^[a-z][a-z0-9_-]{0,63}:scene:[a-z0-9][a-z0-9_-]{0,63}$"
@@ -716,6 +738,54 @@ def _build_leakage_checks(
     return checks, summary, status
 
 
+def _draft_owner_leakage_adjudications() -> list[dict[str, str]]:
+    return copy.deepcopy(list(_DRAFT_OWNER_LEAKAGE_ADJUDICATIONS))
+
+
+def _validate_draft_owner_leakage_adjudications(
+    value: object, checks: list[dict[str, Any]]
+) -> None:
+    path = "$.manifest.leakage_adjudications"
+    expected = _draft_owner_leakage_adjudications()
+    if type(value) is not list or value != expected:
+        raise EvaluationManifestError("LEAKAGE_ADJUDICATION_INVALID", path)
+
+    counts = Counter(check["verdict"] for check in checks)
+    if (
+        len(checks) != 150
+        or counts["REJECT"] != 0
+        or counts["REVIEW_REQUIRED"] != 2
+        or counts["NO_MATCH_WITHIN_BOUNDED_CHECKS"] != 148
+    ):
+        raise EvaluationManifestError(
+            "LEAKAGE_ADJUDICATION_BASELINE_STALE", "$.manifest.leakage_checks"
+        )
+
+    reviewed_pairs = [
+        (
+            check["scene_id"],
+            check["known_record_id"],
+            check["verdict"],
+            check["review_flags"],
+        )
+        for check in checks
+        if check["verdict"] == "REVIEW_REQUIRED"
+    ]
+    expected_pairs = [
+        (
+            item["scene_id"],
+            item["known_record_id"],
+            item["automated_verdict"],
+            [item["automated_review_flag"]],
+        )
+        for item in expected
+    ]
+    if reviewed_pairs != expected_pairs:
+        raise EvaluationManifestError(
+            "LEAKAGE_ADJUDICATION_BASELINE_STALE", "$.manifest.leakage_checks"
+        )
+
+
 def _stable_order(seed: str, item_ids: list[str]) -> list[str]:
     seed_bytes = seed.encode("ascii")
 
@@ -807,6 +877,13 @@ def _hash_envelope(manifest: dict[str, Any]) -> dict[str, Any]:
         if type(episode_order) is list
         else None
     )
+    leakage_review_payload = {
+        "checks": manifest["leakage_checks"],
+        "summary": manifest["leakage_summary"],
+        "status": manifest["leakage_status"],
+    }
+    if "leakage_adjudications" in manifest:
+        leakage_review_payload["adjudications"] = manifest["leakage_adjudications"]
     return {
         "sources_sha256": _hash_json(
             [{"scene_id": scene["scene_id"], "source": scene["source"]} for scene in scenes]
@@ -843,19 +920,13 @@ def _hash_envelope(manifest: dict[str, Any]) -> dict[str, Any]:
         "episode_order_sha256": assignment.get("episode_order_sha256"),
         "order_sha256": assignment.get("order_sha256"),
         "catalog_sha256": manifest["catalog"]["sha256"],
-        "leakage_review_sha256": _hash_json(
-            {
-                "checks": manifest["leakage_checks"],
-                "summary": manifest["leakage_summary"],
-                "status": manifest["leakage_status"],
-            }
-        ),
+        "leakage_review_sha256": _hash_json(leakage_review_payload),
         "counts_sha256": _hash_json(manifest["counts"]),
     }
 
 
 def _manifest_candidate_payload(manifest: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         key: manifest[key]
         for key in (
             "schema_version",
@@ -872,6 +943,9 @@ def _manifest_candidate_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "hashes",
         )
     }
+    if "leakage_adjudications" in manifest:
+        payload["leakage_adjudications"] = manifest["leakage_adjudications"]
+    return payload
 
 
 def build_proposed_holdout_manifest(
@@ -908,6 +982,7 @@ def build_draft_holdout_manifest(
     rubric_sha256: object,
     assessor_sha256: object,
     catalog: object | None = None,
+    include_owner_leakage_adjudications: bool = False,
 ) -> dict[str, Any]:
     """Build the same six-scene proposal while leaving ordering to the owner.
 
@@ -923,6 +998,7 @@ def build_draft_holdout_manifest(
         assessor_sha256=assessor_sha256,
         catalog=catalog,
         draft=True,
+        include_owner_leakage_adjudications=include_owner_leakage_adjudications,
     )
 
 
@@ -935,6 +1011,7 @@ def _build_holdout_manifest(
     assessor_sha256: object,
     catalog: object | None,
     draft: bool,
+    include_owner_leakage_adjudications: bool = False,
 ) -> dict[str, Any]:
     selected_catalog = load_known_examples() if catalog is None else copy.deepcopy(catalog)
     catalog_sha256 = validate_known_examples(selected_catalog)
@@ -1002,6 +1079,19 @@ def _build_holdout_manifest(
     leakage_checks, leakage_summary, leakage_status = _build_leakage_checks(
         normalized_scenes, catalog_records
     )
+    if type(include_owner_leakage_adjudications) is not bool:
+        raise EvaluationManifestError(
+            "LEAKAGE_ADJUDICATION_OPTION", "$.include_owner_leakage_adjudications"
+        )
+    if include_owner_leakage_adjudications and not draft:
+        raise EvaluationManifestError(
+            "LEAKAGE_ADJUDICATION_DRAFT_ONLY",
+            "$.include_owner_leakage_adjudications",
+        )
+    if include_owner_leakage_adjudications:
+        _validate_draft_owner_leakage_adjudications(
+            _draft_owner_leakage_adjudications(), leakage_checks
+        )
     assignment = (
         _build_pending_assignment()
         if draft
@@ -1045,6 +1135,8 @@ def _build_holdout_manifest(
         "assignment": assignment,
         "hashes": {},
     }
+    if include_owner_leakage_adjudications:
+        manifest["leakage_adjudications"] = _draft_owner_leakage_adjudications()
     manifest["hashes"] = _hash_envelope(manifest)
     manifest["candidate_sha256"] = _hash_json(_manifest_candidate_payload(manifest))
     if len(_canonical_json(manifest).encode("ascii")) > _MAX_MANIFEST_BYTES:
@@ -1073,6 +1165,8 @@ def _verify_manifest_shell(
         "hashes",
         "candidate_sha256",
     }
+    if draft and type(manifest) is dict and "leakage_adjudications" in manifest:
+        expected_keys.add("leakage_adjudications")
     data = _require_record(manifest, expected_keys, "$.manifest")
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
         raise EvaluationManifestError("MANIFEST_SCHEMA_VERSION", "$.manifest.schema_version")
@@ -1356,6 +1450,15 @@ def _verify_manifest(
         raise EvaluationManifestError("LEAKAGE_SUMMARY_STALE", "$.manifest.leakage_summary")
     if data["leakage_status"] != leakage_status:
         raise EvaluationManifestError("LEAKAGE_STATUS_STALE", "$.manifest.leakage_status")
+    if "leakage_adjudications" in data:
+        if not draft:
+            raise EvaluationManifestError(
+                "LEAKAGE_ADJUDICATION_DRAFT_ONLY",
+                "$.manifest.leakage_adjudications",
+            )
+        _validate_draft_owner_leakage_adjudications(
+            data["leakage_adjudications"], leakage_checks
+        )
 
     hashes = _require_record(
         data["hashes"],
