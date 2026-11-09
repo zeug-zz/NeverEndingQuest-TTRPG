@@ -10,12 +10,16 @@ from __future__ import annotations
 import ast
 import asyncio
 import re
+import types
 import unittest
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
+from flask_socketio import SocketIO as FlaskSocketIO
+
+from utils.player_host_publication import PlayerHostChangeKind, _validated_notice
 from web.extensions.player import PLAYER_NAMESPACE, create_app
 from web.extensions.player.auth import PlayerSecurity
 from web.extensions.player.capabilities import (
@@ -47,6 +51,27 @@ class SurfaceInventory:
     emissions: frozenset[str]
     dynamic_event_sites: frozenset[str]
     discovery_errors: tuple[str, ...] = ()
+
+
+class _HostEmitProbe:
+    """Capture Flask-SocketIO's in-process dispatch without opening a listener."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    def emit(self, event: str, *args: object, **kwargs: object) -> None:
+        self.calls.append((event, args, kwargs))
+
+
+class _PlayerEmitTripwire:
+    """Fail if the extracted host callback tries a player-server emission."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def emit(self, *args: object, **kwargs: object) -> None:
+        self.calls.append((args, kwargs))
+        raise AssertionError("host compression callback reached the player emitter")
 
 
 def _expression_name(node: ast.AST) -> str | None:
@@ -813,6 +838,196 @@ class PlayerRouteInventoryTests(unittest.TestCase):
         self.assertEqual(PLAYER_HTTP_ALLOWLIST, spec_http)
         self.assertEqual(PLAYER_SOCKET_EVENT_ALLOWLIST, spec_events)
         self.assertEqual(PLAYER_SOCKET_EMISSION_ALLOWLIST, spec_emissions)
+
+    def test_compression_callback_uses_host_default_namespace_not_player_emitter(self) -> None:
+        host_path = REPOSITORY_ROOT / "web" / "web_interface.py"
+        host_tree, errors = _python_trees([host_path])
+        self.assertEqual(errors, [])
+        host_module = host_tree[host_path]
+        callback_nodes = [
+            node
+            for node in host_module.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "emit_compression_event"
+        ]
+        self.assertEqual(len(callback_nodes), 1)
+        callback_node = callback_nodes[0]
+
+        calls = [node for node in ast.walk(callback_node) if isinstance(node, ast.Call)]
+        self.assertEqual(len(calls), 1)
+        host_emit_call = calls[0]
+        self.assertEqual(_expression_name(host_emit_call.func), "socketio.emit")
+        self.assertEqual(
+            [_expression_name(argument) for argument in host_emit_call.args],
+            ["event_type", "data"],
+        )
+        self.assertEqual(host_emit_call.keywords, [])
+        callback_names = {
+            node.id for node in ast.walk(callback_node) if isinstance(node, ast.Name)
+        }
+        self.assertTrue(
+            {
+                "PLAYER_NAMESPACE",
+                "player_socket_server",
+                "submit_player_host_change",
+            }.isdisjoint(callback_names)
+        )
+
+        site_key = (
+            "dynamic:emit:web/web_interface.py:emit_compression_event:"
+            f"{host_emit_call.lineno}"
+        )
+        self.assertIn(site_key, self.inventory.dynamic_event_sites)
+        self.assertEqual(HOST_SURFACE_CLASSIFICATION.get(site_key), HOST_ONLY)
+        compression_classifications = {
+            key
+            for key in HOST_SURFACE_CLASSIFICATION
+            if key.startswith(
+                "dynamic:emit:web/web_interface.py:emit_compression_event:"
+            )
+        }
+        self.assertEqual(compression_classifications, {site_key})
+
+        host_socketio_constructors = [
+            node.value
+            for node in ast.walk(host_module)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "socketio"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and _expression_name(node.value.func) == "SocketIO"
+        ]
+        self.assertEqual(len(host_socketio_constructors), 1)
+        self.assertEqual(
+            [keyword.arg for keyword in host_socketio_constructors[0].keywords],
+            ["cors_allowed_origins"],
+        )
+        self.assertEqual(
+            _expression_name(host_socketio_constructors[0].args[0]), "app"
+        )
+
+        monitor_path = REPOSITORY_ROOT / "web" / "extensions" / "live_chat_monitor.py"
+        monitor_tree, errors = _python_trees([monitor_path])
+        self.assertEqual(errors, [])
+        wrapper_nodes = [
+            node
+            for node in ast.walk(monitor_tree[monitor_path])
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_tabletop_mode_emit_wrapper"
+        ]
+        self.assertEqual(len(wrapper_nodes), 1)
+        wrapper_calls = [
+            node
+            for node in ast.walk(wrapper_nodes[0])
+            if isinstance(node, ast.Call)
+            and _expression_name(node.func) == "original_socketio_emit"
+        ]
+        self.assertEqual(len(wrapper_calls), 1)
+        self.assertEqual(
+            [_expression_name(argument) for argument in wrapper_calls[0].args[:2]],
+            ["event", "data"],
+        )
+        self.assertEqual(
+            [_expression_name(argument.value) for argument in wrapper_calls[0].args[2:]
+             if isinstance(argument, ast.Starred)],
+            ["args"],
+        )
+        self.assertEqual(
+            [(keyword.arg, _expression_name(keyword.value))
+             for keyword in wrapper_calls[0].keywords],
+            [(None, "kwargs")],
+        )
+
+        player_path = PLAYER_PACKAGE_ROOT / "app.py"
+        player_tree, errors = _python_trees([player_path])
+        self.assertEqual(errors, [])
+        player_module = player_tree[player_path]
+        player_server_calls = [
+            node
+            for node in ast.walk(player_module)
+            if isinstance(node, ast.Call)
+            and _expression_name(node.func) == "socketio.AsyncServer"
+        ]
+        self.assertEqual(len(player_server_calls), 1)
+        namespace_keyword = next(
+            keyword
+            for keyword in player_server_calls[0].keywords
+            if keyword.arg == "namespaces"
+        )
+        self.assertIsInstance(namespace_keyword.value, ast.List)
+        assert isinstance(namespace_keyword.value, ast.List)
+        self.assertEqual(
+            [_expression_name(element) for element in namespace_keyword.value.elts],
+            ["PLAYER_NAMESPACE"],
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and _expression_name(node.func) == "socketio.ASGIApp"
+                and node.args
+                and _expression_name(node.args[0]) == "self.socket_server"
+                for node in ast.walk(player_module)
+            )
+        )
+
+        host_socketio = FlaskSocketIO()
+        host_emit_probe = _HostEmitProbe()
+        host_socketio.server = host_emit_probe
+        player_emit_tripwire = _PlayerEmitTripwire()
+        callback_code = compile(
+            ast.Module(body=[callback_node], type_ignores=[]),
+            _relative_path(host_path),
+            "exec",
+        )
+        callback_function_code = next(
+            constant
+            for constant in callback_code.co_consts
+            if isinstance(constant, types.CodeType)
+            and constant.co_name == "emit_compression_event"
+        )
+        callback = types.FunctionType(
+            callback_function_code,
+            {
+                "socketio": host_socketio,
+                "player_socket_server": player_emit_tripwire,
+                "PLAYER_NAMESPACE": PLAYER_NAMESPACE,
+            },
+        )
+        payload = {"progress": 50}
+        callback("compression_progress", payload)
+
+        self.assertEqual(
+            host_emit_probe.calls,
+            [
+                (
+                    "compression_progress",
+                    (payload,),
+                    {
+                        "namespace": "/",
+                        "to": None,
+                        "skip_sid": None,
+                        "callback": None,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(player_emit_tripwire.calls, [])
+
+    def test_compression_is_not_a_typed_player_change_or_player_emission(self) -> None:
+        self.assertEqual(
+            get_args(PlayerHostChangeKind),
+            ("transcript", "active_pc", "combat"),
+        )
+        for event_name in (
+            "compression_start",
+            "compression_progress",
+            "compression_complete",
+        ):
+            with self.subTest(event=event_name):
+                self.assertIsNone(_validated_notice(event_name, None))
+                self.assertNotIn(event_name, PLAYER_SOCKET_EMISSION_ALLOWLIST)
 
     def test_host_only_http_paths_are_not_reachable_through_player_asgi_app(self) -> None:
         app = create_app(security=PlayerSecurity(lambda: None))
