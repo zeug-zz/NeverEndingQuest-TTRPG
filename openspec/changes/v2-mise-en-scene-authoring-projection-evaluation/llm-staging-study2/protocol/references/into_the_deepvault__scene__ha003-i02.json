@@ -1,0 +1,104 @@
+{
+  "arrival_prose": [
+    {
+      "id": "into_the_deepvault:scene:ha003-i02:arrival:approach",
+      "role": "approach",
+      "text": "The scene's approach is staged from a connected room toward the threshold."
+    },
+    {
+      "id": "into_the_deepvault:scene:ha003-i02:arrival:threshold",
+      "role": "threshold",
+      "text": "The area is a prison. Heavy iron bars line this cold, echoing hall."
+    },
+    {
+      "id": "into_the_deepvault:scene:ha003-i02:arrival:focal",
+      "role": "focal",
+      "text": "The threshold is staged toward the runic pleas."
+    }
+  ],
+  "claims": [
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:study2-authored:approach-to-threshold",
+          "id": "into_the_deepvault:scene:ha003-i02:claim:study2-approach",
+          "kind": "factual",
+          "span": "The scene's approach is staged from a connected room toward the threshold.",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:ha003-i02:arrival:approach"
+    },
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:ha003-i02-42ebb68067cc",
+          "id": "into_the_deepvault:scene:ha003-i02:claim:study2-threshold",
+          "kind": "factual",
+          "span": "prison",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:ha003-i02:arrival:threshold"
+    },
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:study2-authored:threshold-to-focal",
+          "id": "into_the_deepvault:scene:ha003-i02:claim:study2-focal",
+          "kind": "factual",
+          "span": "The threshold is staged toward the runic pleas.",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:ha003-i02:arrival:focal"
+    }
+  ],
+  "fixture_deltas": {
+    "facts": [
+      {
+        "fact_id": "into_the_deepvault:fact:study2-authored:approach-to-threshold",
+        "object_id": "into_the_deepvault:entity:location-i02",
+        "predicate": "approach_to_threshold",
+        "subject_id": "into_the_deepvault:entity:room-i01",
+        "value": true
+      },
+      {
+        "fact_id": "into_the_deepvault:fact:study2-authored:threshold-to-focal",
+        "object_id": "into_the_deepvault:entity:runic-pleas",
+        "predicate": "threshold_to_focal",
+        "subject_id": "into_the_deepvault:entity:location-i02",
+        "value": true
+      }
+    ]
+  },
+  "input_refs": {
+    "expected_bundle": {
+      "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json",
+      "sha256": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258"
+    },
+    "gate_canonical_context": {
+      "id": "into_the_deepvault:scene:ha003-i02#gate-canonical-context:into_the_deepvault:topology:i02",
+      "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+    },
+    "scene_id": "into_the_deepvault:scene:ha003-i02",
+    "source_packet": {
+      "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json",
+      "sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e"
+    },
+    "topology": {
+      "id": "into_the_deepvault:topology:i02",
+      "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+    }
+  },
+  "schema": "neq.llm_staging_study2_delta.v1",
+  "stage_role_bindings": {
+    "approach": ["into_the_deepvault:entity:room-i01"],
+    "focal_anchor": ["into_the_deepvault:entity:runic-pleas"],
+    "threshold": ["into_the_deepvault:entity:location-i02"],
+    "usable_space": ["into_the_deepvault:entity:usable-space-i02"]
+  }
+}

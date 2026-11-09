@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neq.llm_staging_study2_delta.v1",
+  "title": "NEQ Study 2 delta-only staging output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "input_refs", "fixture_deltas", "stage_role_bindings", "claims", "arrival_prose"],
+  "properties": {
+    "schema": {"const": "neq.llm_staging_study2_delta.v1"},
+    "input_refs": {"$ref": "#/$defs/input_refs"},
+    "fixture_deltas": {"$ref": "#/$defs/fixture_deltas"},
+    "stage_role_bindings": {"$ref": "#/$defs/stage_role_bindings"},
+    "claims": {"$ref": "#/$defs/claims"},
+    "arrival_prose": {"$ref": "#/$defs/arrival_prose"}
+  },
+  "$defs": {
+    "sha256_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "input_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene_id", "source_packet", "expected_bundle", "topology", "gate_canonical_context"],
+      "properties": {
+        "scene_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_packet": {"$ref": "#/$defs/sha256_ref"},
+        "expected_bundle": {"$ref": "#/$defs/sha256_ref"},
+        "topology": {"$ref": "#/$defs/sha256_ref"},
+        "gate_canonical_context": {"$ref": "#/$defs/sha256_ref"}
+      }
+    },
+    "entity_ref_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "entity_id"],
+      "properties": {
+        "kind": {"const": "entity_ref"},
+        "entity_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"}
+      }
+    },
+    "fact_ref_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "fact_id"],
+      "properties": {
+        "kind": {"const": "fact_ref"},
+        "fact_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"}
+      }
+    },
+    "fact_value": {
+      "oneOf": [
+        {"type": "string", "maxLength": 512},
+        {"type": "boolean"},
+        {"type": "null"},
+        {"$ref": "#/$defs/entity_ref_value"},
+        {"$ref": "#/$defs/fact_ref_value"}
+      ]
+    },
+    "authored_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact_id", "subject_id", "predicate", "object_id", "value"],
+      "properties": {
+        "fact_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"},
+        "subject_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"},
+        "predicate": {
+          "enum": [
+            "approach_to_threshold",
+            "threshold_to_focal",
+            "usable_space",
+            "light_gradient",
+            "sound_gradient",
+            "weather_gradient",
+            "visible_affordance"
+          ]
+        },
+        "object_id": {"type": ["string", "null"], "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"},
+        "value": {"$ref": "#/$defs/fact_value"}
+      }
+    },
+    "fixture_deltas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts"],
+      "properties": {
+        "facts": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/authored_fact"}
+        }
+      }
+    },
+    "stage_role_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approach", "threshold", "focal_anchor", "usable_space"],
+      "properties": {
+        "approach": {"$ref": "#/$defs/entity_id_list"},
+        "threshold": {"$ref": "#/$defs/entity_id_list"},
+        "focal_anchor": {"$ref": "#/$defs/entity_id_list"},
+        "usable_space": {"$ref": "#/$defs/entity_id_list"}
+      }
+    },
+    "entity_id_list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"}
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fact_id", "kind", "span", "choice", "success"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9_.:-]{1,512}$"},
+        "fact_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]{1,256}$"},
+        "kind": {"enum": ["factual", "invitation"]},
+        "span": {"type": "string", "minLength": 1, "maxLength": 512},
+        "choice": {"type": ["string", "null"], "enum": ["open", null]},
+        "success": {"type": ["string", "null"], "enum": ["unspecified", null]}
+      }
+    },
+    "claim_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "items"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "items": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/claim"}}
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"$ref": "#/$defs/claim_group"},
+        {"$ref": "#/$defs/claim_group"},
+        {"$ref": "#/$defs/claim_group"}
+      ],
+      "items": false
+    },
+    "arrival_approach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "text"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9_.:-]{1,512}$"},
+        "role": {"const": "approach"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "arrival_threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "text"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9_.:-]{1,512}$"},
+        "role": {"const": "threshold"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "arrival_focal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "text"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "role": {"const": "focal"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "arrival_prose": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"$ref": "#/$defs/arrival_approach"},
+        {"$ref": "#/$defs/arrival_threshold"},
+        {"$ref": "#/$defs/arrival_focal"}
+      ],
+      "items": false
+    }
+  }
+}

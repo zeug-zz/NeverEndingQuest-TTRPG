@@ -51,3 +51,7 @@ Following the separately authorized offline build of tasks 1.1-1.10, a provider-
 ```
 
 The command and test files exist and were run for the offline build. They make no provider request or write to production modules/runtime state. This offline result does not authorize Section 2 evaluation; its proposed protocol and approval requirements remain unchanged. OpenSpec validation and planning-diff checks apply to this change independently of prototype tests.
+
+## Study 2 provider-free preparation addendum
+
+The later ruling `neq-staging-study1-fail-20261109` authorizes only provider-free study 2 step-(a) preparation on draft PR127. Study 1 remains a frozen envelope FAIL (three truncated responses at 4,096 tokens, no valid artifact); semantic review is NOT APPLICABLE and no owner ratings exist. The new preparation plan is in [`llm-staging-study2/tasks.md`](llm-staging-study2/tasks.md), with authority and design in the adjacent `proposal.md` and `design.md`. The existing 14 task statuses and study 1 records are unchanged. Study 2 generation remains disabled pending the owner's new three-attempt cap approval and Overseer step-(a) review.

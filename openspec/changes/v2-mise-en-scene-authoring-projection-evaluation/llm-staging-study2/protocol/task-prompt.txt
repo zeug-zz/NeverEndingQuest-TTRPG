@@ -1,0 +1,15 @@
+Prepare a delta for exactly {{SCENE_ID}} using the frozen binding references below. These are provided context, not response payload to repeat.
+
+INPUT REFERENCES (authoritative; copy exact values only):
+{{INPUT_REFS_JSON}}
+
+SOURCE PACKET (read-only context):
+{{SOURCE_PACKET_JSON}}
+
+EXPECTED BUNDLE (read-only gate context; preserve all unknowns):
+{{EXPECTED_BUNDLE_JSON}}
+
+OUTPUT SCHEMA (return one object matching it exactly):
+{{OUTPUT_SCHEMA_JSON}}
+
+Return only the permitted delta. Do not copy canonical inputs into the response.

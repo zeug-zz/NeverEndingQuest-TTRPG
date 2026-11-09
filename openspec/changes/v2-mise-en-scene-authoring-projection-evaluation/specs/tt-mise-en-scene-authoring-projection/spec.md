@@ -244,3 +244,25 @@ Builder-authored arrival prose SHALL present an actionable approach-to-threshold
 - **WHEN** D is validated
 - **THEN** the invitation grounded in visible affordances MAY pass
 - **AND** the prescriptive choice or success claim SHALL fail with a localized agency diagnostic
+
+### Requirement: Study 2 preparation SHALL bind deltas to immutable canonical inputs (R11)
+
+Study 2 SHALL bind each delta to the frozen scene, topology, and expected-bundle IDs/SHA-256. It SHALL accept only those references, authored fixture deltas, stage-role bindings, claims, and arrival prose; reject unknown keys, stale/unknown hashes, and topology/base-fact overwrites; then hydrate the full fixture in memory and run all existing safety gates without mutating or persisting canonical inputs. See [`llm-staging-study2/design.md`](../../llm-staging-study2/design.md).
+
+#### Scenario: Delta output is checked against the gate-held canonical fixture
+- **GIVEN** a frozen scene bundle and approved topology have known IDs and SHA-256 values
+- **WHEN** a study 2 delta is validated
+- **THEN** only exact input references and the allowed authored delta fields SHALL be accepted
+- **AND** unknown keys, stale or unknown hashes, and attempted topology/base-fact overwrites SHALL be rejected
+- **AND** the gate SHALL hydrate a full fixture in memory and run all existing safety gates without changing or persisting the canonical inputs
+
+### Requirement: Study 2 preparation SHALL remain isolated and execution-disabled (R12)
+
+Study 2 SHALL use a separate run root and fixed ledger, distinct from study 1. Its three-attempt cap SHALL NOT vary by run ID/root. Preparation SHALL make zero network/provider calls. Dispatch SHALL require owner cap approval and Overseer step-(a) review, reserve before HTTP, and fail closed on unsafe ledger or identity state.
+
+#### Scenario: Unapproved or unsafe state cannot dispatch or reset the study cap
+- **GIVEN** either required approval is absent, the studywide ledger is missing/corrupt/pending, or a run ID/root is repeated
+- **WHEN** preparation or an execution preflight is attempted
+- **THEN** preparation SHALL make no network/provider call and the execution preflight SHALL fail closed
+- **AND** a run ID/root change SHALL NOT reset the fixed three-attempt cap
+- **AND** no study 1 ledger or artifact SHALL be reused or modified
