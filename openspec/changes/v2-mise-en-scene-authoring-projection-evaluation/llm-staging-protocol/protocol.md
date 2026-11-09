@@ -2,10 +2,10 @@
 
 **Status: protocol package frozen for Overseer review; no generation call is
 made or permitted by this implementation step.** The required handoff status is
-recorded in [`protocol.draft.md`](protocol.draft.md). The owner ruling is S,
-2026-11-08T20:41:09Z, item 2; sequence step (a) ends at planner/Overseer
-verification before any call. The companion draft file is the required handoff
-status record; this document is the detailed protocol.
+recorded in [`protocol.draft.md`](protocol.draft.md). Ruling
+`neq-staging-step-a-review-20261109` authorizes one replacement availability GET,
+now completed and CONFIRMED for the exact model. Step (b) remains unauthorized;
+the companion draft file is the required handoff status record.
 
 ## 1. Scope and decision boundary
 
@@ -79,10 +79,11 @@ client/test hashes, and offline validator hashes, are recorded in
 `staging-manifest.json`. The manifest is generated only after all frozen files
 exist. Do not edit a bound input without a new review and refreeze.
 
-Packaging deviation for review: the original step (a) builder made a Context7
-documentation network lookup despite the zero-network assignment. No OpenRouter
-generation is reported. Strict zero-network compliance cannot be claimed for
-step (a); Overseer adjudication is pending.
+Packaging deviation: the original step (a) builder made a Context7 documentation
+network lookup despite the zero-network assignment. Ruling
+`neq-staging-step-a-review-20261109` adjudicated this a RECORDED, NON-MATERIAL
+deviation; the incident record is retained, not pending. The separately
+authorized availability GET is recorded below. No generation call was made.
 
 The model receives one scene at a time and returns one JSON object conforming
 to `output-contract.schema.json`. It creates an initial fixture and a staged
@@ -114,19 +115,21 @@ receipt must record the upstream provider, generation ID, and usage. Missing
 identity fields or a returned-model mismatch make the scene FAIL; stop without
 substitution.
 
-The prior context-mode listing fetch on 2026-11-08 did not surface the exact
-base-model entry and did not preserve raw JSON. Its verdict is
-`UNCONFIRMED`; it is not an availability pass. Before generation call 1, a
-single unauthenticated script-based GET of the public OpenRouter model listing
-must save the raw JSON and SHA-256, then verify an exact `data[].id` match for
-`openai/gpt-6-luna`. The existing owner ruling permits one read-only GET, but
-the earlier fetch consumed that permission without producing the required
-proof. Therefore, obtain explicit Overseer authority for a replacement GET
-before running `check_model_availability.py`. If that authority is absent, the
-listing is unavailable/malformed, the raw bytes or digest cannot be preserved,
-or the exact ID is absent, stop before any generation call. Do not substitute
-another model. The GET is an availability check, not a generation attempt; it
-does not increase the three-call generation cap.
+The 2026-11-08 context-mode listing remains preserved unchanged at
+`availability-check-20261108.json` and remains `UNCONFIRMED`; it is historical
+evidence, not an availability pass. Under ruling
+`neq-staging-step-a-review-20261109`, exactly one replacement unauthenticated
+GET was performed through `availability.py`. The saved raw response is
+`tmp/router-rollout/mapping-pilot/mise-en-scene-offline/llm-staging/availability-check/model-listing.json`
+(829400 bytes, SHA-256
+`d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13`); its
+attestation is preserved verbatim at the same runtime directory's
+`attestation.json` and copied byte-for-byte to `availability-check.json`.
+The attestation records HTTP 200, exact `data[].id` match for
+`openai/gpt-6-luna`, one request, and `2026-11-09T03:48:13Z`. This is the only
+replacement GET; no further GET is authorized or needed for this evidence
+update. The availability GET is not a generation attempt and does not increase
+the three-call cap.
 
 The generation cap is **exactly three attempts total**, one attempt for each
 listed scene and in listed order. The other 27 attempts from the former 30-call
@@ -247,9 +250,11 @@ run directory and records no response text in its ledger or console output.
 
 The owner-approved selection, model, route, fallback/retry/tool posture, exact
 three-attempt cap, rating threshold, review order, and no-linked-view scope are
-fixed by ruling S, item 2. Sequence step (a) is limited to this protocol,
-frozen inputs, availability-check tooling, ledger wiring, and provider-free
-dry-run tests. Submit this package for planner/Overseer review and stop. No
-generation call is permitted until that review approves step (a), the required
-replacement availability GET is explicitly authorized and confirms the exact
-model ID, and all pre-call hashes/manual lineage checks agree.
+fixed by ruling S, item 2. Ruling `neq-staging-step-a-review-20261109` accepted
+the frozen step (a) envelope and authorized the replacement GET, which is now
+CONFIRMED as recorded in section 4. Step (a) is submitted for planner/Overseer
+verification. Step (b), including all three generation calls, is NOT authorized.
+Before any generation call, a real generation transport must be added and
+reviewed, the separate step (b) approval obtained, and all frozen hashes and
+manual-lineage checks must agree. No generation call is permitted by this
+evidence update.

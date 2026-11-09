@@ -361,9 +361,17 @@ class StagingClientTests(unittest.TestCase):
         for name in (
             "scenes.json", "system-prompt.txt", "task-prompt.txt",
             "output-contract.schema.json", "generation-parameters.json",
-            "availability-check-20261108.json", "staging-manifest.json",
+            "availability-check-20261108.json", "availability-check.json",
+            "staging-manifest.json",
         ):
             self.assertTrue((FROZEN_ROOT / name).is_file(), name)
+        historical = json.loads((FROZEN_ROOT / "availability-check-20261108.json").read_text(encoding="utf-8"))
+        current = json.loads((FROZEN_ROOT / "availability-check.json").read_text(encoding="utf-8"))
+        self.assertEqual(historical["verdict"], "UNCONFIRMED")
+        self.assertEqual(current["verdict"], "CONFIRMED")
+        self.assertEqual(current["requested_model_id"], MODEL_ID)
+        self.assertEqual(current["request_count"], 1)
+        self.assertEqual(current["raw_listing_sha256"], "d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13")
         self.assertEqual(client_module.MANIFEST_PATH, FROZEN_ROOT / "staging-manifest.json")
         self.assertNotEqual(client_module.MANIFEST_PATH.parent, STAGING_ROOT)
 

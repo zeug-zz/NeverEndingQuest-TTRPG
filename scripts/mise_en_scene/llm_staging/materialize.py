@@ -24,6 +24,7 @@ PROTOCOL_DIR = PROTOCOL_PATH.parent
 FROZEN_ROOT = PROTOCOL_DIR
 SCENE_SOURCE_MANIFEST = FROZEN_ROOT / "scenes.json"
 AVAILABILITY_NOTE = FROZEN_ROOT / "availability-check-20261108.json"
+CURRENT_AVAILABILITY_NOTE = FROZEN_ROOT / "availability-check.json"
 
 APPROVED_SCENES = (
     "into_the_deepvault:scene:ha003-i02",
@@ -418,6 +419,32 @@ def main() -> None:
     if old_availability.get("verdict") != "UNCONFIRMED" or old_availability.get("generation_calls") != 0:
         raise ValueError("expected historical availability note is not fail-closed")
 
+    availability_dir = STAGING_ROOT / "availability-check"
+    attestation_path = availability_dir / "attestation.json"
+    raw_listing_path = availability_dir / "model-listing.json"
+    attestation_bytes = attestation_path.read_bytes()
+    attestation = json.loads(attestation_bytes.decode("utf-8"))
+    raw_listing = raw_listing_path.read_bytes()
+    raw_hash = _sha256_bytes(raw_listing)
+    if (
+        attestation.get("schema") != "neq.openrouter_model_availability.v1"
+        or attestation.get("verdict") != "CONFIRMED"
+        or attestation.get("requested_model_id") != "openai/gpt-6-luna"
+        or attestation.get("exact_model_id_present") is not True
+        or attestation.get("request_count") != 1
+        or attestation.get("generation_calls") != 0
+        or attestation.get("raw_listing_sha256") != raw_hash
+        or attestation.get("raw_listing_path") != "availability-check/model-listing.json"
+    ):
+        raise ValueError("saved replacement availability evidence failed validation")
+    listing = json.loads(raw_listing.decode("utf-8"))
+    rows = listing.get("data") if type(listing) is dict else None
+    if type(rows) is not list or not any(
+        type(row) is dict and row.get("id") == "openai/gpt-6-luna" for row in rows
+    ):
+        raise ValueError("saved availability listing lacks the exact model ID")
+    _write(CURRENT_AVAILABILITY_NOTE, attestation_bytes)
+
     frozen_paths = [
         str(SCENE_SOURCE_MANIFEST.relative_to(REPO_ROOT)),
         str(PROTOCOL_PATH.relative_to(REPO_ROOT)),
@@ -427,6 +454,7 @@ def main() -> None:
         str((FROZEN_ROOT / "output-contract.schema.json").relative_to(REPO_ROOT)),
         str((FROZEN_ROOT / "generation-parameters.json").relative_to(REPO_ROOT)),
         str(AVAILABILITY_NOTE.relative_to(REPO_ROOT)),
+        str(CURRENT_AVAILABILITY_NOTE.relative_to(REPO_ROOT)),
         "scripts/mise_en_scene/llm_staging/materialize.py",
         "scripts/mise_en_scene/llm_staging/__init__.py",
         "scripts/mise_en_scene/llm_staging/availability.py",
@@ -468,11 +496,17 @@ def main() -> None:
         },
         "attempt_order": list(APPROVED_SCENES),
         "availability": {
-            "status": "UNCONFIRMED",
+            "status": "CONFIRMED",
             "historical_check_path": str(AVAILABILITY_NOTE.relative_to(REPO_ROOT)),
             "historical_check_sha256": _sha256_bytes(AVAILABILITY_NOTE.read_bytes()),
-            "replacement_script_get_required": True,
-            "replacement_get_authority_confirmed": False,
+            "historical_verdict": "UNCONFIRMED",
+            "current_check_path": str(CURRENT_AVAILABILITY_NOTE.relative_to(REPO_ROOT)),
+            "current_check_sha256": _sha256_bytes(CURRENT_AVAILABILITY_NOTE.read_bytes()),
+            "raw_listing_path": str(raw_listing_path.relative_to(REPO_ROOT)),
+            "raw_listing_sha256": raw_hash,
+            "request_count": attestation["request_count"],
+            "performed_utc": attestation["performed_utc"],
+            "replacement_get_authority_confirmed": True,
             "generation_calls": 0,
         },
         "privacy": {
