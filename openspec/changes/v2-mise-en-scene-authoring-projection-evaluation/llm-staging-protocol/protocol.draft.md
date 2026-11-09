@@ -1,19 +1,20 @@
 # LLM Builder Mise-en-Scene Staging Study - Step (a) Handoff
 
-Status: OWNER DECISIONS RECORDED; STEP (a) PREP; NO CALLS UNTIL OVERSEER APPROVES STEP (a)
+Status: STEP (a) REVIEWED; REPLACEMENT AVAILABILITY CONFIRMED; NO GENERATION CALLS AUTHORIZED
 
 The current step (a) protocol is [`protocol.md`](protocol.md). This file records
 the required handoff status and points to that complete protocol so there is one
 authoritative source for the study's frozen requirements.
 
-Step (a) includes only provider-free package preparation, isolated-client and
-deterministic-gate implementation, and provider-free tests. Availability remains
-UNCONFIRMED; a replacement script-based GET requires explicit Overseer
-authorization. No availability GET, generation call, gameplay, server, port, or
-runtime integration is authorized here. Stop for planner/Overseer verification.
+Ruling `neq-staging-step-a-review-20261109` accepted the frozen step (a) envelope
+and authorized exactly one replacement availability GET. It confirmed the exact
+model ID; the attestation and raw-listing SHA-256 are recorded in `protocol.md`
+and the tracked `availability-check.json`. The historical
+`availability-check-20261108.json` remains unchanged and UNCONFIRMED.
 
-Do not execute step (b) until step (a) is approved, a replacement availability
-GET is explicitly authorized and confirms the exact model ID, and the frozen
-hash and manual-lineage gates agree. The selected three-scene set and one-attempt
-per-scene allocation are the only approved study allocation; the other 27
-attempts are unauthorized.
+The Context7 documentation lookup deviation is recorded and adjudicated
+RECORDED, NON-MATERIAL by the ruling; it is not pending. Step (b) remains NOT
+AUTHORIZED: a real generation transport must first be added and reviewed, and
+separate step (b) approval plus all frozen-hash/manual-lineage gates are
+required. The selected three-scene set and one-attempt-per-scene allocation are
+the only approved study allocation; the other 27 attempts are unauthorized.

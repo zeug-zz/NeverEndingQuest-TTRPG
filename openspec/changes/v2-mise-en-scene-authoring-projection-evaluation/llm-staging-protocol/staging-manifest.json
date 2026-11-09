@@ -1,13 +1,14 @@
 {
   "artifacts": {
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check-20261108.json": "6219a5814297b3f5f3aa957e99ca91aeedfa8eb2248f54c0ff6cbd05cf528240",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check.json": "94c1d96f1ec6bcbc4da834cc2394af885f7f53b1479bf52655078b9e3b4f13d1",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/generation-parameters.json": "050af35685e9c6cc42a897087aaf2ee1db0974995e20d732a9f8226d9a2a26da",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/output-contract.schema.json": "9ff913e38368c4269902ea79e4cc230a8c25194e1f60d7c3e9b7f3325ef7a318",
-    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.draft.md": "cb8f01d0b222dbee4d86b2fc2883983b6b0e0c9c902554b987c5d05ff99914d9",
-    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md": "d95e0f8c1a00bd4fc0d55f05b2f1e82e89971b6934d47512a5e3aeed5266ca87",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.draft.md": "72f7a40f90e0e1bc8d7147f6ad0443d37662f5997c2ed6774f26447dd12fe94e",
+    "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md": "bae70964698afff4db2424fa5bc49c60fca2cd7096e946afcd3d4e7070b0421a",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/scenes.json": "47829e42a1843f4f01c8742e1238869d99b6a22ed5ff52b8424fd47819fddf55",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
     "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
@@ -22,9 +23,9 @@
     "scripts/mise_en_scene/llm_staging/__init__.py": "55794eeca4bba388c3b9b725b86388b335e16d19c1aca35b02cc68d71a992b64",
     "scripts/mise_en_scene/llm_staging/availability.py": "0fb3b8b5ae1938cdf97eb0434414a607824f1d6ec0c6af19a64f412e6fb40ae7",
     "scripts/mise_en_scene/llm_staging/client.py": "a2b0c8ece8823db99a85035e65075d41fd2c7069afdf8785fb5d1a70365eabba",
-    "scripts/mise_en_scene/llm_staging/materialize.py": "c50dd17aa4f5edb7b3a5fa709784078ba275914fd9b20073122d5658430ff2da",
+    "scripts/mise_en_scene/llm_staging/materialize.py": "655a03d8b79eff9764ed37f39bd8e191270ab13172961cf84930aefcb28da6ad",
     "scripts/mise_en_scene/llm_staging/output_gates.py": "3569c6adafb63dca7cc4ca0d1bc247009e32505bb1e8b4bd94de6851bb2a0ed4",
-    "scripts/test_mise_en_scene_llm_staging.py": "ef001bf965684a4b7e10a028d1917716a5b57f2fcc878be3e6ffda64e6f34e05"
+    "scripts/test_mise_en_scene_llm_staging.py": "b49c8f54dbef7bb1e0f2577c023661eba9eb9522c10175474ae6ec9e96a4bbdc"
   },
   "attempt_order": [
     "into_the_deepvault:scene:ha003-i02",
@@ -32,12 +33,18 @@
     "xhalruuns_masquerade:scene:tsu001-ao02"
   ],
   "availability": {
+    "current_check_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check.json",
+    "current_check_sha256": "94c1d96f1ec6bcbc4da834cc2394af885f7f53b1479bf52655078b9e3b4f13d1",
     "generation_calls": 0,
     "historical_check_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/availability-check-20261108.json",
     "historical_check_sha256": "6219a5814297b3f5f3aa957e99ca91aeedfa8eb2248f54c0ff6cbd05cf528240",
-    "replacement_get_authority_confirmed": false,
-    "replacement_script_get_required": true,
-    "status": "UNCONFIRMED"
+    "historical_verdict": "UNCONFIRMED",
+    "performed_utc": "2026-11-09T03:48:13Z",
+    "raw_listing_path": "tmp/router-rollout/mapping-pilot/mise-en-scene-offline/llm-staging/availability-check/model-listing.json",
+    "raw_listing_sha256": "d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13",
+    "replacement_get_authority_confirmed": true,
+    "request_count": 1,
+    "status": "CONFIRMED"
   },
   "calls_made": 0,
   "execution_authorized": false,

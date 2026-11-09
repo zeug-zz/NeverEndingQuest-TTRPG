@@ -1,0 +1,17 @@
+{
+  "authenticated": false,
+  "exact_model_id_present": true,
+  "generation_calls": 0,
+  "http_status": 200,
+  "method": "GET",
+  "parse_status": "valid_json",
+  "performed_utc": "2026-11-09T03:48:13Z",
+  "raw_listing_path": "availability-check/model-listing.json",
+  "raw_listing_sha256": "d94d8370997bb6a32c8265d0c5368d98c121355ebed0c51698539d81e32bdc13",
+  "redirects_followed": false,
+  "request_count": 1,
+  "requested_model_id": "openai/gpt-6-luna",
+  "schema": "neq.openrouter_model_availability.v1",
+  "url": "https://openrouter.ai/api/v1/models",
+  "verdict": "CONFIRMED"
+}
