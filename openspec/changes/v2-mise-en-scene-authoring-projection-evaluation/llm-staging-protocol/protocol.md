@@ -147,7 +147,7 @@ reservation binds the approved manifest hash, execution-approval hash,
 availability-attestation hash, run ID, and run-root-relative identity. Every
 later client must match that binding; a different run ID or root cannot reset
 the three-attempt total. Each reservation is appended under the ledger lock and
-durably flushed before the injected one-shot transport is invoked. An
+durably flushed before the one-shot transport is invoked. An
 interrupted or unresolved reservation, malformed/corrupt ledger, or identity
 mismatch fails closed and does not dispatch. Raw response bytes are preserved
 within the bounded response limit when available. Missing or malformed
@@ -157,9 +157,25 @@ Per-run response and validation artifacts remain under
 `runs/<run-id>/`. The existing generic provider-budget utility is not used
 because its enforced root is `tmp/combat_capture` and its ledger path is scoped
 to `tmp/n2`; this fixed study-wide ledger is the bounded alternative allowed
-by the owner ruling. The later execution adapter must itself perform one
-dispatch without hidden retries or redirects and supply the safe provider
-receipt.
+by the owner ruling.
+
+The study-local OpenRouter transport has now been implemented, but remains
+**UNREVIEWED**. It posts only to
+`https://openrouter.ai/api/v1/chat/completions` with the frozen
+`openai/gpt-6-luna` request, `allow_fallbacks=false`, no model list/tools,
+retries, redirects, streaming, or continuation, and a bounded timeout. The
+client's reserve-before-send path supplies a one-use reservation context;
+calling the adapter directly is refused before credential lookup or HTTP. The
+existing `config.OPENROUTER_API_KEY` name is read at dispatch time only. No
+production provider factory or fallback path is used. Clean bounded provider
+responses are preserved byte-for-byte. If an echo is detected in raw bytes or
+decoded JSON string values/keys, all echoes are redacted before persistence and
+the adapter omits receipt identity so the reserved attempt fails and stops; it
+cannot enter semantic review or scoring. Exceptions expose no provider payload
+or credential. Fake-HTTP tests compare the adapter's request, response, and
+ledger records with the existing injected-transport seam. This implementation
+has not been reviewed or used for a generation call, and step (b) remains
+unauthorized.
 
 ## 5. Independent checks and semantic review
 
@@ -243,8 +259,9 @@ provider receipt/usage, timestamp, append-only attempt ledger, deterministic
 diagnostics, Overseer semantic review, then owner ratings and per-scene result.
 The output access order is Overseer first, owner only after semantic review.
 Do not store credentials, authorization headers, or secret configuration.
-The staging client stores raw provider response bytes only in the restricted
-run directory and records no response text in its ledger or console output.
+The staging client stores bounded provider response bytes only in the restricted
+run directory, redacting any credential echo before persistence, and records no
+response text in its ledger or console output.
 
 ## 8. Remaining pre-call conditions
 
@@ -253,8 +270,9 @@ three-attempt cap, rating threshold, review order, and no-linked-view scope are
 fixed by ruling S, item 2. Ruling `neq-staging-step-a-review-20261109` accepted
 the frozen step (a) envelope and authorized the replacement GET, which is now
 CONFIRMED as recorded in section 4. Step (a) is submitted for planner/Overseer
-verification. Step (b), including all three generation calls, is NOT authorized.
-Before any generation call, a real generation transport must be added and
-reviewed, the separate step (b) approval obtained, and all frozen hashes and
-manual-lineage checks must agree. No generation call is permitted by this
-evidence update.
+verification. The real OpenRouter transport is implemented but **UNREVIEWED**;
+no request was dispatched and no credential was accessed. Step (b), including
+all three generation calls, is NOT authorized. Before any generation call, the
+transport must be reviewed, the separate step (b) approval obtained, and all
+frozen hashes and manual-lineage checks must agree. No generation call is
+permitted by this evidence update.

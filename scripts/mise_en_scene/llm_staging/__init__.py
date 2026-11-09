@@ -8,11 +8,14 @@
 from .availability import AvailabilityCheckError, check_model_availability
 from .client import AttemptReceipt, StagingClient, StagingError, TransportResult
 from .output_gates import OutputGateReport, validate_model_output
+from .transport import OpenRouterTransport, OpenRouterTransportError
 
 __all__ = [
     "AttemptReceipt",
     "AvailabilityCheckError",
     "OutputGateReport",
+    "OpenRouterTransport",
+    "OpenRouterTransportError",
     "StagingClient",
     "StagingError",
     "TransportResult",

@@ -459,6 +459,7 @@ def main() -> None:
         "scripts/mise_en_scene/llm_staging/__init__.py",
         "scripts/mise_en_scene/llm_staging/availability.py",
         "scripts/mise_en_scene/llm_staging/client.py",
+        "scripts/mise_en_scene/llm_staging/transport.py",
         "scripts/mise_en_scene/llm_staging/output_gates.py",
         "scripts/test_mise_en_scene_llm_staging.py",
     ]

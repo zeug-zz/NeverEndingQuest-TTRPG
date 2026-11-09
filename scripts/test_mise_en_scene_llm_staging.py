@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import hashlib
 import importlib
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +22,8 @@ import socket
 import sys
 import tempfile
 import threading
+import traceback
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -31,6 +35,12 @@ from mise_en_scene.llm_staging.client import (
     StagingClient,
     StagingError,
     TransportResult,
+)
+from mise_en_scene.llm_staging.transport import (
+    OPENROUTER_ENDPOINT,
+    OpenRouterTransport,
+    OpenRouterTransportError,
+    REQUEST_TIMEOUT_SECONDS,
 )
 from mise_en_scene.llm_staging.output_gates import (
     extract_model_content,
@@ -47,6 +57,86 @@ STAGING_ROOT = REPO_ROOT / "tmp/router-rollout/mapping-pilot/mise-en-scene-offli
 FROZEN_ROOT = REPO_ROOT / "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol"
 MANIFEST_PATH = FROZEN_ROOT / "staging-manifest.json"
 PROTOCOL_RELATIVE = "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/protocol.md"
+
+
+class FakeHTTPPost:
+    """Provider-free HTTP POST stub that records exactly one physical dispatch."""
+
+    def __init__(self, status: int = 200, body: bytes = b"{}", error: Exception | None = None) -> None:
+        self.status = status
+        self.body = body
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    def post(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        timeout: float,
+        allow_redirects: bool,
+    ) -> tuple[int, bytes]:
+        self.calls.append({
+            "url": url,
+            "headers": dict(headers),
+            "body": body,
+            "timeout": timeout,
+            "allow_redirects": allow_redirects,
+        })
+        if self.error is not None:
+            raise self.error
+        return self.status, self.body
+
+
+def _provider_response(
+    *,
+    model: str = MODEL_ID,
+    generation_id: str = "generation-transport-test",
+    provider: str = "OpenAI",
+    usage: dict[str, int] | None = None,
+) -> bytes:
+    return _json_bytes({
+        "id": generation_id,
+        "model": model,
+        "provider": provider,
+        "usage": usage or {
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+        },
+        "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+    })
+
+
+def _exception_chain_text(error: BaseException) -> str:
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    parts: list[str] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        parts.extend((str(current), repr(current)))
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    parts.extend(traceback.format_exception(error))
+    return " ".join(parts)
+
+
+def _json_contains_secret(value: object, secret: str) -> bool:
+    if type(value) is dict:
+        return any(
+            (type(key) is str and secret in key)
+            or _json_contains_secret(child, secret)
+            for key, child in value.items()
+        )
+    if type(value) is list:
+        return any(_json_contains_secret(child, secret) for child in value)
+    return type(value) is str and secret in value
 
 
 def _reload_staging_modules() -> None:
@@ -877,12 +967,416 @@ class StagingClientTests(unittest.TestCase):
         reservation = json.loads((self.availability_dir / "get-reservation.json").read_text(encoding="ascii"))
         self.assertEqual(reservation["reservation_status"], "CONSUMED_BEFORE_DISPATCH")
 
+    def test_openrouter_http_transport_matches_injected_transport_ledger_and_response(self) -> None:
+        availability_path = self._confirmed_availability()
+        approval_path = self._execution_approval()
+        response_body = _provider_response(generation_id="generation-parity")
+        usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        base_run_root = self.root / "parity-runs"
+        secret = "sk-neq-transport-parity-canary"
+        fake_http = FakeHTTPPost(body=response_body)
+        loader_calls: list[int] = []
+
+        def config_loader() -> object:
+            loader_calls.append(1)
+            return SimpleNamespace(OPENROUTER_API_KEY=secret)
+
+        captured_request: list[dict[str, object]] = []
+
+        def injected_transport(_endpoint: str, request: dict[str, object]) -> TransportResult:
+            captured_request.append(copy.deepcopy(request))
+            return TransportResult(
+                http_status=200,
+                body=response_body,
+                returned_model_id=MODEL_ID,
+                upstream_provider="OpenAI",
+                generation_id="generation-parity",
+                usage=usage,
+            )
+
+        with mock.patch.object(client_module, "STUDY_LEDGER_PATH", self.root / "injected-ledger.jsonl"):
+            injected_client = self._client(
+                availability_path,
+                run_id="parity-run",
+                run_root=base_run_root,
+                approval_path=approval_path,
+            )
+            injected_receipt = injected_client.send_once(SCENE_ORDER[0], injected_transport)
+            injected_ledger = [
+                json.loads(line)
+                for line in injected_client.ledger_path.read_text(encoding="ascii").splitlines()
+            ]
+            injected_response = (STAGING_ROOT / injected_receipt.response_path).read_bytes()
+
+        (STAGING_ROOT / injected_receipt.response_path).unlink()
+        with mock.patch.object(client_module, "STUDY_LEDGER_PATH", self.root / "http-ledger.jsonl"):
+            http_client = self._client(
+                availability_path,
+                run_id="parity-run",
+                run_root=base_run_root,
+                approval_path=approval_path,
+            )
+            transport = OpenRouterTransport(http=fake_http, config_loader=config_loader)
+            http_receipt = http_client.send_once_with_openrouter(SCENE_ORDER[0], transport=transport)
+            http_ledger = [
+                json.loads(line)
+                for line in http_client.ledger_path.read_text(encoding="ascii").splitlines()
+            ]
+            http_response = (STAGING_ROOT / http_receipt.response_path).read_bytes()
+
+        self.assertEqual(loader_calls, [1])
+        self.assertEqual(fake_http.calls[0]["url"], OPENROUTER_ENDPOINT)
+        self.assertEqual(fake_http.calls[0]["timeout"], REQUEST_TIMEOUT_SECONDS)
+        self.assertIs(fake_http.calls[0]["allow_redirects"], False)
+        self.assertEqual(fake_http.calls[0]["headers"]["Authorization"], "Bearer " + secret)
+        self.assertEqual(json.loads(fake_http.calls[0]["body"]), captured_request[0])
+        self.assertEqual(injected_ledger, http_ledger)
+        self.assertEqual(injected_response, http_response)
+        self.assertEqual(http_response, response_body)
+        self.assertEqual(injected_receipt.response_sha256, http_receipt.response_sha256)
+        self.assertEqual(http_receipt.returned_model_id, MODEL_ID)
+        self.assertEqual(http_receipt.upstream_provider, "OpenAI")
+        self.assertEqual(http_receipt.generation_id, "generation-parity")
+        self.assertEqual(http_receipt.usage, usage)
+        self.assertEqual(len(fake_http.calls), 1)
+
+    def test_openrouter_credential_is_loaded_only_after_reservation(self) -> None:
+        availability_path = self._confirmed_availability()
+        client = self._client(availability_path)
+        fake_http = FakeHTTPPost(body=_provider_response())
+        secret = "sk-neq-reservation-order-canary"
+        observed_events: list[str] = []
+
+        def config_loader() -> object:
+            rows = [json.loads(line) for line in client.ledger_path.read_text(encoding="ascii").splitlines()]
+            observed_events.extend(row["event"] for row in rows)
+            return SimpleNamespace(OPENROUTER_API_KEY=secret)
+
+        receipt = client.send_once_with_openrouter(
+            SCENE_ORDER[0],
+            transport=OpenRouterTransport(http=fake_http, config_loader=config_loader),
+        )
+        self.assertEqual(receipt.outcome, "succeeded")
+        self.assertEqual(observed_events, ["header", "reservation"])
+        self.assertEqual(len(fake_http.calls), 1)
+
+    def test_openrouter_adapter_refuses_direct_use_before_secret_or_http(self) -> None:
+        client = self._client(FROZEN_ROOT / "availability-check-20261108.json")
+        request = client.build_request(SCENE_ORDER[0])
+        secret_reads: list[int] = []
+        fake_http = FakeHTTPPost(body=_provider_response())
+
+        def config_loader() -> object:
+            secret_reads.append(1)
+            return SimpleNamespace(OPENROUTER_API_KEY="sk-neq-direct-use-canary")
+
+        adapter = OpenRouterTransport(http=fake_http, config_loader=config_loader)
+        with self.assertRaisesRegex(OpenRouterTransportError, "pending staging reservation"):
+            adapter(OPENROUTER_ENDPOINT, request)
+        with self.assertRaisesRegex(OpenRouterTransportError, "pending staging reservation"):
+            adapter._dispatch_reserved(
+                None,
+                OPENROUTER_ENDPOINT,
+                request,
+                owner_token=object(),
+            )
+        self.assertEqual(secret_reads, [])
+        self.assertEqual(fake_http.calls, [])
+
+    def test_openrouter_endpoint_model_fallback_tool_stream_and_retry_mutations_refuse(self) -> None:
+        client = self._client(FROZEN_ROOT / "availability-check-20261108.json")
+        request = client.build_request(SCENE_ORDER[0])
+        variants: list[tuple[str, str, dict[str, object]]] = []
+        variants.append(("endpoint", "https://example.invalid/chat/completions", copy.deepcopy(request)))
+        for field, value in (
+            ("model", "openai/gpt-6-luna-pro"),
+            ("provider", {"allow_fallbacks": True}),
+            ("tools", [{"type": "function"}]),
+            ("tool_choice", "auto"),
+            ("stream", True),
+            ("models", [MODEL_ID]),
+            ("max_retries", 1),
+            ("continue", True),
+        ):
+            changed = copy.deepcopy(request)
+            changed[field] = value
+            variants.append((field, OPENROUTER_ENDPOINT, changed))
+
+        fake_http = FakeHTTPPost(body=_provider_response())
+        secret_reads: list[int] = []
+        adapter = OpenRouterTransport(
+            http=fake_http,
+            config_loader=lambda: secret_reads.append(1) or SimpleNamespace(
+                OPENROUTER_API_KEY="sk-neq-mutated-request-canary"
+            ),
+        )
+        for label, endpoint, changed in variants:
+            with self.subTest(mutation=label):
+                with self.assertRaises(OpenRouterTransportError):
+                    adapter._validate_request(endpoint, changed)
+        self.assertEqual(secret_reads, [])
+        self.assertEqual(fake_http.calls, [])
+
+    def test_openrouter_missing_approval_or_availability_never_reads_secret(self) -> None:
+        confirmed_path = self._confirmed_availability()
+        fake_http = FakeHTTPPost(body=_provider_response())
+        secret_reads: list[int] = []
+        adapter = OpenRouterTransport(
+            http=fake_http,
+            config_loader=lambda: secret_reads.append(1) or SimpleNamespace(
+                OPENROUTER_API_KEY="sk-neq-preflight-canary"
+            ),
+        )
+
+        unconfirmed = self._client(FROZEN_ROOT / "availability-check-20261108.json")
+        with self.assertRaisesRegex(StagingError, "availability"):
+            unconfirmed.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+
+        missing_approval = StagingClient(
+            "missing-approval",
+            confirmed_path,
+            self.root / "missing-execution-approval.json",
+            manifest_path=MANIFEST_PATH,
+            run_root=self.run_root,
+        )
+        with self.assertRaisesRegex(StagingError, "artifact is missing"):
+            missing_approval.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+        self.assertEqual(secret_reads, [])
+        self.assertEqual(fake_http.calls, [])
+        self.assertFalse(unconfirmed.ledger_path.exists())
+        self.assertFalse(missing_approval.ledger_path.exists())
+
+    def test_openrouter_credential_lookup_error_does_not_escape_to_evidence(self) -> None:
+        availability_path = self._confirmed_availability()
+        secret = "sk-neq-config-error-canary"
+        fake_http = FakeHTTPPost(body=_provider_response())
+
+        def failing_config_loader() -> object:
+            raise RuntimeError("credential lookup echoed " + secret)
+
+        adapter = OpenRouterTransport(http=fake_http, config_loader=failing_config_loader)
+        client = self._client(availability_path, run_id="config-error-run")
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(StagingError) as caught:
+                client.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+        exception_text = _exception_chain_text(caught.exception)
+        self.assertNotIn(secret, exception_text)
+        self.assertNotIn(secret, stdout.getvalue())
+        self.assertNotIn(secret, stderr.getvalue())
+        self.assertEqual(fake_http.calls, [])
+        for path in [client.ledger_path, *client.run_dir.rglob("*")]:
+            if path.is_file():
+                self.assertNotIn(secret.encode("ascii"), path.read_bytes())
+
+    def test_openrouter_credential_echoes_are_redacted_and_stop_the_study(self) -> None:
+        availability_path = self._confirmed_availability()
+        approval_path = self._execution_approval()
+        secret = "sk-neq-json-escape-canary"
+        cases = (
+            ("public-content-literal", "content", False),
+            ("public-content-escaped", "content", True),
+            ("upstream-provider-literal", "provider", False),
+            ("response-id-escaped", "id", True),
+            ("nested-usage-key-escaped", "usage_key", True),
+            ("error-payload-literal", "error", False),
+        )
+
+        for name, echo_location, escaped in cases:
+            with self.subTest(location=name):
+                payload = json.loads(_provider_response().decode("ascii"))
+                if echo_location == "content":
+                    payload["choices"][0]["message"]["content"] = secret
+                elif echo_location == "provider":
+                    payload["provider"] = secret
+                elif echo_location == "id":
+                    payload["id"] = secret
+                elif echo_location == "usage_key":
+                    payload["usage"]["details"] = {secret: 1}
+                elif echo_location == "error":
+                    payload["error"] = {"message": secret}
+                body = _json_bytes(payload)
+                escaped_secret = b"\\u0073" + secret[1:].encode("ascii")
+                if escaped:
+                    body = body.replace(secret.encode("ascii"), escaped_secret)
+                    self.assertNotIn(secret.encode("ascii"), body)
+                    self.assertTrue(_json_contains_secret(json.loads(body.decode("ascii")), secret))
+
+                fake_http = FakeHTTPPost(body=body)
+                adapter = OpenRouterTransport(
+                    http=fake_http,
+                    config_loader=lambda: SimpleNamespace(OPENROUTER_API_KEY=secret),
+                )
+                ledger_path = self.root / (name + "-ledger.jsonl")
+                with mock.patch.object(client_module, "STUDY_LEDGER_PATH", ledger_path):
+                    client = self._client(
+                        availability_path,
+                        run_id=name,
+                        run_root=self.root / (name + "-runs"),
+                        approval_path=approval_path,
+                    )
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        with self.assertRaisesRegex(StagingError, "receipt failed validation") as caught:
+                            client.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+                        with self.assertRaises(StagingError):
+                            client.send_once_with_openrouter(SCENE_ORDER[1], transport=adapter)
+
+                    self.assertNotIn(secret, _exception_chain_text(caught.exception))
+                    self.assertNotIn(secret, stdout.getvalue())
+                    self.assertNotIn(secret, stderr.getvalue())
+                    self.assertEqual(len(fake_http.calls), 1)
+                    records = [
+                        json.loads(line)
+                        for line in client.ledger_path.read_text(encoding="ascii").splitlines()
+                    ]
+                    result = next(row for row in records if row["event"] == "result")
+                    self.assertEqual(result["outcome"], "failed")
+                    self.assertTrue(result["stop_run"])
+                    safe_response = (STAGING_ROOT / result["response_path"]).read_bytes()
+                    self.assertIn(b"[REDACTED]", safe_response)
+                    self.assertNotIn(secret.encode("ascii"), safe_response)
+                    self.assertNotIn(escaped_secret, safe_response)
+
+                    for path in [client.ledger_path, *client.run_dir.rglob("*")]:
+                        if not path.is_file():
+                            continue
+                        contents = path.read_bytes()
+                        self.assertNotIn(secret.encode("ascii"), contents)
+                        self.assertNotIn(escaped_secret, contents)
+                        if path == client.ledger_path:
+                            for line in contents.splitlines():
+                                self.assertFalse(_json_contains_secret(json.loads(line), secret))
+                        elif path.suffix == ".json":
+                            self.assertFalse(
+                                _json_contains_secret(json.loads(contents.decode("ascii")), secret)
+                            )
+
+    def test_openrouter_http_error_timeout_and_redirect_are_single_consumed_dispatches(self) -> None:
+        availability_path = self._confirmed_availability()
+        approval_path = self._execution_approval()
+        secret = "sk-neq-http-failure-canary"
+        error_body = _json_bytes({"error": {"message": "provider echoed " + secret}})
+        cases = (
+            ("http-error", 500, error_body, None, "receipt failed validation"),
+            ("redirect", 302, _provider_response(generation_id="generation-redirect"), None, "provider status failed"),
+            ("timeout", 0, b"", TimeoutError("timeout echoed " + secret), "allocation consumed"),
+        )
+        for name, status, body, error, expected_message in cases:
+            with self.subTest(case=name):
+                ledger_path = self.root / (name + "-ledger.jsonl")
+                run_root = self.root / (name + "-runs")
+                fake_http = FakeHTTPPost(status=status, body=body, error=error)
+                adapter = OpenRouterTransport(
+                    http=fake_http,
+                    config_loader=lambda: SimpleNamespace(OPENROUTER_API_KEY=secret),
+                )
+                with mock.patch.object(client_module, "STUDY_LEDGER_PATH", ledger_path):
+                    client = self._client(
+                        availability_path,
+                        run_id=name,
+                        run_root=run_root,
+                        approval_path=approval_path,
+                    )
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        with self.assertRaisesRegex(StagingError, expected_message) as caught:
+                            client.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+                    exception_text = _exception_chain_text(caught.exception)
+                    self.assertNotIn(secret, exception_text)
+                    self.assertNotIn(secret, stdout.getvalue())
+                    self.assertNotIn(secret, stderr.getvalue())
+                    self.assertEqual(len(fake_http.calls), 1)
+                    self.assertEqual(fake_http.calls[0]["url"], OPENROUTER_ENDPOINT)
+                    self.assertIs(fake_http.calls[0]["allow_redirects"], False)
+                    with self.assertRaises(StagingError):
+                        client.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+                    self.assertEqual(len(fake_http.calls), 1)
+                    for path in [client.ledger_path, *client.run_dir.rglob("*")]:
+                        if path.is_file():
+                            self.assertNotIn(secret.encode("ascii"), path.read_bytes())
+                    if name == "http-error":
+                        records = [
+                            json.loads(line)
+                            for line in client.ledger_path.read_text(encoding="ascii").splitlines()
+                        ]
+                        result = next(row for row in records if row["event"] == "result")
+                        saved = (STAGING_ROOT / result["response_path"]).read_bytes()
+                        self.assertIn(b"[REDACTED]", saved)
+
+    def test_openrouter_missing_or_mismatched_response_identity_fails_closed(self) -> None:
+        availability_path = self._confirmed_availability()
+        approval_path = self._execution_approval()
+        cases = (
+            ("missing", _json_bytes({"id": "generation-missing", "model": MODEL_ID}), "receipt failed validation"),
+            ("mismatch", _provider_response(model="openai/gpt-6-luna-pro"), "identity failed"),
+        )
+        for name, body, expected_message in cases:
+            with self.subTest(case=name):
+                ledger_path = self.root / ("identity-" + name + "-ledger.jsonl")
+                fake_http = FakeHTTPPost(body=body)
+                adapter = OpenRouterTransport(
+                    http=fake_http,
+                    config_loader=lambda: SimpleNamespace(
+                        OPENROUTER_API_KEY="sk-neq-identity-canary"
+                    ),
+                )
+                with mock.patch.object(client_module, "STUDY_LEDGER_PATH", ledger_path):
+                    client = self._client(
+                        availability_path,
+                        run_id="identity-" + name,
+                        run_root=self.root / ("identity-" + name + "-runs"),
+                        approval_path=approval_path,
+                    )
+                    with self.assertRaisesRegex(StagingError, expected_message):
+                        client.send_once_with_openrouter(SCENE_ORDER[0], transport=adapter)
+                    self.assertEqual(len(fake_http.calls), 1)
+                    records = [
+                        json.loads(line)
+                        for line in client.ledger_path.read_text(encoding="ascii").splitlines()
+                    ]
+                    result = next(row for row in records if row["event"] == "result")
+                    self.assertEqual(result["outcome"], "failed")
+                    self.assertTrue(result.get("stop_run") is True)
+                    self.assertTrue((STAGING_ROOT / result["response_path"]).is_file())
+
+    def test_openrouter_pending_reservation_blocks_adapter_without_secret_or_http(self) -> None:
+        availability_path = self._confirmed_availability()
+        client = self._client(availability_path, run_id="pending-run")
+
+        class SimulatedInterruption(BaseException):
+            pass
+
+        with self.assertRaises(SimulatedInterruption):
+            client.send_once(SCENE_ORDER[0], lambda _endpoint, _request: (_ for _ in ()).throw(SimulatedInterruption()))
+        secret_reads: list[int] = []
+        fake_http = FakeHTTPPost(body=_provider_response())
+        adapter = OpenRouterTransport(
+            http=fake_http,
+            config_loader=lambda: secret_reads.append(1) or SimpleNamespace(
+                OPENROUTER_API_KEY="sk-neq-pending-canary"
+            ),
+        )
+        with self.assertRaisesRegex(StagingError, "pending"):
+            self._client(availability_path, run_id="pending-run").send_once_with_openrouter(
+                SCENE_ORDER[1],
+                transport=adapter,
+            )
+        self.assertEqual(secret_reads, [])
+        self.assertEqual(fake_http.calls, [])
+
     def test_client_and_tests_do_not_import_config_or_provider_sdk(self) -> None:
         client_source = (REPO_ROOT / "scripts/mise_en_scene/llm_staging/client.py").read_text(encoding="ascii")
         availability_source = (REPO_ROOT / "scripts/mise_en_scene/llm_staging/availability.py").read_text(encoding="ascii")
+        transport_source = (REPO_ROOT / "scripts/mise_en_scene/llm_staging/transport.py").read_text(encoding="ascii")
         test_source = Path(__file__).read_text(encoding="ascii")
         self.assertNotIn("import config", client_source)
         self.assertNotIn("from config", client_source)
+        self.assertNotIn("import config", transport_source)
+        self.assertNotIn("from config", transport_source)
         self.assertNotIn("import config", availability_source)
         self.assertNotIn("import httpx", client_source)
         self.assertNotIn("import openai", client_source)
