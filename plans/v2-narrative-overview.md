@@ -724,6 +724,16 @@ recommendations):
   before implementation. This does not reopen SP3b, alter frozen pilot
   artifacts or scores, authorize live spending or production seeding, open
   later worktrees, complete SP4, or accept ADR-0034.
+- 2026-11-09: owner reviewed the revised ADR-0034 (PR #119, merged
+  `01e710ee`, including the "Open facts and TITAN resolution" section) and
+  ACCEPTED it. Acceptance permits S1 and later spatial phases to be proposed as
+  their own OpenSpec changes; it does not authorize implementation, select a
+  format or combat enforcement level, or approve evaluation budgets. Still
+  pending owner inputs: D1 audit (1,048 claims), seven transcript ratings,
+  format, combat granularity/enforcement, backfill-versus-Builder data
+  pipeline, and any Section 2 live evaluation. Offline mise-en-scene prototype
+  (PR #116), holdout draft (PR #118/#123, unfrozen) and staging-study protocol
+  (PR #120/#127, 3-call study pending transport review) are in progress.
 
 N2 proposal rulings (2026-11-06; change `v2-react-player-vertical-slice`,
 draft PR #103; N1 archived in #102 at `77bb3f1a`). Approved under the

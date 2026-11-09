@@ -1,8 +1,9 @@
 # ADR-0034: Spatial Authority and Projections
 
 - Date: 2026-11-06
-- Status: Proposed
-- Revision: 2026-11-09 draft revision; owner review required; not a decision
+- Status: Accepted
+- Accepted: 2026-11-09 (repository owner)
+- Revision: 2026-11-09 revision accepted as written
 - Supersedes: None
 - Superseded by: None
 
@@ -157,15 +158,17 @@ result or an acceptance decision:
 - Pilot evidence is recorded in the draft pilot decision report. Main SP3 is
   INCONCLUSIVE, SP3b is CLOSED BLOCKED, and M1 is below its frozen threshold;
   none selects a production format or enforcement level.
-- Explicit owner acceptance is required before S1. The draft and its Proposed
-  index entry do not imply acceptance.
+- The owner accepted this ADR on 2026-11-09. Acceptance permits S1 and later
+  spatial phases to be proposed through their own OpenSpec changes; it does not
+  itself authorize implementation, select a format or enforcement level, or
+  approve any evaluation budget.
 - This ADR does not change `MULTIPLAYER_MODE` or existing party-size gates. It
   applies to the single tabletop runtime for 1..x PCs, preserving the 1-PC
   regression floor and multi-PC compatibility.
 - Open owner inputs remain unresolved: D1 audit; seven transcript ratings;
   format; combat granularity and enforcement; backfill-versus-Builder data
-  pipeline; ADR acceptance; and any separate Section 2 evaluation authorization
-  and protocol decisions. No proxy or default is selected here.
+  pipeline; and any separate Section 2 evaluation authorization and protocol
+  decisions. No proxy or default is selected here.
 
 ## Consequences
 
@@ -210,3 +213,6 @@ result or an acceptance decision:
   schematic cells, fact-bound arrival staging, and current evidence boundaries.
   This is not acceptance or implementation authorization; status remains
   Proposed.
+- 2026-11-09: Accepted by the repository owner as revised. Status changed to
+  Accepted; the open owner inputs listed under "Owner gate and scope" remain
+  unresolved and are not implied by acceptance.
