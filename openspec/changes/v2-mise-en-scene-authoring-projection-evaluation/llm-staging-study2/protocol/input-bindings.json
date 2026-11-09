@@ -1,0 +1,64 @@
+{
+  "schema": "neq.llm_staging_study2_input_bindings.v1",
+  "study1_manifest_path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/staging-manifest.json",
+  "canonicalization": "UTF-8 JSON; ensure_ascii=false; sort_keys=true; separators=(',', ':')",
+  "scenes": [
+    {
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "source_packet": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json",
+        "sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e"
+      },
+      "expected_bundle": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json",
+        "sha256": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258"
+      },
+      "topology": {
+        "id": "into_the_deepvault:topology:i02",
+        "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+      },
+      "gate_canonical_context": {
+        "id": "into_the_deepvault:scene:ha003-i02#gate-canonical-context:into_the_deepvault:topology:i02",
+        "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+      }
+    },
+    {
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "source_packet": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json",
+        "sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee"
+      },
+      "expected_bundle": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json",
+        "sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b"
+      },
+      "topology": {
+        "id": "into_the_deepvault:topology:i03",
+        "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+      },
+      "gate_canonical_context": {
+        "id": "into_the_deepvault:scene:sd005-i03#gate-canonical-context:into_the_deepvault:topology:i03",
+        "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+      }
+    },
+    {
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "source_packet": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json",
+        "sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b"
+      },
+      "expected_bundle": {
+        "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json",
+        "sha256": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af"
+      },
+      "topology": {
+        "id": "xhalruuns_masquerade:topology:ao02",
+        "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"
+      },
+      "gate_canonical_context": {
+        "id": "xhalruuns_masquerade:scene:tsu001-ao02#gate-canonical-context:xhalruuns_masquerade:topology:ao02",
+        "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"
+      }
+    }
+  ]
+}

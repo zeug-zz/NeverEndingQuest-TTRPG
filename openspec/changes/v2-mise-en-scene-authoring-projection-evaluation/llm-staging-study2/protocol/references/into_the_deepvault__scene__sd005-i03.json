@@ -1,0 +1,104 @@
+{
+  "arrival_prose": [
+    {
+      "id": "into_the_deepvault:scene:sd005-i03:arrival:approach",
+      "role": "approach",
+      "text": "The scene's approach is staged from a connected room toward the threshold."
+    },
+    {
+      "id": "into_the_deepvault:scene:sd005-i03:arrival:threshold",
+      "role": "threshold",
+      "text": "This hall holds ancient banners, faded nearly to gray, between cracked pillars."
+    },
+    {
+      "id": "into_the_deepvault:scene:sd005-i03:arrival:focal",
+      "role": "focal",
+      "text": "The threshold is staged toward the cracked dais."
+    }
+  ],
+  "claims": [
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:study2-authored:approach-to-threshold",
+          "id": "into_the_deepvault:scene:sd005-i03:claim:study2-approach",
+          "kind": "factual",
+          "span": "The scene's approach is staged from a connected room toward the threshold.",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:sd005-i03:arrival:approach"
+    },
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:sd005-i03-c9f3c8a3594d",
+          "id": "into_the_deepvault:scene:sd005-i03:claim:study2-threshold",
+          "kind": "factual",
+          "span": "hall",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:sd005-i03:arrival:threshold"
+    },
+    {
+      "items": [
+        {
+          "choice": null,
+          "fact_id": "into_the_deepvault:fact:study2-authored:threshold-to-focal",
+          "id": "into_the_deepvault:scene:sd005-i03:claim:study2-focal",
+          "kind": "factual",
+          "span": "The threshold is staged toward the cracked dais.",
+          "success": null
+        }
+      ],
+      "segment_id": "into_the_deepvault:scene:sd005-i03:arrival:focal"
+    }
+  ],
+  "fixture_deltas": {
+    "facts": [
+      {
+        "fact_id": "into_the_deepvault:fact:study2-authored:approach-to-threshold",
+        "object_id": "into_the_deepvault:entity:location-i03",
+        "predicate": "approach_to_threshold",
+        "subject_id": "into_the_deepvault:entity:room-i01",
+        "value": true
+      },
+      {
+        "fact_id": "into_the_deepvault:fact:study2-authored:threshold-to-focal",
+        "object_id": "into_the_deepvault:entity:cracked-dais",
+        "predicate": "threshold_to_focal",
+        "subject_id": "into_the_deepvault:entity:location-i03",
+        "value": true
+      }
+    ]
+  },
+  "input_refs": {
+    "expected_bundle": {
+      "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json",
+      "sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b"
+    },
+    "gate_canonical_context": {
+      "id": "into_the_deepvault:scene:sd005-i03#gate-canonical-context:into_the_deepvault:topology:i03",
+      "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+    },
+    "scene_id": "into_the_deepvault:scene:sd005-i03",
+    "source_packet": {
+      "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json",
+      "sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee"
+    },
+    "topology": {
+      "id": "into_the_deepvault:topology:i03",
+      "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+    }
+  },
+  "schema": "neq.llm_staging_study2_delta.v1",
+  "stage_role_bindings": {
+    "approach": ["into_the_deepvault:entity:room-i01"],
+    "focal_anchor": ["into_the_deepvault:entity:cracked-dais"],
+    "threshold": ["into_the_deepvault:entity:location-i03"],
+    "usable_space": ["into_the_deepvault:entity:usable-space-i03"]
+  }
+}
