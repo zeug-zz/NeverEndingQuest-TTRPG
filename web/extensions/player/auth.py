@@ -12,6 +12,7 @@ import base64
 import getpass
 import hashlib
 import hmac
+import ipaddress
 import os
 import re
 import secrets
@@ -46,6 +47,7 @@ _VERIFIER_RE = re.compile(
     r"neq-scrypt\$v1\$32768\$8\$1\$([0-9a-f]{32})\$([0-9a-f]{64})\Z"
 )
 _COOKIE_NAME_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
+_PUBLIC_DNS_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +219,65 @@ def extract_host_origin(
     return hosts[0], origins[0] if origins else None, True
 
 
+def _parse_public_https_origin(origin: object) -> tuple[str, str] | None:
+    """Return a canonical HTTPS origin and authority for a relay DNS name."""
+    if (
+        not isinstance(origin, str)
+        or not origin
+        or len(origin) > 512
+        or not origin.isascii()
+        or any(ord(character) <= 32 or ord(character) == 127 for character in origin)
+        or not origin.startswith("https://")
+    ):
+        return None
+
+    authority = origin[len("https://") :]
+    if not authority or any(character in authority for character in "/?#@\\"):
+        return None
+    if authority.count(":") > 1:
+        return None
+
+    port: int | None = None
+    if ":" in authority:
+        host, raw_port = authority.rsplit(":", 1)
+        if not raw_port.isascii() or not raw_port.isdigit():
+            return None
+        try:
+            port = int(raw_port)
+        except ValueError:
+            return None
+        if not 1 <= port <= 65535 or str(port) != raw_port:
+            return None
+    else:
+        host = authority
+
+    if not host or host.lower() != host or len(host) > 253:
+        return None
+    labels = host.split(".")
+    if len(labels) < 2 or any(
+        not _PUBLIC_DNS_LABEL_RE.fullmatch(label)
+        or label.startswith("xn--")
+        for label in labels
+    ):
+        return None
+    if not any(character.isalpha() for character in labels[-1]):
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+
+    # Browsers omit the default HTTPS port from both Host and Origin. Treat an
+    # explicit :443 in companion status as that same canonical origin.
+    canonical_port = None if port in (None, 443) else port
+    canonical_authority = (
+        host if canonical_port is None else f"{host}:{canonical_port}"
+    )
+    return f"https://{canonical_authority}", canonical_authority
+
+
 def cookie_value(headers: Iterable[tuple[object, object]], name: str) -> str | None:
     """Read exactly one cookie of ``name`` from an unambiguous Cookie header."""
     cookie_headers = header_values(headers, "cookie")
@@ -290,6 +351,9 @@ class PlayerSecurity:
         self._prelogin: dict[str, tuple[str, float]] = {}
         self._sessions: dict[str, _SessionRecord] = {}
         self._sockets: dict[str, _SocketRecord] = {}
+        self._public_origin: str | None = None
+        self._public_authority: str | None = None
+        self._public_origin_generation: int | None = None
 
     @property
     def expected_host(self) -> str:
@@ -298,6 +362,50 @@ class PlayerSecurity:
     @property
     def expected_origin(self) -> str:
         return f"http://{PLAYER_HOST}:{self.port}"
+
+    @property
+    def public_origin_status(self) -> tuple[bool, int | None]:
+        """Expose binding presence and generation without revealing its origin."""
+        with self._lock:
+            return self._public_origin is not None, self._public_origin_generation
+
+    def bind_public_origin(self, generation: int, origin: object) -> bool:
+        """Bind one validated public origin; replacement requires an explicit clear."""
+        parsed = _parse_public_https_origin(origin)
+        if (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+            or parsed is None
+        ):
+            self.clear_public_origin("invalid_binding")
+            return False
+
+        canonical_origin, authority = parsed
+        with self._lock:
+            if self._public_origin is not None:
+                if (
+                    self._public_origin_generation == generation
+                    and self._public_origin == canonical_origin
+                ):
+                    return True
+                self._clear_public_origin_locked()
+                return False
+            self._public_origin = canonical_origin
+            self._public_authority = authority
+            self._public_origin_generation = generation
+            return True
+
+    def clear_public_origin(self, reason: str | None = None) -> None:
+        """Clear the optional binding without logging caller-supplied details."""
+        del reason
+        with self._lock:
+            self._clear_public_origin_locked()
+
+    def _clear_public_origin_locked(self) -> None:
+        self._public_origin = None
+        self._public_authority = None
+        self._public_origin_generation = None
 
     @property
     def server_instance_id(self) -> str:
@@ -326,6 +434,7 @@ class PlayerSecurity:
             self._prelogin.clear()
             self._sessions.clear()
             self._sockets.clear()
+            self._clear_public_origin_locked()
             self.limiters.clear_sessions()
             self._signing_key = secrets.token_bytes(32)
             self._server_instance_id = secrets.token_urlsafe(32)
@@ -340,6 +449,7 @@ class PlayerSecurity:
             self._prelogin.clear()
             self._sessions.clear()
             self._sockets.clear()
+            self._clear_public_origin_locked()
             self.limiters.clear_sessions()
             return socket_ids
 
@@ -507,8 +617,11 @@ class PlayerSecurity:
             return bool(
                 session is not None
                 and now < session.expires_at
-                and socket_record.host == self.expected_host
-                and socket_record.origin == self.expected_origin
+                and self.request_identity_is_valid(
+                    socket_record.host,
+                    socket_record.origin,
+                    require_origin=True,
+                )
             )
 
     def session_context_for_socket(self, sid: str) -> PlayerSessionIdentity | None:
@@ -523,8 +636,11 @@ class PlayerSecurity:
             if (
                 session is None
                 or now >= session.expires_at
-                or socket_record.host != self.expected_host
-                or socket_record.origin != self.expected_origin
+                or not self.request_identity_is_valid(
+                    socket_record.host,
+                    socket_record.origin,
+                    require_origin=True,
+                )
             ):
                 return None
             return PlayerSessionIdentity(
@@ -543,8 +659,11 @@ class PlayerSecurity:
             return [
                 sid
                 for sid, socket_record in self._sockets.items()
-                if socket_record.host == self.expected_host
-                and socket_record.origin == self.expected_origin
+                if self.request_identity_is_valid(
+                    socket_record.host,
+                    socket_record.origin,
+                    require_origin=True,
+                )
                 and (session := self._sessions.get(socket_record.session_id)) is not None
                 and now < session.expires_at
             ]
@@ -565,11 +684,18 @@ class PlayerSecurity:
         *,
         require_origin: bool,
     ) -> bool:
-        if host != self.expected_host:
-            return False
+        if host == self.expected_host:
+            if origin is None:
+                return not require_origin
+            return origin == self.expected_origin
         if origin is None:
-            return not require_origin
-        return origin == self.expected_origin
+            return False
+        with self._lock:
+            return bool(
+                self._public_origin is not None
+                and host == self._public_authority
+                and origin == self._public_origin
+            )
 
     def _sign_session_locked(self, session_id: str, expires_at: int) -> str:
         payload = f"v1|{self._server_instance_id}|{session_id}|{expires_at}".encode("ascii")
