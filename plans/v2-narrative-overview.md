@@ -214,7 +214,7 @@ B0: router + combat refactor committed (incl. llm-router-cleanup,
  |     G2 -> G3 new capabilities (storage, trade, charges) -> G4 inventory/AC
  |     G4 + SC0 -> G5 resources/conditions/clock (combat bookkeeping SC-owned)
  |     G5 -> G6 progression/quests/occupants ; GU per upstream release
- |-- Track B  Narrator P0 (docs in main) ; worktree R opens after the pilot gate
+ |-- Track B  Narrator P0 (docs in main) ; worktree R opens after the Narrator P0 gate (OD-2, 2026-11-10)
  |     P0..P6
  |     P1 merged  -> Track C Pilot P1-P2  (Pilot P0 is docs/audit; may start before B0)
  |     P2 passed  -> Pilot P3 -> P4 -> P5 ; pilot + MB2 evidence -> schema sign-off
@@ -244,7 +244,7 @@ Revised 2026-11-03 (owner decision). The build opens with two concurrent
 worktrees: Network, so human testers arrive as early as possible, and the
 mapping pilot, because spatial decisions shape the Narrator's context, combat
 and the Builder's output. Narrator P0 proceeds as docs in the main checkout.
-Worktree R opens after the pilot gate. This moves Narrator delivery about five
+Worktree R opens after the pilot gate [superseded 2026-11-10: OD-2 moves this to the Narrator P0 gate]. This moves Narrator delivery about five
 weeks later than the 2026-10-30 timeline; Network and the tester date are
 unchanged.
 
@@ -298,13 +298,13 @@ Historical week bands (2026-11-03 estimate):
 | --- | --- | --- |
 | N `feature/v2-network` | Network N0-N4 delivered to invited testers; full prompt in s10.5 | Tester builds come from a tagged `main` SHA |
 | S `feature/v2-mapping-pilot` | Objective and immutable completion criteria of `plans/v2-mapping-pilot.md` s11, verbatim; full prompt in s10.5 | Opens with N after B0; owns SP0 (owner decision 2026-11-05); research only; ends at the owner decision gate |
-| SB `feature/v2-spatial` | S1-S4 objective of `plans/v2-spatial.md` s11 | After the pilot gate; may reuse worktree S once the pilot branch merges |
+| SB `feature/v2-spatial` | S1-S4 objective of `plans/v2-spatial.md` s11 | After the pilot gate (S1a may start after SP4 closeout, OD-9); may reuse worktree S once the pilot branch merges |
 | SC `feature/v2-spatial-combat` | SC0-SC4 objective of `plans/v2-spatial.md` s11 | After S1 merges and SC0 is accepted |
-| R | Objective and immutable completion criteria of `plans/v2-narrator.md` s17, verbatim | Opens after the pilot gate; P0 runs as docs in main beforehand |
+| R | Objective and immutable completion criteria of `plans/v2-narrator.md` s17, verbatim | Opens after the Narrator P0 gate (OD-2, 2026-11-10); P0 runs as docs in main beforehand |
 | M | Candidate objective of `plans/v2-memory-pilot.md` s4 | Full-seed criterion may end BLOCKED on the producer; report it, never drop it |
 | T (later) | TITAN P0 and P2-P6; P1 recorded as delivered by the pilot | Separate goal so a blocked pilot does not hold the engine open |
 | B `feature/v2-module-builder` | Candidate objective and full completion criteria of `plans/v2-module-builder.md` s8/s9 | Create only after owner approval and B0; MB0-MB2 may precede TITAN runtime, but full completion retains seed/MB3-MB5 gates |
-| G `feature/v2-firelight` | Candidate goal of `plans/v2-firelight.md` s13 | After the G0 ADR, the G1 gate and pilot SP3; G0/G1 run in main and `tmp/` beforehand |
+| G `feature/v2-firelight` | Candidate goal of `plans/v2-firelight.md` s13 | After the G1 gate and the shared identity contract, with no frozen-configuration study in flight in S (OD-4, 2026-11-10); G0/G1 run in main and `tmp/` beforehand |
 
 ### Parallel-worktree rules
 
@@ -626,6 +626,21 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
   - OD-12 one seeded 1-PC and one four-PC capture session may feed more than
     one track's evidence when each owning plan's requirements are met in full;
     each ledger judges its own rows.
+- Concurrency constraint, 2026-11-10 (owner): subscription limits allow only
+  TWO goal orchestrator sessions at once for now (N and S). This is stricter
+  than OD-11 (three) and governs until the owner lifts it. The Wave 1
+  main-checkout goal (fable review FR-11 preflight, FR-10 runner and CI tier,
+  FR-16 unification, FR-12 Narrator P0, FR-13 G1, FR-14 Pilot P0 close, in the
+  review's order of value) opens in the slot freed by whichever of N or S
+  completes first. Worktrees R, SB, G and M then open one at a time as slots
+  free, in the gate-keyed order of s7. Work that needs no new session stays
+  with the Overseer (docs and ledger).
+- Port status, 2026-11-10: the fable review's ledger, order, decision and
+  Wave 0 changes are in this index and in the status lines of the owning
+  plans. The work-package texts (FR-10 to FR-33) still live in the review and
+  are the seed for their OpenSpec proposals; the owning plans (Narrator P0
+  extension and P2a/P2b order, Spatial S1a/S1b and S2a, Firelight G2/G3
+  notes) are amended when each package is proposed.
 - Standing delegation, 2026-11-10: the owner delegated routine decisions to
   the Overseer (in-scope PR merges with green CI, provider-free work, harness
   and test fixes, corrected reruns of approved experiments, model spend inside
