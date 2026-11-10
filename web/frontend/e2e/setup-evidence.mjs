@@ -281,29 +281,57 @@ export function sanitizeSetupScreenshotPage(role, documentRef = globalThis.docum
   ].includes(role) || !documentRef?.documentElement) {
     return { safe: false, reason: "page-not-ready" };
   }
-
-  const sensitiveName = /(password|passphrase|verifier|token|csrf|secret|authorization|cookie|session)/i;
-  const maskElement = (element) => {
-    element.setAttribute("data-n2-evidence-masked", "true");
-    element.style?.setProperty("color", "transparent", "important");
-    element.style?.setProperty("-webkit-text-fill-color", "transparent", "important");
-    element.style?.setProperty("text-shadow", "none", "important");
-    element.style?.setProperty("background-image", "none", "important");
-  };
-  for (const element of documentRef.querySelectorAll("input, textarea, select")) {
-    if (element.matches("select")) {
-      element.selectedIndex = -1;
-    } else {
-      element.value = "";
-      element.setAttribute("value", "");
+  const passwordField = documentRef.querySelector("input[type='password']");
+  if (role.startsWith("player-")) {
+    const heading = documentRef.querySelector("h1")?.textContent?.trim();
+    const connectionStatus = documentRef.querySelector("[role='status']")?.textContent?.trim();
+    const logoutButton = [...documentRef.querySelectorAll("button")]
+      .some((button) => button.textContent?.trim() === "Log out");
+    if (heading !== "NeverEndingQuest player" || !logoutButton ||
+        !authenticatedPlayerStatuses.has(connectionStatus) || passwordField) {
+      return { safe: false, reason: "login-or-authentication-not-confirmed" };
     }
-    element.setAttribute("placeholder", "");
-    maskElement(element);
+  } else if (role === "host-ui-chrome-context") {
+    if (!documentRef.querySelector("#game-output") || !documentRef.querySelector("#user-input") || passwordField) {
+      return { safe: false, reason: "login-or-authentication-not-confirmed" };
+    }
   }
 
-  for (const element of documentRef.querySelectorAll("[contenteditable='true']")) {
-    element.textContent = "";
-    maskElement(element);
+  const sensitiveName = /(password|passphrase|verifier|token|csrf|secret|authorization|cookie|session)/i;
+  const selectorForElement = (element) => {
+    const parts = [];
+    let current = element;
+    while (current) {
+      if (typeof current.localName !== "string" || current.localName.length === 0) return null;
+      let part = current.localName;
+      const parent = current.parentElement;
+      if (parent) {
+        let position = 0;
+        for (const sibling of parent.children) {
+          if (sibling.localName === current.localName) position += 1;
+          if (sibling === current) break;
+        }
+        if (position === 0) return null;
+        part += `:nth-of-type(${position})`;
+      }
+      parts.unshift(part);
+      current = parent;
+    }
+    return parts.join(" > ");
+  };
+  const maskSelectors = [];
+  const maskedElements = new Set();
+  const addMask = (element) => {
+    if (maskedElements.has(element)) return true;
+    const selector = selectorForElement(element);
+    if (selector === null) return false;
+    maskedElements.add(element);
+    maskSelectors.push(selector);
+    return true;
+  };
+
+  for (const element of documentRef.querySelectorAll("input, textarea, select, [contenteditable='true']")) {
+    if (!addMask(element)) return { safe: false, reason: "page-safety-check-unavailable" };
   }
 
   for (const element of documentRef.querySelectorAll(
@@ -320,32 +348,16 @@ export function sanitizeSetupScreenshotPage(role, documentRef = globalThis.docum
     if (!sensitiveName.test(identifyingText) && !element.hasAttribute("data-sensitive") &&
         !element.hasAttribute("data-secret")) continue;
     if (element.matches("input, textarea")) continue;
-    element.textContent = "[REDACTED]";
-    maskElement(element);
+    if (!addMask(element)) return { safe: false, reason: "page-safety-check-unavailable" };
   }
-
-  const passwordField = documentRef.querySelector("input[type='password']");
-  if (role.startsWith("player-")) {
-    const heading = documentRef.querySelector("h1")?.textContent?.trim();
-    const connectionStatus = documentRef.querySelector("[role='status']")?.textContent?.trim();
-    const logoutButton = [...documentRef.querySelectorAll("button")]
-      .some((button) => button.textContent?.trim() === "Log out");
-    if (heading !== "NeverEndingQuest player" || !logoutButton ||
-        !authenticatedPlayerStatuses.has(connectionStatus) || passwordField) {
-      return { safe: false, reason: "login-or-authentication-not-confirmed" };
-    }
-  } else if (role === "host-ui-chrome-context") {
-    if (!documentRef.querySelector("#game-output") || !documentRef.querySelector("#user-input") || passwordField) {
-      return { safe: false, reason: "login-or-authentication-not-confirmed" };
-    }
-  }
-  return { safe: true, reason: null };
+  return { safe: true, reason: null, mask_selectors: maskSelectors };
 }
 
 export async function captureCredentialSafeScreenshot(page, role, path, expectedOrigin) {
   if (!page || typeof page.isClosed !== "function" || page.isClosed()) {
     return { status: "skipped", reason: "page-unavailable" };
   }
+  if (typeof role !== "string") return { status: "skipped", reason: "page-not-ready" };
   const fixedOrigin = role.startsWith("player-")
     ? "http://127.0.0.1:8370"
     : role === "host-ui-chrome-context"
@@ -373,8 +385,21 @@ export async function captureCredentialSafeScreenshot(page, role, path, expected
         : "page-safety-check-unavailable",
     };
   }
+  if (!Array.isArray(safety.mask_selectors) ||
+      safety.mask_selectors.some((selector) => typeof selector !== "string" || selector.length === 0) ||
+      typeof page.locator !== "function") {
+    return { status: "skipped", reason: "page-safety-check-unavailable" };
+  }
   try {
-    await page.screenshot({ path, fullPage: true, animations: "disabled" });
+    const mask = [];
+    for (const selector of safety.mask_selectors) {
+      const locator = page.locator(selector);
+      if (!locator || typeof locator.count !== "function" || await locator.count() !== 1) {
+        throw new Error("A setup screenshot mask locator did not resolve exactly once.");
+      }
+      mask.push(locator);
+    }
+    await page.screenshot({ path, fullPage: true, animations: "disabled", caret: "initial", mask });
     return { status: "captured", path };
   } catch {
     return { status: "failed", reason: "screenshot-failed" };

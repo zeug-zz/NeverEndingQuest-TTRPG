@@ -30,6 +30,64 @@ function evaluateSerializedSanitizer(callback, role, documentRef) {
   });
 }
 
+function snapshotDom(dom) {
+  const documentRef = dom.window.document;
+  const selection = dom.window.getSelection();
+  return {
+    html: documentRef.documentElement.outerHTML,
+    activeElement: documentRef.activeElement?.id ?? null,
+    controls: [...documentRef.querySelectorAll("input, textarea, select")].map((element) => ({
+      tagName: element.tagName,
+      value: element.value,
+      selectedIndex: typeof element.selectedIndex === "number" ? element.selectedIndex : null,
+      selectedValues: element.selectedOptions
+        ? [...element.selectedOptions].map((option) => option.value)
+        : null,
+      selectionStart: typeof element.selectionStart === "number" ? element.selectionStart : null,
+      selectionEnd: typeof element.selectionEnd === "number" ? element.selectionEnd : null,
+    })),
+    editableSubtrees: [...documentRef.querySelectorAll("[contenteditable='true']")]
+      .map((element) => ({ html: element.innerHTML, text: element.textContent })),
+    selection: selection
+      ? {
+          text: selection.toString(),
+          anchorText: selection.anchorNode?.textContent ?? null,
+          anchorOffset: selection.anchorOffset,
+          focusText: selection.focusNode?.textContent ?? null,
+          focusOffset: selection.focusOffset,
+        }
+      : null,
+  };
+}
+
+function createSerializedScreenshotPage(dom, {
+  url = "http://127.0.0.1:8370/",
+  screenshotError = null,
+  screenshotEffect = null,
+} = {}) {
+  const screenshotOptions = [];
+  const page = {
+    isClosed: () => false,
+    url: () => url,
+    evaluate: async (callback, role) => evaluateSerializedSanitizer(callback, role, dom.window.document),
+    locator: (selector) => {
+      const elements = [...dom.window.document.querySelectorAll(selector)];
+      return {
+        selector,
+        element: elements[0],
+        count: async () => elements.length,
+      };
+    },
+    screenshot: async (options) => {
+      assert.equal(options.caret, "initial");
+      screenshotOptions.push(options);
+      if (screenshotError) throw screenshotError;
+      await screenshotEffect?.(options);
+    },
+  };
+  return { page, screenshotOptions };
+}
+
 test("setup stage errors retain only a fixed stage and discard exception text", async () => {
   const original = new Error("password=setup-secret; Cookie: setup-cookie");
   await assert.rejects(
@@ -143,39 +201,119 @@ test("setup capture still closes pages if screenshot or evidence writing fails",
   assert.deepEqual(order, ["closed"]);
 });
 
-test("screenshot sanitization masks form content and refuses login or unknown pages", () => {
+test("serialized screenshot masking is non-interfering and keeps authentication safety checks", async () => {
   const authenticated = new JSDOM(`<!doctype html><main>
     <h1>NeverEndingQuest player</h1>
-    <button type="button">Log out</button>
-    <p role="status">Connected</p>
-    <input type="hidden" name="csrf_token" value="csrf-secret">
-    <input name="player-note" value="draft-secret">
-    <textarea>typed-secret</textarea>
-    <select name="active-character"><option selected>private-character</option></select>
-    <div contenteditable="true">editable-secret</div>
-    <button aria-label="Show session token">session-token-secret</button>
-    <span data-testid="csrf-token-value">csrf-ui-secret</span>
-  </main>`);
-  const safe = sanitizeSetupScreenshotPage("player-a-chrome", authenticated.window.document);
-  assert.deepEqual(safe, { safe: true, reason: null });
-  for (const field of authenticated.window.document.querySelectorAll("input, textarea")) {
-    assert.equal(field.value, "");
-    assert.equal(field.getAttribute("value"), "");
-    assert.equal(field.style.getPropertyValue("-webkit-text-fill-color"), "transparent");
+    <button id="logout-button" type="button">Log out</button>
+    <p role="status">Disconnected</p>
+    <input type="hidden" name="csrf_token" value="csrf-secret" style="color: rgb(1, 2, 3)">
+    <input name="player-note" value="draft-secret" placeholder="keep-placeholder" style="outline: 1px solid red">
+    <textarea id="text-control">typed-secret</textarea>
+    <select id="active-pc" name="active-character"><option value="Merisiel">Merisiel</option><option value="Acheron" selected>Acheron</option></select>
+    <div id="editable-control" contenteditable="true"><strong>editable-sentinel</strong></div>
+    <button id="token-button" aria-label="Show session token">session-token-sentinel</button>
+    <span data-testid="csrf-token-value">csrf-ui-sentinel</span>
+    <span data-sensitive>identified-sensitive-sentinel</span>
+    <span data-secret>identified-secret-sentinel</span>
+    <span id="text-identified">Authorization header sentinel</span>
+    <span name="refresh_token">name-identified sentinel</span>
+    <span autocomplete="current-password">autocomplete-identified sentinel</span>
+    <div role="button" aria-label="Session verifier">role-button sentinel</div>
+  </main>`, { pretendToBeVisual: true });
+  const documentRef = authenticated.window.document;
+  const draft = documentRef.querySelector("input[name='player-note']");
+  draft.focus();
+  draft.setSelectionRange(2, 7);
+  documentRef.querySelector("select").selectedIndex = 1;
+  const editableText = documentRef.querySelector("#editable-control strong").firstChild;
+  const range = documentRef.createRange();
+  range.setStart(editableText, 2);
+  range.setEnd(editableText, 9);
+  authenticated.window.getSelection().removeAllRanges();
+  authenticated.window.getSelection().addRange(range);
+  const events = [];
+  for (const eventName of ["beforeinput", "input", "change", "focus", "blur", "selectionchange"]) {
+    documentRef.addEventListener(eventName, () => events.push(eventName));
   }
-  assert.equal(authenticated.window.document.querySelector("[contenteditable]")?.textContent, "");
-  assert.equal(authenticated.window.document.querySelector("select")?.selectedIndex, -1);
-  assert.equal(authenticated.window.document.querySelector("button[aria-label]")?.textContent, "[REDACTED]");
-  assert.equal(authenticated.window.document.querySelector("[data-testid='csrf-token-value']")?.textContent, "[REDACTED]");
+  const before = snapshotDom(authenticated);
+  const serializedSafety = evaluateSerializedSanitizer(
+    sanitizeSetupScreenshotPage,
+    "player-a-chrome",
+    documentRef,
+  );
+  assert.equal(serializedSafety.safe, true);
+  assert.equal(serializedSafety.reason, null);
+  assert.ok(Array.isArray(serializedSafety.mask_selectors));
+
+  const mock = createSerializedScreenshotPage(authenticated);
+  const captured = await captureCredentialSafeScreenshot(
+    mock.page,
+    "player-a-chrome",
+    "screenshots/player.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.equal(captured.status, "captured");
+  assert.deepEqual(snapshotDom(authenticated), before);
+  assert.deepEqual(events, []);
+
+  const expectedMaskedElements = [
+    ...documentRef.querySelectorAll("input, textarea, select, [contenteditable='true']"),
+    documentRef.querySelector("#token-button"),
+    documentRef.querySelector("[data-testid='csrf-token-value']"),
+    documentRef.querySelector("[data-sensitive]"),
+    documentRef.querySelector("[data-secret]"),
+    documentRef.querySelector("#text-identified"),
+    documentRef.querySelector("[name='refresh_token']"),
+    documentRef.querySelector("[autocomplete='current-password']"),
+    documentRef.querySelector("[role='button']"),
+  ];
+  const screenshotMask = mock.screenshotOptions[0]?.mask;
+  assert.ok(Array.isArray(screenshotMask));
+  const actualMaskedElements = new Set(screenshotMask.map((locator) => locator.element));
+  assert.equal(actualMaskedElements.size, expectedMaskedElements.length);
+  for (const element of expectedMaskedElements) assert.ok(actualMaskedElements.has(element));
+  assert.equal(actualMaskedElements.has(documentRef.querySelector("#logout-button")), false);
+  assert.equal(documentRef.querySelector("#active-pc").value, "Acheron");
+
+  const repeated = await captureCredentialSafeScreenshot(
+    mock.page,
+    "player-a-chrome",
+    "screenshots/player-repeat.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.equal(repeated.status, "captured");
+  assert.deepEqual(snapshotDom(authenticated), before);
+  assert.deepEqual(events, []);
+
+  const failingMock = createSerializedScreenshotPage(authenticated, {
+    screenshotError: new Error("synthetic screenshot failure"),
+  });
+  const failed = await captureCredentialSafeScreenshot(
+    failingMock.page,
+    "player-a-chrome",
+    "screenshots/player-failed.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.deepEqual(failed, { status: "failed", reason: "screenshot-failed" });
+  assert.deepEqual(snapshotDom(authenticated), before);
+  assert.deepEqual(events, []);
 
   const login = new JSDOM(`<!doctype html><main><h1>Player login</h1><input type="password" value="password-secret"></main>`);
-  const unsafe = sanitizeSetupScreenshotPage("player-a-chrome", login.window.document);
-  assert.equal(unsafe.safe, false);
-  assert.equal(unsafe.reason, "login-or-authentication-not-confirmed");
+  const loginBefore = snapshotDom(login);
+  const loginMock = createSerializedScreenshotPage(login);
+  const unsafe = await captureCredentialSafeScreenshot(
+    loginMock.page,
+    "player-a-chrome",
+    "screenshots/login.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.deepEqual(unsafe, { status: "skipped", reason: "login-or-authentication-not-confirmed" });
+  assert.equal(loginMock.screenshotOptions.length, 0);
+  assert.deepEqual(snapshotDom(login), loginBefore);
   assert.equal(sanitizeSetupScreenshotPage("unapproved-role", login.window.document).safe, false);
 
-  const disconnected = new JSDOM(`<!doctype html><h1>NeverEndingQuest player</h1><p role="status">Disconnected</p>`);
-  assert.deepEqual(sanitizeSetupScreenshotPage("player-a-chrome", disconnected.window.document), {
+  const disconnectedWithoutLogout = new JSDOM(`<!doctype html><h1>NeverEndingQuest player</h1><p role="status">Disconnected</p>`);
+  assert.deepEqual(sanitizeSetupScreenshotPage("player-a-chrome", disconnectedWithoutLogout.window.document), {
     safe: false,
     reason: "login-or-authentication-not-confirmed",
   });
@@ -196,74 +334,100 @@ test("screenshot sanitization masks form content and refuses login or unknown pa
       <p role="status">${status}</p>
       <p role="alert">Connection state is being reported.</p>
     </main>`);
-    assert.deepEqual(
-      sanitizeSetupScreenshotPage("player-a-chrome", loggedIn.window.document),
-      { safe: true, reason: null },
-      `authenticated player screenshot should accept ${status}`,
-    );
+    const safety = evaluateSerializedSanitizer(sanitizeSetupScreenshotPage, "player-a-chrome", loggedIn.window.document);
+    assert.equal(safety.safe, true, `authenticated player screenshot should accept ${status}`);
   }
 
   const hostUi = new JSDOM(`<!doctype html><main><div id="game-output"></div><textarea id="user-input">draft</textarea></main>`);
-  assert.deepEqual(sanitizeSetupScreenshotPage("host-ui-chrome-context", hostUi.window.document), {
-    safe: true,
-    reason: null,
-  });
+  const hostSafety = evaluateSerializedSanitizer(
+    sanitizeSetupScreenshotPage,
+    "host-ui-chrome-context",
+    hostUi.window.document,
+  );
+  assert.equal(hostSafety.safe, true);
+  assert.ok(hostSafety.mask_selectors.length > 0);
   const incompleteHost = new JSDOM(`<!doctype html><main><div id="game-output"></div></main>`);
-  assert.equal(sanitizeSetupScreenshotPage("host-ui-chrome-context", incompleteHost.window.document).safe, false);
+  assert.deepEqual(sanitizeSetupScreenshotPage("host-ui-chrome-context", incompleteHost.window.document), {
+    safe: false,
+    reason: "login-or-authentication-not-confirmed",
+  });
 });
 
-test("credential-safe screenshot capture skips unsafe pages and masks before capture", async () => {
+test("screenshot capture preserves legitimate active-PC and DOM updates during masking", async () => {
+  const dom = new JSDOM(`<!doctype html><main>
+    <h1>NeverEndingQuest player</h1>
+    <button type="button">Log out</button>
+    <p role="status">Disconnected</p>
+    <select id="active-pc"><option value="Acheron" selected>Acheron</option><option value="Merisiel">Merisiel</option></select>
+    <div id="editable-control" contenteditable="true"><strong>Initial fixture value</strong></div>
+  </main>`);
+  const mock = createSerializedScreenshotPage(dom, {
+    screenshotEffect: async () => {
+      dom.window.document.querySelector("#active-pc").value = "Merisiel";
+      dom.window.document.querySelector("#editable-control").innerHTML = "<strong>Updated server value</strong>";
+    },
+  });
+
+  const result = await captureCredentialSafeScreenshot(
+    mock.page,
+    "player-a-chrome",
+    "screenshots/player-concurrent-update.png",
+    "http://127.0.0.1:8370",
+  );
+
+  assert.deepEqual(result, {
+    status: "captured",
+    path: "screenshots/player-concurrent-update.png",
+  });
+  assert.equal(dom.window.document.querySelector("#active-pc").value, "Merisiel");
+  assert.equal(dom.window.document.querySelector("#active-pc").selectedIndex, 1);
+  assert.equal(
+    dom.window.document.querySelector("#editable-control").innerHTML,
+    "<strong>Updated server value</strong>",
+  );
+  assert.equal(mock.screenshotOptions.length, 1);
+});
+
+test("credential-safe screenshot capture refuses origin and mask errors", async () => {
   const login = new JSDOM(`<!doctype html><h1>Player login</h1><input type="password" value="secret">`);
-  let screenshotCalled = false;
-  const skipped = await captureCredentialSafeScreenshot({
-    isClosed: () => false,
-    url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, login.window.document),
-    screenshot: async () => { screenshotCalled = true; },
-  }, "player-a-chrome", "screenshots/login.png", "http://127.0.0.1:8370");
-  assert.equal(skipped.status, "skipped");
-  assert.equal(screenshotCalled, false);
+  const loginMock = createSerializedScreenshotPage(login);
+  const skipped = await captureCredentialSafeScreenshot(
+    loginMock.page,
+    "player-a-chrome",
+    "screenshots/login.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.deepEqual(skipped, { status: "skipped", reason: "login-or-authentication-not-confirmed" });
+  assert.equal(loginMock.screenshotOptions.length, 0);
 
   const authenticated = new JSDOM(`<!doctype html>
     <h1>NeverEndingQuest player</h1>
     <button type="button">Log out</button>
     <p role="status">Disconnected</p>
-    <input type="hidden" name="csrf_token" value="csrf-secret">
-    <textarea>typed-secret</textarea>
-    <select><option selected>private-character</option></select>
-    <div contenteditable="true">editable-secret</div>
-    <button aria-label="Show session token">session-token-secret</button>`);
-  let inputValueAtCapture = "not-captured";
-  let maskedAtCapture = false;
-  const captured = await captureCredentialSafeScreenshot({
-    isClosed: () => false,
-    url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, authenticated.window.document),
-    screenshot: async () => {
-      screenshotCalled = true;
-      inputValueAtCapture = authenticated.window.document.querySelector("input")?.value ?? "missing";
-      maskedAtCapture =
-        authenticated.window.document.querySelector("input")?.getAttribute("value") === "" &&
-        authenticated.window.document.querySelector("textarea")?.value === "" &&
-        authenticated.window.document.querySelector("select")?.selectedIndex === -1 &&
-        authenticated.window.document.querySelector("[contenteditable]")?.textContent === "" &&
-        authenticated.window.document.querySelector("button[aria-label]")?.textContent === "[REDACTED]";
-    },
-  }, "player-a-chrome", "screenshots/player.png", "http://127.0.0.1:8370");
-  assert.equal(captured.status, "captured");
-  assert.equal(screenshotCalled, true);
-  assert.equal(inputValueAtCapture, "");
-  assert.equal(maskedAtCapture, true);
-
-  screenshotCalled = false;
-  const wrongOrigin = await captureCredentialSafeScreenshot({
-    isClosed: () => false,
-    url: () => "http://127.0.0.1:8360/",
-    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, authenticated.window.document),
-    screenshot: async () => { screenshotCalled = true; },
-  }, "player-a-chrome", "screenshots/foreign.png", "http://127.0.0.1:8370");
+    <input name="player-note" value="draft-secret">
+    <textarea>typed-secret</textarea>`);
+  const wrongOriginMock = createSerializedScreenshotPage(authenticated, {
+    url: "http://127.0.0.1:8360/",
+  });
+  const wrongOrigin = await captureCredentialSafeScreenshot(
+    wrongOriginMock.page,
+    "player-a-chrome",
+    "screenshots/foreign.png",
+    "http://127.0.0.1:8370",
+  );
   assert.deepEqual(wrongOrigin, { status: "skipped", reason: "page-not-ready" });
-  assert.equal(screenshotCalled, false);
+  assert.equal(wrongOriginMock.screenshotOptions.length, 0);
+
+  const maskErrorMock = createSerializedScreenshotPage(authenticated);
+  maskErrorMock.page.locator = () => ({ count: async () => 0 });
+  const maskError = await captureCredentialSafeScreenshot(
+    maskErrorMock.page,
+    "player-a-chrome",
+    "screenshots/mask-error.png",
+    "http://127.0.0.1:8370",
+  );
+  assert.deepEqual(maskError, { status: "failed", reason: "screenshot-failed" });
+  assert.equal(maskErrorMock.screenshotOptions.length, 0);
 });
 
 test("serialized screenshot safety skips login, unknown status, missing logout, and password pages", async () => {
@@ -309,12 +473,12 @@ test("historic authenticated Disconnected DOM is captured before setup pages clo
     <p role="status">Disconnected</p>
     <p role="alert">The player connection ended before setup completed.</p>
   </main>`);
-  const page = {
-    isClosed: () => false,
-    url: () => "http://127.0.0.1:8370/",
-    evaluate: (callback, role) => evaluateSerializedSanitizer(callback, role, historicPage.window.document),
-    screenshot: async () => { order.push("screenshot"); },
+  const mock = createSerializedScreenshotPage(historicPage);
+  mock.page.screenshot = async (options) => {
+    mock.screenshotOptions.push(options);
+    order.push("screenshot");
   };
+  const page = mock.page;
   const result = await captureSetupFailureBeforeClose({
     stage: "player_connection_wait",
     observed: { player_connection_state: "disconnected", player_shell_loaded: true },
