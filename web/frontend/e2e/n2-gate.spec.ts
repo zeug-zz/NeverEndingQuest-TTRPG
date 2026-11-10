@@ -842,6 +842,7 @@ test("busy-input: concurrent player inputs surface a busy receipt without append
       server.onMessage((message) => route.send(message));
     });
     await playerOne.reload({ waitUntil: "domcontentloaded" });
+    await loginPlayer(playerOne, { playerUrl: PLAYER_URL, password: PLAYER_PASSWORD, expect, withSetupStage });
     await expect(playerOne.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
     await expect(playerOne.getByText("Connected", { exact: true })).toBeVisible();
     await playerOne.locator("#gameplay-input").fill(markers[0]);
@@ -894,6 +895,7 @@ test("refresh-reconnect: refresh and network reconnect never replay a draft", as
   const marker = `N2_UNSENT_DRAFT_${RUN_ID}`;
   await playerOne.locator("#gameplay-input").fill(marker);
   await playerOne.reload({ waitUntil: "domcontentloaded" });
+  await loginPlayer(playerOne, { playerUrl: PLAYER_URL, password: PLAYER_PASSWORD, expect, withSetupStage });
   await expect(playerOne.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
   await expect(playerOne.getByText("Connected", { exact: true })).toBeVisible();
   await expect(playerOne.locator("#gameplay-input")).toHaveValue("");
@@ -918,6 +920,7 @@ test("refresh-reconnect: refresh and network reconnect never replay a draft", as
     const firefoxMarker = `${marker}_FIREFOX`;
     await playerTwo.locator("#gameplay-input").fill(firefoxMarker);
     await playerTwo.reload({ waitUntil: "domcontentloaded" });
+    await loginPlayer(playerTwo, { playerUrl: PLAYER_URL, password: PLAYER_PASSWORD, expect, withSetupStage });
     await expect(playerTwo.getByRole("heading", { name: "NeverEndingQuest player" })).toBeVisible();
     await expect(playerTwo.getByText("Connected", { exact: true })).toBeVisible();
     await expect(playerTwo.locator("#gameplay-input")).toHaveValue("");
