@@ -1,6 +1,7 @@
 # V2 Server, React Client, and OpenTunnel Network Implementation Plan
 
-Status: DRAFT FOR OWNER REVIEW - not implementation authorization.
+Status: approved owning plan; phase verdicts are recorded only in the program
+ledger (`plans/v2-narrative-overview.md` s10.3), not restated here.
 
 Priority: next network-play build after the current LLM-router/combat refactor
 is completed, verified, and committed.

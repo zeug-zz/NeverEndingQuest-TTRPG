@@ -177,14 +177,14 @@ Prime directive:
 | Existing continuity contract extensions and module-version binding adapter | Builder MB0/MB3, preserving ingest contracts | Pilot/TITAN continuity seams; later bulk import |
 | Campaign module-continuity projections | Builder MB3 using Narrator event/fencing and Pilot evidence APIs | Narrator/TITAN; derived notes only, not Archivist expansion or a required new Historian |
 | Typed intervention operations, risk and publication validators | TITAN P0/P4 | Builder MB4 maps blueprint permissions/dependencies; metadata grants no write authority |
-| Player projection and sync protocol | Network P1 | Narrator status (host-only) |
+| Player projection and sync protocol | Network N1 | Narrator status (host-only) |
 | Managed companion process supervision (Hindsight/PostgreSQL, OpenTunnel) | Joint decision at Network N0 / Narrator P0 | Both |
-| Spatial authority and projections ADR | Track F (drafted at pilot SP4; accepted before S1 starts) | All spatial consumers |
+| Spatial authority and projections ADR | ADR-0034, accepted 2026-11-09 | All spatial consumers |
 | Spatial identity and `SpatialService` query API | Spatial S1 | Narrator P3/P4, TITAN, Builder, combat SC1 |
 | Scene layout schema | Spatial S1 (pilot draft) | Builder MB1/MB2 produce it; S3 backfill; SC1 zones |
 | Spatial overlay and discovery state | Spatial S1, using Narrator P1 events and P2 save manifest/fencing | Narrator, TITAN, Builder MB3, S4 |
 | Narrator spatial packet | Spatial S2 | Narrator P4 layered assembler (current-state region) |
-| Player map projection | Spatial S4, as a message within the Network P1 protocol | `/client`, host tab |
+| Player map projection | Spatial S4, as a message within the Network N1 protocol | `/client`, host tab |
 | Encounter spatial state, typed `position_deltas` | Spatial SC1, extending combat turn receipts | Tactical brain, ally controller, Narrator P1 commit identity |
 | Regional geography | Spatial S5 (separate plan first) | TITAN, Builder MB3 |
 | Firelight ADR, pin record and upgrade policy | Track G0 | All tracks; `AGENTS.md` rule on acceptance |
@@ -247,6 +247,37 @@ and the Builder's output. Narrator P0 proceeds as docs in the main checkout.
 Worktree R opens after the pilot gate. This moves Narrator delivery about five
 weeks later than the 2026-10-30 timeline; Network and the tester date are
 unchanged.
+
+Revised 2026-11-10 (owner decisions OD-1 to OD-12, s10.1). Actual dates: B0
+and N0/SP0/SP1/G0 on 2026-11-05 (week 1); N1 and SP2/SP3 2026-11-06 (week 1);
+N2 implementation merged 2026-11-07 (bands said weeks 5-8); ADR-0034 accepted
+2026-11-09. The week bands below are now HISTORICAL estimates. The governing
+order is gate-keyed, from the [V2 fable review](v2-fable-review.md) s6:
+
+```text
+Wave 0  ledger reconciliation | status lines + ID hygiene | AGENTS commands | archive finished pilot changes
+        SP4 closeout under OD-1 -> S goal closes
+Wave 1  main: test-runner-ci-tier ; live-gate preflight ; single-runtime unification
+        main: Narrator P0 extended (envelope map, identity contract, seam map, compression and
+              persistence inventories -> baseline after preflight and unification)
+        main: Firelight G1 (budget ratified first) ; Memory Pilot P0 close
+        N:    N2 gate -> N3
+Wave 2  main: context-views step 1 (byte-identical prompt seam) -> step 2 ; atomic writes
+        R:    Narrator P1 (PR1 identity -> PR2 envelope -> PR3 backfill)
+        S/SB: S1a (after SP4) -> S1b (format + P1 PR2)
+        G:    G2 (G1 gate + identity contract + P1 PR1)
+Wave 3  N: N4 testers ; SB: S2a ; G: G3 ; R: P2a -> P2b ; M: Pilot P1-P2
+Wave 4+ as the owning plans order it (MB0-MB1 when review time allows)
+```
+
+Changes from the bands: R opens on the Narrator P0 gate; G opens on the G1
+gate and the identity contract; S1a is separable from the format decision; one
+identity contract and one prompt-assembly seam land before their consumers;
+unification lands before the baseline. Live windows follow the fable review s7
+rules (preflight before booking, driver-enforced caps, shared sessions under
+OD-12, booking priority Network > baselines > track gates).
+
+Historical week bands (2026-11-03 estimate):
 
 | Weeks | Main checkout | Worktree N `feature/v2-network` | Worktree S (Spatial) | Worktree R `feature/v2-narrator` | Worktree G `feature/v2-firelight` | Memory / TITAN |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -562,12 +593,59 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
   - `bookings.log`: append-only record of every acquire, release and stale
     break.
 
+- Owner decisions, 2026-11-10, on the [V2 fable review](v2-fable-review.md)
+  decision sheet (s4 there). All twelve were approved as recommended:
+  - OD-1 SP4 closes on existing evidence: the D1 claim audit (1,048 rows) is
+    recorded as NOT AUDITED, so S criterion 4 is met through its "reported
+    blocked with evidence" branch; the 85 percent precision gate is not
+    assessed and S3 backfill stays closed; new layouts come only from the
+    Builder plus a small hand-authored set (`plans/v2-mapping-pilot.md`
+    D1 fallback). The seven rateable SP3 transcripts are owner-WAIVED as
+    superseded (a recorded waiver, not ratings; no values are entered). Format
+    is decided in the S1b proposal, combat granularity and enforcement at SC0,
+    and the data pipeline at S3/MB0.
+  - OD-2 worktree R opens after the Narrator P0 gate, not the pilot gate.
+  - OD-3 Narrator P0 and Firelight G1 run in the main checkout; G1 uses the
+    toolchain and release download named in its ruling; the G0 latency budget
+    is ratified before G1 measures.
+  - OD-4 worktree G opens after the G1 gate and the shared identity contract,
+    with no frozen-configuration study in flight in S.
+  - OD-5 new change `test-runner-ci-tier` (fable review FR-10), advisory in CI first.
+  - OD-6 live-gate preflight (FR-11): no ruling authorizes a live booking
+    without a preflight report showing zero infrastructure failures at the SHA
+    to be run; one line is added to `AGENTS.md`.
+  - OD-7 `tt-single-runtime-unification` (FR-16) runs now, before the Narrator
+    P0 baseline capture, with its own live regression.
+  - OD-8 Narrator gates are renamed "Gate P0" to "Gate P6"; P0 is extended per
+    FR-12; the P2a/P2b order (FR-33) is approved only after P0 confirms it.
+  - OD-9 Spatial S1 splits into S1a and S1b; S2a is added (FR-21, FR-31).
+  - OD-10 `v2-context-views` starts with a byte-identical prompt-assembly
+    extraction (FR-23); new change for atomic-write remediation (FR-24).
+  - OD-11 at most three worktree goals at once (N, S/SB, R); G replaces N when
+    N retires; Builder MB0-MB1 held to Wave 4.
+  - OD-12 one seeded 1-PC and one four-PC capture session may feed more than
+    one track's evidence when each owning plan's requirements are met in full;
+    each ledger judges its own rows.
+- Standing delegation, 2026-11-10: the owner delegated routine decisions to
+  the Overseer (in-scope PR merges with green CI, provider-free work, harness
+  and test fixes, corrected reruns of approved experiments, model spend inside
+  an approved study up to USD 1 per study and USD 5 in total, bookings,
+  resumes, next-phase starts after a passed gate). Owner escalation remains
+  for security-rule relaxation, production or schema changes outside an
+  approved change, ADR acceptance, larger spend, owner-only judgements,
+  credentials, destructive actions and outward publication.
+- Coordination relay (2026-11-08 onward): campaign `neq-current-build` under
+  `<git-common-dir>/overseer-relay/campaigns/` binds N as role A and S as role
+  B; framed reports accompany the prose inbox; gated goal resumes are enabled.
+  The legacy mailbox remains the prose and rulings channel.
+
 ### 10.2 Worktrees and goals
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | `feature/v2-network-n2` | B0 | Opened 2026-11-05 | #103 implementation merged; external owner-run package under review | N2 live gate; provider-attempt cap enforcement correction required before handoff |
-| S | `feature/v2-mapping-pilot` | B0 | Opened 2026-11-05 | M1 review complete; mise-en-scene planning follow-up authorized; SP3b remains BLOCKED | Prospective planning PR; remaining SP4 owner inputs |
+| N | detached at `c8d0b185` (relay branch `feature/v2-network-n2-gate`) | B0 | Opened 2026-11-05 (goal `611274ea`) | N2 implementation and fixes merged (#103, #115, #117, #121-#122, #124, #128, #130-#132); WebSocket-only player transport verified in Chrome; Chrome P1 gate FAIL on a screenshot-masking harness defect, fix in progress | Chrome P1 then P4 gate rerun; Firefox portion; then N3 |
+| S | `feature/v2-llm-staging-study-prep` at `43e4c809` | B0 | Opened 2026-11-05 (goal `a9effa87`) | Mise-en-scene offline prototype merged (#116, #118, #120, #123); LLM staging studies 1 and 2 FAIL on contract defects (not model verdicts); study 3 contract-parity build in progress (#127 draft) | Study 3 run; SP4 closeout (FR-05) under OD-1 |
+| (scratch) | detached `tmp/overseer/main-baseline` at `1a94e364` | -- | none | Overseer scratch checkout for independent verification | -- |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
 `~/Projects/neq-v2-network` and `~/Projects/neq-v2-mapping-pilot`. The
@@ -772,14 +850,17 @@ standing owner instruction:
 | --- | --- | --- | --- | --- | --- |
 | N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
 | N1 player boundary and contract | N | PASS | 2026-11-06 | Initial head `196fd98d` held after the Overseer reproduced a stale active-PC revision rollback; one bounded correction plus verification-only continuation; Overseer independently re-verified the final head `a7abddcd`: focused N1 99 OK, rollback reproducer and lifecycle probes 0 failures (1-PC/4-PC), host/combat suites 75/26/13/13/7/15 OK, ASCII/Bandit/Semgrep clean, CI 10/10. Pre-existing request-path gaps surfaced by CodeQL fixed separately in #98/#99; remaining character-name alerts dismissed as false positive with owner approval (private review `plans/security/pr93-n1-review.md`). N2 requires separate authorization | #93 (`0b12f44f` integrated head) |
-| N2 React vertical slice | N | implementation integrated; live gate pending | 2026-11-07 | External owner-run package submitted; no live gate attempted. Review found documentation-only 30-attempt cap; enforcement must be demonstrated before owner handoff. No N2 PASS or N3 authorization | #103 (`2cf224ce`) |
+| N2 React vertical slice | N | Chrome P1 gate FAIL (harness); Firefox BLOCKED | 2026-11-10 | Fail-closed provider-attempt budget (#115); missing-Origin polling 403 traced and fixed by WebSocket-only client (#132); inert Chrome observation PASS (Connected, WS 101, Origin/Host/session true, zero provider reservations). Chrome P1 gate run `p1-agent-chrome-20261110T004340Z-b290967b`: 3 Chrome checks PASS, active-PC check FAIL from screenshot masking mutating the live page; P4/lifecycle not run. Firefox launches crash in the sandbox. No N2 PASS | #103, #115, #117, #121, #122, #124, #128, #130-#132 |
 | N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
 | SP2 offline D1/M1 | S | M1 below threshold; D1 owner audit pending | 2026-11-07 | Original M1 16/16 owner-rated: 2.625 legibility / 2.875 usefulness, below 3.5. Combat fixtures 5/5; redesign ratings excluded. D1 20 attempts (11 validated, 9 invalid layouts); 1,048 claim rows unaudited. See owner feedback for exact scores and next planning direction | #94 (`e40e4899`) |
 | SP3 live matrix | S | INCONCLUSIVE (main run); SP3b BLOCKED (no verified lifecycle profiles) | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
-| SP4 decision gate | S | pending | -- | -- | -- |
+| SP4 decision gate | S | pending (closes under OD-1) | -- | ADR-0034 accepted 2026-11-09 (#119, #129); D1 recorded not audited and transcripts waived by owner 2026-11-10; S assembles the closeout report (FR-05) | -- |
+| Mise-en-scene LLM staging studies | S | study 1 FAIL (output truncation), study 2 FAIL_FROZEN_CONTRACT (undisclosed validator rules) | 2026-11-09 | Both are protocol defects, not model or Builder verdicts; study 3 adds request/validator parity before calls | #127 (draft) |
+| Narrator P0 contracts (extended, FR-12) | main | pending (approved OD-3/OD-8) | -- | -- | -- |
+| Firelight G1 offline spike | main | pending (approved OD-3; budget ratification first) | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
 | Memory Pilot P0 contracts | main | pending | 2026-11-05 | `plans/v2-memory-pilot-p0/baseline-audit.md`; audit ready, premature production request withdrawn; fixture/rubric and budget contracts still pending | #84 (audit); scope correction follows |
 
@@ -823,8 +904,20 @@ are authorized. Missing evidence is reported explicitly.
 
 ### 10.4 Pending owner actions
 
-1. IMPORTANT, at SP4: one sitting to rate the SP3 live transcripts and M1
-   sketches. Without it S criterion 5 stays unmet.
+All decision-sheet items OD-1 to OD-12 were answered 2026-11-10 (s10.1). Open:
+
+1. Rating of LLM staging study scenes once a valid artifact passes the
+   Overseer semantic review (owner-only judgement).
+2. Map format (S1b proposal), combat granularity and enforcement (SC0), and
+   data pipeline (S3/MB0) at their owning gates, per OD-1.
+3. Section 2 live evaluation of the mise-en-scene change: deferred until the
+   staging study has a valid result.
+4. NEQ-world production seed job: awaits sign-off of the 240-fragment pilot
+   schema.
+5. Making the `test-runner-ci-tier` check required after ten green runs
+   (branch protection is an owner action).
+6. Firefox portion of the N2 gate: sandbox Firefox still crashes at newPage;
+   the owner is pursuing a sandbox fix.
 
 N0 closeout: the owner-run Linux leg completed and both tunnels are down.
 The guarded identity bootstrap (`up` -> `status` -> `down` with isolated
@@ -853,6 +946,11 @@ mapping-research goal is closed. The updated nono wrapper is installed.
 Stage 1 packet ratings waived (s10.1).
 
 ### 10.5 Goal prompts
+
+Superseded phrases (do not edit open goal prompts): "merged by the owner" and
+"booked with the Overseer" were superseded by the 2026-11-06 standing
+authorization and the 2026-11-10 delegation (s10.1); "per-worktree Hindsight
+namespace" was superseded by the shared bank ruling (s10.1, N0 rulings).
 
 Paste each prompt as the `/goal` in its worktree session, unchanged. The
 operating rules are shared; the S objective and criteria are copied verbatim
