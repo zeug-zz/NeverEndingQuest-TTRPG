@@ -1,0 +1,26 @@
+{
+  "schema": "neq.llm_staging_study3_delta.v1",
+  "input_refs": {
+    "scene_id": "into_the_deepvault:scene:sd005-i03",
+    "source_packet": {"id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json", "sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee"},
+    "expected_bundle": {"id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json", "sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b"},
+    "topology": {"id": "into_the_deepvault:topology:i03", "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"},
+    "gate_canonical_context": {"id": "into_the_deepvault:scene:sd005-i03#gate-canonical-context:into_the_deepvault:topology:i03", "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"}
+  },
+  "fixture_deltas": {"facts": [
+    {"fact_id": "into_the_deepvault:fact:study3-authored:approach-edge", "subject_id": "into_the_deepvault:entity:room-i01", "predicate": "approach_to_threshold", "object_id": "into_the_deepvault:entity:location-i03", "value": true},
+    {"fact_id": "into_the_deepvault:fact:study3-authored:threshold-edge", "subject_id": "into_the_deepvault:entity:location-i03", "predicate": "threshold_to_focal", "object_id": "into_the_deepvault:entity:cracked-dais", "value": true},
+    {"fact_id": "into_the_deepvault:fact:study3-authored:usable-space", "subject_id": "into_the_deepvault:entity:usable-space-i03", "predicate": "usable_space", "object_id": null, "value": "A bounded authored usable space."}
+  ]},
+  "stage_role_bindings": {"approach": ["into_the_deepvault:entity:room-i01"], "threshold": ["into_the_deepvault:entity:location-i03"], "focal_anchor": ["into_the_deepvault:entity:cracked-dais"], "usable_space": ["into_the_deepvault:entity:usable-space-i03"]},
+  "claims": [
+    {"segment_id": "into_the_deepvault:scene:sd005-i03:arrival:approach", "items": [{"id": "into_the_deepvault:scene:sd005-i03:claim:approach", "fact_id": "into_the_deepvault:fact:study3-authored:approach-edge", "kind": "factual", "span": "The bound approach connects to the threshold.", "choice": null, "success": null}]},
+    {"segment_id": "into_the_deepvault:scene:sd005-i03:arrival:threshold", "items": [{"id": "into_the_deepvault:scene:sd005-i03:claim:threshold", "fact_id": "into_the_deepvault:fact:study3-authored:threshold-edge", "kind": "factual", "span": "At the threshold, the cracked dais is the focal anchor.", "choice": null, "success": null}]},
+    {"segment_id": "into_the_deepvault:scene:sd005-i03:arrival:focal", "items": [{"id": "into_the_deepvault:scene:sd005-i03:claim:focal", "fact_id": "into_the_deepvault:fact:study3-authored:usable-space", "kind": "factual", "span": "The bounded authored usable space is identified.", "choice": null, "success": null}]}
+  ],
+  "arrival_prose": [
+    {"id": "into_the_deepvault:scene:sd005-i03:arrival:approach", "role": "approach", "text": "The bound approach connects to the threshold."},
+    {"id": "into_the_deepvault:scene:sd005-i03:arrival:threshold", "role": "threshold", "text": "At the threshold, the cracked dais is the focal anchor."},
+    {"id": "into_the_deepvault:scene:sd005-i03:arrival:focal", "role": "focal", "text": "The bounded authored usable space is identified."}
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "schema": "neq.llm_staging_study3_manifest.v1",
+  "study_id": "mise-en-scene-study3-20261110",
+  "protocol_version": "neq.llm_staging_study3_delta.v1",
+  "status": "CONTRACT_PREPARATION_ONLY",
+  "software_preparation_readiness": "PENDING",
+  "dispatch_authorized": false,
+  "scene_order": [
+    "into_the_deepvault:scene:ha003-i02",
+    "into_the_deepvault:scene:sd005-i03",
+    "xhalruuns_masquerade:scene:tsu001-ao02"
+  ],
+  "attempt_cap": 3,
+  "attempts_per_scene": 1,
+  "approval": {
+    "status": "APPROVED_CAP_ONLY",
+    "ruling_pins": [
+      "neq-standing-authority-20261110",
+      "neq-study3-pre-approved-20261110"
+    ]
+  },
+  "generation_envelope": {
+    "provider": "openrouter",
+    "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+    "model_id": "openai/gpt-6-luna",
+    "allow_fallbacks": false,
+    "retries": 0,
+    "reruns": 0,
+    "tools": [],
+    "redirects": false,
+    "streaming": false,
+    "continuation": false,
+    "max_tokens": 16384,
+    "timeout_seconds": 720
+  },
+  "cost_estimates": {
+    "status": "ESTIMATE",
+    "expected_usd_approx": "0.01",
+    "conservative_usd_approx": "0.03",
+    "hard_ceiling_usd": "0.05",
+    "actual_study3_cost": null
+  },
+  "frozen_study_inputs": {
+    "study1_manifest": {
+      "path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/staging-manifest.json",
+      "sha256": "4cebb3f3b3a6fd45830615ff42d7fd67625ace9b8f0c4de94bff664b950d7401"
+    },
+    "study2_manifest": {
+      "path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-study2/protocol/staging-manifest.json",
+      "sha256": "d9d81730ee32f19513ea722bcb12ed328505763ffa9deb75fc93b314337cbe4b"
+    },
+    "study2_input_bindings": {
+      "path": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-study2/protocol/input-bindings.json",
+      "sha256": "0ea8961dbd9a6d9bf05bfab34d060b16de831da75c6d7208adc0379bd833581a"
+    }
+  },
+  "artifacts": {
+    "protocol": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/protocol.md",
+      "sha256": "61bf6d5011eb72822d0d42beb815a512b36896022b93d38687120ec4c827886e"
+    },
+    "input_bindings": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/input-bindings.json",
+      "sha256": "65ef3871e6f73206f243160a1324d2ed63399834c704cba5aebaf0ff7d00b044"
+    },
+    "model_contract": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/model-contract.json",
+      "sha256": "8cd9b5bef3c57c75ced2533830de530001617d9dd11613ee28ac2771b9fc445f"
+    },
+    "schema_template": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/output-contract.schema.json",
+      "sha256": "0080bfc6a5cbd9d242fe8083bf45c3c91b8114ed1f5b2bac5d980b2cbfdcb366"
+    },
+    "system_prompt_template": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/system-prompt.txt",
+      "sha256": "7458454c0069ab8bcdb28cec90f0484f856fdb3b2667001906877261cf0dc65c"
+    },
+    "task_prompt_template": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/task-prompt.txt",
+      "sha256": "56fc1be143cb654af20b0dd9929be736cb6ddbaa7b5c04366322c7c1d4d29a90"
+    },
+    "generation_config": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/generation-config.json",
+      "sha256": "304971e237baf10c6f6ceb6b72724ddd3fd56496a59646b434e3d6f39e5bc19e"
+    },
+    "sizing_report": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/sizing-report.json",
+      "sha256": "ff7c905f5b01c0fef53c63cfcc81718efe3b6317d12b33bfd74aaca0fb604d17"
+    }
+  },
+  "rendered_scene_artifacts": [
+    {
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "module_id": "into_the_deepvault",
+      "system_prompt_sha256": "e43946e44af07d509dd1cfea9d0e13f45e4894396bce0c1844c9b3545dcb02dc",
+      "output_schema_canonical_sha256": "f93bafdc0ecbcf55dfaa1047df1b97e5bf8015f921ce37bc03c805f49cbe1ec1",
+      "user_message_sha256": "a5500a0f7565d0e6d0bec62cf67076bf7cc4a0b0ce4c3f4248a1f1f0d133e522"
+    },
+    {
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "module_id": "into_the_deepvault",
+      "system_prompt_sha256": "e43946e44af07d509dd1cfea9d0e13f45e4894396bce0c1844c9b3545dcb02dc",
+      "output_schema_canonical_sha256": "41d1ec82b3a0825a5698e7e595c487d56eaede67d16be51074a6f91252eeec83",
+      "user_message_sha256": "42dcabec21ac1e1b8178d7af1ff93c9a8d988a080824784785cefc75d71865bd"
+    },
+    {
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "module_id": "xhalruuns_masquerade",
+      "system_prompt_sha256": "b3ba240788e06a3cb9d09bff51181980c7bd0d8f3750fac332203ae6ffed9701",
+      "output_schema_canonical_sha256": "80d8f3aa50540862412880472694d4c54310051ae4d420a215a7bc1206907373",
+      "user_message_sha256": "ecc7f7c0c48efc7cd2106f360634b5fc7bafec2bed46cb46e80bd6822206c76b"
+    }
+  ],
+  "references": [
+    {
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/references/into_the_deepvault__scene__ha003-i02.json",
+      "sha256": "1249069e43a193ed4f739c0011d8595c8a21d07177f0c63226c1e8fc6e66f3d3",
+      "assembly": "HAND_ASSEMBLED_FROM_BOUND_EXPECTED_INPUTS_AND_SOURCE_MATERIAL_ONLY",
+      "model_generated": false,
+      "study_result": false,
+      "human_review": "PENDING",
+      "source_packet_sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e",
+      "expected_bundle_sha256": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258",
+      "topology_id": "into_the_deepvault:topology:i02",
+      "topology_sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+    },
+    {
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/references/into_the_deepvault__scene__sd005-i03.json",
+      "sha256": "acf9b3ef46f218d5aa40b37e7250f9d351032b7df459652feddea7b13f31a2b5",
+      "assembly": "HAND_ASSEMBLED_FROM_BOUND_EXPECTED_INPUTS_AND_SOURCE_MATERIAL_ONLY",
+      "model_generated": false,
+      "study_result": false,
+      "human_review": "PENDING",
+      "source_packet_sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee",
+      "expected_bundle_sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b",
+      "topology_id": "into_the_deepvault:topology:i03",
+      "topology_sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+    },
+    {
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/references/xhalruuns_masquerade__scene__tsu001-ao02.json",
+      "sha256": "1adaf1444a10cb1366276213a9bc73cb42c5b32bfdd1cfcb00384e318b07a6a2",
+      "assembly": "HAND_ASSEMBLED_FROM_BOUND_EXPECTED_INPUTS_AND_SOURCE_MATERIAL_ONLY",
+      "model_generated": false,
+      "study_result": false,
+      "human_review": "PENDING",
+      "source_packet_sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b",
+      "expected_bundle_sha256": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af",
+      "topology_id": "xhalruuns_masquerade:topology:ao02",
+      "topology_sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"
+    }
+  ],
+  "hash_canonicalization": "Protocol files: exact stored UTF-8 bytes. Rendered schemas: UTF-8 JSON, ensure_ascii=false, sort_keys=true, separators=(',', ':')."
+}

@@ -1,0 +1,194 @@
+{
+  "schema": "neq.llm_staging_study3_input_bindings.v1",
+  "study_id": "mise-en-scene-study3-20261110",
+  "study1_manifest": {
+    "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/staging-manifest.json",
+    "sha256": "4cebb3f3b3a6fd45830615ff42d7fd67625ace9b8f0c4de94bff664b950d7401"
+  },
+  "study2_manifest": {
+    "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-study2/protocol/staging-manifest.json",
+    "sha256": "d9d81730ee32f19513ea722bcb12ed328505763ffa9deb75fc93b314337cbe4b"
+  },
+  "study2_input_bindings": {
+    "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-study2/protocol/input-bindings.json",
+    "sha256": "0ea8961dbd9a6d9bf05bfab34d060b16de831da75c6d7208adc0379bd833581a"
+  },
+  "canonicalization": "UTF-8 JSON; ensure_ascii=false; sort_keys=true; separators=(',', ':')",
+  "scenes": [
+    {
+      "scene_id": "into_the_deepvault:scene:ha003-i02",
+      "module_id": "into_the_deepvault",
+      "input_refs": {
+        "scene_id": "into_the_deepvault:scene:ha003-i02",
+        "source_packet": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__ha003-i02.json",
+          "sha256": "165d983bc572ba2f900a69bbb893e4f76222b2ca5e1923f0b4bea4693fd26f3e"
+        },
+        "expected_bundle": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__ha003-i02.json",
+          "sha256": "642597984aac4c8cf7de1b7364be7c097f67b092e65ef6b66c093fc2667bb258"
+        },
+        "topology": {
+          "id": "into_the_deepvault:topology:i02",
+          "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+        },
+        "gate_canonical_context": {
+          "id": "into_the_deepvault:scene:ha003-i02#gate-canonical-context:into_the_deepvault:topology:i02",
+          "sha256": "02271ab7eca053818af57a14977de6356607382c6b47d9929355d8070376906c"
+        }
+      },
+      "topology_node_ids": [
+        "into_the_deepvault:entity:location-i02",
+        "into_the_deepvault:entity:room-i01",
+        "into_the_deepvault:entity:room-i03",
+        "into_the_deepvault:entity:chains",
+        "into_the_deepvault:entity:cell-bars",
+        "into_the_deepvault:entity:runic-pleas",
+        "into_the_deepvault:entity:cell-door-derval-s-cell",
+        "into_the_deepvault:entity:west-door-from-alchemy-vault",
+        "into_the_deepvault:entity:east-door-to-shatterglass-experimentum",
+        "into_the_deepvault:entity:trapped-miner-derval",
+        "into_the_deepvault:entity:ironbound-guardian",
+        "into_the_deepvault:entity:usable-space-i02"
+      ],
+      "stage_role_candidates": {
+        "approach": ["into_the_deepvault:entity:room-i01", "into_the_deepvault:entity:room-i03"],
+        "threshold": ["into_the_deepvault:entity:location-i02"],
+        "focal_anchor": ["into_the_deepvault:entity:runic-pleas"],
+        "usable_space": ["into_the_deepvault:entity:usable-space-i02"]
+      },
+      "public_base_fact_ids": [
+        "into_the_deepvault:fact:ha003-i02-c6dc3b944946",
+        "into_the_deepvault:fact:ha003-i02-6cb902adcf5c",
+        "into_the_deepvault:fact:ha003-i02-42ebb68067cc",
+        "into_the_deepvault:fact:ha003-i02-092a569e68b3",
+        "into_the_deepvault:fact:ha003-i02-135b1e7ba36e",
+        "into_the_deepvault:fact:ha003-i02-0cdba3af609d",
+        "into_the_deepvault:fact:ha003-i02-8c5427e27a10",
+        "into_the_deepvault:fact:ha003-i02-23dc79ec7c07",
+        "into_the_deepvault:fact:ha003-i02-ee714fb28102",
+        "into_the_deepvault:fact:ha003-i02-dce11810858b",
+        "into_the_deepvault:fact:ha003-i02-20192389e408",
+        "into_the_deepvault:fact:ha003-i02-8f5c3417fb31",
+        "into_the_deepvault:fact:ha003-i02-fa6df778aec2",
+        "into_the_deepvault:fact:ha003-i02-64202aa447f5",
+        "into_the_deepvault:fact:ha003-i02-4dbde07f395b",
+        "into_the_deepvault:fact:ha003-i02-4a57234d980d"
+      ]
+    },
+    {
+      "scene_id": "into_the_deepvault:scene:sd005-i03",
+      "module_id": "into_the_deepvault",
+      "input_refs": {
+        "scene_id": "into_the_deepvault:scene:sd005-i03",
+        "source_packet": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/into_the_deepvault__scene__sd005-i03.json",
+          "sha256": "628b1d68a7d2dd5ab441e20cc031b58c7ee6fedb7ad466a6eaad175214a4a6ee"
+        },
+        "expected_bundle": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/into_the_deepvault__scene__sd005-i03.json",
+          "sha256": "f1a5835b517fe38521b8a2af89cd4de8dd23c25370082501ed07c1591b4ea20b"
+        },
+        "topology": {
+          "id": "into_the_deepvault:topology:i03",
+          "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+        },
+        "gate_canonical_context": {
+          "id": "into_the_deepvault:scene:sd005-i03#gate-canonical-context:into_the_deepvault:topology:i03",
+          "sha256": "9fef91cf653debbaf900f378859a196005dd0970e0d0270ea2d2062e443e902a"
+        }
+      },
+      "topology_node_ids": [
+        "into_the_deepvault:entity:location-i03",
+        "into_the_deepvault:entity:room-i01",
+        "into_the_deepvault:entity:banners",
+        "into_the_deepvault:entity:echoing-chamber",
+        "into_the_deepvault:entity:cracked-dais",
+        "into_the_deepvault:entity:collapsed-east-passage",
+        "into_the_deepvault:entity:echo-wraith",
+        "into_the_deepvault:entity:usable-space-i03"
+      ],
+      "stage_role_candidates": {
+        "approach": ["into_the_deepvault:entity:room-i01"],
+        "threshold": ["into_the_deepvault:entity:location-i03"],
+        "focal_anchor": ["into_the_deepvault:entity:cracked-dais", "into_the_deepvault:entity:banners"],
+        "usable_space": ["into_the_deepvault:entity:usable-space-i03"]
+      },
+      "public_base_fact_ids": [
+        "into_the_deepvault:fact:sd005-i03-50116a7d910d",
+        "into_the_deepvault:fact:sd005-i03-d6eb16488c38",
+        "into_the_deepvault:fact:sd005-i03-c9f3c8a3594d",
+        "into_the_deepvault:fact:sd005-i03-2bb9fedaaf3b",
+        "into_the_deepvault:fact:sd005-i03-fa9681843b69",
+        "into_the_deepvault:fact:sd005-i03-ecddbbd8cb64",
+        "into_the_deepvault:fact:sd005-i03-b0e96257f30a",
+        "into_the_deepvault:fact:sd005-i03-21d41f41d550",
+        "into_the_deepvault:fact:sd005-i03-ff5e97b850c3",
+        "into_the_deepvault:fact:sd005-i03-cd164f8f8ef0",
+        "into_the_deepvault:fact:sd005-i03-3c943a73fb5a",
+        "into_the_deepvault:fact:sd005-i03-a250fdbefe7c",
+        "into_the_deepvault:fact:sd005-i03-ead7f500728f",
+        "into_the_deepvault:fact:sd005-i03-747a17fefffd",
+        "into_the_deepvault:fact:sd005-i03-ef04a8034902",
+        "into_the_deepvault:fact:sd005-i03-084dd01a326c"
+      ]
+    },
+    {
+      "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+      "module_id": "xhalruuns_masquerade",
+      "input_refs": {
+        "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+        "source_packet": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json",
+          "sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b"
+        },
+        "expected_bundle": {
+          "id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json",
+          "sha256": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af"
+        },
+        "topology": {
+          "id": "xhalruuns_masquerade:topology:ao02",
+          "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"
+        },
+        "gate_canonical_context": {
+          "id": "xhalruuns_masquerade:scene:tsu001-ao02#gate-canonical-context:xhalruuns_masquerade:topology:ao02",
+          "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"
+        }
+      },
+      "topology_node_ids": [
+        "xhalruuns_masquerade:entity:location-ao02",
+        "xhalruuns_masquerade:entity:room-ao01",
+        "xhalruuns_masquerade:entity:room-ao03",
+        "xhalruuns_masquerade:entity:narrow-passage",
+        "xhalruuns_masquerade:entity:grand-archway",
+        "xhalruuns_masquerade:entity:circular-sigil",
+        "xhalruuns_masquerade:entity:veil-wraith",
+        "xhalruuns_masquerade:entity:usable-space-ao02"
+      ],
+      "stage_role_candidates": {
+        "approach": ["xhalruuns_masquerade:entity:room-ao01", "xhalruuns_masquerade:entity:room-ao03"],
+        "threshold": ["xhalruuns_masquerade:entity:location-ao02"],
+        "focal_anchor": ["xhalruuns_masquerade:entity:grand-archway", "xhalruuns_masquerade:entity:circular-sigil"],
+        "usable_space": ["xhalruuns_masquerade:entity:usable-space-ao02"]
+      },
+      "public_base_fact_ids": [
+        "xhalruuns_masquerade:fact:tsu001-ao02-cf7be2382363",
+        "xhalruuns_masquerade:fact:tsu001-ao02-5f6943545cda",
+        "xhalruuns_masquerade:fact:tsu001-ao02-25c126998b1e",
+        "xhalruuns_masquerade:fact:tsu001-ao02-faa312867799",
+        "xhalruuns_masquerade:fact:tsu001-ao02-baf93acf8d1f",
+        "xhalruuns_masquerade:fact:tsu001-ao02-7f059293c22a",
+        "xhalruuns_masquerade:fact:tsu001-ao02-bf566a2c9e94",
+        "xhalruuns_masquerade:fact:tsu001-ao02-ffbd08dd3b74",
+        "xhalruuns_masquerade:fact:tsu001-ao02-b2f7b5ad72df",
+        "xhalruuns_masquerade:fact:tsu001-ao02-c3dee1f8176f",
+        "xhalruuns_masquerade:fact:tsu001-ao02-d421ffefa79d",
+        "xhalruuns_masquerade:fact:tsu001-ao02-5b283f96762c",
+        "xhalruuns_masquerade:fact:tsu001-ao02-3aaac5c52c34",
+        "xhalruuns_masquerade:fact:tsu001-ao02-6d764ce8c545",
+        "xhalruuns_masquerade:fact:tsu001-ao02-600c38a7420f",
+        "xhalruuns_masquerade:fact:tsu001-ao02-1a622d1d2f92"
+      ]
+    }
+  ]
+}

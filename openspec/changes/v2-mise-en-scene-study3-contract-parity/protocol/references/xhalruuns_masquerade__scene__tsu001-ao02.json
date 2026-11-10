@@ -1,0 +1,26 @@
+{
+  "schema": "neq.llm_staging_study3_delta.v1",
+  "input_refs": {
+    "scene_id": "xhalruuns_masquerade:scene:tsu001-ao02",
+    "source_packet": {"id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/source-packets/xhalruuns_masquerade__scene__tsu001-ao02.json", "sha256": "2a44cebcc17617e5b83b7cf1d95425e18729bf3d1f13fafcd712d71937891d0b"},
+    "expected_bundle": {"id": "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/llm-staging-protocol/expected/xhalruuns_masquerade__scene__tsu001-ao02.json", "sha256": "6e0e07ac80632252f40207e82d94b4c532cadddf2e4895beca49a701524997af"},
+    "topology": {"id": "xhalruuns_masquerade:topology:ao02", "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"},
+    "gate_canonical_context": {"id": "xhalruuns_masquerade:scene:tsu001-ao02#gate-canonical-context:xhalruuns_masquerade:topology:ao02", "sha256": "a3c93908e343e3a4c22be0056259e1498426310402bae7093f9eb312f4639e29"}
+  },
+  "fixture_deltas": {"facts": [
+    {"fact_id": "xhalruuns_masquerade:fact:study3-authored:approach-edge", "subject_id": "xhalruuns_masquerade:entity:room-ao01", "predicate": "approach_to_threshold", "object_id": "xhalruuns_masquerade:entity:location-ao02", "value": true},
+    {"fact_id": "xhalruuns_masquerade:fact:study3-authored:threshold-edge", "subject_id": "xhalruuns_masquerade:entity:location-ao02", "predicate": "threshold_to_focal", "object_id": "xhalruuns_masquerade:entity:grand-archway", "value": true},
+    {"fact_id": "xhalruuns_masquerade:fact:study3-authored:usable-space", "subject_id": "xhalruuns_masquerade:entity:usable-space-ao02", "predicate": "usable_space", "object_id": null, "value": "A bounded authored usable space."}
+  ]},
+  "stage_role_bindings": {"approach": ["xhalruuns_masquerade:entity:room-ao01"], "threshold": ["xhalruuns_masquerade:entity:location-ao02"], "focal_anchor": ["xhalruuns_masquerade:entity:grand-archway"], "usable_space": ["xhalruuns_masquerade:entity:usable-space-ao02"]},
+  "claims": [
+    {"segment_id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:approach", "items": [{"id": "xhalruuns_masquerade:scene:tsu001-ao02:claim:approach", "fact_id": "xhalruuns_masquerade:fact:study3-authored:approach-edge", "kind": "factual", "span": "The bound approach connects to the threshold.", "choice": null, "success": null}]},
+    {"segment_id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:threshold", "items": [{"id": "xhalruuns_masquerade:scene:tsu001-ao02:claim:threshold", "fact_id": "xhalruuns_masquerade:fact:study3-authored:threshold-edge", "kind": "factual", "span": "At the threshold, the grand archway is the focal anchor.", "choice": null, "success": null}]},
+    {"segment_id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:focal", "items": [{"id": "xhalruuns_masquerade:scene:tsu001-ao02:claim:focal", "fact_id": "xhalruuns_masquerade:fact:study3-authored:usable-space", "kind": "factual", "span": "The bounded authored usable space is identified.", "choice": null, "success": null}]}
+  ],
+  "arrival_prose": [
+    {"id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:approach", "role": "approach", "text": "The bound approach connects to the threshold."},
+    {"id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:threshold", "role": "threshold", "text": "At the threshold, the grand archway is the focal anchor."},
+    {"id": "xhalruuns_masquerade:scene:tsu001-ao02:arrival:focal", "role": "focal", "text": "The bounded authored usable space is identified."}
+  ]
+}
