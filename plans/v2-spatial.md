@@ -57,8 +57,8 @@ not evidence that a format won the live pilot or permission to start S5 early.
 
 - Precedence: `AGENTS.md` > accepted ADRs > active OpenSpec changes > master
   plans > the index. This plan proposes changes and goals; it authorizes none.
-- **ADR needed:** "Spatial authority and projections". The pilot (SP4) drafts it.
-  Phase S1 or SC0 accepts it. It records:
+- **ADR:** "Spatial authority and projections" is ADR-0034, accepted
+  2026-11-09 (`adrs/0034-spatial-authority-and-projections.md`). It records:
   - Python spatial authority;
   - one projection per audience;
   - schematic versus metric coordinates;
@@ -200,7 +200,7 @@ the Narrator describes is the cover the combat engine applies.
   - Updates on movement, discovery and feature change.
   - A schematic look, labelled as such, with no hidden information.
 - **Depends on:** S2. Network N2: the projection is a message type within the
-  Network P1 player-projection protocol; `web/` and `/client` changes start only
+  Network N1 player-projection protocol; `web/` and `/client` changes start only
   after N2 merges. *[pilot: M1 conventions]*
 - **Exit:** tester-cohort sessions rate legibility and plan-discussion
   usefulness; there are no leaks in knowledge-filter tests; reconnect resyncs the
@@ -289,7 +289,7 @@ into a proposal that Python validates.
 
 | Track | Spatial touchpoint |
 | --- | --- |
-| Network (A) | S4 map projection is a protocol message under Network P1 ownership; client panel after N2; testers rate the map in follow-up cohorts |
+| Network (A) | S4 map projection is a protocol message under Network N1 ownership; client panel after N2; testers rate the map in follow-up cohorts |
 | Narrator (B) | S1 movement/discovery events use the P1 envelope; overlay joins the P2 save manifest and generation fencing; S2 packet is a P4 current-state region; P3 retrieval may recall "what happened here" keyed by stable location IDs |
 | Memory pilot (C) | Location seed fragments (`location_scene`) may enrich layouts at build time only; no runtime truth |
 | TITAN (D) | Consumes the spatial query API and S5 geography; interventions that change places use typed operations validated by `SpatialService`; never bypasses movement, connectivity or tactical legality |

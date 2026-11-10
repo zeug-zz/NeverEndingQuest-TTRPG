@@ -221,7 +221,7 @@ using the G2 bridge, so `core/combat/` keeps one owner.
 | Narrator (B) | Engine receipts carry commit identity for the P1 event envelope; the live-state document joins the P2 save manifest; `expected_revision` supports generation fencing; committed engine events are clean retention inputs for Hindsight | G0 hands the seam to P0; P1/P2 consume it |
 | Spatial (F) | The SP4 spatial ADR evaluates the engine map as the backend for S1 routes and visited places and S5 travel time; layout, zones and cover stay in Python | SP4 and S1 |
 | Combat baseline / SC | SC0 records bookkeeping-only routing; SC4 reruns affected archived gates | SC0 |
-| Network (A) | Player views of inventory, storage and resources come through the Network P1 projection; binary placement coordinated with N3 packaging | N1 reserves views; N3 |
+| Network (A) | Player views of inventory, storage and resources come through the Network N1 projection; binary placement coordinated with N3 packaging | N1 reserves views; N3 |
 | Builder (E) | MB1/MB2 emit route times, item catalogue and stock references the engine can load | MB0 adopts the projection draft |
 | TITAN (D) | Intervention operations with mechanical effects compile to engine actions and accept engine refusals | TITAN P0 records the seam |
 

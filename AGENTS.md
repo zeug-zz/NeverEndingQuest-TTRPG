@@ -63,8 +63,6 @@ Use `.venv/bin/python` for runtime, rebuild, migration, and dependency-sensitive
 .venv/bin/python core/validation/validate_module_files.py --module <ModuleSlug>
 
 # Focused validation and regression checks
-.venv/bin/python test_compression.py
-.venv/bin/python analyze_telemetry.py
 python3 scripts/check_ascii_compliance.py --summary-only
 OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate --specs
 ```
@@ -76,6 +74,7 @@ Run the focused tests for the change and report exact commands/results. Diary re
 - When an approved change requires live gameplay evidence, the primary orchestrator runs and judges the capture after the relevant focused tests; builders implement tooling and fixes, not the final gate verdict.
 - Use `.opencode/skills/neq-capture-arena/SKILL.md`: a real copy under `tmp/combat_capture/`, port 8360, `NEQ_OPEN_BROWSER=0`, and the repository venv. Never use the installed campaign or port 8357.
 - Preserve per-gate, per-run evidence under `tmp/router-rollout/<gate>/<run-id>/` before teardown. Record scenario/party/seed identity, current worktree and model/provider identity, expected versus observed checks, and artifact paths.
+- No ruling authorizes a live booking without a provider-free preflight report showing zero infrastructure failures at the exact SHA to be run (owner decision 2026-11-10; see `plans/v2-fable-review.md` FR-11).
 - Driver exit 0, a degraded report, green unit tests, or builder claims do not establish a live gate PASS. Required missing scenarios/evidence, timeouts, and failed assertions leave the gate incomplete with a FAIL or BLOCKED verdict.
 - Active OpenSpec artifacts own scenario coverage and acceptance criteria; `plans/archive/combat-openrouter-alignment.md` maps rollout gates. No required capture may be silently waived or checked complete. Existing G1 evidence and the accepted candidate bake-off are not rerun prerequisites.
 - Resume captures only when the rollout goal is active and the workflow is authorized. A separately requested guideline/planning update leaves a paused goal paused.
