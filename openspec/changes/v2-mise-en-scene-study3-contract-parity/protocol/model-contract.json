@@ -1,0 +1,229 @@
+{
+  "schema": "neq.llm_staging_study3_model_contract.v1",
+  "study_id": "mise-en-scene-study3-20261110",
+  "protocol_version": "neq.llm_staging_study3_delta.v1",
+  "authority": {
+    "cap_status": "APPROVED_CAP_ONLY",
+    "ruling_pins": [
+      "neq-standing-authority-20261110",
+      "neq-study3-pre-approved-20261110"
+    ],
+    "software_preparation_readiness": "PENDING",
+    "dispatch_authorized": false,
+    "semantic_review": "PENDING",
+    "owner_ratings": "PENDING",
+    "model_capability_verdict": "PENDING"
+  },
+  "scene_order": [
+    "into_the_deepvault:scene:ha003-i02",
+    "into_the_deepvault:scene:sd005-i03",
+    "xhalruuns_masquerade:scene:tsu001-ao02"
+  ],
+  "canonical_bindings": {
+    "artifact_path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/input-bindings.json",
+    "artifact_sha256": "65ef3871e6f73206f243160a1324d2ed63399834c704cba5aebaf0ff7d00b044",
+    "scene_order_is_exact": true,
+    "canonicalization": "UTF-8 JSON; ensure_ascii=false; sort_keys=true; separators=(',', ':')",
+    "exact_value_json_pointers": {
+      "scene_ids_in_order": "/scenes/*/scene_id",
+      "module_ids": "/scenes/*/module_id",
+      "reference_ids_and_hashes": "/scenes/*/input_refs",
+      "topology_node_ids": "/scenes/*/topology_node_ids",
+      "role_candidate_ids": "/scenes/*/stage_role_candidates",
+      "public_base_fact_ids": "/scenes/*/public_base_fact_ids"
+    },
+    "reference_keys": [
+      "scene_id",
+      "source_packet",
+      "expected_bundle",
+      "topology",
+      "gate_canonical_context"
+    ],
+    "stage_role_order": ["approach", "threshold", "focal_anchor", "usable_space"]
+  },
+  "output_contract": {
+    "schema_id": "neq.llm_staging_study3_delta.v1",
+    "json": {
+      "payload_max_bytes": 65536,
+      "duplicate_object_keys": "REJECT",
+      "non_finite_numbers": "REJECT",
+      "numeric_values": "NOT_ALLOWED"
+    },
+    "root": {
+      "only_fields": [
+        "schema",
+        "input_refs",
+        "fixture_deltas",
+        "stage_role_bindings",
+        "claims",
+        "arrival_prose"
+      ],
+      "closed": true,
+      "schema_value": "neq.llm_staging_study3_delta.v1"
+    },
+    "input_refs": {
+      "only_fields": [
+        "scene_id",
+        "source_packet",
+        "expected_bundle",
+        "topology",
+        "gate_canonical_context"
+      ],
+      "closed": true,
+      "scene_id": "EXACT_SCENE_BINDING",
+      "reference_names": [
+        "source_packet",
+        "expected_bundle",
+        "topology",
+        "gate_canonical_context"
+      ],
+      "reference_fields": ["id", "sha256"],
+      "reference_id_length": {"min": 1, "max": 512},
+      "sha256_pattern": "^[0-9a-f]{64}$",
+      "values": "EXACT_STUDY3_INPUT_BINDING; NO MODEL-SUPPLIED AUTHORITY"
+    },
+    "fixture_deltas": {
+      "only_fields": ["facts"],
+      "closed": true,
+      "facts": {"min_items": 2, "max_items": 64, "authored_fact_ids_unique": true},
+      "no_source_base_facts_entities_topology_provenance_or_canonical_extension_fields": true
+    },
+    "authored_fact": {
+      "only_fields": ["fact_id", "subject_id", "predicate", "object_id", "value"],
+      "closed": true,
+      "fact_id_max_length": 256,
+      "fact_id_namespace_template": "<module_id>:fact:study3-authored:<suffix>",
+      "fact_id_regex_template": "^<escaped_module_id>:fact:study3-authored:[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "fact_id_must_not_equal_any_source_or_base_fact_id": true,
+      "subject_id": "EXACT_SCENE_TOPOLOGY_NODE_ID",
+      "object_id": "EXACT_SCENE_TOPOLOGY_NODE_ID_OR_NULL",
+      "predicate_enum": [
+        "approach_to_threshold",
+        "threshold_to_focal",
+        "usable_space",
+        "light_gradient",
+        "sound_gradient",
+        "weather_gradient",
+        "visible_affordance"
+      ],
+      "value_shapes": [
+        {"type": "string", "max_length": 512},
+        {"type": "boolean"},
+        {"type": "null"},
+        {
+          "type": "object",
+          "kind": "entity_ref",
+          "only_fields": ["kind", "entity_id"],
+          "closed": true,
+          "entity_id": "EXACT_SCENE_TOPOLOGY_NODE_ID"
+        },
+        {
+          "type": "object",
+          "kind": "fact_ref",
+          "only_fields": ["kind", "fact_id"],
+          "closed": true,
+          "fact_id": "PUBLIC_BASE_FACT_ID_OR_STUDY3_AUTHORED_FACT_ID"
+        }
+      ],
+      "arbitrary_objects_and_arrays": "REJECT"
+    },
+    "stage_relations": [
+      {
+        "predicate": "approach_to_threshold",
+        "required_count": 1,
+        "subject_role": "approach",
+        "object_role": "threshold",
+        "subject_object_must_be_member_of_selected_role_bindings": true,
+        "value": {"type": "boolean", "const": true}
+      },
+      {
+        "predicate": "threshold_to_focal",
+        "required_count": 1,
+        "subject_role": "threshold",
+        "object_role": "focal_anchor",
+        "subject_object_must_be_member_of_selected_role_bindings": true,
+        "value": {"type": "boolean", "const": true}
+      }
+    ],
+    "usable_space_subject_must_be_member_of_selected_role_binding": true,
+    "stage_role_bindings": {
+      "only_fields": ["approach", "threshold", "focal_anchor", "usable_space"],
+      "closed": true,
+      "role_order": ["approach", "threshold", "focal_anchor", "usable_space"],
+      "each_role": {
+        "min_items": 1,
+        "max_items": 16,
+        "unique_ids": true,
+        "ids": "ONLY_THE_EXACT_SCENE_ROLE_CANDIDATES"
+      },
+      "topology_mutation": "REJECT"
+    },
+    "claims": {
+      "exact_group_count": 3,
+      "group_role_order": ["approach", "threshold", "focal"],
+      "groups_closed": true,
+      "max_claims_per_group": 32,
+      "claim_only_fields": ["id", "fact_id", "kind", "span", "choice", "success"],
+      "claim_closed": true,
+      "claim_id": {
+        "max_length": 512,
+        "pattern_template": "^<escaped_scene_id>:claim:[A-Za-z0-9][A-Za-z0-9._-]*$",
+        "unique": true
+      },
+      "fact_id": "PUBLIC_BASE_FACT_ID_OR_THIS_DELTA_AUTHORED_FACT_ID",
+      "kind_enum": ["factual", "invitation"],
+      "span": {"min_length": 1, "max_length": 512, "must_be_exact_substring_of_bound_segment": true},
+      "agency": {
+        "invitation": {"choice": "open", "success": "unspecified"},
+        "factual": {"choice": null, "success": null},
+        "prose_must_not_assert_player_choice_or_success": true
+      },
+      "no_unbound_or_prose_only_public_fact_claims": true
+    },
+    "arrival_prose": {
+      "exact_segment_count": 3,
+      "role_order": ["approach", "threshold", "focal"],
+      "segment_only_fields": ["id", "role", "text"],
+      "segment_closed": true,
+      "id_template": "<scene_id>:arrival:<role>",
+      "id_max_length": 512,
+      "text_length": {"min": 1, "max": 512},
+      "text": "BOUNDED_PROSE_ONLY; CLAIMS_BIND_CHECKABLE_SPANS_TO_FACT_IDS"
+    },
+    "unknown_keys": "REJECT_AT_ROOT_AND_EVERY_NESTED_OBJECT",
+    "stale_or_unbound_hashes_references": "REJECT",
+    "source_base_topology_or_protected_unknown_overwrite": "REJECT",
+    "protected_unknowns": "REMAIN_UNKNOWN; DO_NOT_PROMOTE_OR_INFER",
+    "public_claim_boundary": "PUBLIC_BASE_FACTS_OR_THIS_DELTA_AUTHORED_FACTS_ONLY"
+  },
+  "generation_envelope": {
+    "provider": "openrouter",
+    "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+    "model_id": "openai/gpt-6-luna",
+    "allow_fallbacks": false,
+    "retries": 0,
+    "reruns": 0,
+    "tools": [],
+    "redirects": false,
+    "streaming": false,
+    "continuation": false,
+    "max_tokens": 16384,
+    "timeout_seconds": 720,
+    "study_attempt_cap": 3,
+    "attempts_per_scene": 1,
+    "cap_bound_to": "mise-en-scene-study3-20261110_NOT_RUN_ID_OR_ROOT"
+  },
+  "cost": {
+    "status": "ESTIMATE",
+    "expected_usd_approx": "0.01",
+    "conservative_usd_approx": "0.03",
+    "hard_ceiling_usd": "0.05",
+    "actual_study3_cost": null
+  },
+  "host_safety_and_integrity_not_model_rules": [
+    "No provider or HTTP call during preparation.",
+    "No credential access, real-ledger initialization, attempt allocation, or dispatch during preparation.",
+    "The approved cap is not software-preparation readiness or dispatch authorization.",
+    "Any future approval decision must be pinned to both listed ruling IDs, not mutable self-asserted JSON."
+  ]
+}

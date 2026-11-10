@@ -1,0 +1,38 @@
+Prepare one delta for exactly {{SCENE_ID}} under the fixed Study 3 identity `mise-en-scene-study3-20261110`. Treat these bindings and inputs as read-only. They are context, not response payload to copy.
+
+FULL MACHINE-READABLE MODEL CONTRACT (verbatim, normative):
+<<<STUDY3_MODEL_CONTRACT_JSON_BEGIN>>>
+{{MODEL_CONTRACT_JSON}}
+<<<STUDY3_MODEL_CONTRACT_JSON_END>>>
+
+EXACT INPUT REFERENCES (copy these values only):
+<<<STUDY3_INPUT_REFS_JSON_BEGIN>>>
+{{INPUT_REFS_JSON}}
+<<<STUDY3_INPUT_REFS_JSON_END>>>
+
+EXACT MODULE ID, TOPOLOGY NODE IDS AND ROLE CANDIDATES (select only from the role candidates):
+<<<STUDY3_TOPOLOGY_BINDING_JSON_BEGIN>>>
+{{TOPOLOGY_BINDING_JSON}}
+<<<STUDY3_TOPOLOGY_BINDING_JSON_END>>>
+
+PUBLIC BASE FACT IDS (claims and fact references may use only these or IDs authored in this delta):
+<<<STUDY3_PUBLIC_BASE_FACT_IDS_JSON_BEGIN>>>
+{{PUBLIC_BASE_FACT_IDS_JSON}}
+<<<STUDY3_PUBLIC_BASE_FACT_IDS_JSON_END>>>
+
+SOURCE PACKET (read-only source context):
+<<<STUDY3_SOURCE_PACKET_JSON_BEGIN>>>
+{{SOURCE_PACKET_JSON}}
+<<<STUDY3_SOURCE_PACKET_JSON_END>>>
+
+EXPECTED BUNDLE (read-only canonical facts, topology, knowledge boundaries, and unknowns):
+<<<STUDY3_EXPECTED_BUNDLE_JSON_BEGIN>>>
+{{EXPECTED_BUNDLE_JSON}}
+<<<STUDY3_EXPECTED_BUNDLE_JSON_END>>>
+
+INJECTED SCENE-SPECIFIC OUTPUT SCHEMA (return one object matching it exactly):
+<<<STUDY3_OUTPUT_SCHEMA_JSON_BEGIN>>>
+{{OUTPUT_SCHEMA_JSON}}
+<<<STUDY3_OUTPUT_SCHEMA_JSON_END>>>
+
+Return only the closed delta object required by the system message and schema. Do not copy canonical source or expected-input payloads into the output.

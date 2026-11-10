@@ -30,6 +30,23 @@ FIXTURE_IDS = {
 }
 
 
+def _boundary_violations(paths: set[str]) -> tuple[list[str], list[str]]:
+    allowed = (
+        "scripts/",
+        "openspec/changes/v2-mapping-pilot-tooling/",
+        "openspec/changes/v2-mapping-pilot-offline/",
+        "openspec/changes/v2-mapping-pilot-execution/",
+        "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/",
+        "openspec/changes/v2-mise-en-scene-study3-contract-parity/",
+        "adrs/0034-spatial-authority-and-projections.md",
+        "adrs/index.md",
+    )
+    violations = sorted(path for path in paths if not path.startswith(allowed))
+    forbidden = sorted(path for path in paths if path.startswith(("core/", "web/", "modules/", "plans/"))
+                       or path in {"main.py", "model_config.py", "config.py"})
+    return violations, forbidden
+
+
 class MappingPilotBoundaryTests(unittest.TestCase):
     def test_static_sources_are_provider_free_and_project_relative(self) -> None:
         sources = sorted((ROOT / "scripts" / "mapping_pilot").glob("*.py"))
@@ -99,20 +116,28 @@ class MappingPilotBoundaryTests(unittest.TestCase):
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             self.skipTest("git boundary inspection unavailable (origin/main and main merge-base lookup failed): %s" % exc)
         paths = set(tracked.stdout.splitlines()) | set(untracked.stdout.splitlines())
-        allowed = (
-            "scripts/",
-            "openspec/changes/v2-mapping-pilot-tooling/",
-            "openspec/changes/v2-mapping-pilot-offline/",
-            "openspec/changes/v2-mapping-pilot-execution/",
-            "openspec/changes/v2-mise-en-scene-authoring-projection-evaluation/",
-            "adrs/0034-spatial-authority-and-projections.md",
-            "adrs/index.md",
-        )
-        violations = sorted(path for path in paths if not path.startswith(allowed))
-        forbidden = sorted(path for path in paths if path.startswith(("core/", "web/", "modules/", "plans/"))
-                           or path in {"main.py", "model_config.py", "config.py"})
+        violations, forbidden = _boundary_violations(paths)
         self.assertFalse(violations, "out-of-scope paths: %s" % violations)
         self.assertFalse(forbidden, "production-boundary paths: %s" % forbidden)
+
+    def test_study3_boundary_allowlist_is_exact(self) -> None:
+        path = "openspec/changes/v2-mise-en-scene-study3-contract-parity/tasks.md"
+        completed = subprocess.CompletedProcess
+        with patch("subprocess.run", side_effect=[
+                completed([], 0, stdout="base\n", stderr=""),
+                completed([], 0, stdout="", stderr=""),
+                completed([], 0, stdout=path + "\n", stderr=""),
+        ]):
+            self.test_production_boundary_diff()
+
+        rejected = (
+            "openspec/changes/v2-mise-en-scene-study3-contract-parity-extra/tasks.md",
+            "core/example.py", "web/example.py", "modules/example.json",
+            "plans/example.md", "config.py", "main.py",
+        )
+        violations, forbidden = _boundary_violations(set(rejected))
+        self.assertEqual(violations, sorted(rejected))
+        self.assertEqual(forbidden, sorted(rejected[1:]))
 
 
 if __name__ == "__main__":

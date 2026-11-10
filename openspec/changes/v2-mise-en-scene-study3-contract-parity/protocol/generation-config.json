@@ -1,0 +1,52 @@
+{
+  "schema": "neq.llm_staging_study3_generation_config.v1",
+  "study_id": "mise-en-scene-study3-20261110",
+  "preparation_only": true,
+  "dispatch_authorized": false,
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "provider": "openrouter",
+  "model_id": "openai/gpt-6-luna",
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "frequency_penalty": 0.0,
+  "presence_penalty": 0.0,
+  "max_tokens": 16384,
+  "timeout_seconds": 720,
+  "response_format": {"type": "json_object"},
+  "stream": false,
+  "tools": [],
+  "tool_choice": "none",
+  "provider_options": {"allow_fallbacks": false},
+  "transport_constraints": {
+    "retries": 0,
+    "reruns": 0,
+    "redirects": false,
+    "continuation": false
+  },
+  "attempt_cap": {
+    "identity": "mise-en-scene-study3-20261110",
+    "total": 3,
+    "per_scene": 1,
+    "scene_order": [
+      "into_the_deepvault:scene:ha003-i02",
+      "into_the_deepvault:scene:sd005-i03",
+      "xhalruuns_masquerade:scene:tsu001-ao02"
+    ]
+  },
+  "approval": {
+    "status": "APPROVED_CAP_ONLY",
+    "ruling_pins": [
+      "neq-standing-authority-20261110",
+      "neq-study3-pre-approved-20261110"
+    ],
+    "software_preparation_readiness": "PENDING",
+    "dispatch_authorized": false
+  },
+  "cost_estimates": {
+    "status": "ESTIMATE",
+    "expected_usd_approx": "0.01",
+    "conservative_usd_approx": "0.03",
+    "hard_ceiling_usd": "0.05",
+    "actual_study3_cost": null
+  }
+}
