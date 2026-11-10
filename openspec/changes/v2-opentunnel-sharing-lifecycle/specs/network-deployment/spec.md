@@ -4,31 +4,47 @@
 
 ### Requirement: Production companion SHALL use a pinned install-relative executable
 
-Production sharing SHALL use upstream OpenTunnel v0.6.2 only at the proposed install-relative path `runtime/opentunnel/v0.6.2/<asset-stem>/opentunnel`. The resolver SHALL reject unsupported, absent, or misplaced binaries and SHALL NOT search `PATH`, download, or install. A later packaging change supplies the verified binary.
+Production sharing SHALL use upstream OpenTunnel v0.6.2 only at `runtime/opentunnel/v0.6.2/<asset-stem>/opentunnel` beneath the installation root. It SHALL select asset stem and SHA-256 from the later packaging change's pinned manifest; this change resolves only the mapping and does not distribute binaries. Only macOS arm64 and Linux arm64 are supported; every other OS/architecture SHALL fail closed with bounded `unsupported_platform`. It SHALL NOT search `PATH`, download, or install.
 
 #### Scenario: Production resolver refuses an absent or misplaced companion
-- **WHEN** the binary is absent, unsupported for the approved platform, outside the resolved installation root, or inside `.venv` or `venv`
+- **WHEN** the manifest-selected binary is absent, outside the resolved installation root, or inside `.venv` or `venv`
 - **THEN** Start sharing fails before process execution with a bounded diagnostic and does not download, install, or search `PATH`
+
+#### Scenario: A platform pair outside the N0-evidenced matrix is selected
+- **WHEN** the host OS/architecture pair is not macOS arm64 or Linux arm64
+- **THEN** the controller reports `unsupported_platform`, starts no companion process, and performs no `PATH` search, download, or installation
+
+#### Scenario: An approved platform pair resolves through the pinned manifest
+- **WHEN** the host is macOS arm64 or Linux arm64 and the pinned packaging manifest contains that platform's asset stem and SHA-256
+- **THEN** the resolver selects only `runtime/opentunnel/v0.6.2/<asset-stem>/opentunnel` beneath the installation root and uses the manifest-pinned digest; it invents no asset stem or digest
 
 ### Requirement: Production profile state SHALL be private and isolated
 
-Production sharing SHALL use a dedicated NEQ profile and per-profile XDG directories in private user state. Tunnel private keys SHALL remain in that profile state; the facilitator's player credential verifier SHALL use approved OS-specific private storage. Production state SHALL NOT read, modify, or stop unrelated profiles or write credentials, keys, cookies, or invitations into the repository.
+Production sharing SHALL use a dedicated NEQ profile in private per-profile XDG state outside the repository and campaign data. Tunnel private keys SHALL remain there. Only the existing N1 verifier may be stored, in private 0600 storage; plaintext credentials, cookies, and invitations SHALL NOT be persisted. No OS-keychain dependency is introduced. Unrelated profiles SHALL remain untouched.
 
 #### Scenario: Production profile state is private
 - **WHEN** the production profile is created or opened
-- **THEN** its XDG state has private permissions, unrelated profiles and repository/campaign files remain untouched, and the credential verifier comes from the approved private store
+- **THEN** its XDG state is private, the existing N1 verifier is stored with 0600 permissions outside repository/campaign data, and unrelated profiles and repository/campaign files remain untouched
 
-### Requirement: Production identity setup SHALL leave no background service
+### Requirement: Production identity bootstrap SHALL be explicit and leave no background service
 
-Production identity setup SHALL stop and reap any temporary helper before readiness. The companion SHALL run only as the owned foreground `serve` process with a dedicated profile and route to `127.0.0.1:8370`; it SHALL NOT leave a service registration or background daemon.
+Identity bootstrap SHALL be an explicit facilitator action, once per dedicated XDG profile. It SHALL run guarded `up -> status -> down` and require positive ownership evidence before foreground `serve`. Uncertainty SHALL fail closed without further mutation. Evidence SHALL be bounded, redacted, and credential-free. N0 spike-only checks SHALL be reimplemented behind the controller with tests.
 
-#### Scenario: Production identity setup cannot leave a background service
-- **WHEN** production sharing creates or verifies the dedicated OpenTunnel identity
-- **THEN** every temporary helper is stopped and reaped before readiness and only the owned foreground process can expose the player listener
+#### Scenario: Facilitator initializes a profile identity once
+- **WHEN** the facilitator explicitly initializes an uninitialized dedicated profile
+- **THEN** the controller runs guarded `up -> status -> down`, records completion only after successful checks, and does not run bootstrap automatically at host startup or login
+
+#### Scenario: Identity bootstrap proves no helper or service remains
+- **WHEN** bootstrap finishes before foreground `serve`
+- **THEN** positive executable/profile/ownership checks prove no service-manager entry, helper, or background process remains, including when `PATH` is empty
+
+#### Scenario: Identity bootstrap evidence is uncertain
+- **WHEN** any executable, profile, ownership, service-manager, or process evidence is missing or ambiguous
+- **THEN** the controller fails closed before `serve`, makes no further changes, leaves uncertain resources untouched, and reports only bounded redacted credential-free evidence
 
 ### Requirement: Sharing readiness SHALL fail closed
 
-The sharing controller SHALL report `ready` and return an invitation only after the game is available, player assets are verified and served, the authenticated player listener is healthy on loopback, N1 authentication is configured, and the owned tunnel route passes its health check.
+The sharing controller SHALL report `ready` and return an invitation only after the game is available, player assets are verified and served, the authenticated player listener is healthy on loopback, N1 authentication is configured, the owned tunnel route passes its health check, and the controller has bound the exact companion-reported HTTPS origin to N1 validation for that same generation.
 
 #### Scenario: A startup dependency is not ready
 - **WHEN** any readiness prerequisite is missing or fails during startup
@@ -37,6 +53,34 @@ The sharing controller SHALL report `ready` and return an invitation only after 
 #### Scenario: The full stack becomes ready
 - **WHEN** every readiness prerequisite passes for the same owned sharing generation
 - **THEN** the controller reports `ready` and makes the HTTPS invitation available only to the local facilitator surface
+
+### Requirement: The companion origin SHALL be bound by exact match for one generation
+
+After companion status reports route readiness for the active generation, and before the controller reports that generation ready, it SHALL bind only the exact HTTPS scheme, host, and port reported by that status to N1 validation. The binding SHALL be generation-scoped and cleared on stop, failed, degraded, or rotation. Changed or unparsable origins SHALL fail closed; the host surface SHALL NOT be exposed. Invitations SHALL be URL-only.
+
+#### Scenario: The ready generation binds its exact HTTPS origin
+- **WHEN** companion status reports a parseable HTTPS origin after route readiness for the active generation
+- **THEN** the controller adds only that exact scheme/host/port to N1 Origin validation and its exact host/port authority to Host validation before publishing the invitation
+
+#### Scenario: Wildcard, suffix, and subdomain variants are presented
+- **WHEN** a player request uses a wildcard, suffix match, or subdomain instead of the exact bound Host or Origin
+- **THEN** N1 rejects the request and does not expose the host surface
+
+#### Scenario: HTTP or a mismatched port is presented
+- **WHEN** a player request uses an HTTP Origin or a Host/Origin with a port different from the exact bound HTTPS origin
+- **THEN** N1 rejects the request
+
+#### Scenario: Companion status origin is unparsable or changes
+- **WHEN** companion status contains an unparsable origin or reports a changed origin for the active generation
+- **THEN** the controller fails closed, publishes no invitation, and does not broaden or retain the prior binding
+
+#### Scenario: A stale generation reports an origin
+- **WHEN** status from a stale generation reports an otherwise valid HTTPS origin
+- **THEN** the controller ignores it and does not add it to N1 validation
+
+#### Scenario: Lifecycle invalidates the origin binding
+- **WHEN** sharing is stopped, failed, degraded, or access is rotated
+- **THEN** the prior origin binding is cleared and rejected until the active generation passes a fresh status/readiness check
 
 ### Requirement: Sharing supervision SHALL remain explicit and bounded
 
