@@ -30,6 +30,12 @@ const LIFECYCLE_IDS = N2_MANAGED_LIFECYCLE_IDS;
 const HOST_URL = "http://127.0.0.1:8360";
 const PLAYER_URL = "http://127.0.0.1:8370";
 
+export async function startFreshHostProcess(manager, { signal } = {}) {
+  // Restarting gives this lifecycle scenario an empty in-memory runtime queue.
+  await manager.stop();
+  return manager.start({ playerExpected: true, signal });
+}
+
 function isContainedPath(parent, candidate) {
   const path = relative(parent, candidate);
   return path !== "" && path !== "." && path !== ".." &&
@@ -374,6 +380,7 @@ async function recordScenario(id, expected, password, verifier, run, signal) {
 }
 
 async function runServerInstanceScenario({ manager, playerContextOne, playerContextTwo, hostContext, evidenceDirectory, partySize, runId, password, signal }) {
+  await startFreshHostProcess(manager, { signal });
   const tracking = { websocketRoutes: 0, requestIds: [], acceptedReceiptsDropped: 0 };
   await playerContextOne.routeWebSocket("**/socket.io/**", (route) => {
     tracking.websocketRoutes += 1;
