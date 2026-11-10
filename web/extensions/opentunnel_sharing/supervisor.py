@@ -208,6 +208,17 @@ class OwnedCompanion:
         self._refresh_exit_state()
         return self._state
 
+    # TABLETOP MODE: Expose the fixed executable/profile for owned status probes.
+    @property
+    def executable_path(self) -> Path:
+        """Return the resolved executable path for bounded profile status probes."""
+        return self._binary_path
+
+    @property
+    def profile_layout(self) -> ProfileLayout:
+        """Return the validated dedicated profile used by this child."""
+        return self._layout
+
     @property
     def reason_code(self) -> ReasonCode | None:
         self._refresh_exit_state()
