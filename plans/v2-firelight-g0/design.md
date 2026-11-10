@@ -1,6 +1,7 @@
 # Firelight G0 Design: Pin, Registry, Seam and Latency
 
-Status: G0 design input for ADR-0033; not runtime authorization.
+Status: G0 design input for ADR-0033; not runtime authorization. ADR-0033 was
+accepted 2026-11-05.
 Date: 2026-11-05. Plan: `plans/v2-firelight.md` s5-s7. Companion:
 `gap-inventory.md` (this directory).
 

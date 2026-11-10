@@ -519,13 +519,13 @@ mocks. Resolve phase design decisions before dependent tasks start.
 
 | Phase | Outcome | Depends on | Gate |
 | --- | --- | --- | --- |
-| P0 | Baseline, contracts, scenarios and numeric budgets | Build authorization and integrated baseline | N0 |
-| P1 | Event/identity/local continuity substrate | P0 | N1 |
-| P2 | Supported Hindsight, campaign scopes and portability | P1 | N2 |
-| P3 | Narrator hybrid memory gateway/retrieval | P2 | N3 |
-| P4 | Archivist and layered context | P3 | N4 |
-| P5 | Durable conditional agendas | P4 | N5 |
-| P6 | Integrated live UX and release handoff | P1-P5 | N6 |
+| P0 | Baseline, contracts, scenarios and numeric budgets | Build authorization and integrated baseline | Gate P0 |
+| P1 | Event/identity/local continuity substrate | P0 | Gate P1 |
+| P2 | Supported Hindsight, campaign scopes and portability | P1 | Gate P2 |
+| P3 | Narrator hybrid memory gateway/retrieval | P2 | Gate P3 |
+| P4 | Archivist and layered context | P3 | Gate P4 |
+| P5 | Durable conditional agendas | P4 | Gate P5 |
+| P6 | Integrated live UX and release handoff | P1-P5 | Gate P6 |
 
 ### P0 - Baseline and executable contracts
 
@@ -540,7 +540,7 @@ mocks. Resolve phase design decisions before dependent tasks start.
 - [ ] Define section 16 fixtures and expected outcomes; record known baseline
   failures without attributing untested causes.
 
-**N0:** Approved contract/budget/scenario manifest and reference evidence; no
+**Gate P0:** Approved contract/budget/scenario manifest and reference evidence; no
 unresolved blocker for P1/P2. Do not rerun/reopen unrelated accepted router/combat
 gates or silently alter their requirements.
 
@@ -555,7 +555,7 @@ gates or silently alter their requirements.
   through their owners, without a general NPC rewrite.
 - [ ] Test rejection, duplicate commits, crash gaps, restart and delivery repair.
 
-**N1:** Tests and isolated commit-path evidence prove no phantom/missing required
+**Gate P1:** Tests and isolated commit-path evidence prove no phantom/missing required
 events, recoverable delivery and immediate resurrection/oath continuity before
 Hindsight completes ingestion.
 
@@ -572,9 +572,9 @@ Hindsight completes ingestion.
 - [ ] Evaluate `openai/gpt-oss-20b` extraction/consolidation quality; configure
   embeddings/reranking independently and preserve router ownership.
 
-**N2:** Real service/provider retain-to-recall, restart, restore/switch and clean-host
+**Gate P2:** Real service/provider retain-to-recall, restart, restore/switch and clean-host
 import pass; isolation/security checks pass; versions/costs recorded. Mocks or an
-accepted asynchronous job ID cannot establish N2.
+accepted asynchronous job ID cannot establish Gate P2.
 
 ### P3 - Relevant Narrator retrieval
 
@@ -588,7 +588,7 @@ accepted asynchronous job ID cannot establish N2.
 - [ ] Compare local-only and hybrid retrieval on identical fixtures; identify actual
   Hindsight contribution rather than a different Narrator model or prompt change.
 
-**N3:** Tests and real-service evidence show relevant memories within approved
+**Gate P3:** Tests and real-service evidence show relevant memories within approved
 budgets and no forbidden scope/future material. Healthy Narrator requests genuinely
 consume Hindsight, not a placeholder adapter.
 
@@ -605,7 +605,7 @@ consume Hindsight, not a placeholder adapter.
 - [ ] Test repeated compaction, concurrent turns/switches, failure, restart and
   context-too-small outcomes.
 
-**N4:** Severe repeated compaction preserves critical evidence/mechanics; source
+**Gate P4:** Severe repeated compaction preserves critical evidence/mechanics; source
 history remains recoverable; stale/unsupported packets are rejected; live recognition
 works without dumping remote scenes.
 
@@ -621,7 +621,7 @@ works without dumping remote scenes.
 - [ ] Reassess transcripts for remaining authority loops. Broader world-delta
   reconciliation needs evidence and separately approved scope, not silent expansion.
 
-**N5:** Agendas survive restart/compaction and revise from evidence without scripted
+**Gate P5:** Agendas survive restart/compaction and revise from evidence without scripted
 outcomes, PC control, omniscient NPCs or autonomous continuation. Authority regression
 checks remain green.
 
@@ -629,7 +629,7 @@ checks remain green.
 
 - [ ] Run deterministic, real-service and live matrices; the primary orchestrator
   judges actual narration and state evidence.
-- [ ] Compare against N0 using declared models/settings/seeds; report token,
+- [ ] Compare against Gate P0 using declared models/settings/seeds; report token,
   latency/cost distributions and queue/cache/worker behaviour.
 - [ ] Verify installation, lifecycle, correction/recovery, save/export/restore,
   campaign switch and clean-host import on supported deployment combinations.
@@ -638,7 +638,7 @@ checks remain green.
 - [ ] Audit all scope and evidence before requesting goal completion. Missing
   scenarios or release blockers are FAIL/BLOCKED, never implicit waivers.
 
-**N6:** Every required matrix cell passes with human-reviewed continuity/agency,
+**Gate P6:** Every required matrix cell passes with human-reviewed continuity/agency,
 no mechanics/knowledge/campaign/timeline leaks and approved resource envelopes met.
 Owner acceptance of believable DM behaviour is required; fluent prose is insufficient.
 
@@ -816,14 +816,14 @@ not invented in advance or appended as history to `AGENTS.md`.
 > machine") using first-class Hindsight alongside canonical state and `memory.db`,
 > a memory-aware Archivist/layered context, and durable conditional agendas.
 > Preserve Python authority, perspective/campaign/timeline isolation, portable
-> campaign runtime and 1-PC/four-PC behaviour. Complete N0-N6 with real-service and
+> campaign runtime and 1-PC/four-PC behaviour. Complete Gate P0-Gate P6 with real-service and
 > orchestrator-owned live evidence. Reserve but do not implement NPC/Titan workers.
 
 ### Immutable completion criteria for that future goal
 
 1. Every in-scope capability is implemented through approved OpenSpec requirements,
    including real Hindsight use on healthy Narrator requests.
-2. N0-N6 and required C01-C19/party-shape cells have auditable PASS evidence; critical
+2. Gate P0-Gate P6 and required C01-C19/party-shape cells have auditable PASS evidence; critical
    continuity, mechanics, knowledge and campaign/timeline constraints hold.
 3. Predeclared quality/token/latency/cost limits are met with measured evidence.
 4. Deployment, save/export/restore/switch/import/clone, correction, degradation and
@@ -854,8 +854,8 @@ not invented in advance or appended as history to `AGENTS.md`.
 
 | Decision | Deadline | Resolution rule |
 | --- | --- | --- |
-| Baseline/shared-file ownership and sequencing | N0 | Record integrated SHA and owner handoff, not stale status |
-| Numeric budgets and model profiles | N0 | Predeclare comparison method/caps; do not alter unrelated defaults |
+| Baseline/shared-file ownership and sequencing | Gate P0 | Record integrated SHA and owner handoff, not stale status |
+| Numeric budgets and model profiles | Gate P0 | Predeclare comparison method/caps; do not alter unrelated defaults |
 | Commit/outbox crash-repair seam | P1 design | Reuse owners; prove JSON/SQLite recovery without replaying actions |
 | Service/platform/embedding/reranker packaging | P2 design | Smallest supported operational deployment, verified pinned dependencies |
 | Export vs reconstruction and clone identity mapping | P2 design | Clean-host import plus no foreign campaign/discarded-future synthesis |
