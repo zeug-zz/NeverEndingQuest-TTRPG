@@ -51,6 +51,8 @@ ReasonCode = Literal[
     "assets_unavailable",
     "listener_failed",
     "companion_failed",
+    "monitor_failed",
+    "reconnect_budget_exhausted",
     "route_unhealthy",
     "origin_unbound",
     "origin_changed",
@@ -75,6 +77,8 @@ _REASON_CODES = frozenset(
         "assets_unavailable",
         "listener_failed",
         "companion_failed",
+        "monitor_failed",
+        "reconnect_budget_exhausted",
         "route_unhealthy",
         "origin_unbound",
         "origin_changed",
@@ -286,6 +290,7 @@ class SharingController:
         self._active_start_event: threading.Event | None = None
         self._shutdown_requested = False
         self._generation = 0
+        self._lifecycle_revision = 0
         self._state = SharingState.OFF
         self._reason: ReasonCode = "off"
         self._checks = ReadinessChecks()
@@ -300,6 +305,14 @@ class SharingController:
     def generation(self) -> int:
         with self._lock:
             return self._generation
+
+    # TABLETOP MODE: invalidates sharing retries without coupling them to
+    # gameplay input.
+    @property
+    def lifecycle_revision(self) -> int:
+        """Return a change token for stop, shutdown, and rotation."""
+        with self._lock:
+            return self._lifecycle_revision
 
     @property
     def state(self) -> SharingState:
@@ -353,6 +366,7 @@ class SharingController:
 
     def _begin_start_locked(self, ticket: int, token: threading.Event) -> int:
         self._generation += 1
+        self._lifecycle_revision += 1
         generation = self._generation
         self._counters = _increment(self._counters, "start_attempts")
         self._checks = ReadinessChecks()
@@ -611,6 +625,7 @@ class SharingController:
                 return self._snapshot_locked()
 
             ticket = self._reserve_ticket_locked()
+            self._lifecycle_revision += 1
             cancelled_start = self._state is SharingState.STARTING or (
                 self._pending_start_event is not None
             )
@@ -649,6 +664,7 @@ class SharingController:
             if self._shutdown_requested:
                 return self._snapshot_locked()
             self._shutdown_requested = True
+            self._lifecycle_revision += 1
             ticket = self._reserve_ticket_locked()
             if self._active_start_event is not None:
                 self._active_start_event.set()
@@ -698,6 +714,8 @@ class SharingController:
             if self._shutdown_requested:
                 return self._snapshot_locked()
             ticket = self._reserve_ticket_locked()
+            self._lifecycle_revision += 1
+            lifecycle_revision = self._lifecycle_revision
             was_starting = self._state is SharingState.STARTING or (
                 self._pending_start_event is not None
             )
@@ -749,6 +767,7 @@ class SharingController:
                 can_reverify = (
                     should_reverify
                     and generation == self._generation
+                    and lifecycle_revision == self._lifecycle_revision
                     and self._state is SharingState.DEGRADED
                     and not self._shutdown_requested
                 )
@@ -757,11 +776,14 @@ class SharingController:
 
             self._increment_counter("readiness_checks")
             checks, reason, _origin = self._evaluate_full_readiness(
-                generation, SharingState.DEGRADED
+                generation,
+                SharingState.DEGRADED,
+                lifecycle_revision=lifecycle_revision,
             )
             with self._lock:
                 if (
                     generation != self._generation
+                    or lifecycle_revision != self._lifecycle_revision
                     or self._state is not SharingState.DEGRADED
                     or self._shutdown_requested
                 ):
@@ -780,7 +802,16 @@ class SharingController:
         finally:
             self._finish_ticket(ticket)
 
-    def mark_degraded(self, reason: object = "readiness_regressed") -> SharingSnapshot:
+    # TABLETOP MODE: relay failures withdraw only sharing; gameplay state is
+    # untouched.
+    def mark_degraded(
+        self,
+        reason: object = "readiness_regressed",
+        *,
+        expected_generation: int | None = None,
+        expected_lifecycle_revision: int | None = None,
+        expected_state: SharingState | None = None,
+    ) -> SharingSnapshot:
         """Withdraw the binding while retaining resources for bounded recovery."""
         with self._lock:
             if self._shutdown_requested:
@@ -789,7 +820,22 @@ class SharingController:
         try:
             self._wait_for_ticket(ticket)
             with self._lock:
-                if self._state in {SharingState.STOPPING, SharingState.OFF}:
+                if (
+                    self._shutdown_requested
+                    or (
+                        expected_generation is not None
+                        and expected_generation != self._generation
+                    )
+                    or (
+                        expected_lifecycle_revision is not None
+                        and expected_lifecycle_revision != self._lifecycle_revision
+                    )
+                    or (
+                        expected_state is not None
+                        and self._state is not expected_state
+                    )
+                    or self._state not in {SharingState.READY, SharingState.DEGRADED}
+                ):
                     return self._snapshot_locked()
                 selected_reason = _operation_failure_reason(reason)
                 self._checks = replace(self._checks, origin_bound=False)
@@ -800,8 +846,15 @@ class SharingController:
         finally:
             self._finish_ticket(ticket)
 
-    def mark_failed(self, reason: object = "readiness_regressed") -> SharingSnapshot:
-        """Withdraw the binding and expose only a bounded failure reason."""
+    def mark_failed(
+        self,
+        reason: object = "readiness_regressed",
+        *,
+        expected_generation: int | None = None,
+        expected_lifecycle_revision: int | None = None,
+        expected_state: SharingState | None = None,
+    ) -> SharingSnapshot:
+        """Withdraw the binding, clean up owned resources, and expose failure."""
         with self._lock:
             if self._shutdown_requested:
                 return self._snapshot_locked()
@@ -809,12 +862,31 @@ class SharingController:
         try:
             self._wait_for_ticket(ticket)
             with self._lock:
-                if self._state is SharingState.STOPPING:
+                if (
+                    self._shutdown_requested
+                    or (
+                        expected_generation is not None
+                        and expected_generation != self._generation
+                    )
+                    or (
+                        expected_lifecycle_revision is not None
+                        and expected_lifecycle_revision != self._lifecycle_revision
+                    )
+                    or (
+                        expected_state is not None
+                        and self._state is not expected_state
+                    )
+                    or self._state not in {SharingState.READY, SharingState.DEGRADED}
+                ):
                     return self._snapshot_locked()
                 selected_reason = _operation_failure_reason(reason)
                 self._checks = replace(self._checks, origin_bound=False)
                 self._set_state(SharingState.FAILED, selected_reason)
-            self._clear_binding("failed")
+            cleanup_ok = self._cleanup_resources("failed")
+            if not cleanup_ok:
+                with self._lock:
+                    self._counters = _increment(self._counters, "cleanup_failures")
+                    self._set_state(SharingState.FAILED, "cleanup_failed")
             return self.status()
         finally:
             self._finish_ticket(ticket)
@@ -825,14 +897,17 @@ class SharingController:
         return snapshot.state is SharingState.READY and snapshot.reason == "ready"
 
     def recover(self) -> SharingSnapshot:
-        """Perform at most one complete readiness pass in serializer order."""
+        """Recheck readiness serially and replace an exited companion child."""
         with self._condition:
             if self._shutdown_requested:
                 return self._snapshot_locked()
+            lifecycle_revision = self._lifecycle_revision
             ticket = self._reserve_ticket_locked()
         try:
             self._wait_for_ticket(ticket)
             with self._lock:
+                if lifecycle_revision != self._lifecycle_revision:
+                    return self._snapshot_locked()
                 generation = self._generation
                 previous_state = self._state
                 if generation < 1 or previous_state not in {
@@ -842,11 +917,34 @@ class SharingController:
                     return self._snapshot_locked()
                 self._counters = _increment(self._counters, "readiness_checks")
 
+            if previous_state is SharingState.DEGRADED:
+                restart_ok = self._restart_companion_for_recovery(
+                    generation, lifecycle_revision
+                )
+                if not restart_ok:
+                    with self._lock:
+                        still_current = (
+                            generation == self._generation
+                            and lifecycle_revision == self._lifecycle_revision
+                            and self._state is SharingState.DEGRADED
+                        )
+                        if still_current:
+                            self._checks = replace(self._checks, origin_bound=False)
+                            self._set_state(SharingState.DEGRADED, "companion_failed")
+                    if still_current:
+                        self._clear_binding("degraded", generation)
+                    return self.status()
+
             checks, reason, _origin = self._evaluate_full_readiness(
-                generation, previous_state
+                generation,
+                previous_state,
+                lifecycle_revision=lifecycle_revision,
             )
             with self._lock:
-                if not self._is_current_locked(generation, previous_state):
+                if (
+                    lifecycle_revision != self._lifecycle_revision
+                    or not self._is_current_locked(generation, previous_state)
+                ):
                     stale = True
                 else:
                     stale = False
@@ -866,6 +964,87 @@ class SharingController:
             return self.status()
         finally:
             self._finish_ticket(ticket)
+
+    def _restart_companion_for_recovery(
+        self, generation: int, lifecycle_revision: int
+    ) -> bool:
+        """Reap an exited child before replacing it through the owned factory."""
+        with self._lock:
+            if (
+                generation != self._generation
+                or lifecycle_revision != self._lifecycle_revision
+                or self._state is not SharingState.DEGRADED
+            ):
+                return False
+            previous = self._companion
+
+        if previous is not None:
+            if self._companion_state(previous) == "running":
+                return True
+            try:
+                stopped = previous.stop(
+                    self._deps.companion_stop_deadline_seconds
+                ) is True
+                reaped = getattr(previous, "reaped", True) is True
+            except Exception:
+                stopped = False
+                reaped = False
+            if not stopped or not reaped:
+                return False
+            with self._lock:
+                if self._companion is previous:
+                    self._companion = None
+                    self._companion_started = False
+                    self._companion_generation = None
+
+        with self._lock:
+            if (
+                generation != self._generation
+                or lifecycle_revision != self._lifecycle_revision
+                or self._state is not SharingState.DEGRADED
+            ):
+                return False
+        try:
+            replacement = self._deps.start_companion(generation)
+        except Exception:
+            return False
+        if replacement is None:
+            return False
+        with self._lock:
+            if (
+                generation != self._generation
+                or lifecycle_revision != self._lifecycle_revision
+                or self._state is not SharingState.DEGRADED
+            ):
+                return False
+            self._companion = replacement
+            self._companion_started = False
+            self._companion_generation = generation
+        try:
+            started_state = replacement.start(
+                self._deps.companion_start_deadline_seconds
+            )
+        except Exception:
+            started_state = "failed"
+        replacement_state = self._companion_state(replacement)
+        started = (
+            started_state == "running"
+            and replacement_state == "running"
+        )
+        try:
+            replacement_reaped = getattr(replacement, "reaped", True) is True
+        except Exception:
+            replacement_reaped = False
+        needs_cleanup = replacement_state != "stopped" and not replacement_reaped
+        with self._lock:
+            if self._companion is replacement:
+                self._companion_started = started or needs_cleanup
+            still_current = (
+                generation == self._generation
+                and lifecycle_revision == self._lifecycle_revision
+                and self._state is SharingState.DEGRADED
+            )
+        return started and still_current
 
     def invitation(self) -> str | None:
         """Compute the URL-only invitation transiently from a fresh bound status."""
@@ -1015,11 +1194,19 @@ class SharingController:
         generation: int,
         expected_state: SharingState,
         cancel_event: threading.Event | None = None,
+        lifecycle_revision: int | None = None,
     ) -> tuple[ReadinessChecks, ReasonCode, str | None]:
         def current() -> bool:
             if cancel_event is not None and cancel_event.is_set():
                 return False
-            return self._is_current(generation, expected_state)
+            with self._lock:
+                return (
+                    self._is_current_locked(generation, expected_state)
+                    and (
+                        lifecycle_revision is None
+                        or lifecycle_revision == self._lifecycle_revision
+                    )
+                )
 
         def stale_reason() -> ReasonCode:
             return (
