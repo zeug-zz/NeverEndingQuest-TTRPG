@@ -20,6 +20,7 @@ import {
   parseN2BrowserSet,
 } from "./browser-contract.mjs";
 import { compareHostAndPlayerParty } from "./party-coherence.mjs";
+import { hitPointsLabel } from "./sheet-locator.mjs";
 import { loginPlayer, readPlayerVersion, type PlayerVersion } from "./login-player.mjs";
 import { SocketRequestDiagnosticsCollector } from "./request-diagnostics.mjs";
 import {
@@ -724,7 +725,7 @@ test("sheets-initiative-combat-busy-state: safe projection matches the visible U
     const sheet = page.locator('article[aria-label$=" read-only sheet"]');
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("heading", { name: activeName as string })).toBeVisible();
-    await expect(sheet.locator("dt", { hasText: "Hit points" })).toHaveCount(1);
+    await expect(hitPointsLabel(sheet)).toHaveCount(1);
     expect(snapshot.projection.combat?.available).toBe(true);
     expect(snapshot.projection.combat?.active).toBe(true);
     expect(snapshot.projection.combat?.turn_order.length).toBeGreaterThanOrEqual(PARTY_SIZE);
