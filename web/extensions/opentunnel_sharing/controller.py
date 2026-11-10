@@ -15,6 +15,15 @@ from enum import Enum
 from typing import Callable, Literal, Protocol
 
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
+from web.extensions.opentunnel_sharing.cleanup import (
+    CleanupDependencies,
+    ReconcileResult,
+    clear_ambiguity as rerun_cleanup_after_acknowledgement,
+    cleanup_owned,
+    owner_record_from_handle,
+    reconcile_orphans as reconcile_owned_orphans,
+    write_owner_record,
+)
 
 MAX_DIAGNOSTIC_COUNTER = (1 << 31) - 1
 MAX_COMPANION_START_DEADLINE_SECONDS = 120.0
@@ -60,6 +69,7 @@ ReasonCode = Literal[
     "startup_cancelled",
     "readiness_regressed",
     "cleanup_failed",
+    "cleanup_ambiguous",
     "shutting_down",
 ]
 
@@ -86,6 +96,7 @@ _REASON_CODES = frozenset(
         "startup_cancelled",
         "readiness_regressed",
         "cleanup_failed",
+        "cleanup_ambiguous",
         "shutting_down",
     }
 )
@@ -222,6 +233,7 @@ class SharingDependencies:
     companion_stop_deadline_seconds: float = 5.0
     route_wait_seconds: float = 30.0
     route_poll_interval_seconds: float = 0.25
+    cleanup: CleanupDependencies | None = None
 
     def __repr__(self) -> str:
         return "SharingDependencies(<injected>)"
@@ -245,6 +257,10 @@ class SharingDependencies:
                 raise TypeError("sharing_dependency_invalid")
         if self.origin_binder is None:
             raise TypeError("sharing_dependency_invalid")
+        if self.cleanup is not None and not isinstance(
+            self.cleanup, CleanupDependencies
+        ):
+            raise TypeError("sharing_cleanup_dependencies_invalid")
         if not _bounded_seconds(
             self.companion_start_deadline_seconds,
             maximum=MAX_COMPANION_START_DEADLINE_SECONDS,
@@ -300,6 +316,7 @@ class SharingController:
         self._companion: CompanionHandle | None = None
         self._companion_started = False
         self._companion_generation: int | None = None
+        self._cleanup_ambiguous = False
 
     @property
     def generation(self) -> int:
@@ -384,6 +401,9 @@ class SharingController:
                 if self._state is SharingState.OFF:
                     self._set_state(SharingState.OFF, "shutting_down")
                 return self._snapshot_locked()
+            if self._cleanup_ambiguous:
+                self._set_state(SharingState.FAILED, "cleanup_ambiguous")
+                return self._snapshot_locked()
             if (
                 self._state in {SharingState.STARTING, SharingState.READY}
                 or self._pending_start_event is not None
@@ -403,7 +423,12 @@ class SharingController:
                 if self._pending_start_ticket == ticket:
                     self._pending_start_ticket = None
                     self._pending_start_event = None
-                if token.is_set() or self._shutdown_requested:
+                if self._shutdown_requested:
+                    return self._snapshot_locked()
+                if self._cleanup_ambiguous:
+                    self._set_state(SharingState.FAILED, "cleanup_ambiguous")
+                    return self._snapshot_locked()
+                if token.is_set():
                     return self._snapshot_locked()
                 if self._active_start_ticket == ticket and self._active_start_event is token:
                     generation = self._generation
@@ -419,6 +444,107 @@ class SharingController:
                 if self._active_start_ticket == ticket:
                     self._active_start_ticket = None
                     self._active_start_event = None
+            self._finish_ticket(ticket)
+
+    def reconcile_cleanup(self) -> ReconcileResult:
+        """Explicitly reconcile one profile at host startup; never starts sharing."""
+        return self._reconcile_cleanup(facilitator_acknowledged=False)
+
+    def clear_ambiguity(
+        self, *, facilitator_acknowledged: bool
+    ) -> ReconcileResult:
+        """Rerun reconciliation after facilitator cleanup; never force-clears."""
+        return self._reconcile_cleanup(
+            facilitator_acknowledged=facilitator_acknowledged
+        )
+
+    def _reconcile_cleanup(
+        self, *, facilitator_acknowledged: bool
+    ) -> ReconcileResult:
+        config = self._deps.cleanup
+        if config is None:
+            return ReconcileResult(
+                "ambiguous",
+                "cleanup_not_configured",
+                False,
+                (),
+                "Facilitator action required: cleanup reconciliation is unavailable.",
+            )
+        with self._condition:
+            ticket = self._reserve_ticket_locked()
+        try:
+            self._wait_for_ticket(ticket)
+            with self._lock:
+                if (
+                    self._state
+                    in {SharingState.STARTING, SharingState.READY, SharingState.STOPPING}
+                    or self._listener_started
+                    or self._companion is not None
+                ):
+                    return ReconcileResult(
+                        "ambiguous",
+                        "controller_resources_active",
+                        False,
+                        (),
+                        "Facilitator action required: stop active sharing before reconciliation.",
+                    )
+                was_ambiguous = self._cleanup_ambiguous
+            if was_ambiguous and facilitator_acknowledged is not True:
+                return ReconcileResult(
+                    "ambiguous",
+                    "facilitator_acknowledgement_required",
+                    False,
+                    (),
+                    "Facilitator action required: review the dedicated NEQ profile, then acknowledge and rerun reconciliation.",
+                )
+            resolution = self._probe_companion()
+            if resolution is None:
+                result = ReconcileResult(
+                    "ambiguous",
+                    "companion_resolution_unknown",
+                    False,
+                    (),
+                    "Facilitator action required: companion identity is unavailable; resolve the profile and rerun reconciliation.",
+                )
+            elif was_ambiguous:
+                result = rerun_cleanup_after_acknowledgement(
+                    config.layout,
+                    resolution,
+                    facilitator_acknowledged=True,
+                    process_table=config.process_table,
+                    route_table=config.route_table,
+                    signaller=config.signaller,
+                    term_wait_seconds=config.term_wait_seconds,
+                    kill_wait_seconds=config.kill_wait_seconds,
+                    poll_interval_seconds=config.poll_interval_seconds,
+                    clock=config.clock,
+                    sleeper=config.sleeper,
+                )
+            else:
+                result = reconcile_owned_orphans(
+                    config.layout,
+                    resolution,
+                    process_table=config.process_table,
+                    route_table=config.route_table,
+                    signaller=config.signaller,
+                    term_wait_seconds=config.term_wait_seconds,
+                    kill_wait_seconds=config.kill_wait_seconds,
+                    poll_interval_seconds=config.poll_interval_seconds,
+                    clock=config.clock,
+                    sleeper=config.sleeper,
+                )
+            with self._lock:
+                self._cleanup_ambiguous = not result.sharing_available
+                if result.sharing_available:
+                    if (
+                        self._state is SharingState.FAILED
+                        and self._reason == "cleanup_ambiguous"
+                    ):
+                        self._set_state(SharingState.OFF, "off")
+                else:
+                    self._set_state(SharingState.FAILED, "cleanup_ambiguous")
+            return result
+        finally:
             self._finish_ticket(ticket)
 
     def _start_generation(
@@ -459,6 +585,30 @@ class SharingController:
                 companion_available=False,
             )
         self._replace_checks(platform_supported=True, companion_available=True)
+
+        cleanup_config = self._deps.cleanup
+        if cleanup_config is not None:
+            reconcile_result = reconcile_owned_orphans(
+                cleanup_config.layout,
+                resolution,
+                process_table=cleanup_config.process_table,
+                route_table=cleanup_config.route_table,
+                signaller=cleanup_config.signaller,
+                term_wait_seconds=cleanup_config.term_wait_seconds,
+                kill_wait_seconds=cleanup_config.kill_wait_seconds,
+                poll_interval_seconds=cleanup_config.poll_interval_seconds,
+                clock=cleanup_config.clock,
+                sleeper=cleanup_config.sleeper,
+            )
+            if not reconcile_result.sharing_available:
+                with self._lock:
+                    self._cleanup_ambiguous = True
+                return self._precondition_failure(
+                    generation,
+                    SharingState.FAILED,
+                    "cleanup_ambiguous",
+                    cancel_event,
+                )
 
         if not self._start_is_current(generation, cancel_event):
             return self._cancelled_start(generation)
@@ -575,6 +725,21 @@ class SharingController:
             return self._cancelled_start(generation)
         if not companion_started:
             return self._fail_start(generation, "companion_failed", cancel_event)
+
+        if cleanup_config is not None:
+            owner_record = owner_record_from_handle(
+                cleanup_config.layout,
+                companion,
+                generation,
+            )
+            if owner_record is None or not write_owner_record(
+                cleanup_config.layout, owner_record
+            ):
+                with self._lock:
+                    self._cleanup_ambiguous = True
+                return self._fail_start(
+                    generation, "cleanup_ambiguous", cancel_event
+                )
 
         route_ok, route_reason = self._wait_for_route(
             generation, companion, cancel_event
@@ -981,14 +1146,29 @@ class SharingController:
         if previous is not None:
             if self._companion_state(previous) == "running":
                 return True
-            try:
-                stopped = previous.stop(
-                    self._deps.companion_stop_deadline_seconds
-                ) is True
-                reaped = getattr(previous, "reaped", True) is True
-            except Exception:
-                stopped = False
-                reaped = False
+            cleanup_config = self._deps.cleanup
+            if cleanup_config is not None:
+                cleanup_result = cleanup_owned(
+                    cleanup_config.layout,
+                    handle=previous,
+                    route_table=cleanup_config.route_table,
+                    stop_listener=lambda: None,
+                    deadline_seconds=self._deps.companion_stop_deadline_seconds,
+                )
+                stopped = cleanup_result.state == "clean"
+                reaped = cleanup_result.process_reaped
+                if cleanup_result.state != "clean":
+                    with self._lock:
+                        self._cleanup_ambiguous = True
+            else:
+                try:
+                    stopped = previous.stop(
+                        self._deps.companion_stop_deadline_seconds
+                    ) is True
+                    reaped = getattr(previous, "reaped", True) is True
+                except Exception:
+                    stopped = False
+                    reaped = False
             if not stopped or not reaped:
                 return False
             with self._lock:
@@ -1036,6 +1216,41 @@ class SharingController:
         except Exception:
             replacement_reaped = False
         needs_cleanup = replacement_state != "stopped" and not replacement_reaped
+        cleanup_config = self._deps.cleanup
+        if started and cleanup_config is not None:
+            owner_record = owner_record_from_handle(
+                cleanup_config.layout,
+                replacement,
+                generation,
+            )
+            if owner_record is None or not write_owner_record(
+                cleanup_config.layout, owner_record
+            ):
+                with self._lock:
+                    self._cleanup_ambiguous = True
+                cleanup_result = cleanup_owned(
+                    cleanup_config.layout,
+                    handle=replacement,
+                    route_table=cleanup_config.route_table,
+                    stop_listener=lambda: None,
+                    deadline_seconds=self._deps.companion_stop_deadline_seconds,
+                )
+                with self._lock:
+                    self._companion_started = not cleanup_result.process_reaped
+                return False
+        elif needs_cleanup and cleanup_config is not None:
+            cleanup_result = cleanup_owned(
+                cleanup_config.layout,
+                handle=replacement,
+                route_table=cleanup_config.route_table,
+                stop_listener=lambda: None,
+                deadline_seconds=self._deps.companion_stop_deadline_seconds,
+            )
+            if cleanup_result.state != "clean":
+                with self._lock:
+                    self._cleanup_ambiguous = True
+                return False
+            needs_cleanup = False
         with self._lock:
             if self._companion is replacement:
                 self._companion_started = started or needs_cleanup
@@ -1394,6 +1609,42 @@ class SharingController:
             )
             companion = self._companion if owns_companion else None
             companion_started = self._companion_started if owns_companion else False
+            owns_listener = (
+                generation is None or self._listener_generation == generation
+            )
+            listener_started = self._listener_started if owns_listener else False
+
+        cleanup_config = self._deps.cleanup
+        if cleanup_config is not None and (companion is not None or listener_started):
+            cleanup_result = cleanup_owned(
+                cleanup_config.layout,
+                handle=companion,
+                route_table=cleanup_config.route_table,
+                stop_listener=(
+                    self._deps.stop_player_listener
+                    if listener_started
+                    else lambda: None
+                ),
+                deadline_seconds=self._deps.companion_stop_deadline_seconds,
+            )
+            companion_stopped = cleanup_result.process_reaped
+            listener_stopped = cleanup_result.listener_stopped
+            cleanup_ok = cleanup_ok and cleanup_result.state == "clean"
+            if cleanup_result.state != "clean":
+                with self._lock:
+                    self._cleanup_ambiguous = True
+            if owns_companion and companion_stopped:
+                with self._lock:
+                    if self._companion is companion:
+                        self._companion = None
+                        self._companion_started = False
+                        self._companion_generation = None
+            if owns_listener and listener_stopped:
+                with self._lock:
+                    self._listener_started = False
+                    self._listener_generation = None
+            return cleanup_ok
+
         companion_stopped = not companion_started
         if companion_started and companion is not None:
             try:
@@ -1412,11 +1663,6 @@ class SharingController:
                     self._companion_started = False
                     self._companion_generation = None
 
-        with self._lock:
-            owns_listener = (
-                generation is None or self._listener_generation == generation
-            )
-            listener_started = self._listener_started if owns_listener else False
         listener_stopped = not listener_started
         if listener_started:
             try:
