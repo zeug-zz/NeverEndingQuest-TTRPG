@@ -284,20 +284,30 @@ async function readSnapshot(page) {
   });
 }
 
-async function assertHostUi(page) {
-  await page.goto(HOST_URL, { waitUntil: "domcontentloaded", timeout: 15_000 });
-  await page.locator("#game-output").waitFor({ state: "attached", timeout: 15_000 });
+export async function assertHostUi(page, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const response = await page.goto(HOST_URL, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+  await page.locator("#game-output").waitFor({ state: "attached", timeout: timeoutMs });
   const input = page.locator("#user-input");
-  await input.waitFor({ state: "attached", timeout: 15_000 });
-  if (!(await input.isEnabled())) throw new Error("The host gameplay input is disabled.");
-  const probe = "N2_HOST_UI_LOCAL_USABILITY_PROBE";
-  await input.fill(probe);
-  if ((await input.inputValue()) !== probe) throw new Error("The host input did not accept local text entry.");
-  await input.fill("");
+  await input.waitFor({ state: "attached", timeout: timeoutMs });
+  const userInputEnabled = await input.isEnabled();
+  const startButton = page.locator("#start-button");
+  await startButton.waitFor({ state: "visible", timeout: timeoutMs });
+  const startButtonText = (await startButton.textContent())?.trim();
+  let hostSocketConnected = false;
+  if (startButtonText !== "Game Running") {
+    await waitFor(async () => {
+      hostSocketConnected = await startButton.isEnabled();
+      return hostSocketConnected;
+    }, timeoutMs, "The host socket did not connect: Start Game remained disabled.");
+  }
   return {
-    host_http_status: 200,
+    host_http_status: response?.status() ?? 200,
     game_output_attached: true,
-    user_input_enabled_and_editable: true,
+    user_input_attached: true,
+    host_socket_connected: hostSocketConnected || startButtonText === "Game Running",
+    user_input_enabled: userInputEnabled,
+    user_input_disabled_until_game_start: !userInputEnabled,
     probe_submitted: false,
   };
 }
