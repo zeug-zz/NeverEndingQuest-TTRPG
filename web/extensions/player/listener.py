@@ -15,6 +15,7 @@ import time
 import uvicorn
 
 from .app import PlayerApplication, create_app
+from .auth import PlayerSecurity
 from .constants import PLAYER_HOST, PLAYER_PORT
 from .gateway import PlayerGateway
 from .limits import MAX_SOCKETIO_EVENT_BYTES
@@ -35,6 +36,8 @@ class PlayerListener:
         self,
         gateway: PlayerGateway | None = None,
         *,
+        # TABLETOP MODE: The host may inject its profile-bound N1 security authority.
+        security: PlayerSecurity | None = None,
         test_only_port: int | None = None,
         build_root: str | PathLike[str] | None = None,
     ) -> None:
@@ -49,6 +52,7 @@ class PlayerListener:
         self.app: PlayerApplication = create_app(
             gateway=gateway,
             port=self._port,
+            security=security,
             build_root=build_root,
         )
         self._state_lock = threading.Lock()
