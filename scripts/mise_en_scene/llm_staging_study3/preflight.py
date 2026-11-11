@@ -3,14 +3,14 @@
 # License: See LICENSE file in the repository root.
 # This software is subject to the terms of the Fair Source License.
 
-"""Pure, synthetic Study 3 approval, allocation-state, and outcome checks.
+"""Synthetic approval/accounting checks and the exact-SHA readiness CLI.
 
-This module is not a dispatch client. It reads no approval files, creates no
-ledger, reserves no attempt, loads no credentials, and sends no HTTP request.
-The caller must supply independently trusted immutable pins and in-memory
-synthetic snapshots. A returned decision is metadata, never a dispatch token.
-The synthetic ledger hash chain detects malformed test state only; it is not an
-authentication mechanism for a mutable persisted ledger.
+The reusable functions validate synthetic in-memory snapshots only: they do
+not create a ledger, reserve an attempt, load credentials, or send HTTP. The
+explicit ``--exact-sha-readiness`` CLI delegates to readiness.py, which reports
+a fail-closed provenance blocker before GitHub CLI, credentials, or local
+preflight gates are touched. Synthetic decisions and the CLI result are
+metadata, never a dispatch token.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
+import sys
 from typing import Any
 
 from . import protocol
@@ -852,6 +853,44 @@ def _canonical_json(value: Any) -> bytes:
         raise PreflightBlocked("SYNTHETIC_STATE_SERIALIZATION_INVALID") from None
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Run fresh exact-SHA readiness; no saved evidence arguments are accepted."""
+
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments != ["--exact-sha-readiness"]:
+        print(
+            '{"reason_codes":["READINESS_ARGUMENTS_NOT_ACCEPTED"],'
+            '"status":"BLOCKED"}'
+        )
+        return 2
+    from . import readiness
+
+    verification = readiness.verify_readiness_evidence()
+    result = {
+        "status": verification.status,
+        "reason_codes": list(verification.reason_codes),
+        "current_head_sha": verification.current_head_sha,
+        "ci_check_count": verification.ci_check_count,
+        "preflight_gate_count": verification.preflight_gate_count,
+        "external_provenance_verified": verification.external_provenance_verified,
+        "live_dispatch_permitted": verification.live_dispatch_permitted,
+    }
+    print(
+        json.dumps(
+            result,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    )
+    return 0 if readiness.is_verified_readiness(verification) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 __all__ = [
     "ApprovalPins",
     "DispatchPins",
@@ -861,5 +900,6 @@ __all__ = [
     "ProviderIdentity",
     "SyntheticLedgerSnapshot",
     "classify_attempt_outcome",
+    "main",
     "synthetic_preflight",
 ]

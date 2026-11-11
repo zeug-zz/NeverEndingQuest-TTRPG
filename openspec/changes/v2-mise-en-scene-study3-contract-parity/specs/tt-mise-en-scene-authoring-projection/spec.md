@@ -150,63 +150,64 @@ Each Study 3 reference SHALL be hand assembled from its frozen expected inputs a
 
 ### Requirement: Software-preparation readiness SHALL be independently gated (R19)
 
-Software-preparation readiness SHALL be READY only when every required software gate passes and the Overseer approves the evidence. Missing, failed, or dependency-blocked evidence SHALL NOT establish READY. Readiness SHALL remain separate from study outcomes and SHALL NOT by itself authorize dispatch.
+Study 3 execution SHALL remain blocked until all required software gates and 11 CI checks pass on the exact published SHA and provider-free preflight on that same SHA has zero infrastructure failures. The approved ruling authorizes primary-owned execution after those gates without further per-step approval; post-study semantic review SHALL remain independent.
 
-#### Scenario: All software gates and exact-head review permit readiness
-- **GIVEN** bidirectional request/validator parity, collect-all diagnostic coverage with every independently evaluable finding mapped, all three reference/full-gate regressions, focused Study 3 and full 196-baseline mise-en-scene and 276-test mapping suites, and complete frozen-file hash inventories all pass
-- **AND** all 11 required CI checks pass on the exact new head of the authorized DRAFT PR127 or successor DRAFT PR
-- **AND** the Overseer approves the software-preparation evidence
-- **WHEN** software-preparation status is reported
-- **THEN** software-preparation readiness MAY be READY
-- **AND** semantic review, owner ratings, and model-capability verdict MAY remain PENDING independently
-- **AND** no generation or attempt allocation SHALL occur
+#### Scenario: Exact-SHA gates permit conditional execution
+- **GIVEN** bidirectional parity, collect-all diagnostic coverage, all three reference/full-gate regressions, focused Study 3 tests, the full 196-baseline mise-en-scene and 276-test mapping suites, frozen-file inventories, all 11 CI checks on the exact published DRAFT SHA, and provider-free preflight on that same SHA all pass with zero infrastructure failures
+- **WHEN** the primary begins the authorized run
+- **THEN** execution SHALL be permitted under `neq-s-study3-runner-revision-20261111` and the pinned cap rulings without another per-step approval
+- **AND** the run SHALL remain distinct from semantic review, owner ratings, and model-capability verdict
 
-#### Scenario: Exact-head packet stops at software-preparation review
-- **GIVEN** the implementation packet is complete and all 11 required CI checks pass on the exact newly published DRAFT head
-- **WHEN** the packet is submitted for review
-- **THEN** work SHALL stop for Overseer software-preparation review before any actual generation call
-- **AND** no test result, readiness status, or call authorization SHALL be inferred from planning approval or a green CI result on a different head
-
-#### Scenario: Authorized publication remains draft-only
-- **GIVEN** Git publication is needed for exact-new-head CI
-- **WHEN** the change is published
-- **THEN** commit/push to PR127 or a successor DRAFT PR SHALL be permitted
-- **AND** the PR SHALL NOT be merged
-- **AND** the packet SHALL stop for Overseer software-preparation review after all 11 exact-head checks and required evidence are ready
-
-#### Scenario: Missing gate, failed gate, or old-head CI cannot establish readiness
-- **GIVEN** any required software gate or Overseer review is missing, a required gate fails, or CI is green only for a different/old head
-- **WHEN** software-preparation status is reported
-- **THEN** readiness SHALL be PENDING for missing evidence or BLOCKED for a failed gate, never READY
+#### Scenario: Failed, unavailable, or mismatched exact-SHA gate blocks execution
+- **GIVEN** a required gate or CI check fails or is unavailable, CI is green only on a different SHA, or exact-SHA provider-free preflight reports an infrastructure failure
+- **WHEN** the primary checks run readiness
+- **THEN** execution SHALL remain blocked before real ledger initialization, credential access, or HTTP
 - **AND** a dependency-blocked check SHALL be `NOT_EVALUATED`, never PASS
-- **AND** old-head CI SHALL NOT count as exact-new-head evidence
-- **AND** semantic review, owner ratings, and model-capability verdict SHALL remain separate
+
+#### Scenario: Publication remains draft-only
+- **GIVEN** publication is needed to run exact-head CI
+- **WHEN** the primary publishes the change
+- **THEN** publication to PR127 or a successor DRAFT PR SHALL be permitted
+- **AND** the PR SHALL NOT be merged
+- **AND** green checks on any other head SHALL NOT satisfy the exact-SHA gate
+
+#### Scenario: The run stops for independent semantic review
+- **GIVEN** the primary completes all three attempts or the stop matrix ends the run earlier
+- **WHEN** execution evidence is preserved
+- **THEN** the primary SHALL stop for independent post-study semantic review
+- **AND** the primary SHALL NOT self-score, expose output prose in status reports, or claim a model-capability verdict
+- **AND** owner ratings and semantic review SHALL remain PENDING until separately completed
+
+#### Scenario: Preflight does not create a study outcome
+- **GIVEN** exact-SHA provider-free preflight passes
+- **WHEN** preflight status is reported
+- **THEN** it SHALL NOT be reported as a generation result, semantic review, owner rating, or model-capability verdict
 
 ### Requirement: Study 3 preparation SHALL remain allocation- and provider-free (R17)
 
-Study 3 preparation SHALL be provider-, credential-, real-ledger-, and allocation-free. Any future dispatch SHALL honor the fixed approved cap, require exact approval and post-review authorization, and SHALL NOT reset the cap through run-ID or root changes.
+Provider-free Study 3 preparation and tests SHALL make no provider call, credential access, real-ledger initialization, or attempt allocation. Separately authorized execution SHALL use the isolated Study 3 ledger, fixed approved cap, and conditional exact-SHA gate without resetting allocation through run-ID or root changes.
 
 #### Scenario: Preparation has no external side effects
 - **GIVEN** the Study 3 preparation or provider-free test suite runs
-- **WHEN** network, credential, or real-ledger tripwires are active
+- **WHEN** network, credential, and real-ledger tripwires are active
 - **THEN** the run SHALL make no HTTP/provider call, read no credential, initialize no real ledger, and allocate no attempt
 
-#### Scenario: Missing approval or unsafe allocation state fails closed
-- **GIVEN** either exact cap-approval ruling pin (`neq-standing-authority-20261110` or `neq-study3-pre-approved-20261110`), Overseer post-review READY and dispatch authorization, or a safe allocation state is absent; the fixed cap is exhausted; or a synthetic ledger state is pending or corrupt
-- **WHEN** a provider-free dispatch-preflight test is exercised
-- **THEN** it SHALL refuse before reservation, credential access, and HTTP, without resetting the cap by changing run ID or root
-- **AND** a mutable, self-asserted approval JSON SHALL NOT substitute for either ruling pin
+#### Scenario: Missing approval pins or unsafe state fails closed
+- **GIVEN** either exact cap-approval ruling pin (`neq-standing-authority-20261110` or `neq-study3-pre-approved-20261110`) is absent or mismatched, the conditional exact-SHA gates have not passed, the fixed cap is exhausted, or the isolated ledger is pending or corrupt
+- **WHEN** provider-free dispatch-preflight is exercised
+- **THEN** it SHALL refuse before real reservation, credential access, and HTTP, without resetting allocation by changing run ID or root
+- **AND** mutable self-asserted approval JSON SHALL NOT substitute for either ruling pin
 
-#### Scenario: Conservative future preflight remains below the hard ceiling
-- **GIVEN** a future dispatch preflight computes a conservative predicted cost for all three approved calls
-- **WHEN** that total is USD 0.05 or greater, or cannot be calculated from valid rate provenance
-- **THEN** it SHALL refuse before reservation, credential access, and HTTP
-- **AND** it SHALL stop safely if subsequent actual cost accounting is missing, pending, or inconsistent
+#### Scenario: Conservative envelope is strictly below the hard ceiling
+- **GIVEN** preflight computes the conservative predicted cost for all three approved calls from the already-bound historical rate record
+- **WHEN** the total is USD 0.05 or greater or cannot be calculated from valid provenance
+- **THEN** it SHALL refuse before real reservation, credential access, and HTTP
+- **AND** it SHALL make no additional availability GET
 
-#### Scenario: Future transport failures preserve the stop boundary
-- **GIVEN** a separately authorized future attempt receives an identity/transport failure or non-200 response, or receives HTTP 200 with contract-failing content
-- **WHEN** the attempt outcome is classified
-- **THEN** identity/transport failure and non-200 SHALL stop the study with remaining attempts unspent, while HTTP 200 contract failure SHALL consume that scene's attempt and permit the next scene without retry, rerun, or fallback
+#### Scenario: Preparation tests remain provider-free
+- **GIVEN** provider-free tests exercise the Study 3 runner and ledger
+- **WHEN** fake transports, socket tripwires, and temporary Study 3 roots are used
+- **THEN** tests SHALL not reach the network, read credentials, initialize the real ledger, or allocate a real attempt
 
 ### Requirement: Study 2 diagnostic re-gating SHALL collect violations without changing evidence (R20)
 
@@ -229,3 +230,103 @@ Study 3 SHALL provide collect-all diagnostics that operate only on copies of the
 - **WHEN** collect-all mode produces its report
 - **THEN** source evidence and copy bytes/values/prose SHALL remain unchanged
 - **AND** outputs SHALL be labeled `DIAGNOSTIC_NOT_STUDY_RESULT` and SHALL NOT change Study 2's frozen verdict or be represented as a Study 3 result
+
+### Requirement: Study 3 execution SHALL use an isolated durable attempt ledger (R21)
+
+Execution SHALL reserve each scene once in a durable ledger confined to the Study 3 root before credential access or dispatch. Ledger state SHALL bind the fixed Study 3 identity, exact scene order, request hash, attempt outcome, and actual-cost state; unsafe, pending, duplicate, or corrupt state SHALL fail closed without reset.
+
+#### Scenario: Reservation is durable before dispatch
+- **GIVEN** exact-SHA pre-call gates pass and the primary requests the next approved scene
+- **WHEN** the runner reaches credential lookup or the transport boundary
+- **THEN** one durable reservation bound to the fixed identity, scene/order, request hash, and budget reservation SHALL already exist
+- **AND** the reservation SHALL be flushed before credential access or HTTP
+
+#### Scenario: Paths remain confined to the Study 3 root
+- **GIVEN** a ledger, response, or result path contains traversal, resolves outside the Study 3 root, or traverses a symlink
+- **WHEN** reservation or evidence creation is attempted
+- **THEN** the operation SHALL fail before any outside-root write or dispatch
+
+#### Scenario: Duplicate, concurrent, or out-of-order reservation is refused
+- **GIVEN** a scene already has a reservation, another process concurrently requests the same scene, or the next scene is not the next fixed scene
+- **WHEN** a reservation is requested
+- **THEN** at most one reservation SHALL be accepted and no duplicate or out-of-order dispatch SHALL occur
+
+#### Scenario: Restarted pending or corrupt ledger is not replayed
+- **GIVEN** a restart finds a pending reservation, malformed record, invalid hash chain, changed identity, or duplicate ledger/result artifact
+- **WHEN** the runner reloads allocation state
+- **THEN** it SHALL refuse dispatch and SHALL NOT reset the cap, retry the reservation, or create a fresh ledger under another run ID/root
+
+### Requirement: Study 3 execution SHALL reuse one-shot transport with the fixed envelope (R22)
+
+The primary runner SHALL dispatch only the three fixed scenes in order through the existing reservation-gated one-shot OpenRouter transport, using the exact approved Study 3 envelope and no ancillary provider lookup.
+
+#### Scenario: One reserved dispatch uses the exact envelope
+- **GIVEN** a durable reservation exists for the next approved scene
+- **WHEN** one transport dispatch occurs
+- **THEN** it SHALL use OpenRouter model `openai/gpt-6-luna`, `allow_fallbacks=false`, `max_tokens=16384`, and a 720-second timeout
+- **AND** it SHALL issue exactly one POST with no retry, rerun, redirect, streaming, continuation, or tools
+- **AND** provider credentials SHALL be read only after reservation
+
+#### Scenario: No additional availability lookup occurs
+- **GIVEN** the existing model availability evidence and exact frozen request pins are present
+- **WHEN** preflight or the three-scene execution runs
+- **THEN** it SHALL NOT make another models-list GET or any other ancillary provider request
+
+#### Scenario: Identity, transport, and HTTP status failures stop remaining attempts
+- **GIVEN** a durable reservation exists and the attempt encounters a returned provider identity failure, transport failure/timeout, or non-200 response
+- **WHEN** the outcome is recorded
+- **THEN** the reserved attempt SHALL remain consumed and the run SHALL stop with later scene reservations unspent
+
+#### Scenario: HTTP 200 with invalid content consumes only its scene
+- **GIVEN** a response has HTTP 200 but fails the Study 3 output contract
+- **WHEN** its outcome and actual cost are recorded
+- **THEN** that scene's attempt SHALL be consumed and the next scene MAY proceed only if actual cost is reconciled and the remaining budget is safe
+- **AND** no retry, rerun, or fallback SHALL occur
+
+### Requirement: Study 3 actual cost SHALL be reconciled fail-closed (R23)
+
+Historical rate-derived figures SHALL remain labeled estimates, while dispatch SHALL maintain a separate USD 0.05 ceiling and require a valid actual-cost receipt before any subsequent scene can be dispatched.
+
+#### Scenario: Historical costs remain estimates
+- **GIVEN** the existing hash-bound historical rate record is used for sizing
+- **WHEN** the expected and conservative amounts are reported
+- **THEN** USD 0.0125671 and USD 0.0324461 SHALL be labeled `ESTIMATE`
+- **AND** neither estimate SHALL be represented as actual spend or as the hard ceiling
+
+#### Scenario: Budget refusal happens before dispatch
+- **GIVEN** the conservative remaining envelope is USD 0.05 or greater or cannot be calculated from valid historical provenance
+- **WHEN** the next attempt is considered
+- **THEN** the runner SHALL refuse before credentials and HTTP
+- **AND** it SHALL NOT fetch availability or replace the historical rate record
+
+#### Scenario: Missing or inconsistent actual cost blocks later dispatch
+- **GIVEN** a completed HTTP response has missing, pending, malformed, or inconsistent actual-cost data
+- **WHEN** the ledger reconciles the attempt
+- **THEN** it SHALL record accounting as unresolved and stop further dispatch without another network request
+
+#### Scenario: Actual cost is bound to the reserved attempt
+- **GIVEN** an actual-cost receipt is available for a response
+- **WHEN** the ledger records the result
+- **THEN** the cost SHALL be bound to that reservation and included in cumulative Study 3 spend
+- **AND** no later attempt SHALL be dispatched when cumulative actual cost plus the conservative remaining envelope reaches or exceeds USD 0.05
+
+### Requirement: Study 3 outputs SHALL remain private pending semantic review (R24)
+
+Raw provider output SHALL remain under the private Study 3 evidence root until independent post-study semantic review. Logs and status records SHALL exclude credentials, prompt text, and response prose; semantic review and owner ratings SHALL remain pending until separately performed.
+
+#### Scenario: Raw output is stored privately
+- **GIVEN** the one-shot transport returns a bounded provider response
+- **WHEN** the runner persists response evidence
+- **THEN** the raw response SHALL be stored only under the Study 3 root with restrictive directory/file permissions
+- **AND** ledger records SHALL contain only safe metadata, hashes, and accounting receipts
+
+#### Scenario: Status and error paths do not disclose secrets or output prose
+- **GIVEN** a credential or provider response contains sensitive text or an error occurs
+- **WHEN** status, logs, exceptions, or cost records are written
+- **THEN** they SHALL contain no credential, prompt text, or response prose
+- **AND** a credential echo SHALL be redacted or the response rejected safely
+
+#### Scenario: Execution does not self-review outputs
+- **GIVEN** the primary has completed the run or an earlier stop boundary
+- **WHEN** the execution handoff is produced
+- **THEN** it SHALL report only metadata and actual receipts/costs, leave semantic review and owner ratings pending, and stop for the independent reviewer
