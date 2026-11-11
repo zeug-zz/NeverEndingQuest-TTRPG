@@ -403,6 +403,45 @@ def download_release_asset(
 ) -> None:
     """Stream one pinned GitHub release file with proxy-free bounded transport."""
     _validate_download_url(url, release_url)
+    _download_https_asset(
+        url,
+        destination,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+    )
+
+
+def download_pinned_github_release_asset(
+    url: str,
+    destination: Path,
+    *,
+    release_url: str,
+    asset_names: frozenset[str],
+    timeout_seconds: int,
+    max_bytes: int,
+) -> None:
+    """Stream an asset from this fork's pinned release namespace.
+
+    This shares the OpenTunnel transport guards without loosening its separate,
+    exact upstream URL contract.
+    """
+    _validate_pinned_github_release_url(url, release_url, asset_names)
+    _download_https_asset(
+        url,
+        destination,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+    )
+
+
+def _download_https_asset(
+    url: str,
+    destination: Path,
+    *,
+    timeout_seconds: int,
+    max_bytes: int,
+) -> None:
+    """Apply the shared bounded, proxy-free HTTPS release transport."""
     if (
         type(timeout_seconds) is not int
         or timeout_seconds < 1
@@ -437,7 +476,12 @@ def download_release_asset(
                     raise DownloadSecurityError("download exceeds its size bound")
 
             total = 0
-            with Path(destination).open("xb") as output:
+            file_descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            with os.fdopen(file_descriptor, "wb") as output:
                 while True:
                     if time.monotonic() - started > timeout_seconds:
                         raise TimeoutError("download deadline exceeded")
@@ -456,6 +500,57 @@ def download_release_asset(
         except OSError:
             pass
         raise
+
+
+def _validate_pinned_github_release_url(
+    url: str,
+    release_url: str,
+    asset_names: frozenset[str],
+) -> None:
+    """Accept only exact asset paths under this fork's semver release URL."""
+    try:
+        base = urlsplit(release_url)
+        parsed = urlsplit(url)
+        base_port = base.port
+        port = parsed.port
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise DownloadSecurityError("download URL is invalid") from exc
+    if (
+        base.scheme != "https"
+        or base.netloc != "github.com"
+        or re.fullmatch(
+            r"/zeug-zz/NeverEndingQuest-TTRPG/releases/download/v[0-9]+\.[0-9]+\.[0-9]+",
+            base.path,
+        )
+        is None
+        or base_port not in (None, 443)
+        or base.query
+        or base.fragment
+        or parsed.scheme != "https"
+        or parsed.netloc not in {"github.com", "github.com:443"}
+        or parsed.hostname != base.hostname
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or "\\" in url
+        or any(ord(character) < 32 or ord(character) == 127 for character in url)
+    ):
+        raise DownloadSecurityError("download URL is outside the pinned fork release")
+    if (
+        not asset_names
+        or any(
+            not isinstance(name, str)
+            or not name
+            or "/" in name
+            or "\\" in name
+            or name in {".", ".."}
+            for name in asset_names
+        )
+        or parsed.path not in {base.path + "/" + name for name in asset_names}
+    ):
+        raise DownloadSecurityError("download URL is not an approved release asset")
 
 
 def _validate_download_url(url: str, release_url: str) -> None:
