@@ -1,0 +1,41 @@
+{
+  "version": "0.6.2",
+  "upstream_tag": "v0.6.2",
+  "upstream_commit": "1ad859e17924ec3f6741cbc4cdb54ce381c9007c",
+  "release_url": "https://github.com/anomalyco/opentunnel/releases/download/v0.6.2",
+  "sha256sums_provenance": {
+    "url": "https://github.com/anomalyco/opentunnel/releases/download/v0.6.2/SHA256SUMS",
+    "sha256": "1b2e3d3f4aeec8526678fbeec46075b9ec6fe484dc6c3328514ed4205b5d55c6",
+    "size_bytes": 382,
+    "source": "N0 local cache: tmp/n0/release/SHA256SUMS"
+  },
+  "license_notice": {
+    "spdx_id": "MIT",
+    "notice": "OpenTunnel v0.6.2 is distributed under the MIT License.",
+    "text_pointer": "https://opensource.org/license/mit/"
+  },
+  "platforms": [
+    {
+      "os": "darwin",
+      "arch": "arm64",
+      "asset_name": "opentunnel-darwin-arm64.tar.gz",
+      "asset_stem": "opentunnel-darwin-arm64",
+      "archive_size_bytes": 2743327,
+      "archive_sha256": "3f4cf4d316db0e341b2995fd5cd44ba79a78aaee534f32199969152397c9e504",
+      "executable_size_bytes": 5511264,
+      "sha256": "39991ec74bc79e13917d5e7bc309870f7925d364808b33ec535fef2fc29eeaf8",
+      "runtime_path": "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "asset_name": "opentunnel-linux-arm64.tar.gz",
+      "asset_stem": "opentunnel-linux-arm64",
+      "archive_size_bytes": 2905242,
+      "archive_sha256": "3136e3b66157db18e2f2b86bdcbf1c88016b2daeee70c0396a5c9d188eb6f293",
+      "executable_size_bytes": 5716056,
+      "sha256": "7876ca698377c11b56781e5577258aa6b73ae763a062fbcdebfa14df2d9edac1",
+      "runtime_path": "runtime/opentunnel/v0.6.2/opentunnel-linux-arm64/opentunnel"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ logs/
 modules/logs/
 
 # Runtime data
+/runtime/
 conversation_history.json
 conversation_history.json.bak
 combat_conversation_history.json
