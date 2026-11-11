@@ -81,15 +81,29 @@ def _sandbox_root() -> tuple[tempfile.TemporaryDirectory[str], Path]:
     (outer / "model_config.py").write_text("SANDBOX_MARKER = True\n", encoding="ascii")
     root = outer / "tmp" / "combat_capture"
     root.mkdir(parents=True)
+    _source_path(root)
     return scratch, root
+
+
+def _source_path(root: Path, *, web_dir: str = "web") -> Path:
+    source = (
+        root
+        / web_dir
+        / "extensions"
+        / "opentunnel_sharing"
+        / "production_monitor.py"
+    )
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("# synthetic monitor source\n", encoding="ascii")
+    return source
 
 
 class RecoveryOverrideTests(unittest.TestCase):
     def test_missing_override_preserves_default_without_resolving_root(self) -> None:
         with _GateEnvironment():
             with mock.patch(
-                "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                side_effect=AssertionError("root must not be resolved"),
+                "web.extensions.opentunnel_sharing.production_monitor._is_isolated_capture_root",
+                side_effect=AssertionError("root must not be inspected"),
             ):
                 policy = production_recovery_policy(8360)
 
@@ -112,9 +126,6 @@ class RecoveryOverrideTests(unittest.TestCase):
                             N3_RECOVERY_ATTEMPTS_ENV: value,
                             N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
                         }
-                    ), mock.patch(
-                        "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                        return_value=root,
                     ):
                         policy = production_recovery_policy(8360)
                     self.assertEqual(policy, _DEFAULT_POLICY)
@@ -139,9 +150,8 @@ class RecoveryOverrideTests(unittest.TestCase):
                         N3_RECOVERY_ATTEMPTS_ENV: attempts,
                         N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
                     }
-                ), mock.patch(
-                    "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                    return_value=root,
+                ), mock.patch.object(
+                    production_monitor, "__file__", str(_source_path(root))
                 ):
                     policy = production_recovery_policy(8360)
 
@@ -165,6 +175,7 @@ class RecoveryOverrideTests(unittest.TestCase):
         )
         for variant in variants:
             variant.mkdir(parents=True)
+            _source_path(variant)
 
         alias_root = outer / "alias" / "tmp" / "combat_capture"
         alias_root.parent.mkdir(parents=True)
@@ -173,20 +184,23 @@ class RecoveryOverrideTests(unittest.TestCase):
         parent_alias.symlink_to(outer, target_is_directory=True)
         parent_alias_root = parent_alias / "tmp" / "combat_capture"
 
-        cases = tuple((path, "runtime_root_not_isolated") for path in variants) + (
-            (alias_root, "runtime_root_symlinked"),
-            (parent_alias_root, "runtime_root_symlinked"),
+        cases = tuple(
+            (_source_path(path), "runtime_root_not_isolated") for path in variants
+        ) + (
+            (_source_path(alias_root), "runtime_root_symlinked"),
+            (_source_path(parent_alias_root), "runtime_root_symlinked"),
         )
-        for selected_root, expected_reason in cases:
-            with self.subTest(root_kind=expected_reason, root_name=selected_root.name):
+        for selected_source, expected_reason in cases:
+            with self.subTest(
+                root_kind=expected_reason, source_name=selected_source.name
+            ):
                 with _GateEnvironment(
                     **{
                         N3_RECOVERY_ATTEMPTS_ENV: "2",
                         N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
                     }
-                ), mock.patch(
-                    "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                    return_value=selected_root,
+                ), mock.patch.object(
+                    production_monitor, "__file__", str(selected_source)
                 ), self.assertLogs(
                     "web.extensions.opentunnel_sharing.production_monitor",
                     level="WARNING",
@@ -199,19 +213,18 @@ class RecoveryOverrideTests(unittest.TestCase):
                 )
 
     def test_override_is_ignored_when_the_imported_source_path_is_symlinked(self) -> None:
-        scratch, _root = _sandbox_root()
+        scratch, root = _sandbox_root()
         self.addCleanup(scratch.cleanup)
         source_alias = Path(scratch.name) / "production_monitor.py"
-        source_alias.symlink_to(Path(production_monitor.__file__))
+        source_alias.symlink_to(_source_path(root))
 
         with _GateEnvironment(
             **{
                 N3_RECOVERY_ATTEMPTS_ENV: "1",
                 N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
             }
-        ), mock.patch.object(production_monitor, "__file__", str(source_alias)), mock.patch(
-            "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-            side_effect=AssertionError("symlinked source must fail before root lookup"),
+        ), mock.patch.object(
+            production_monitor, "__file__", str(source_alias)
         ), self.assertLogs(
             "web.extensions.opentunnel_sharing.production_monitor", level="WARNING"
         ) as captured:
@@ -234,9 +247,8 @@ class RecoveryOverrideTests(unittest.TestCase):
                         N3_RECOVERY_ATTEMPTS_ENV: "1",
                         N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
                     }
-                ), mock.patch(
-                    "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                    return_value=root,
+                ), mock.patch.object(
+                    production_monitor, "__file__", str(_source_path(root))
                 ), self.assertLogs(
                     "web.extensions.opentunnel_sharing.production_monitor",
                     level="WARNING",
@@ -253,9 +265,8 @@ class RecoveryOverrideTests(unittest.TestCase):
                 values = {N3_RECOVERY_ATTEMPTS_ENV: "1"}
                 if run_id is not _MISSING:
                     values[N3_GATE_RUN_ID_ENV] = run_id
-                with _GateEnvironment(**values), mock.patch(
-                    "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-                    return_value=root,
+                with _GateEnvironment(**values), mock.patch.object(
+                    production_monitor, "__file__", str(_source_path(root))
                 ), self.assertLogs(
                     "web.extensions.opentunnel_sharing.production_monitor",
                     level="WARNING",
@@ -278,9 +289,8 @@ class RecoveryOverrideTests(unittest.TestCase):
                 N3_RECOVERY_ATTEMPTS_ENV: override_value,
                 N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
             }
-        ), mock.patch(
-            "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-            return_value=rejected_root,
+        ), mock.patch.object(
+            production_monitor, "__file__", str(_source_path(rejected_root))
         ), self.assertLogs(
             "web.extensions.opentunnel_sharing.production_monitor", level="WARNING"
         ) as captured:
@@ -314,9 +324,8 @@ class RecoveryOverrideTests(unittest.TestCase):
                 N3_RECOVERY_ATTEMPTS_ENV: "3",
                 N3_GATE_RUN_ID_ENV: _GATE_RUN_ID,
             }
-        ), mock.patch(
-            "web.extensions.opentunnel_sharing.production_monitor.repository_root",
-            return_value=root,
+        ), mock.patch.object(
+            production_monitor, "__file__", str(_source_path(root))
         ):
             service = create_production_player_sharing_service(
                 gateway=object(),  # type: ignore[arg-type]

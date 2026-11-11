@@ -147,6 +147,27 @@ For every row, an observed unmet PASS criterion with complete and reliable evide
 
 ## Evidence layout, redaction, and verdicts
 
+### Host ownership and abort-cleanup interpretation
+
+The host launcher PID and the host listener PID are distinct ownership facts.
+`launcher_pid` is the managed `run_web.main()` process and remains the process-
+group (`killpg`) anchor. `owner_pid` is the single PID reported as listening on
+127.0.0.1:8360; it MUST be a descendant in the launcher's process group. The
+driver retains both PIDs as owned host processes. Listener and companion
+ownership observations use the listener PID, while managed shutdown signals
+only the positively established launcher process group. Provider-ledger
+activation order is checked against the observed listener-PID sequence, not
+the mixed launcher/listener process history.
+
+The driver's final teardown MUST attempt removal of the identity-verified,
+driver-created state root on every run exit path, including host-start failure
+and fail-fast row aborts. Removal is allowed only after the host stop and
+free-port checks succeed and the root and parent identities still match.
+Remove the `neq-n3g` parent only when this driver created it, its identity still
+matches, and it is empty. If ownership or stopped-host evidence is uncertain,
+retain the state and report teardown failure instead of broadening deletion.
+These interpretations add no row, cap, platform, or manifest fields.
+
 Write evidence under `<run>/capture` with these artifacts:
 
 - `run.json`
