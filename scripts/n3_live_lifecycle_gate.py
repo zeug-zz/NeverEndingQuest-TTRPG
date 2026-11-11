@@ -5,14 +5,15 @@
 
 """Primary-owned live N3 lifecycle driver.
 
-The driver is intentionally fail-closed. L01-L05 have bounded executors;
-L06-L10 remain placeholders until Task 6.6.
+The driver is intentionally fail-closed. Every frozen row has a bounded
+executor; all state-changing observations remain owned by the isolated host.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import errno
 import hashlib
 import html.parser
 import http.client
@@ -46,13 +47,18 @@ from web.extensions.opentunnel_sharing.companion import (
     verify_companion_digest,
 )
 from web.extensions.opentunnel_sharing.identity_bootstrap import (
+    DefaultCommandRunner,
     DefaultIdentityObserver,
     IdentityObserver,
     Observation,
+    RunResult,
+    parse_identity_status,
 )
 from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
+    MAX_UNIX_SOCKET_PATH,
     ProfileLayout,
+    companion_environment,
     prepare_profile,
 )
 from web.extensions.opentunnel_sharing.relay_supervision import RecoveryPolicy
@@ -66,7 +72,7 @@ from web.extensions.player.contracts import PROTOCOL_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_ID = "N3-live"
-MANIFEST_ID = "n3-live-lifecycle-v1"
+MANIFEST_ID = "n3-live-lifecycle-v2"
 EVIDENCE_BASE = Path("tmp/router-rollout/v2-network/n3")
 CAPTURE_RELATIVE = Path("tmp/combat_capture")
 HOST_PORT = 8360
@@ -174,8 +180,8 @@ LIVE_ROWS = (
     LiveRow(
         "L10", "clean-teardown", 300,
         "The run's gate-owned profile and any gate remote tunnel identity are positively identified; the installed companion path is verified.",
-        "Stop sharing; stop the host; delete the gate remote tunnel identity using the installed companion's delete --yes with the gate profile environment only; verify deletion via status; verify ports are free and no run processes remain; remove the gate state root; verify the public URL is unreachable afterwards.",
-        "The gate remote identity is deleted and confirmed absent; ports are free; no run processes remain; the gate state root is removed; the public URL is unreachable; the installed companion remains in place.",
+        "Stop sharing; stop the host; delete the gate remote tunnel identity using the installed companion's delete --yes with the gate profile environment only; verify deletion via status; verify ports are free and no run processes remain; remove only the gate state root; remove its neq-n3g parent only if empty; verify the public URL is unreachable afterwards.",
+        "The gate remote identity is deleted and confirmed absent; ports are free; no run processes remain; only the unique gate state root is removed and its neq-n3g parent is removed only if empty; the public URL is unreachable; the installed companion remains in place.",
         "Ownership of the profile/identity/process or the status/port/public-reachability evidence cannot be established safely. Any deletion outside the gate profile, remaining process/state/port/public reachability, or removal of the installed companion is FAIL.",
     ),
 )
@@ -196,6 +202,38 @@ FROZEN_CAPS = MappingProxyType(
 APPROVED_PLATFORMS = ("macos-arm64", "linux-arm64")
 
 
+def _state_root_id8(run_id: str) -> str:
+    if RUN_ID_PATTERN.fullmatch(run_id) is None:
+        raise GateError("run_id_invalid")
+    return hashlib.sha256(run_id.encode("ascii")).hexdigest()[:8]
+
+
+def _default_state_cache_base(
+    *,
+    platform: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> Path:
+    selected_platform = sys.platform if platform is None else platform
+    selected_environment = os.environ if environ is None else environ
+    selected_home = Path.home() if home is None else home
+    if not selected_home.is_absolute():
+        raise GateError("gate_state_root_invalid")
+    if selected_platform == "darwin":
+        return selected_home / "Library" / "Caches"
+    cache_home = selected_environment.get("XDG_CACHE_HOME")
+    if cache_home:
+        selected_cache = Path(cache_home)
+        if not selected_cache.is_absolute():
+            raise GateError("gate_state_root_invalid")
+        return selected_cache
+    return selected_home / ".cache"
+
+
+def _state_path_sha256(state_root: Path) -> str:
+    return hashlib.sha256(os.fsencode(os.fspath(state_root))).hexdigest()
+
+
 def live_manifest() -> dict[str, object]:
     """Return a fresh JSON-compatible projection of the frozen live contract."""
     return {
@@ -204,6 +242,14 @@ def live_manifest() -> dict[str, object]:
         "platforms": list(APPROVED_PLATFORMS),
         "host": {"host": "127.0.0.1", "port": HOST_PORT},
         "player": {"host": "127.0.0.1", "port": PLAYER_PORT},
+        "gate_state_root": {
+            "macos": "~/Library/Caches/neq-n3g/<id8>",
+            "other_approved": "$XDG_CACHE_HOME/neq-n3g/<id8> or ~/.cache/neq-n3g/<id8>",
+            "id8": "first-8-hex-of-sha256(run_id)",
+            "socket_path_bytes_must_be_less_than": MAX_UNIX_SOCKET_PATH,
+            "evidence": ["id8", "sha256(os.fsencode(state_root))"],
+            "teardown": "remove-run-root; remove-neq-n3g-parent-only-if-empty",
+        },
         "caps": dict(FROZEN_CAPS),
         "provider_budget_ceiling": PROVIDER_BUDGET,
         "verdict_policy": {
@@ -244,7 +290,7 @@ def calculate_manifest_digest() -> str:
 
 
 # Updated only as part of a reviewed frozen-contract revision.
-FROZEN_MANIFEST_SHA256 = "5c17c8e9187140b5d662bdb07e2e13704fef637ae45a6d71e4689ea1d790cde1"
+FROZEN_MANIFEST_SHA256 = "a9bb1f3f23df1cd216f627dd1974f7a4702da6d533e7f39a4603ca0d30ca3693"
 
 
 def verify_frozen_manifest() -> bool:
@@ -1024,23 +1070,16 @@ class RowContext:
     identity_observer_factory: Callable[[ProfileLayout, Path], IdentityObserver] = (
         lambda layout, path: DefaultIdentityObserver(layout, path)
     )
+    companion_runner: Callable[[Sequence[str], Mapping[str, str], float], RunResult] = field(
+        default_factory=DefaultCommandRunner, repr=False
+    )
+    companion_sha256: str | None = None
     monotonic: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
 
     def remember_secret(self, value: object) -> None:
         if isinstance(value, str) and len(value) >= 3 and value not in self.secrets:
             self.secrets.append(value)
-
-
-class PlaceholderRowExecutor:
-    """Fail-closed placeholder retained for Tasks 6.6 rows."""
-
-    def __init__(self, row_id: str, name: str) -> None:
-        self.row_id = row_id
-        self.name = name
-
-    def execute(self, _context: RowContext) -> RowExecutionResult:
-        return RowExecutionResult("BLOCKED", "executor-not-implemented")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1712,6 +1751,996 @@ class L05RelayLossRecoveryExecutor:
                 old_origin_client.disconnect()
 
 
+class L06CredentialRotationExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        session = client.session
+        if session is None or client.origin is None:
+            return _blocked("rotation_precondition_unavailable")
+        old_credential = session.credential
+        if not old_credential:
+            return _blocked("old_credential_unavailable")
+        try:
+            ready_before = _host_status(context.host_api.get_status())
+            if ready_before is None:
+                return _blocked("sharing_status_unavailable")
+            if ready_before.get("state") != "ready":
+                return _failed("sharing_not_ready_for_rotation")
+
+            old_snapshot = client.authenticated_snapshot(session)
+            old_snapshot_valid = _decode_player_snapshot(old_snapshot) is not None
+            if not old_snapshot_valid:
+                return _failed("old_session_not_valid_before_rotation")
+            if client.socket_connected is not True:
+                snapshot = _decode_player_snapshot(old_snapshot)
+                if snapshot is None or not client.connect_player_socket(session, snapshot):
+                    return _blocked("old_socket_precondition_unavailable")
+            if client.socket_connected is not True:
+                return _blocked("old_socket_precondition_unavailable")
+
+            rotated = context.host_api.post("rotate", {})
+            rotated_status = _host_status(rotated)
+            new_credential = rotated.payload.get("credential")
+            if (
+                rotated.status != 200
+                or rotated.payload.get("ok") is not True
+                or not isinstance(new_credential, str)
+                or not new_credential
+                or len(new_credential) > 256
+                or new_credential == old_credential
+            ):
+                return _failed("credential_rotation_contract_failed")
+            context.remember_secret(new_credential)
+            if rotated_status is None or rotated_status.get("state") != "ready":
+                return _failed("sharing_not_ready_after_rotation")
+
+            socket_connected_after = client.socket_connected
+            if socket_connected_after is None:
+                return _blocked("rotated_socket_state_unavailable")
+            if socket_connected_after:
+                return _failed("old_socket_not_disconnected")
+
+            invitation = context.host_api.post("copy-invitation", {})
+            invitation_url = invitation.payload.get("invitation")
+            invitation_status = _host_status(invitation)
+            if (
+                invitation.status != 200
+                or invitation.payload.get("ok") is not True
+                or not isinstance(invitation_url, str)
+                or invitation_status is None
+                or invitation_status.get("state") != "ready"
+            ):
+                return _failed("rotated_invitation_unavailable")
+            context.remember_secret(invitation_url)
+            client.bind_invitation(invitation_url)
+
+            old_cookie_response = client.authenticated_snapshot(session)
+            if not _data_free_protected_refusal(old_cookie_response):
+                return _failed("old_session_accepted_after_rotation")
+
+            old_challenge_response, old_challenge = client.login_challenge()
+            if old_challenge_response.status != 200 or old_challenge is None:
+                return _blocked("old_credential_probe_unavailable")
+            context.remember_secret(old_challenge.csrf_nonce)
+            context.remember_secret(old_challenge.prelogin_cookie)
+            old_login, _old_session = client.login(old_challenge, old_credential)
+            if old_login.status not in {400, 401, 403}:
+                if 200 <= old_login.status < 400:
+                    return _failed("old_credential_accepted_after_rotation")
+                return _blocked("old_credential_probe_unavailable")
+
+            new_challenge_response, new_challenge = client.login_challenge()
+            if new_challenge_response.status != 200 or new_challenge is None:
+                return _blocked("new_credential_probe_unavailable")
+            context.remember_secret(new_challenge.csrf_nonce)
+            context.remember_secret(new_challenge.prelogin_cookie)
+            new_login, new_session = client.login(new_challenge, new_credential)
+            if new_login.status != 200 or new_session is None:
+                if new_login.status in {400, 401, 403}:
+                    return _failed("new_credential_rejected_after_rotation")
+                return _blocked("new_credential_probe_unavailable")
+            context.remember_secret(new_session.cookie)
+            context.remember_secret(new_session.csrf_token)
+            new_snapshot = client.authenticated_snapshot(new_session)
+            if _decode_player_snapshot(new_snapshot) is None:
+                return _failed("new_session_unavailable_after_rotation")
+
+            return RowExecutionResult(
+                "PASS",
+                "credential_rotation_revoked_old_access",
+                {
+                    "rotation_ready": True,
+                    "old_session_status": old_cookie_response.status,
+                    "old_credential_status": old_login.status,
+                    "new_login_status": new_login.status,
+                    "new_session_snapshot_valid": True,
+                    "old_socket_disconnected": True,
+                    "old_socket_no_further_events": True,
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_rotation_contract_invalid")
+            return _blocked("l06_public_observation_unavailable")
+        except (HostApiError, GateError, ValueError):
+            return _blocked("l06_lifecycle_observation_unavailable")
+
+
+class L07StopSharingExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        session = client.session
+        owner_pid = context.host.owner_pid
+        if session is None or client.origin is None or type(owner_pid) is not int:
+            return _blocked("stop_precondition_unavailable")
+        try:
+            before = _host_status(context.host_api.get_status())
+            if before is None:
+                return _blocked("sharing_status_unavailable")
+            if before.get("state") != "ready":
+                return _failed("sharing_not_ready_for_stop")
+            initial_session = client.authenticated_snapshot(session)
+            if _decode_player_snapshot(initial_session) is None:
+                return _failed("active_session_not_valid_before_stop")
+
+            listener_before = _inspect_port(context, PLAYER_PORT)
+            if listener_before is None:
+                return _blocked("player_listener_observation_unavailable")
+            if not _host_listener_count_is_one(listener_before, owner_pid):
+                return _failed("player_listener_precondition_failed")
+            companion_before = _profile_companion_records(context)
+            if companion_before is None:
+                return _blocked("companion_process_observation_unavailable")
+            if len(companion_before) != 1:
+                return _failed("owned_companion_precondition_failed")
+            host_health_before = _observe_host_health(context)
+            if host_health_before is None:
+                return _blocked("host_health_observation_unavailable")
+            if not host_health_before:
+                return _failed("host_unhealthy_before_stop")
+
+            stopped = context.host_api.post("stop", {})
+            stopped_status = _host_status(stopped)
+            if (
+                stopped.status != 200
+                or stopped.payload.get("ok") is not True
+                or stopped_status is None
+                or stopped_status.get("state") != "off"
+            ):
+                return _failed("sharing_stop_failed")
+
+            try:
+                public_after = client.request("GET", "/")
+            except PublicClientError:
+                return _blocked("public_stop_observation_unavailable")
+            if not _public_root_unreachable(public_after):
+                return _failed("public_player_reachable_after_stop")
+
+            listener_after = _inspect_port(context, PLAYER_PORT)
+            if listener_after is None or listener_after.state == "unknown":
+                return _blocked("player_listener_observation_unavailable")
+            if listener_after.state != "free" or listener_after.pids:
+                return _failed("player_listener_remains_after_stop")
+            companion_after = _profile_companion_records(context)
+            if companion_after is None:
+                return _blocked("companion_process_observation_unavailable")
+            if companion_after:
+                return _failed("owned_companion_remains_after_stop")
+
+            old_session_after = client.authenticated_snapshot(session)
+            if not _data_free_protected_refusal(old_session_after):
+                return _failed("session_remains_valid_after_stop")
+            host_health_after = _observe_host_health(context)
+            if host_health_after is None:
+                return _blocked("host_health_observation_unavailable")
+            if not host_health_after:
+                return _failed("host_health_lost_after_stop")
+            return RowExecutionResult(
+                "PASS",
+                "sharing_stopped_and_session_revoked",
+                {
+                    "public_player_unreachable": True,
+                    "public_status": public_after.status,
+                    "player_port_free": True,
+                    "owned_companion_count": 0,
+                    "session_invalidated": True,
+                    "host_healthy": True,
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_stop_contract_invalid")
+            return _blocked("l07_public_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l07_lifecycle_observation_unavailable")
+
+
+class L08HostExitRestartExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        try:
+            status = _host_status(context.host_api.get_status())
+            if status is None:
+                return _blocked("host_status_unavailable")
+            if status.get("identity_initialized") is not True:
+                return _failed("initialized_identity_not_available")
+
+            # L07 deliberately stopped sharing. Restore it here to exercise an
+            # actual active-host exit, without repeating identity bootstrap.
+            if status.get("state") != "ready":
+                if status.get("state") not in {"off", "initializing_required"}:
+                    return _failed("sharing_state_invalid_before_host_exit")
+                started = context.host_api.post("start", {})
+                status = _host_status(started)
+                if (
+                    started.status != 200
+                    or started.payload.get("ok") is not True
+                    or status is None
+                    or status.get("state") != "ready"
+                ):
+                    return _failed("sharing_start_before_host_exit_failed")
+            if status.get("state") != "ready":
+                return _failed("sharing_not_ready_before_host_exit")
+
+            credential = _current_credential(client)
+            if credential is None:
+                return _blocked("active_credential_unavailable")
+            invitation = _bind_current_invitation(context, client)
+            if invitation is None:
+                return _blocked("public_invitation_unavailable")
+            session = _login_public_session(context, client, credential)
+            if session is None:
+                return _blocked("active_session_unavailable")
+
+            owner_pid = context.host.owner_pid
+            host_record = _observe_owned_host(context)
+            if type(owner_pid) is not int or host_record is None:
+                return _blocked("host_process_ownership_unavailable")
+            listener = _inspect_port(context, PLAYER_PORT)
+            if listener is None or listener.state == "unknown":
+                return _blocked("active_player_listener_unavailable")
+            if not _host_listener_count_is_one(listener, owner_pid):
+                return _failed("active_player_listener_invalid")
+            companion = _owned_profile_companions(context)
+            if companion is None:
+                return _blocked("active_companion_ownership_unavailable")
+            if len(companion) != 1:
+                return _failed("active_companion_count_invalid")
+            layout = _gate_profile_layout(context)
+            if layout is None:
+                return _blocked("gate_profile_observation_unavailable")
+            owner_record_state = _owner_record_state(layout)
+            if owner_record_state == "unknown":
+                return _blocked("owner_record_observation_unavailable")
+            if owner_record_state != "present":
+                return _blocked("active_owner_record_unavailable")
+            active_snapshot = client.authenticated_snapshot(session)
+            if _decode_player_snapshot(active_snapshot) is None:
+                return _failed("active_session_not_valid_before_host_exit")
+
+            if context.host.stop() is not True:
+                return _blocked("owned_host_stop_unconfirmed")
+            if not _ports_are_free_for_context(context):
+                port_state = _ports_state_for_context(context)
+                if port_state is None or "unknown" in port_state:
+                    return _blocked("host_exit_port_observation_unavailable")
+                return _failed("ports_occupied_after_host_exit")
+            if not _owner_record_absent(layout):
+                owner_state = _owner_record_state(layout)
+                if owner_state == "present":
+                    return _failed("owner_record_remains_after_host_exit")
+                return _blocked("owner_record_observation_unavailable")
+            processes = _run_processes_absent(context, (owner_pid,), layout)
+            if processes is None:
+                return _blocked("run_process_observation_unavailable")
+            if not processes:
+                return _failed("run_process_remains_after_host_exit")
+
+            previous_generation = getattr(context.host, "process_generation", None)
+            if context.host.start() is not True:
+                return _failed("owned_host_restart_failed")
+            new_pid = context.host.owner_pid
+            restarted_host_record = _observe_owned_host(context)
+            if (
+                type(new_pid) is not int
+                or new_pid <= 0
+                or restarted_host_record is None
+                or type(previous_generation) is int
+                and getattr(context.host, "process_generation", 0) <= previous_generation
+            ):
+                if restarted_host_record is None:
+                    return _blocked("restarted_host_identity_unavailable")
+                return _failed("owned_host_restart_identity_invalid")
+            if (
+                restarted_host_record.creation_token == host_record.creation_token
+                and restarted_host_record.started_at <= host_record.started_at
+            ):
+                return _failed("owned_host_restart_identity_invalid")
+            if not _host_ports_owned_or_free(context.port_inspector, new_pid):
+                port_state = _ports_state_for_context(context)
+                if port_state is None or "unknown" in port_state:
+                    return _blocked("restarted_host_port_ownership_unavailable")
+                return _failed("restarted_host_port_ownership_invalid")
+
+            restarted = _host_status(context.host_api.get_status())
+            if restarted is None:
+                return _blocked("restarted_host_status_unavailable")
+            if restarted.get("state") != "off":
+                return _failed("sharing_auto_started_after_host_restart")
+            if restarted.get("identity_initialized") is not True:
+                return _failed("gate_identity_not_preserved_after_restart")
+            launches = restarted.get("companion_launches")
+            if type(launches) is not int:
+                return _blocked("restart_reconciliation_observation_unavailable")
+            if launches != 0:
+                return _failed("sharing_auto_started_after_host_restart")
+            restarted_processes = _run_processes_absent(context, (), layout)
+            if restarted_processes is None:
+                return _blocked("restart_process_observation_unavailable")
+            if not restarted_processes:
+                return _failed("orphan_process_after_host_restart")
+            player_after_restart = _inspect_port(context, PLAYER_PORT)
+            if player_after_restart is None or player_after_restart.state == "unknown":
+                return _blocked("restart_player_port_observation_unavailable")
+            if player_after_restart.state != "free" or player_after_restart.pids:
+                return _failed("player_listener_auto_started_after_restart")
+            if not _owner_record_absent(layout):
+                return _failed("owner_record_reappeared_after_restart")
+
+            return RowExecutionResult(
+                "PASS",
+                "owned_host_exit_cleanup_and_restart_off",
+                {
+                    "host_exit_confirmed": True,
+                    "ports_free_after_exit": True,
+                    "owned_companion_absent_after_exit": True,
+                    "owner_record_cleared": True,
+                    "host_restarted": True,
+                    "sharing_state_after_restart": "off",
+                    "identity_preserved": True,
+                    "sharing_auto_started": False,
+                    "reconciliation_clean": True,
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_host_exit_contract_invalid")
+            return _blocked("l08_public_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l08_lifecycle_observation_unavailable")
+
+
+class L09RevokeAccessExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        try:
+            before = _host_status(context.host_api.get_status())
+            if before is None:
+                return _blocked("host_status_unavailable")
+            if before.get("identity_initialized") is not True:
+                return _failed("identity_not_initialized_before_revoke")
+            up_before = _identity_up_counter(before)
+            if up_before is None:
+                return _blocked("identity_up_counter_unavailable")
+
+            started = context.host_api.post("start", {})
+            ready = _host_status(started)
+            if (
+                started.status != 200
+                or started.payload.get("ok") is not True
+                or ready is None
+                or ready.get("state") != "ready"
+            ):
+                return _failed("sharing_start_before_revoke_failed")
+            up_after_start = _identity_up_counter(ready)
+            if up_after_start is None:
+                return _blocked("identity_up_counter_unavailable")
+            if up_after_start != up_before:
+                return _failed("identity_reinitialized_on_start")
+
+            credential = _current_credential(client)
+            if credential is None:
+                return _blocked("current_credential_unavailable")
+            if _bind_current_invitation(context, client) is None:
+                return _blocked("public_invitation_unavailable")
+            session = _login_public_session(context, client, credential)
+            if session is None:
+                return _blocked("active_session_unavailable")
+            if _decode_player_snapshot(client.authenticated_snapshot(session)) is None:
+                return _failed("active_session_not_valid_before_revoke")
+
+            revoked = context.host_api.post("revoke", {})
+            revoked_status = _host_status(revoked)
+            if (
+                revoked.status != 200
+                or revoked.payload.get("ok") is not True
+                or revoked.payload.get("reason") != "access_revoked"
+                or revoked_status is None
+                or revoked_status.get("state") != "off"
+            ):
+                return _failed("access_revocation_failed")
+            up_after_revoke = _identity_up_counter(revoked_status)
+            if up_after_revoke is None:
+                return _blocked("identity_up_counter_unavailable")
+            if up_after_revoke != up_after_start:
+                return _failed("identity_reinitialized_during_revoke")
+
+            old_session = client.authenticated_snapshot(session)
+            if not _data_free_protected_refusal(old_session):
+                return _failed("session_accepted_after_revoke")
+            challenge_response, challenge = client.login_challenge()
+            if challenge is None:
+                if not _data_free_protected_refusal(challenge_response):
+                    if 200 <= challenge_response.status < 400:
+                        return _failed("revoked_login_shell_invalid")
+                    return _blocked("revoked_login_probe_unavailable")
+                old_login_status = challenge_response.status
+            else:
+                if challenge_response.status != 200:
+                    return _blocked("revoked_login_probe_unavailable")
+                context.remember_secret(challenge.csrf_nonce)
+                context.remember_secret(challenge.prelogin_cookie)
+                old_login, _revoked_session = client.login(challenge, credential)
+                if old_login.status not in {400, 401, 403}:
+                    if 200 <= old_login.status < 400:
+                        return _failed("revoked_credential_accepted")
+                    return _blocked("revoked_login_probe_unavailable")
+                old_login_status = old_login.status
+            unauthenticated = client.unauthenticated_snapshot()
+            if not _data_free_protected_refusal(unauthenticated):
+                return _failed("unauthenticated_service_available_after_revoke")
+            unavailable_invitation = context.host_api.post("copy-invitation", {})
+            if (
+                unavailable_invitation.status != 409
+                or unavailable_invitation.payload.get("ok") is not False
+                or unavailable_invitation.payload.get("reason")
+                != "invitation_unavailable"
+            ):
+                return _failed("invitation_available_after_revoke")
+            return RowExecutionResult(
+                "PASS",
+                "access_revoked_without_identity_rebootstrap",
+                {
+                    "identity_up_invocations_before": up_before,
+                    "identity_up_invocations_after_start": up_after_start,
+                    "identity_up_invocations_after_revoke": up_after_revoke,
+                    "revoked_session_status": old_session.status,
+                    "revoked_login_status": old_login_status,
+                    "unauthenticated_status": unauthenticated.status,
+                    "unauthenticated_data_free": True,
+                    "invitation_unavailable": True,
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_revoke_contract_invalid")
+            return _blocked("l09_public_observation_unavailable")
+        except (HostApiError, GateError, ValueError):
+            return _blocked("l09_lifecycle_observation_unavailable")
+
+
+class L10CleanTeardownExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        if client.origin is None:
+            return _blocked("public_origin_unavailable_for_teardown")
+        try:
+            companion = _companion_path(context)
+            if not _installed_companion_matches(context, companion):
+                return _blocked("installed_companion_identity_unavailable")
+            layout = _gate_profile_layout(context)
+            state_identity = _owned_state_root_identity(context)
+            if layout is None or state_identity is None:
+                return _blocked("gate_profile_ownership_unavailable")
+            if layout.profile != DEFAULT_PROFILE:
+                return _blocked("gate_profile_ownership_unavailable")
+            if not _identity_owner_record_matches(context, layout):
+                return _blocked("gate_profile_owner_unverified")
+
+            host_pid = context.host.owner_pid
+            if type(host_pid) is not int or _observe_owned_host(context) is None:
+                return _blocked("host_process_ownership_unavailable")
+            current = _host_status(context.host_api.get_status())
+            if current is None:
+                return _blocked("host_status_unavailable")
+            if current.get("identity_initialized") is not True:
+                return _failed("gate_identity_not_initialized")
+            up_count = _identity_up_counter(current)
+            if up_count is None:
+                return _blocked("identity_up_counter_unavailable")
+
+            stopped = context.host_api.post("stop", {})
+            stopped_status = _host_status(stopped)
+            if (
+                stopped.status != 200
+                or stopped.payload.get("ok") is not True
+                or stopped_status is None
+                or stopped_status.get("state") != "off"
+            ):
+                return _failed("sharing_stop_before_teardown_failed")
+
+            if context.host.stop() is not True:
+                return _blocked("owned_host_stop_unconfirmed")
+            if not _ports_are_free_for_context(context):
+                port_state = _ports_state_for_context(context)
+                if port_state is None or "unknown" in port_state:
+                    return _blocked("teardown_port_observation_unavailable")
+                return _failed("ports_occupied_after_host_stop")
+            owner_state = _owner_record_state(layout)
+            if owner_state == "unknown":
+                return _blocked("owner_record_observation_unavailable")
+            if owner_state != "absent":
+                return _failed("owner_record_remains_after_host_stop")
+            owned_host_pids = getattr(context.host, "owned_pids", (host_pid,))
+            if not isinstance(owned_host_pids, (list, tuple)):
+                return _blocked("host_process_ownership_unavailable")
+            processes_absent = _run_processes_absent(
+                context, owned_host_pids, layout
+            )
+            if processes_absent is None:
+                return _blocked("run_process_observation_unavailable")
+            if not processes_absent:
+                return _failed("run_process_remains_after_host_stop")
+
+            environment = companion_environment(layout)
+            if set(environment) != {
+                "HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_STATE_HOME",
+                "XDG_RUNTIME_DIR",
+            }:
+                return _blocked("gate_profile_environment_invalid")
+            before_delete = _run_companion_status(context, companion, layout, environment)
+            if before_delete is None:
+                return _blocked("identity_status_before_delete_unavailable")
+            before_evidence = _identity_status_evidence(before_delete.bounded_output)
+            if before_evidence is None:
+                return _blocked("identity_status_before_delete_invalid")
+            if not before_evidence[0]:
+                return _failed("gate_remote_identity_not_present")
+            if before_evidence[1]:
+                return _failed("gate_identity_service_still_running")
+            if not before_evidence[2]:
+                return _blocked("identity_service_state_unproven_before_delete")
+
+            delete = _run_companion_command(
+                context,
+                (
+                    str(companion),
+                    "--profile",
+                    layout.profile,
+                    "delete",
+                    "--yes",
+                ),
+                environment,
+            )
+            if delete is None or delete.timed_out or delete.output_truncated:
+                return _blocked("identity_delete_observation_unavailable")
+            if delete.returncode is None:
+                return _blocked("identity_delete_observation_unavailable")
+            if delete.returncode != 0:
+                return _failed("gate_remote_identity_delete_failed")
+
+            after_delete = _run_companion_status(
+                context, companion, layout, environment
+            )
+            if after_delete is None:
+                return _blocked("identity_status_after_delete_unavailable")
+            absent = _identity_absent_status(after_delete.bounded_output)
+            if absent is None:
+                return _blocked("identity_absence_not_proven")
+            if not absent:
+                return _failed("gate_remote_identity_remains")
+
+            if not _ports_are_free_for_context(context):
+                port_state = _ports_state_for_context(context)
+                if port_state is None:
+                    return _blocked("teardown_port_observation_unavailable")
+                return _failed("ports_occupied_after_identity_delete")
+            processes_absent = _run_processes_absent(context, (), layout)
+            if processes_absent is None:
+                return _blocked("run_process_observation_unavailable")
+            if not processes_absent:
+                return _failed("run_process_remains_after_identity_delete")
+            if not _installed_companion_matches(context, companion):
+                return _failed("installed_companion_missing_after_delete")
+
+            state_root = Path(context.host.state_root)
+            if not _private_state_tree_matches(state_root, state_identity):
+                return _blocked("gate_state_root_ownership_changed")
+            try:
+                shutil.rmtree(state_root)
+            except OSError:
+                return _failed("gate_state_root_removal_failed")
+            if state_root.exists() or state_root.is_symlink():
+                return _failed("gate_state_root_remains")
+            parent_identity = getattr(context.host, "_state_parent_identity", None)
+            parent_removed = _remove_private_state_parent_if_empty(
+                state_root.parent, parent_identity
+            )
+            if parent_removed is None:
+                return _blocked("gate_state_parent_removal_unavailable")
+
+            try:
+                public_after = client.request("GET", "/")
+            except PublicClientError:
+                return _blocked("public_teardown_observation_unavailable")
+            if not _public_root_unreachable(public_after):
+                return _failed("public_player_reachable_after_teardown")
+            client.disconnect()
+            return RowExecutionResult(
+                "PASS",
+                "gate_profile_identity_and_processes_removed",
+                {
+                    "sharing_stopped": True,
+                    "host_stopped": True,
+                    "identity_deleted_and_absent": True,
+                    "identity_up_invocations_before_teardown": up_count,
+                    "ports_free": True,
+                    "run_processes_absent": True,
+                    "gate_state_root_removed": True,
+                    "gate_state_root_id8": _state_root_id8(context.run_id),
+                    "gate_state_path_sha256": _state_path_sha256(state_root),
+                    "gate_state_parent_removed_if_empty": parent_removed,
+                    "public_url_unreachable": True,
+                    "installed_companion_preserved": True,
+                    "public_status": public_after.status,
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_teardown_contract_invalid")
+            return _blocked("l10_public_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l10_lifecycle_observation_unavailable")
+
+
+def _inspect_port(context: RowContext, port: int) -> preflight_gate.PortObservation | None:
+    if context.port_inspector is None:
+        return None
+    try:
+        observation = context.port_inspector.inspect(port)
+    except Exception:
+        return None
+    return observation if _port_observation_valid(observation, port) else None
+
+
+def _observe_host_health(context: RowContext) -> bool | None:
+    owner_pid = context.host.owner_pid
+    observation = _inspect_port(context, HOST_PORT)
+    if type(owner_pid) is not int or observation is None or observation.state == "unknown":
+        return None
+    return bool(observation.state == "occupied" and observation.pids == (owner_pid,))
+
+
+def _ports_state_for_context(context: RowContext) -> tuple[str, str] | None:
+    host = _inspect_port(context, HOST_PORT)
+    player = _inspect_port(context, PLAYER_PORT)
+    if host is None or player is None:
+        return None
+    return host.state, player.state
+
+
+def _ports_are_free_for_context(context: RowContext) -> bool:
+    state = _ports_state_for_context(context)
+    if state is None:
+        return False
+    return state == ("free", "free")
+
+
+def _profile_companion_records(context: RowContext) -> tuple[ProcessRecord, ...] | None:
+    try:
+        path = _companion_path(context)
+        matches = _matching_companion_processes(
+            context.process_table.snapshot(), path, DEFAULT_PROFILE
+        )
+    except (GateError, ProcessTableError, OSError, ValueError):
+        return None
+    return matches
+
+
+def _run_processes_absent(
+    context: RowContext,
+    owned_host_pids: Sequence[int],
+    layout: ProfileLayout,
+) -> bool | None:
+    try:
+        records = context.process_table.snapshot()
+        path = _companion_path(context)
+        matches = _matching_companion_processes(records, path, layout.profile)
+    except (GateError, ProcessTableError, OSError, ValueError):
+        return None
+    if matches is None:
+        return None
+    if any(record.pid in set(owned_host_pids) for record in records):
+        return False
+    return not matches
+
+
+def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
+    host = context.host
+    pid = getattr(host, "owner_pid", None)
+    process = getattr(host, "process", None)
+    if type(pid) is not int or pid <= 0 or process is None:
+        return None
+    if getattr(process, "pid", None) != pid:
+        return None
+    try:
+        if process.poll() is not None:
+            return None
+        records = context.process_table.snapshot()
+        record = next((item for item in records if item.pid == pid), None)
+        identity = context.process_identity_probe(pid)
+        expected_python = (context.root / ".venv" / "bin" / "python").resolve(
+            strict=True
+        )
+        executable = Path(
+            str(getattr(identity, "executable_path", ""))
+        ).resolve(strict=True)
+        argv = getattr(identity, "argv", ())
+        command_line = getattr(identity, "command_line", "")
+        arguments = (
+            tuple(str(item) for item in argv)
+            if isinstance(argv, (tuple, list))
+            else ()
+        )
+        command = " ".join(arguments) if arguments else str(command_line)
+        owned_pids = getattr(host, "owned_pids", ())
+        if (
+            record is None
+            or record.uid != os.getuid()
+            or not _identity_matches_record(identity, record)
+            or executable != expected_python
+            or "run_web.main()" not in command
+            or pid not in owned_pids
+        ):
+            return None
+        process_args = _process_arguments(record, expected_python)
+        if process_args is None or "run_web.main()" not in " ".join(process_args):
+            return None
+        return record
+    except (OSError, RuntimeError, TypeError, ValueError, ProcessTableError):
+        return None
+
+
+def _owned_state_root_identity(context: RowContext) -> tuple[int, int] | None:
+    try:
+        state_root = Path(context.host.state_root)
+        repository_root = context.root.resolve(strict=True)
+        expected_id = _state_root_id8(context.run_id)
+        identity = getattr(context.host, "_state_root_identity", None)
+        parent_identity = getattr(context.host, "_state_parent_identity", None)
+        try:
+            state_root.relative_to(repository_root)
+            inside_repository = True
+        except ValueError:
+            inside_repository = False
+        try:
+            repository_root.relative_to(state_root)
+            contains_repository = True
+        except ValueError:
+            contains_repository = False
+        if (
+            inside_repository
+            or contains_repository
+            or state_root.name != expected_id
+            or state_root.parent.name != "neq-n3g"
+            or not state_root.is_absolute()
+            or not isinstance(identity, tuple)
+            or len(identity) != 2
+            or any(type(part) is not int or part < 0 for part in identity)
+            or not _private_state_tree_matches(state_root, identity)
+            or not _private_state_parent_matches(
+                state_root.parent, parent_identity
+            )
+        ):
+            return None
+        return identity
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _identity_owner_record_matches(
+    context: RowContext, layout: ProfileLayout
+) -> bool:
+    identity = _owned_state_root_identity(context)
+    if identity is None:
+        return False
+    try:
+        expected_state = Path(context.host.state_root).resolve(strict=True)
+        return bool(
+            layout.state_root == expected_state.resolve(strict=True)
+            and layout.profile_root
+            == layout.state_root / "neq" / "opentunnel" / DEFAULT_PROFILE
+            and layout.owner_file == layout.profile_root / "profile_owner.json"
+            and layout.owner_file.is_file()
+            and not layout.owner_file.is_symlink()
+        )
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _owner_record_state(layout: ProfileLayout) -> str:
+    path = layout.state_home / "owned_process.json"
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    return "present"
+
+
+def _owner_record_absent(layout: ProfileLayout) -> bool:
+    return _owner_record_state(layout) == "absent"
+
+
+def _identity_up_counter(status: Mapping[str, object]) -> int | None:
+    value = status.get("identity_up_invocations")
+    return value if type(value) is int and value >= 0 else None
+
+
+def _current_credential(client: PublicUrlClient) -> str | None:
+    session = client.session
+    if session is None or not session.credential or len(session.credential) > 256:
+        return None
+    return session.credential
+
+
+def _bind_current_invitation(
+    context: RowContext, client: PublicUrlClient
+) -> str | None:
+    try:
+        response = context.host_api.post("copy-invitation", {})
+        url = response.payload.get("invitation")
+        status = _host_status(response)
+        if (
+            response.status != 200
+            or response.payload.get("ok") is not True
+            or not isinstance(url, str)
+            or status is None
+            or status.get("state") != "ready"
+        ):
+            return None
+        context.remember_secret(url)
+        client.bind_invitation(url)
+        return url
+    except (HostApiError, PublicClientError, ValueError):
+        return None
+
+
+def _login_public_session(
+    context: RowContext, client: PublicUrlClient, credential: str
+) -> PublicPlayerSession | None:
+    try:
+        challenge_response, challenge = client.login_challenge()
+        if challenge_response.status != 200 or challenge is None:
+            return None
+        context.remember_secret(challenge.csrf_nonce)
+        context.remember_secret(challenge.prelogin_cookie)
+        login, session = client.login(challenge, credential)
+        if login.status != 200 or session is None:
+            return None
+        context.remember_secret(session.cookie)
+        context.remember_secret(session.csrf_token)
+        if _decode_player_snapshot(client.authenticated_snapshot(session)) is None:
+            return None
+        return session
+    except PublicClientError:
+        return None
+
+
+def _installed_companion_matches(context: RowContext, path: Path) -> bool:
+    digest = context.companion_sha256
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        return False
+    try:
+        root = (context.root / "runtime/opentunnel/v0.6.2").resolve(strict=True)
+        path.relative_to(root)
+        metadata = path.lstat()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return bool(
+        not stat.S_ISLNK(metadata.st_mode)
+        and stat.S_ISREG(metadata.st_mode)
+        and path.name == "opentunnel"
+        and verify_companion_digest(path, digest)
+    )
+
+
+def _run_companion_command(
+    context: RowContext,
+    argv: Sequence[str],
+    environment: Mapping[str, str],
+) -> RunResult | None:
+    try:
+        result = context.companion_runner(tuple(argv), dict(environment), 30.0)
+    except Exception:
+        return None
+    if (
+        not isinstance(result, RunResult)
+        or (result.returncode is not None and type(result.returncode) is not int)
+        or not isinstance(result.bounded_output, str)
+        or len(result.bounded_output) > 64 * 1024
+        or type(result.output_truncated) is not bool
+        or type(result.timed_out) is not bool
+    ):
+        return None
+    return result
+
+
+def _run_companion_status(
+    context: RowContext,
+    companion: Path,
+    layout: ProfileLayout,
+    environment: Mapping[str, str],
+) -> RunResult | None:
+    result = _run_companion_command(
+        context,
+        (str(companion), "--profile", layout.profile, "status"),
+        environment,
+    )
+    if (
+        result is None
+        or result.returncode != 0
+        or result.output_truncated
+        or result.timed_out
+    ):
+        return None
+    return result
+
+
+def _identity_status_evidence(output: str) -> tuple[bool, bool, bool] | None:
+    if not isinstance(output, str) or len(output) > 64 * 1024:
+        return None
+    evidence = parse_identity_status(output)
+    service = re.search(r"(?im)^\s*Service:\s*(.+?)\s*$", output)
+    if service is None:
+        return None
+    service_stopped = service.group(1).strip().casefold().startswith("stopped")
+    return evidence.identity_confirmed, evidence.daemon_running, service_stopped
+
+
+def _identity_absent_status(output: str) -> bool | None:
+    evidence = _identity_status_evidence(output)
+    if evidence is None:
+        return None
+    no_tunnel = "no tunnel exists for this profile" in output.casefold()
+    identifier_present = bool(
+        re.search(r"(?im)^\s*Hostname:\s*\S+", output)
+        or re.search(r"(?im)^\s*Tunnel ID:\s*\S+", output)
+        or re.search(r"(?i)\btunnel[_ -]?id\s*[:=]\s*\S+", output)
+    )
+    if evidence[0] or evidence[1] or identifier_present:
+        return False
+    if no_tunnel and evidence[2]:
+        return True
+    return None
+
+
+def _public_root_unreachable(response: PublicHttpResponse) -> bool:
+    if (
+        not isinstance(response, PublicHttpResponse)
+        or response.status != 404
+        or len(response.body) > MAX_PUBLIC_PROBE_BODY_BYTES
+    ):
+        return False
+    try:
+        payload = json.loads(
+            response.body.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and set(payload) == {"error"}
+        and payload.get("error") == "not_found"
+    )
+
+
 ROW_EXECUTORS: Mapping[str, RowExecutor] = MappingProxyType(
     {
         "L01": L01SharingOffExecutor(),
@@ -1719,10 +2748,11 @@ ROW_EXECUTORS: Mapping[str, RowExecutor] = MappingProxyType(
         "L03": L03PublicAccessExecutor(),
         "L04": L04DuplicateStartExecutor(),
         "L05": L05RelayLossRecoveryExecutor(),
-        **{
-            row.row_id: PlaceholderRowExecutor(row.row_id, row.name)
-            for row in LIVE_ROWS[5:]
-        },
+        "L06": L06CredentialRotationExecutor(),
+        "L07": L07StopSharingExecutor(),
+        "L08": L08HostExitRestartExecutor(),
+        "L09": L09RevokeAccessExecutor(),
+        "L10": L10CleanTeardownExecutor(),
     }
 )
 
@@ -1866,7 +2896,7 @@ def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
         install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
         install_marker = "neq-" + hashlib.sha256(os.fsencode(install_path)).hexdigest()[:32]
         profile = prepare_profile(
-            context.run_root / "state" / "state",
+            Path(context.host.state_root),
             install_marker=install_marker,
             profile=DEFAULT_PROFILE,
             create=False,
@@ -2221,7 +3251,7 @@ def build_host_environment(
         "HOME": state_root / "home",
         "XDG_CONFIG_HOME": state_root / "config",
         "XDG_DATA_HOME": state_root / "data",
-        "XDG_STATE_HOME": state_root / "state",
+        "XDG_STATE_HOME": state_root,
         "XDG_CACHE_HOME": state_root / "cache",
         "XDG_RUNTIME_DIR": state_root / "runtime",
         "TMPDIR": state_root / "tmp",
@@ -2284,6 +3314,7 @@ class ManagedHostHarness:
         self.process_generation = 0
         self.owned_pids: list[int] = []
         self._state_root_identity: tuple[int, int] | None = None
+        self._state_parent_identity: tuple[int, int] | None = None
         self.output = ManagedHostOutputCounters()
         self._drainers: list[threading.Thread] = []
         self._stop_signal_error = False
@@ -2303,8 +3334,13 @@ class ManagedHostHarness:
         if self._state_root_identity is None:
             _create_private_state_tree(self.state_root)
             self._state_root_identity = _private_state_tree_identity(self.state_root)
+            self._state_parent_identity = _private_state_parent_identity(
+                self.state_root.parent
+            )
         elif not _private_state_tree_matches(
             self.state_root, self._state_root_identity
+        ) or not _private_state_parent_matches(
+            self.state_root.parent, self._state_parent_identity
         ):
             raise GateError("gate_state_root_invalid")
         try:
@@ -2471,8 +3507,9 @@ class LiveGateDependencies:
     preflight_reader: Callable[[Path, str, str], Mapping[str, object]]
     companion_verifier: Callable[[Path, str], Mapping[str, object]]
     sandbox_validator: Callable[[Path], Path]
-    host_factory: Callable[[Path, Path, str], ManagedHostHarness]
+    host_factory: Callable[[Path, Path, Path, str], ManagedHostHarness]
     api_factory: Callable[[], HostApiClient]
+    state_base_provider: Callable[[], Path] = _default_state_cache_base
     executor_registry: Mapping[str, RowExecutor] = ROW_EXECUTORS
     monotonic: Callable[[], float] = time.monotonic
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
@@ -2494,7 +3531,7 @@ def _default_dependencies(root: Path) -> LiveGateDependencies:
         preflight_reader=load_preflight_report,
         companion_verifier=verify_installed_companion,
         sandbox_validator=validate_prepared_sandbox,
-        host_factory=lambda sandbox, state, run_id: ManagedHostHarness(
+        host_factory=lambda _root, sandbox, state, run_id: ManagedHostHarness(
             root,
             sandbox,
             state,
@@ -3061,10 +4098,30 @@ def _live_platform_key(value: str) -> str:
     return value
 
 
-def _validate_run_paths(root: Path, arguments: RunArguments) -> tuple[Path, Path, Path]:
+def _validate_run_paths(
+    root: Path, arguments: RunArguments, state_cache_base: Path
+) -> tuple[Path, Path, Path]:
     run_root = root / EVIDENCE_BASE / arguments.run_id
     capture_dir = run_root / "capture"
-    state_root = run_root / "state"
+    try:
+        raw_base = Path(os.fspath(state_cache_base))
+    except (OSError, TypeError, ValueError):
+        raise GateError("gate_state_root_invalid") from None
+    if not raw_base.is_absolute():
+        raise GateError("gate_state_root_invalid")
+    base = Path(os.path.abspath(os.fspath(raw_base)))
+    state_root = base / "neq-n3g" / _state_root_id8(arguments.run_id)
+    socket_path = (
+        state_root
+        / "neq"
+        / "opentunnel"
+        / DEFAULT_PROFILE
+        / "run"
+        / (DEFAULT_PROFILE + ".sock")
+    )
+    if len(os.fsencode(os.fspath(socket_path))) >= MAX_UNIX_SOCKET_PATH:
+        raise GateError("state_root_too_long")
+    _validate_state_root_candidate(root, base, state_root)
     for relative in (EVIDENCE_BASE, EVIDENCE_BASE / arguments.run_id):
         candidate = root / relative
         try:
@@ -3080,9 +4137,151 @@ def _validate_run_paths(root: Path, arguments: RunArguments) -> tuple[Path, Path
         raise GateError("run_evidence_directory_missing")
     if capture_dir.exists() or capture_dir.is_symlink():
         raise GateError("capture_destination_exists")
+    return run_root, capture_dir, state_root
+
+
+def _validate_state_root_candidate(
+    root: Path, state_cache_base: Path, state_root: Path
+) -> None:
+    repository_root = root.resolve(strict=True)
+    forbidden_components = {".venv", "venv"}
+    if forbidden_components.intersection(state_root.parts):
+        raise GateError("gate_state_root_invalid")
+    try:
+        state_root.relative_to(repository_root)
+        inside_repository = True
+    except ValueError:
+        inside_repository = False
+    try:
+        repository_root.relative_to(state_root)
+        contains_repository = True
+    except ValueError:
+        contains_repository = False
+    if inside_repository or contains_repository:
+        raise GateError("gate_state_root_invalid")
+
+    uid = os.getuid()
+    missing_seen = False
+    for candidate in reversed((state_cache_base, *state_cache_base.parents)):
+        try:
+            metadata = candidate.lstat()
+        except FileNotFoundError:
+            missing_seen = True
+            continue
+        except OSError:
+            raise GateError("gate_state_root_invalid") from None
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            raise GateError("gate_state_root_invalid") from None
+        if (
+            missing_seen
+            or stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or resolved != candidate
+        ):
+            raise GateError("gate_state_root_invalid")
+        if candidate == state_cache_base and metadata.st_uid != uid:
+            raise GateError("gate_state_root_invalid")
+
+    namespace = state_cache_base / "neq-n3g"
+    if namespace.exists() or namespace.is_symlink():
+        if not _private_state_parent_matches(namespace):
+            raise GateError("gate_state_root_invalid")
     if state_root.exists() or state_root.is_symlink():
         raise GateError("gate_state_root_exists")
-    return run_root, capture_dir, state_root
+
+
+def _private_state_parent_matches(
+    parent: Path, expected_identity: tuple[int, int] | None = None
+) -> bool:
+    try:
+        metadata = parent.lstat()
+        return bool(
+            not stat.S_ISLNK(metadata.st_mode)
+            and stat.S_ISDIR(metadata.st_mode)
+            and stat.S_IMODE(metadata.st_mode) == 0o700
+            and metadata.st_uid == os.getuid()
+            and parent.resolve(strict=True) == parent
+            and (
+                expected_identity is None
+                or (metadata.st_dev, metadata.st_ino) == expected_identity
+            )
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _private_state_parent_identity(parent: Path) -> tuple[int, int]:
+    if not _private_state_parent_matches(parent):
+        raise GateError("gate_state_root_invalid")
+    metadata = parent.lstat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def _create_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=False, exist_ok=False)
+    os.chmod(path, 0o700)
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or metadata.st_uid != os.getuid()
+        or path.resolve(strict=True) != path
+    ):
+        raise GateError("gate_state_root_invalid")
+
+
+def _ensure_private_state_parents(state_root: Path) -> list[Path]:
+    state_cache_base = state_root.parent.parent
+    created: list[Path] = []
+    try:
+        ancestors = list(reversed((state_cache_base, *state_cache_base.parents)))
+        missing_seen = False
+        uid = os.getuid()
+        for candidate in ancestors:
+            try:
+                metadata = candidate.lstat()
+            except FileNotFoundError:
+                missing_seen = True
+                continue
+            except OSError:
+                raise GateError("gate_state_root_invalid") from None
+            if (
+                missing_seen
+                or stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISDIR(metadata.st_mode)
+                or candidate.resolve(strict=True) != candidate
+            ):
+                raise GateError("gate_state_root_invalid")
+            if candidate == state_cache_base and metadata.st_uid != uid:
+                raise GateError("gate_state_root_invalid")
+
+        for candidate in ancestors:
+            if candidate.exists():
+                continue
+            _create_private_directory(candidate)
+            created.append(candidate)
+
+        namespace = state_root.parent
+        if namespace.exists() or namespace.is_symlink():
+            if not _private_state_parent_matches(namespace):
+                raise GateError("gate_state_root_invalid")
+        else:
+            _create_private_directory(namespace)
+            created.append(namespace)
+        return created
+    except BaseException:
+        cleanup_ok = True
+        for directory in reversed(created):
+            try:
+                directory.rmdir()
+            except OSError:
+                cleanup_ok = False
+        if not cleanup_ok:
+            raise GateError("gate_state_cleanup_failed") from None
+        raise
 
 
 def _private_state_tree_matches(
@@ -3102,7 +4301,7 @@ def _private_state_tree_matches(
             )
         ):
             return False
-        for name in ("home", "config", "data", "state", "cache", "runtime", "tmp"):
+        for name in ("home", "config", "data", "cache", "runtime", "tmp"):
             child = state_root / name
             child_info = child.lstat()
             if (
@@ -3126,6 +4325,9 @@ def _private_state_tree_identity(state_root: Path) -> tuple[int, int]:
 
 
 def _create_private_state_tree(state_root: Path) -> None:
+    if state_root.exists() or state_root.is_symlink():
+        raise GateError("gate_state_root_exists")
+    created_parents = _ensure_private_state_parents(state_root)
     created_identity: tuple[int, int] | None = None
     created = False
     try:
@@ -3135,7 +4337,7 @@ def _create_private_state_tree(state_root: Path) -> None:
         if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
             raise GateError("gate_state_root_invalid")
         created_identity = (root_info.st_dev, root_info.st_ino)
-        for name in ("home", "config", "data", "state", "cache", "runtime", "tmp"):
+        for name in ("home", "config", "data", "cache", "runtime", "tmp"):
             directory = state_root / name
             directory.mkdir(mode=0o700, exist_ok=False)
             os.chmod(directory, 0o700)
@@ -3156,9 +4358,39 @@ def _create_private_state_tree(state_root: Path) -> None:
                     cleanup_ok = not state_root.exists()
             except OSError:
                 cleanup_ok = False
+        for directory in reversed(created_parents):
+            try:
+                directory.rmdir()
+            except OSError:
+                cleanup_ok = False
         if not cleanup_ok:
             raise GateError("gate_state_cleanup_failed") from None
         raise
+
+
+def _remove_private_state_parent_if_empty(
+    parent: Path, expected_identity: object
+) -> bool | None:
+    if (
+        not isinstance(expected_identity, tuple)
+        or len(expected_identity) != 2
+        or any(type(part) is not int or part < 0 for part in expected_identity)
+        or not _private_state_parent_matches(parent, expected_identity)
+    ):
+        return None
+    try:
+        next(parent.iterdir())
+    except StopIteration:
+        try:
+            parent.rmdir()
+        except OSError as exc:
+            if exc.errno in {errno.ENOTEMPTY, errno.EEXIST}:
+                return False
+            return None
+        return True
+    except OSError:
+        return None
+    return False
 
 
 def _ports_are_free(inspector: preflight_gate.PortInspector) -> bool:
@@ -3485,6 +4717,8 @@ class LiveGateRunner:
         self.run_root: Path | None = None
         self.capture_dir: Path | None = None
         self.state_root: Path | None = None
+        self.state_root_id8: str | None = None
+        self.state_path_sha256: str | None = None
         self.host: ManagedHostHarness | None = None
         self.api: HostApiClient | None = None
         self.context: RowContext | None = None
@@ -3541,8 +4775,11 @@ class LiveGateRunner:
             ):
                 self.capture_created = False
                 raise GateError("capture_destination_invalid")
+            assert self.state_root is not None
             self.host = self.dependencies.host_factory(
-                self.dependencies.root, self.dependencies.root / CAPTURE_RELATIVE,
+                self.dependencies.root,
+                self.dependencies.root / CAPTURE_RELATIVE,
+                self.state_root,
                 self.arguments.run_id,
             )
             self.api = self.dependencies.api_factory()
@@ -3563,6 +4800,11 @@ class LiveGateRunner:
                 port_inspector=self.dependencies.port_inspector,
                 companion_path=self.companion_path,
                 identity_observer_factory=self.dependencies.identity_observer_factory,
+                companion_sha256=(
+                    self.companion_record.get("sha256")
+                    if isinstance(self.companion_record.get("sha256"), str)
+                    else None
+                ),
                 monotonic=self.dependencies.monotonic,
                 sleep=self.dependencies.sleep,
             )
@@ -3659,11 +4901,16 @@ class LiveGateRunner:
         )
         self._check_driver_time()
         try:
+            state_cache_base = self.dependencies.state_base_provider()
             self.run_root, self.capture_dir, self.state_root = _validate_run_paths(
-                self.dependencies.root, self.arguments
+                self.dependencies.root, self.arguments, state_cache_base
             )
+            self.state_root_id8 = _state_root_id8(self.arguments.run_id)
+            self.state_path_sha256 = _state_path_sha256(self.state_root)
         except GateError:
             raise
+        except Exception:
+            raise GateError("gate_state_root_invalid") from None
         try:
             sandbox = self.dependencies.sandbox_validator(self.dependencies.root)
         except GateError:
@@ -3871,16 +5118,23 @@ class LiveGateRunner:
                 result = RowExecutionResult("BLOCKED", exc.reason)
                 self._add_infrastructure(exc.reason)
             self._observe_result_secrets(result)
-            try:
-                assert self.api is not None
-                after_response = self.api.get_status()
-                _remember_payload_secrets(after_response.payload, self.secrets)
-                after_status = _status_counters(after_response)
-                self._observe_counter_sample(after_status)
-            except (HostApiError, GateError):
+            if row.row_id == "L10" and self.host is not None and self.host.owner_pid is None:
+                # L10 intentionally stops the owned host and removes its private
+                # state before returning. The last pre-teardown sample is the
+                # final host counter observation; no request may target a port
+                # that is no longer owned by this runner.
                 after_status = before_status
-                result = RowExecutionResult("BLOCKED", "host_counters_unavailable")
-                self._add_infrastructure("host_counters_unavailable")
+            else:
+                try:
+                    assert self.api is not None
+                    after_response = self.api.get_status()
+                    _remember_payload_secrets(after_response.payload, self.secrets)
+                    after_status = _status_counters(after_response)
+                    self._observe_counter_sample(after_status)
+                except (HostApiError, GateError):
+                    after_status = before_status
+                    result = RowExecutionResult("BLOCKED", "host_counters_unavailable")
+                    self._add_infrastructure("host_counters_unavailable")
             if (
                 result.recovery_attempts < 0
                 or result.recovery_attempts > 1
@@ -4107,6 +5361,8 @@ class LiveGateRunner:
     def _persist_evidence(self) -> dict[str, object]:
         assert self.capture_dir is not None
         assert self.run_root is not None
+        assert self.state_root_id8 is not None
+        assert self.state_path_sha256 is not None
         host_output = (
             self.host.output.snapshot()
             if self.host is not None and hasattr(self.host, "output")
@@ -4125,6 +5381,8 @@ class LiveGateRunner:
             "manifest_id": MANIFEST_ID,
             "manifest_sha256": calculate_manifest_digest(),
             "run_id": self.arguments.run_id,
+            "gate_state_root_id8": self.state_root_id8,
+            "gate_state_path_sha256": self.state_path_sha256,
             "booking_id": self.arguments.booking_id,
             "sha": self.arguments.sha,
             "platform": self.platform_key,
@@ -4155,6 +5413,8 @@ class LiveGateRunner:
             "manifest_id": MANIFEST_ID,
             "manifest_sha256": calculate_manifest_digest(),
             "run_id": self.arguments.run_id,
+            "gate_state_root_id8": self.state_root_id8,
+            "gate_state_path_sha256": self.state_path_sha256,
             "row_coverage_complete": len(self.rows) == len(LIVE_ROWS)
             and [row.get("row_id") for row in self.rows]
             == [row.row_id for row in LIVE_ROWS],

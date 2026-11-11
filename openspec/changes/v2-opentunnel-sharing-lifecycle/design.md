@@ -67,7 +67,7 @@ This lifecycle gate does not establish installer/update readiness, N4 external g
 
 ### Live gate contract
 
-The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v1`, its rows, caps, lock protocol, platform verdicts, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
+The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v2`, its rows, caps, lock protocol, platform verdicts, state-root policy, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
 
 ## Risks / Trade-offs
 
