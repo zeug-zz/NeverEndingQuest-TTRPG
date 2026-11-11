@@ -516,6 +516,12 @@ def _status_projection(status: object) -> dict[str, Any] | None:
         "identity_initialized": getattr(status, "identity_initialized", False) is True,
         "credential_state": credential_state,
         "credential_generation": credential_generation,
+        "companion_launches": _bounded_int(
+            getattr(status, "companion_launches", 0)
+        ),
+        "identity_up_invocations": _bounded_int(
+            getattr(status, "identity_up_invocations", 0)
+        ),
     }
 
 

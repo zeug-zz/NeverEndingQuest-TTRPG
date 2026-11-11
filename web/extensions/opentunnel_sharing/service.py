@@ -35,6 +35,7 @@ from web.extensions.opentunnel_sharing.companion import (
     verify_companion_digest,
 )
 from web.extensions.opentunnel_sharing.controller import (
+    MAX_DIAGNOSTIC_COUNTER,
     MAX_COMPANION_START_DEADLINE_SECONDS,
     MAX_ROUTE_POLL_INTERVAL_SECONDS,
     MAX_ROUTE_WAIT_SECONDS,
@@ -50,6 +51,7 @@ from web.extensions.opentunnel_sharing.identity_bootstrap import (
     BootstrapResult,
     DefaultCommandRunner,
     DefaultIdentityObserver,
+    MAX_RESULT_FACTS,
     RunResult,
     _read_marker,
     bootstrap_identity,
@@ -57,6 +59,7 @@ from web.extensions.opentunnel_sharing.identity_bootstrap import (
 from web.extensions.opentunnel_sharing.origin_binding import PublicOriginBinder
 from web.extensions.opentunnel_sharing.production_monitor import (
     ProductionRelayMonitor,
+    production_recovery_policy,
 )
 from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
@@ -198,6 +201,8 @@ class SharingServiceStatus:
     credential_generation: int | None = None
     credential_issued_at: str | None = None
     supervision: RelaySupervisionSnapshot | None = None
+    companion_launches: int = 0
+    identity_up_invocations: int = 0
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -314,6 +319,7 @@ class PlayerSharingService:
         self._run_supervision_thread = run_supervision_thread
         self._supervision: _SupervisionRuntime | None = None
         self._last_supervision_snapshot: RelaySupervisionSnapshot | None = None
+        self._identity_up_invocations = 0
 
     def status(self) -> SharingServiceStatus:
         """Read bounded status without initializing the profile or starting work."""
@@ -404,6 +410,13 @@ class PlayerSharingService:
             bootstrap = None
         if not isinstance(bootstrap, BootstrapResult):
             return self._result("initialize_identity", False, "identity_initialization_failed", profile)
+        up_invocations = _bootstrap_up_invocations(bootstrap)
+        if up_invocations:
+            with self._lock:
+                self._identity_up_invocations = min(
+                    MAX_DIAGNOSTIC_COUNTER,
+                    self._identity_up_invocations + up_invocations,
+                )
 
         success = bootstrap.state in {"initialized", "already_initialized"}
         reason = (
@@ -1011,7 +1024,15 @@ class PlayerSharingService:
             credential_generation=credential.generation,
             credential_issued_at=credential.issued_at,
             supervision=self.supervision_status(),
+            companion_launches=_bounded_service_counter(
+                getattr(cached.counters, "companion_launches", 0)
+            ),
+            identity_up_invocations=self._identity_up_invocations_snapshot(),
         )
+
+    def _identity_up_invocations_snapshot(self) -> int:
+        with self._lock:
+            return self._identity_up_invocations
 
     def _result(
         self,
@@ -1051,6 +1072,7 @@ def create_production_player_sharing_service(
     profile: str = DEFAULT_PROFILE,
     player_build_root: str | os.PathLike[str] | None = None,
     recovery_policy: RecoveryPolicy | None = None,
+    web_port: object = None,
     supervision_clock: Callable[[], float] = time.monotonic,
     supervision_sleeper: CancellableSleeper | None = None,
     run_supervision_thread: bool = True,
@@ -1073,9 +1095,14 @@ def create_production_player_sharing_service(
         profile=profile,
         player_build_root=player_build_root,
     )
+    selected_recovery_policy = (
+        recovery_policy
+        if recovery_policy is not None
+        else production_recovery_policy(web_port)
+    )
     return PlayerSharingService(
         composition.dependencies(),
-        recovery_policy=recovery_policy,
+        recovery_policy=selected_recovery_policy,
         supervision_clock=supervision_clock,
         supervision_sleeper=supervision_sleeper,
         run_supervision_thread=run_supervision_thread,
@@ -1813,6 +1840,23 @@ def _initial_snapshot(profile: ProfileState, initialized: bool) -> SharingSnapsh
 
 def _safe_controller_reason(value: object) -> str:
     return value if isinstance(value, str) and value in _SAFE_CONTROLLER_REASONS else "operation_failed"
+
+
+def _bootstrap_up_invocations(result: BootstrapResult) -> int:
+    """Count only bounded bootstrap command facts for actual ``up`` calls."""
+    facts = result.facts
+    if not isinstance(facts, tuple):
+        return 0
+    return sum(
+        isinstance(fact, str) and fact.startswith("up=")
+        for fact in facts[:MAX_RESULT_FACTS]
+    )
+
+
+def _bounded_service_counter(value: object) -> int:
+    if type(value) is not int:
+        return 0
+    return min(max(value, 0), MAX_DIAGNOSTIC_COUNTER)
 
 
 def _safe_verifier_reason(value: object) -> str:

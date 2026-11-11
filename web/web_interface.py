@@ -4068,6 +4068,7 @@ def _get_player_sharing_service():
                 _player_sharing_service = create_production_player_sharing_service(
                     gateway=create_player_runtime_gateway(),
                     local_runtime_check=_player_sharing_runtime_available,
+                    web_port=_configured_web_port,  # TABLETOP MODE: Pass only the configured port to the N3 guard.
                 )
     return _player_sharing_service
 

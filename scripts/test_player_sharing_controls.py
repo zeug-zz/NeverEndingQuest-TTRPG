@@ -497,6 +497,8 @@ class PlayerSharingControlsTests(unittest.TestCase):
             credential_state=cookie,
             credential_generation=1 << 80,
             credential_issued_at=credential,
+            companion_launches=1 << 80,
+            identity_up_invocations=2 << 80,
             invitation=invitation,
             private_key=private_key,
             cookie=cookie,
@@ -541,6 +543,8 @@ class PlayerSharingControlsTests(unittest.TestCase):
                 "identity_initialized",
                 "credential_state",
                 "credential_generation",
+                "companion_launches",
+                "identity_up_invocations",
             },
         )
         self.assertEqual(safe_status["state"], "ready")
@@ -552,6 +556,8 @@ class PlayerSharingControlsTests(unittest.TestCase):
         self.assertEqual(safe_status["profile_state"], "unavailable")
         self.assertEqual(safe_status["credential_state"], "unavailable")
         self.assertEqual(safe_status["credential_generation"], (1 << 31) - 1)
+        self.assertEqual(safe_status["companion_launches"], (1 << 31) - 1)
+        self.assertEqual(safe_status["identity_up_invocations"], (1 << 31) - 1)
         response_text = response.get_data(as_text=True)
         self.assertLess(len(response_text), 2048)
         for secret in (invitation, credential, cookie, private_key, companion_output):
