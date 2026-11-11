@@ -653,13 +653,50 @@ claim, a driver exit code or green unit tests alone never move a row to PASS.
   `<git-common-dir>/overseer-relay/campaigns/` binds N as role A and S as role
   B; framed reports accompany the prose inbox; gated goal resumes are enabled.
   The legacy mailbox remains the prose and rulings channel.
+- Owner decision, 2026-11-12: spatial pilot outcome. The mapping pilot is
+  closed (SP4 decision gate). Mise-en-scene remains the overall goal for
+  spatiality: coherent, narrator-first scene staging of one shared world in the
+  theatre of the players' mind. The owner decided from the pilot evidence how
+  it is delivered:
+  1. Python ingests module source. The LLM Builder authors spatial grids
+     together with narrator-facing descriptions, calibrated on the owner's
+     examples and the owner-reviewed assistant-authored grids in
+     [owner feedback](v2-mapping-pilot-owner-feedback.md) (market AB01,
+     tavern AB03, crossroads V01, scarecrow hollow V02 and the appendix
+     examples).
+  2. The Builder is a creator: it may author module reality
+     (`builder_authored`), and it deliberately leaves open facts unknown as
+     hooks for TITAN to resolve and evolve at runtime.
+  3. That world reality passes back to Python (canonical store) and to
+     Firelight (mechanical legality) for gameplay.
+  4. The Narrator narrates world facts richly, constrained by Python and
+     Firelight; it never resolves an open fact by narration.
+  Evidence: SP3 live narration invented space wherever a fact was unknown or
+  unauthored (E07, E11, E12, C05, C06); M1 rated authored layouts 5.0/4.6
+  against 1.545/2.091 for unguided generated sketches, so generation needs
+  exemplars and validation; the LLM staging studies (1, 2, 3, 3b) were safe
+  and faithful but extractive, so scene value comes from authored structure
+  plus the Narrator, not a standalone LLM staging pass; only that standalone
+  pass is closed. The arm comparison itself
+  stayed inconclusive. The outcome is consistent with accepted ADR-0034
+  (Python spatial authority, provenance classes, open facts resolved only by
+  the Builder or TITAN) and ADR-0033 (Firelight legality) and needs no ADR
+  change now. It directs the OD-1 deferrals: the data pipeline is
+  Builder-authored (legacy S3 backfill stays closed except through the
+  Builder), and the map representation is grids plus descriptions. Specifics
+  -- grid schema and scale, the exemplar set, validation by machine scoring
+  against authored source (no owner row-by-row audits), combat granularity,
+  TITAN open-fact interfaces and the Narrator packet shape -- are worked
+  through in the owning builds: Builder MB0-MB2, Spatial S1a/S1b, S2/S2a and
+  SC0, TITAN, Narrator and Firelight.
 
 ### 10.2 Worktrees and goals
 
 | Worktree | Branch | Base | Goal | Current phase | Next gate |
 | --- | --- | --- | --- | --- | --- |
-| N | detached at `c8d0b185` (relay branch `feature/v2-network-n2-gate`) | B0 | Opened 2026-11-05 (goal `611274ea`) | N2 implementation and fixes merged (#103, #115, #117, #121-#122, #124, #128, #130-#132); WebSocket-only player transport verified in Chrome; Chrome P1 gate FAIL on a screenshot-masking harness defect, fix in progress | Chrome P1 then P4 gate rerun; Firefox portion; then N3 |
-| S | `feature/v2-llm-staging-study-prep` at `43e4c809` | B0 | Opened 2026-11-05 (goal `a9effa87`) | Mise-en-scene offline prototype merged (#116, #118, #120, #123); LLM staging studies 1 and 2 FAIL on contract defects (not model verdicts); study 3 contract-parity build in progress (#127 draft) | Study 3 run; SP4 closeout (FR-05) under OD-1 |
+| N | per-change feature branches (N3: `feat/n3-*`) | B0 | Opened 2026-11-05 (goal `611274ea`) | N2 PASS and archived (#141-#143, #145); N3 sharing lifecycle (#140, #143, #147, #151, #152) and packaging (#144, #149, #150) merged; N3 live attempt 3 FAIL at L02 (identity initialization, before any companion launch), offline diagnosis authorized | N3 live lifecycle gate (attempt 4) |
+| S | final PRs #127, #146, #148 merged | B0 | Closed 2026-11-11 (goal `a9effa87`, unmet: completion criterion 5 discharged only by owner waiver) | Pilot closed; Study 3/3b tooling (#127), FR-04 archive (#146), SP4 closeout (#148) | -- |
+| main | per-package branches | -- | Free slot; Wave 1 goal awaits owner creation | -- | FR-11 preflight tool |
 | (scratch) | detached `tmp/overseer/main-baseline` at `1a94e364` | -- | none | Overseer scratch checkout for independent verification | -- |
 
 Both worktrees were created 2026-11-05 as siblings of the main checkout:
@@ -865,15 +902,15 @@ standing owner instruction:
 | --- | --- | --- | --- | --- | --- |
 | N0 transport feasibility | N | PASS | 2026-11-05 | `openspec/changes/v2-network-transport-feasibility/n0-verdict.md`; independently reviewed macOS 22/22 and Linux arm64-container 23/23; teardowns verified; 12 fixture tests and 63 driver self-test PASS entries (0 FAIL); strict validation; required CI and CodeQL pass; advisory Semgrep findings reviewed, not suppressed; assumed (standing instruction) | #89 (`62e9ec17` integrated head) |
 | N1 player boundary and contract | N | PASS | 2026-11-06 | Initial head `196fd98d` held after the Overseer reproduced a stale active-PC revision rollback; one bounded correction plus verification-only continuation; Overseer independently re-verified the final head `a7abddcd`: focused N1 99 OK, rollback reproducer and lifecycle probes 0 failures (1-PC/4-PC), host/combat suites 75/26/13/13/7/15 OK, ASCII/Bandit/Semgrep clean, CI 10/10. Pre-existing request-path gaps surfaced by CodeQL fixed separately in #98/#99; remaining character-name alerts dismissed as false positive with owner approval (private review `plans/security/pr93-n1-review.md`). N2 requires separate authorization | #93 (`0b12f44f` integrated head) |
-| N2 React vertical slice | N | Chrome P1 gate FAIL (harness); Firefox BLOCKED | 2026-11-10 | Fail-closed provider-attempt budget (#115); missing-Origin polling 403 traced and fixed by WebSocket-only client (#132); inert Chrome observation PASS (Connected, WS 101, Origin/Host/session true, zero provider reservations). Chrome P1 gate run `p1-agent-chrome-20261110T004340Z-b290967b`: 3 Chrome checks PASS, active-PC check FAIL from screenshot masking mutating the live page; P4/lifecycle not run. Firefox launches crash in the sandbox. No N2 PASS | #103, #115, #117, #121, #122, #124, #128, #130-#132 |
-| N3 tunnel, installers, sharing UX | N | pending | -- | -- | -- |
+| N2 React vertical slice | N | PASS (Chrome and Firefox; 1-PC and 4-PC) | 2026-11-11 | P1 `tmp/router-rollout/v2-network/n2-firefox/p1-ff2-20261111T023456Z` and P4 `tmp/router-rollout/v2-network/n2-firefox/p4-ff-20261111T023550Z` (N worktree), each 11/11 PASS; the Firefox test client ran with its own content sandbox disabled inside nono (test environment only); change archived | #141, #142, #143, #145 |
+| N3 tunnel, installers, sharing UX | N | in progress: live attempts 1-2 BLOCKED (harness), attempt 3 FAIL at L02 with no relay contact | 2026-11-11 | `tmp/router-rollout/v2-network/n3/n3-20261111-175359/` (N worktree) | #140, #144, #147, #149, #150, #151, #152 |
 | N4 internet gameplay and release | N | pending | -- | -- | -- |
 | SP0 preregistration reviewed | S | PASS | 2026-11-05 | `plans/v2-mapping-pilot-prereg/` (MANIFEST.sha256 verified 10/10); owner reviewed and approved | #81 (`c6ed675b`) |
 | SP1 tooling | S | PASS | 2026-11-05 | Overseer reviewed exact PR head; 16/16 tasks, strict change validation, frozen hashes 10/10; post-merge provider-free suite 133/133 PASS (`tmp/overseer/pr87-postmerge-tests.log`); research-only changed-path boundary verified; assumed (standing instruction) | #87 (`c11bd385` integrated head) |
-| SP2 offline D1/M1 | S | M1 below threshold; D1 owner audit pending | 2026-11-07 | Original M1 16/16 owner-rated: 2.625 legibility / 2.875 usefulness, below 3.5. Combat fixtures 5/5; redesign ratings excluded. D1 20 attempts (11 validated, 9 invalid layouts); 1,048 claim rows unaudited. See owner feedback for exact scores and next planning direction | #94 (`e40e4899`) |
+| SP2 offline D1/M1 | S | M1 below threshold; D1 NOT AUDITED (OD-1) | 2026-11-07 | Original M1 16/16 owner-rated: 2.625 legibility / 2.875 usefulness, below 3.5. Combat fixtures 5/5; redesign ratings excluded. D1 20 attempts (11 validated, 9 invalid layouts); 1,048 claim rows unaudited. See owner feedback for exact scores and next planning direction | #94 (`e40e4899`) |
 | SP3 live matrix | S | INCONCLUSIVE (main run); SP3b BLOCKED (no verified lifecycle profiles) | 2026-11-06 | 26/30 slots attempted, 18 FAIL / 8 BLOCKED / 0 PASS; content failures stand as qualitative findings; landscape host NameError fixed in #105; re-freeze and missed-pause deviations recorded, not waived. Not a PASS | #97 (`5999af37`), #105 (`9291994f`) |
-| SP4 decision gate | S | pending (closes under OD-1) | -- | ADR-0034 accepted 2026-11-09 (#119, #129); D1 recorded not audited and transcripts waived by owner 2026-11-10; S assembles the closeout report (FR-05) | -- |
-| Mise-en-scene LLM staging studies | S | study 1 FAIL (output truncation), study 2 FAIL_FROZEN_CONTRACT (undisclosed validator rules) | 2026-11-09 | Both are protocol defects, not model or Builder verdicts; study 3 adds request/validator parity before calls | #127 (draft) |
+| SP4 decision gate | S | CLOSED; owner-decided outcome recorded 2026-11-12 (s10.1) | 2026-11-12 | `openspec/changes/v2-mapping-pilot-execution/reports/sp4-primary-report.md`; D1 not audited and transcripts waived (OD-1); completion criterion 5 by owner waiver | #148 |
+| Mise-en-scene LLM staging studies | S | CLOSED as a standalone LLM staging pass (mise-en-scene remains the spatial goal): studies 1-2 FAIL (protocol defects); study 3 FAIL as run (1 model-attributable guarded leak, 2 harness parity); study 3b 2/3 deterministic PASS, Overseer semantic review safe and faithful but extractive (low staging value); no Study 4 | 2026-11-12 | `tmp/router-rollout/mapping-pilot/mise-en-scene-offline/` (S worktree); total spend about USD 0.047 | #127 |
 | Narrator P0 contracts (extended, FR-12) | main | pending (approved OD-3/OD-8) | -- | -- | -- |
 | Firelight G1 offline spike | main | pending (approved OD-3; budget ratification first) | -- | -- | -- |
 | G0 ADR, audit and pin (docs) | main | PASS | 2026-11-05 | ADR-0033 accepted by the owner; `plans/v2-firelight-g0/gap-inventory.md`, `design.md`; release `SHA256SUMS` matches `gh release download v0.1.0` | #83 |
@@ -921,18 +958,17 @@ are authorized. Missing evidence is reported explicitly.
 
 All decision-sheet items OD-1 to OD-12 were answered 2026-11-10 (s10.1). Open:
 
-1. Rating of LLM staging study scenes once a valid artifact passes the
-   Overseer semantic review (owner-only judgement).
-2. Map format (S1b proposal), combat granularity and enforcement (SC0), and
-   data pipeline (S3/MB0) at their owning gates, per OD-1.
-3. Section 2 live evaluation of the mise-en-scene change: deferred until the
-   staging study has a valid result.
+1. Open the Wave 1 main-checkout goal in the free slot (goals are created
+   only at the owner's request).
+2. LuLu outbound allow rule for the capture-copy companion
+   (`~/Projects/neq-v2-network/tmp/combat_capture/runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel`)
+   before the next N3 live attempt; the N3 Linux leg remains owner-run.
+3. Repository variable `PLAYER_BUNDLE_PUBLISHERS` before the first tester
+   release tag.
 4. NEQ-world production seed job: awaits sign-off of the 240-fragment pilot
    schema.
 5. Making the `test-runner-ci-tier` check required after ten green runs
    (branch protection is an owner action).
-6. Firefox portion of the N2 gate: sandbox Firefox still crashes at newPage;
-   the owner is pursuing a sandbox fix.
 
 N0 closeout: the owner-run Linux leg completed and both tunnels are down.
 The guarded identity bootstrap (`up` -> `status` -> `down` with isolated
