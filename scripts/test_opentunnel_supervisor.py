@@ -365,9 +365,14 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
 
     def test_output_is_drained_bounded_and_never_written_or_diagnosed(self) -> None:
         secret_output = (
-            b"https://private-route.opentunnel.xyz TOKEN=very-secret-id\n"
+            b"https://private-route.opentunnel.xyz?token=invitation-token-canary "
+            b"PASSWORD=credential-canary COOKIE=cookie-canary "
+            b"-----BEGIN PRIVATE KEY-----private-key-canary-----END PRIVATE KEY-----\n"
         )
-        output = secret_output * 4096
+        output_size = 1024 * 1024
+        output = (secret_output * ((output_size + len(secret_output) - 1) // len(secret_output)))[
+            :output_size
+        ]
         process = FakeProcess(output=output)
         owner, _factory, _process = self._owner(process=process)
         with (
@@ -380,11 +385,17 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
             self.assertFalse(owner._drain_thread.is_alive())
             self.assertTrue(owner.stop(1.0))
         self.assertEqual(len(owner._output_buffer), OUTPUT_BUFFER_BYTES)
-        self.assertGreater(owner.diagnostics()["bytes_drained"], 100 * 1024)
+        self.assertEqual(owner.diagnostics()["bytes_drained"], output_size)
         diagnostic_text = repr(owner.diagnostics())
-        self.assertNotIn("private-route", diagnostic_text)
-        self.assertNotIn("very-secret-id", diagnostic_text)
-        self.assertNotIn("TOKEN", diagnostic_text)
+        for secret in (
+            "private-route",
+            "invitation-token-canary",
+            "credential-canary",
+            "cookie-canary",
+            "private-key-canary",
+            "BEGIN PRIVATE KEY",
+        ):
+            self.assertNotIn(secret, diagnostic_text)
 
     def test_deadlines_must_be_positive_and_bounded(self) -> None:
         owner, factory, _process = self._owner()

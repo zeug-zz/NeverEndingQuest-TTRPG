@@ -489,7 +489,12 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
     def test_secret_bearing_runner_output_never_reaches_result_or_marker(self) -> None:
         output = (
             "https://private-route.example.com Tunnel ID=credential-tunnel-id "
-            "TOKEN=credential-token-sentinel " + "b" * 64
+            "TOKEN=credential-token-sentinel "
+            "COOKIE=session-cookie-canary "
+            "PRIVATE_KEY=private-key-canary "
+            "-----BEGIN PRIVATE KEY-----private-key-body-canary-----END PRIVATE KEY----- "
+            "control=\x1b[31mredacted-test\x00 "
+            + "b" * 64
         )
         observer = FakeObserver()
         runner = BootstrapRunner(
@@ -508,6 +513,10 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
             "private-route.example.com",
             "credential-tunnel-id",
             "credential-token-sentinel",
+            "session-cookie-canary",
+            "private-key-canary",
+            "private-key-body-canary",
+            "\x1b[31mredacted-test\x00",
             "b" * 64,
         ):
             self.assertNotIn(sentinel, result_text)

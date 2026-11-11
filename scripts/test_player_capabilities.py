@@ -108,6 +108,16 @@ def _make_canonical_fixture(
         "CANARY-HOST-DEBUG-OUTPUT",
         "CANARY-ENEMY-HP-AND-AC",
     ]
+    sharing_canaries = (
+        "https://neq-share.account.opentunnel.xyz?token=player-invitation-canary",
+        "player-sharing-credential-canary",
+        "neq_player_session=player-cookie-canary",
+        "-----BEGIN PRIVATE KEY-----player-private-key-canary-----END PRIVATE KEY-----",
+        "player-companion-status-canary",
+        "player-host-diagnostic-canary",
+        "player-companion-output-canary",
+    )
+    canaries.extend(sharing_canaries)
     party_tracker: dict[str, object] = {
         "module": "CANARY-PRIVATE-CAMPAIGN-NAME",
         "partyMembers": names,
@@ -152,6 +162,16 @@ def _make_canonical_fixture(
         "debug_output": canaries[5],
         "filesystem_path": path_canary,
         "campaign": {"private": canaries[0]},
+        "player_sharing": {
+            "state": "ready",
+            "invitation": sharing_canaries[0],
+            "credential": sharing_canaries[1],
+            "session_cookie": sharing_canaries[2],
+            "private_key": sharing_canaries[3],
+            "companion_status": sharing_canaries[4],
+            "host_diagnostic": sharing_canaries[5],
+            "companion_output": sharing_canaries[6],
+        },
     }
     _write_json(party_path, party_tracker)
 
@@ -835,10 +855,25 @@ class PlayerCapabilitiesTests(unittest.TestCase):
         self.assertEqual(event["schema_version"], PROTOCOL_VERSION)
         self.assertEqual(event["event_id"], 1)
         self.assertEqual(event["instance_id"], security.server_instance_id)
+        forbidden_sharing_fields = (
+            "player_sharing",
+            "invitation",
+            "credential",
+            "session_cookie",
+            "private_key",
+            "companion_status",
+            "host_diagnostic",
+            "companion_output",
+        )
+        snapshot_text = body.decode("ascii")
+        event_text = json.dumps(event, sort_keys=True)
+        for field in forbidden_sharing_fields:
+            self.assertNotIn('"%s"' % field, snapshot_text)
+            self.assertNotIn('"%s"' % field, event_text)
         for canary in canaries:
-            self.assertNotIn(canary, body.decode("ascii"))
-            self.assertNotIn(canary, json.dumps(event, sort_keys=True))
-        self.assertNotIn(session_id, body.decode("ascii"))
+            self.assertNotIn(canary, snapshot_text)
+            self.assertNotIn(canary, event_text)
+        self.assertNotIn(session_id, snapshot_text)
 
     def test_public_login_shell_assets_are_unauthenticated_and_game_data_free(self) -> None:
         root = self._temporary_directory()
