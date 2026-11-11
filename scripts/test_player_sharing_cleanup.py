@@ -158,13 +158,15 @@ class FakeSecurity:
     def __init__(self) -> None:
         self.origin: str | None = None
         self.generation: int | None = None
+        self.active_generation: int | None = None
+        self.highest_generation = 0
 
     @property
     def public_origin_status(self) -> tuple[bool, int | None]:
         return self.origin is not None, self.generation
 
     def bind_public_origin(self, generation: int, origin: object) -> bool:
-        if not isinstance(origin, str):
+        if not isinstance(origin, str) or self.active_generation != generation:
             return False
         if self.origin is not None:
             return self.origin == origin and self.generation == generation
@@ -172,9 +174,26 @@ class FakeSecurity:
         self.generation = generation
         return True
 
+    def set_active_origin_generation(self, generation: int | None) -> bool:
+        if generation is None:
+            self.active_generation = None
+            self.origin = None
+            self.generation = None
+            return True
+        if type(generation) is not int or generation < self.highest_generation:
+            return False
+        if generation == self.active_generation:
+            return True
+        self.active_generation = generation
+        self.highest_generation = max(self.highest_generation, generation)
+        self.origin = None
+        self.generation = None
+        return True
+
     def clear_public_origin(self, _reason: str | None = None) -> None:
         self.origin = None
         self.generation = None
+        self.active_generation = None
 
 
 class CleanupControllerFixture:

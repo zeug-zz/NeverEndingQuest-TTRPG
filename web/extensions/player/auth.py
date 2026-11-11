@@ -119,6 +119,7 @@ class _SocketRecord:
     session_id: str
     host: str
     origin: str
+    origin_generation: int | None
 
 
 def parse_verifier(value: str | None) -> ScryptCredentialVerifier | None:
@@ -354,6 +355,8 @@ class PlayerSecurity:
         self._public_origin: str | None = None
         self._public_authority: str | None = None
         self._public_origin_generation: int | None = None
+        self._active_origin_generation: int | None = None
+        self._highest_origin_generation = 0
 
     @property
     def expected_host(self) -> str:
@@ -369,6 +372,12 @@ class PlayerSecurity:
         with self._lock:
             return self._public_origin is not None, self._public_origin_generation
 
+    @property
+    def active_origin_generation(self) -> int | None:
+        """Expose the active generation without exposing the public origin."""
+        with self._lock:
+            return self._active_origin_generation
+
     def bind_public_origin(self, generation: int, origin: object) -> bool:
         """Bind one validated public origin; replacement requires an explicit clear."""
         parsed = _parse_public_https_origin(origin)
@@ -383,6 +392,8 @@ class PlayerSecurity:
 
         canonical_origin, authority = parsed
         with self._lock:
+            if self._active_origin_generation != generation:
+                return False
             if self._public_origin is not None:
                 if (
                     self._public_origin_generation == generation
@@ -396,11 +407,45 @@ class PlayerSecurity:
             self._public_origin_generation = generation
             return True
 
+    def set_active_origin_generation(self, generation: int | None) -> bool:
+        """Set the current sharing generation; ``None`` withdraws public access.
+
+        Generations are monotonic for this security authority. Re-activating the
+        current high-water generation is allowed after a clear so the controller
+        can complete a fresh readiness check for degraded or rotated access.
+        """
+        with self._lock:
+            if generation is None:
+                self._active_origin_generation = None
+                self._clear_public_origin_locked()
+                return True
+            if (
+                not isinstance(generation, int)
+                or isinstance(generation, bool)
+                or generation < 1
+                or generation < self._highest_origin_generation
+            ):
+                return False
+            if self._active_origin_generation is not None:
+                if generation < self._active_origin_generation:
+                    return False
+                if generation == self._active_origin_generation:
+                    return True
+                if generation <= self._highest_origin_generation:
+                    return False
+            self._clear_public_origin_locked()
+            self._active_origin_generation = generation
+            self._highest_origin_generation = max(
+                self._highest_origin_generation, generation
+            )
+            return True
+
     def clear_public_origin(self, reason: str | None = None) -> None:
         """Clear the optional binding without logging caller-supplied details."""
         del reason
         with self._lock:
             self._clear_public_origin_locked()
+            self._active_origin_generation = None
 
     def _clear_public_origin_locked(self) -> None:
         self._public_origin = None
@@ -435,6 +480,7 @@ class PlayerSecurity:
             self._sessions.clear()
             self._sockets.clear()
             self._clear_public_origin_locked()
+            self._active_origin_generation = None
             self.limiters.clear_sessions()
             self._signing_key = secrets.token_bytes(32)
             self._server_instance_id = secrets.token_urlsafe(32)
@@ -450,6 +496,7 @@ class PlayerSecurity:
             self._sessions.clear()
             self._sockets.clear()
             self._clear_public_origin_locked()
+            self._active_origin_generation = None
             self.limiters.clear_sessions()
             return socket_ids
 
@@ -587,23 +634,39 @@ class PlayerSecurity:
     ) -> bool:
         if not isinstance(sid, str) or not sid:
             return False
-        if not self.request_identity_is_valid(host, origin, require_origin=True):
-            return False
         now = self.clock()
         with self._lock:
             self._prune_expired_sessions_locked(now)
-            if not self._active:
+            if (
+                not self._active
+                or not self._request_identity_is_valid_locked(
+                    host, origin, require_origin=True
+                )
+            ):
                 return False
+            origin_generation = (
+                None if host == self.expected_host else self._public_origin_generation
+            )
             session = self._session_from_cookie_locked(cookie)
             if session is None:
                 return False
             existing = self._sockets.get(sid)
             if existing is not None:
-                return existing.session_id == session.session_id
+                return bool(
+                    existing.session_id == session.session_id
+                    and existing.host == host
+                    and existing.origin == origin
+                    and existing.origin_generation == origin_generation
+                )
             if len(self._sockets) >= MAX_CONCURRENT_PLAYER_SOCKETS:
                 return False
             session.sockets.add(sid)
-            self._sockets[sid] = _SocketRecord(session.session_id, host or "", origin or "")
+            self._sockets[sid] = _SocketRecord(
+                session.session_id,
+                host or "",
+                origin or "",
+                origin_generation,
+            )
             return True
 
     def authorize_socket_event(self, sid: str) -> bool:
@@ -617,11 +680,7 @@ class PlayerSecurity:
             return bool(
                 session is not None
                 and now < session.expires_at
-                and self.request_identity_is_valid(
-                    socket_record.host,
-                    socket_record.origin,
-                    require_origin=True,
-                )
+                and self._socket_identity_is_valid_locked(socket_record)
             )
 
     def session_context_for_socket(self, sid: str) -> PlayerSessionIdentity | None:
@@ -636,11 +695,7 @@ class PlayerSecurity:
             if (
                 session is None
                 or now >= session.expires_at
-                or not self.request_identity_is_valid(
-                    socket_record.host,
-                    socket_record.origin,
-                    require_origin=True,
-                )
+                or not self._socket_identity_is_valid_locked(socket_record)
             ):
                 return None
             return PlayerSessionIdentity(
@@ -659,11 +714,7 @@ class PlayerSecurity:
             return [
                 sid
                 for sid, socket_record in self._sockets.items()
-                if self.request_identity_is_valid(
-                    socket_record.host,
-                    socket_record.origin,
-                    require_origin=True,
-                )
+                if self._socket_identity_is_valid_locked(socket_record)
                 and (session := self._sessions.get(socket_record.session_id)) is not None
                 and now < session.expires_at
             ]
@@ -684,18 +735,39 @@ class PlayerSecurity:
         *,
         require_origin: bool,
     ) -> bool:
+        with self._lock:
+            return self._request_identity_is_valid_locked(
+                host, origin, require_origin=require_origin
+            )
+
+    def _request_identity_is_valid_locked(
+        self,
+        host: str | None,
+        origin: str | None,
+        *,
+        require_origin: bool,
+    ) -> bool:
         if host == self.expected_host:
             if origin is None:
                 return not require_origin
             return origin == self.expected_origin
-        if origin is None:
+        return bool(
+            origin is not None
+            and self._active_origin_generation is not None
+            and self._public_origin_generation == self._active_origin_generation
+            and self._public_origin is not None
+            and host == self._public_authority
+            and origin == self._public_origin
+        )
+
+    def _socket_identity_is_valid_locked(self, record: _SocketRecord) -> bool:
+        if not self._request_identity_is_valid_locked(
+            record.host, record.origin, require_origin=True
+        ):
             return False
-        with self._lock:
-            return bool(
-                self._public_origin is not None
-                and host == self._public_authority
-                and origin == self._public_origin
-            )
+        if record.host == self.expected_host:
+            return record.origin_generation is None
+        return record.origin_generation == self._active_origin_generation
 
     def _sign_session_locked(self, session_id: str, expires_at: int) -> str:
         payload = f"v1|{self._server_instance_id}|{session_id}|{expires_at}".encode("ascii")

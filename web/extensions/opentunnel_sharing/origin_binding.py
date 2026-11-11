@@ -65,6 +65,8 @@ class PublicOriginBinder:
             if self._generation is not None and generation <= self._generation:
                 return False
             self._security.clear_public_origin("generation_started")
+            if not self._security.set_active_origin_generation(generation):
+                return False
             self._generation = generation
             self._origin = None
             self._state = "unbound"
@@ -102,6 +104,8 @@ class PublicOriginBinder:
             if self._origin is not None and self._origin != canonical_origin:
                 self._clear_locked("origin_changed")
                 return False
+            if not self._security.set_active_origin_generation(generation):
+                return False
             if not self._security.bind_public_origin(generation, canonical_origin):
                 self._clear_locked("binding_rejected")
                 return False
@@ -125,7 +129,14 @@ class PublicOriginBinder:
         self._security.clear_public_origin(reason)
         self._origin = None
         self._state = reason
-        if reason in ("origin_changed", "invalid_origin", "binding_rejected"):
+        if reason in (
+            "origin_changed",
+            "invalid_origin",
+            "binding_rejected",
+            "stop",
+            "failed",
+            "cleared",
+        ):
             self._terminal_generation = True
 
     def _reconcile_security_binding_locked(self) -> None:
