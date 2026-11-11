@@ -263,3 +263,104 @@ are superseded only for M1. The 1,048 D1 claim rows, seven rateable transcripts
 (18 not rateable; E01 excluded; condition key withheld), final format/combat/
 data choices, and ADR-0034 Proposed status remain pending. No whole decision
 report is rerun or inferred from absent inputs.
+
+## FR05 owner-authorized append-only closeout (2026-11-12)
+
+This section is the current closeout and supersedes earlier pending-status
+language in this report only where stated below. It is appended without
+rewriting the preceding report. The preserved 25,167-byte prefix has SHA-256
+`4734384e9c61fffd3f93ddb59ac292bd3b71a78004b3e781dccdb7bf2bbd0382`.
+This records the FR05 owner authorization in `neq-replan-lift-b-20261110`
+(PR #133, main `7a5d032a`). It is an evidence closeout and Builder handoff,
+not a production contract, implementation authorization, or new experiment.
+
+### Current evidence disposition
+
+- **SP3:** the primary's 26 attempted rows were 18 FAIL and 8 BLOCKED (0 live
+  PASS). The Overseer's comparison adjudication is **INCONCLUSIVE**; the row
+  counts do not become successes or a pooled causal format result. See the
+  primary collection closeout and the earlier SP3 adjudication entry above.
+- **SP3b:** **CLOSED BLOCKED**; all 19 approved profile rows remain unrun,
+  per `neq-replan-lift-b-20261110`. No retry, profiling, or live execution is
+  inferred or authorized here.
+- **D1:** **NOT AUDITED** under OD-1. The inventory records 20 sample attempts,
+  11 validated layouts and 9 invalid layouts, with 1,048 claim-audit rows.
+  The 85% precision gate is **NOT ASSESSED** (owner numerator and denominator
+  are null); the owner did no row-by-row audit. Precision is machine-scored
+  against authored source, and owner review time is reserved for rendered
+  layouts. Backfill is **CLOSED**. Authored-field coverage is not established;
+  proposed claims are not authored facts and no new census is made here.
+- **Seven rateable SP3 transcripts:** owner-waived as superseded, with no
+  score values. The other 18 remain not rateable; E01 remains excluded. This
+  supersedes the earlier pending-rating wording; no rating is imputed.
+- **M1:** the original 16 owner-rated sketches average **2.625 legibility**
+  and **2.875 usefulness**, both below the frozen 3.5 threshold. This is an M1
+  result, not a whole-pilot verdict. The bound ratings file and hash are in the
+  earlier M1 evidence section.
+- **Decision status:** map format (S1b), combat granularity/enforcement
+  (SC0), and data pipeline (S3/MB0) remain deferred to their owning gates;
+  this closeout selects none of them. Later ruling
+  `neq-adr0034-accepted-20261109` records ADR-0034 accepted via PR #129,
+  merged as `2a422fff`; that acceptance does not decide those three choices.
+  The previous statement that ADR-0034 remained Proposed is superseded, not
+  erased.
+
+### Mise-en-scene staging studies
+
+| Study | Recorded outcome | Interpretation and evidence pointer |
+|---|---|---|
+| 1 | **FAIL**; 3 attempts; USD 0.0117564. | All outputs hit the 4,096-token limit inside the fixture/topology echo, before arrival staging. This is a frozen-envelope/protocol failure, not a model or Builder result. Run `staging-20261109T072504Z`; ruling `neq-staging-study1-fail-20261109` (2026-11-09; batch `b-5ccceb5a...e19b`). No rerun or owner rating. |
+| 2 | **FAIL_FROZEN_CONTRACT**; 3 attempts; USD 0.010145275 (the ruling reports the rounded USD 0.010145). | Undisclosed validator requirements rejected authored-fact IDs and typed stage relations; protocol/validator defect, not a model result. Run `study2-20261109T210130Z`; ruling `neq-study2-fail-adjudicated-20261110`. No rescoring, repair-as-pass, pooling, or owner rating. |
+| 3 | **FAIL as run**; 3 attempts; USD 0.011938525, under the USD 0.05 cap. | `ha003-i02` is model-attributable for `GUARDED_MARKER_IN_PUBLIC_DELTA`. `sd005-i03` and `tsu001-ao02` passed the contract checks but failed hydration with `CLAIM_FACT_NOT_MATERIALIZABLE`; these two are harness contract/hydration-parity diagnostics, not model verdicts. Ruling `neq-s-study3-adjudication-20261111` (2026-11-11T02:28:23Z), batch `b-97be4f6c189163bc305caa5463e191800700b209b613b03b460030d648e81bd2`; PR #127 head `3fc5c457`, 11/11 CI checks, preflight READY (8 gates, 0 failures). The two diagnostics do not establish semantic passes. |
+| 3b | **CLOSED** after the append-only continuation: 3 total attempts, USD 0.012793900 under the USD 0.05 cap. | Initial ruling `neq-s-study3b-adjudication-20261111` (2026-11-11T10:15:22Z) records PR #127 head `80e165d1`, 11/11 CI, one `ha003-i02` attempt costing USD 0.004085175, and two scenes unrun after the runner stopped on that scene's contract failure. The stop behavior was fixed; the same study/ledger continued. `ha003-i02` remains a model-attributable failure. Only `sd005-i03` and `tsu001-ao02` were deterministic ACCEPTED and independently received semantic-fidelity PASS; both had LOW, near-verbatim/extractive staging value. Their finding is limited to those two scenes, not generalized to a corpus. Response-hash prefixes recorded by the final ruling: `cc99f997...`, `25c41bf1...`. Final review ruling `neq-s-study3b-semantic-review-20261112` (recorded 2026-11-11T12:46:04Z), batch `b-ce12fd4f6be63d313ee0bfcaead4d54cb60d7d9b99bce906fb279d8083676d34`; PR #127 head `5e4961c5`, 11/11 CI checks, preflight READY (4 gates, 0 failures). No owner ratings; no Study 4 or further calls on this line. |
+
+These outcomes preserve the distinction between protocol/harness failures and
+the one model-attributable guarded-content failure. They do not establish that
+all three scenes were safe, or that two scenes represent performance beyond
+their observed sample. FR-04 was handled by the Overseer under ruling
+`neq-s-fr04-done-by-overseer-20261111`, PR #146 (`efe31ec9`); its reported
+checks were `openspec validate --specs` (474
+passed, 0 failed) and ASCII (0 violations). This FR05 append does not repeat
+or alter FR-04.
+
+### Builder module-data requirements and gaps (s10.3)
+
+The D1 inventory contains 20 sample-attempt identities: Keep_of_Doom (7:
+`AN01`, `AA01`, `AG01`, `AE01`, `AL01`, `AN02`, `AA02`),
+The_Thornwood_Watch (6: `NC01`, `NC02`, `NC03`, `NC04`, `NC05`, `RO01`),
+and The_Pumpkin_Kings_Curse (7: `AD01`, `AB01`, `V01`, `AB02`, `V02`,
+`AB03`, `V03`). The 11/9 validation split is an attempt/layout status, not a
+field-presence count. For every row below, authored/missing/ambiguous field
+counts are **NOT ASSESSED**: the inventory does not establish authored-field
+coverage, and no fresh census or promotion of claim proposals is authorized.
+
+| Fact or behavior to review (not a schema proposal) | Evidence and count boundary | Value provenance / units | Owner and follow-up |
+|---|---|---|---|
+| Stable scene identity and binding of a threshold/exit to its destination, so a player can orient and act on the intended place. | D1 denominator: 20 attempts (7/6/7 by module); field coverage **NOT ASSESSED**. In the separate E01-E14 transcript sample, E02 asserted an alley for an unknown back-door destination and E11 invented a corridor beyond an unknown back door: 2/14 rows, **not** a rate across destination opportunities. | Use only source-authored identity/binding; unknown destination stays unknown. Identity/reference, not a measured distance. No derived/default binding rule is proposed. | Spatial S1 owns schema/query review; Builder MB1/MB2 own generation requirements. |
+| Connection/topology and whether a path is actually connected, rather than inferred from proximity or a schematic layout. | D1 field counts **NOT ASSESSED** (same 20-attempt sample). E02 and E11 are the two observed destination/connection errors above; the 2/14 row count is not an opportunity denominator. | Authored connection or explicit unknown only. Topological relation, not metric length/time. Do not infer a link from co-location. | S1/S2 review the spatial representation; MB1/MB2 define any separately approved authoring needs. S3 backfill is CLOSED. |
+| Threshold/door state and its binding to a known or unknown destination, preserving the distinction between state and connection. | D1 field counts **NOT ASSESSED**. E07 narrated the kitchen door open despite the frozen closed/unknown-destination state: 1/14 E01-E14 rows, not an opportunity rate. | Source-backed categorical state only; retain unknowns. No new state machine or implementation mechanism is specified. | S1 review; MB1/MB2 generation requirements. Any combat enforcement remains at SC0, deferred. |
+| Authored cues and character-knowledge boundaries around an unentered or unknown space, so narration does not imply unsupported sensory access or knowledge. | D1 cue/knowledge coverage **NOT ASSESSED**; the 20 attempts do not supply a supported field-level denominator. The three door observations are examples, not a corpus-frequency estimate. | Cues/knowledge are source- and perspective-bound; absent evidence remains unknown. No cue, visibility, access, or knowledge mechanism is invented here. | Builder MB1/MB2 review with Narrator consumption; S1/S2 define any future spatial query contract. |
+| Schematic layout versus metric distance, height, bearing, or travel time, so a diagram is not mistaken for measured geometry. | D1 authored/missing counts **NOT ASSESSED**; no metric census or new measurement was performed. | Keep layout explicitly schematic unless an authored source supplies metric units/value; otherwise metric values are unknown/not applicable, never inferred from cells. | S1/S1b format decision is deferred; Builder MB1/MB2 review data needs; S3/MB0 pipeline choice is deferred. |
+| Arrival staging roles/relations (approach, threshold, focal) that make a scene actionable to narration. | D1 **NOT ASSESSED**. Study 3b semantic results apply only to its three scenes: two accepted with LOW staging value; the third failed the guarded-marker rule. | Existing authored facts remain provenance; study results do not define a production contract or make LLM-proposed facts authored. Schematic relations are not measurements. | Builder MB1/MB2 and Narrator review; no standalone LLM staging default is selected. |
+
+The three unbound-door examples are limited to E02, E07, and E11 in the
+existing E01-E14 transcript rows: **3/14 rows**, not an opportunity rate.
+They identify Builder review gaps in binding, connection, state, cues, and
+knowledge boundaries; they do not establish a generalized corpus frequency or
+prescribe an implementation mechanism. S1 schema/query, MB1/MB2 generation,
+and S3 feasibility are owner handoffs only. No backfill is reopened, and no
+production field or contract is approved here.
+
+**Recommendation only (not a decision, implementation, or ADR change):** prefer
+Python-authored spatial structure plus the Narrator for player-facing staging,
+not a standalone LLM staging pass. The two accepted study-3b scenes were
+faithful but extractive, while the third had a model-attributable guarded
+marker failure. Any implementation requires separately approved work and the
+owning Spatial/Builder gates.
+
+### Closeout evidence pointers
+
+- [D1 closeout inventory](../../../../tmp/router-rollout/mapping-pilot/sp4-closeout/d1-closeout-primary-inventory.json), SHA-256 `add060b7315199fd2c56e0f316b943b37a09c800bc91fc5a4feaaa50bcd12278`. Authority note `tmp/router-rollout/mapping-pilot/sp4-closeout/overview-7a5d032a-authority.md`, SHA-256 `6742b3f2db3b6cac446ba34e0f0254aed352124a7e1da62735df6f936335927b`.
+- D1 source pointers in that inventory: `tmp/router-rollout/mapping-pilot/d1/d1-20261105-01/d1_attempt_ledger.json` SHA-256 `125fa3f37a95b4629bd1623a5c4fd02ef740f5a4607a0e8db843727201a83e0b`; `d1_audit_sheet.json` SHA-256 `fc46908569382112bf4df2ab960eeeed8fb7b8a401802030122c7a7e780eede3`; `d1_owner_audit.csv` SHA-256 `23eb2a65d09d8e52393a20c0873a226ffcbfc359082acb5799cdafdc34740cb4`; `selection.json` SHA-256 `f96070b3d736f84ce0cffdaa5c2336b5e4e36c8fc9a6ab0e6b0037c4d541d3b8`.
+- M1 owner ratings remain bound at `tmp/router-rollout/mapping-pilot/m1/m1-20261105-02/ratings.csv`, SHA-256 `2611bc239076fc5e7d47f2495576134369e24f823049f45cd1c11da09f1b3b78`, as detailed in the earlier M1 section.
+- Study rulings and their recorded batch/PR/head/CI identifiers are cited inline above. Hashes shown with ellipses are prefixes only as recorded in the ruling; no full hash or private response prose is inferred.
