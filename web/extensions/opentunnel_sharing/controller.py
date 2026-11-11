@@ -355,6 +355,58 @@ class SharingController:
             counters=self._counters,
         )
 
+    # TABLETOP MODE: expose only bounded companion and route health facts to
+    # the host-side relay monitor; process output and route origins stay private.
+    def supervision_companion_diagnostics(
+        self, generation: int
+    ) -> tuple[str, str | None] | None:
+        """Read allowlisted diagnostics from the owned active-generation child."""
+        companion = self._supervision_companion(generation)
+        if companion is None:
+            return "unknown", None
+        try:
+            diagnostics = companion.diagnostics()
+        except Exception:
+            return None
+        if not isinstance(diagnostics, dict):
+            return None
+        state = diagnostics.get("state")
+        if state not in {"running", "exited", "failed", "stopped"}:
+            state = "unknown"
+        exit_code_bucket = diagnostics.get("exit_code_bucket")
+        if exit_code_bucket not in {"success", "failure", "signal"}:
+            exit_code_bucket = None
+        return state, exit_code_bucket
+
+    def supervision_route_healthy(self, generation: int) -> bool:
+        """Use the configured route-status probe without exposing its origin."""
+        companion = self._supervision_companion(generation)
+        if companion is None:
+            return False
+        try:
+            result = self._deps.route_status(companion, generation)
+        except Exception:
+            return False
+        return bool(
+            isinstance(result, RouteStatus)
+            and result.healthy is True
+            and type(result.generation) is int
+            and result.generation == generation
+        )
+
+    def _supervision_companion(self, generation: int) -> CompanionHandle | None:
+        if type(generation) is not int or generation < 1:
+            return None
+        with self._lock:
+            if (
+                generation != self._generation
+                or generation != self._companion_generation
+                or not self._companion_started
+                or self._state not in {SharingState.READY, SharingState.DEGRADED}
+            ):
+                return None
+            return self._companion
+
     def _reserve_ticket_locked(self) -> int:
         ticket = self._next_ticket
         self._next_ticket += 1
