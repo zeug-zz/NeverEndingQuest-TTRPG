@@ -664,16 +664,38 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         (sandbox / "web" / "frontend" / "index.html").write_text("", encoding="ascii")
 
     def _prepare_companion(self) -> None:
+        self._write_companion_install(self.root / gate.CAPTURE_RELATIVE)
+
+    def _write_companion_install(self, install_root: Path) -> Path:
+        content = b"fake pinned companion"
         companion = (
-            self.root
-            / "runtime"
-            / "opentunnel"
-            / "v0.6.2"
-            / "opentunnel-darwin-arm64"
-            / "opentunnel"
+            install_root
+            / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
         )
         companion.parent.mkdir(parents=True)
-        companion.write_text("fake pinned companion", encoding="ascii")
+        companion.write_bytes(content)
+        companion.chmod(0o700)
+        manifest = companion.parent.parent / "manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema": "neq.opentunnel.runtime_manifest.v1",
+                    "version": "0.6.2",
+                    "platforms": {
+                        "darwin-arm64": {
+                            "asset_stem": "opentunnel-darwin-arm64",
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                        }
+                    },
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="ascii",
+        )
+        manifest.chmod(0o644)
+        return companion
 
     def make_row_context(
         self,
@@ -726,6 +748,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 owner_pid=444,
                 state_root=self.state_root_for(selected_run_id),
             ),
+            self.root / gate.CAPTURE_RELATIVE,
             public_client=factory(),
             public_client_factory=factory,
             process_table=process_table or FakeProcessTable(()),
@@ -734,6 +757,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=port_inspector,
             companion_path=(
                 self.root
+                / gate.CAPTURE_RELATIVE
                 / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
             ),
             identity_observer_factory=(
@@ -1103,7 +1127,11 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
     def companion_process_fixture(
         self, *, mismatch_child_token: bool = False
     ) -> tuple[tuple[gate.ProcessRecord, ...], dict[int, object]]:
-        companion = self.root / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        companion = (
+            self.root
+            / gate.CAPTURE_RELATIVE
+            / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        )
         uid = os.getuid()
         host_started = datetime(2026, 11, 11, 11, 0, 0)
         child_started = datetime(2026, 11, 11, 11, 1, 0)
@@ -1268,6 +1296,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             self.root / gate.CAPTURE_RELATIVE,
             api,
             SimpleNamespace(owner_pid=444),
+            self.root / gate.CAPTURE_RELATIVE,
             public_client=client,
             public_client_factory=client_factory,
             process_table=FakeProcessTable(records),
@@ -1276,6 +1305,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=ports,
             companion_path=(
                 self.root
+                / gate.CAPTURE_RELATIVE
                 / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
             ),
             monotonic=lambda: 1000.0,
@@ -1431,15 +1461,14 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             )
             return self.fake_host
 
-        def check_companion(_root: Path, platform_key: str) -> Mapping[str, object]:
+        def check_companion(
+            companion_install_root: Path, platform_key: str
+        ) -> Mapping[str, object]:
             if companion_error:
                 raise gate.GateError(companion_error)
-            return {
-                "platform": platform_key,
-                "sha256": "5" * 64,
-                "path": self.root
-                / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel",
-            }
+            return gate.verify_installed_companion(
+                companion_install_root, platform_key
+            )
 
         def check_sandbox(root: Path) -> Path:
             if sandbox_error:
@@ -1512,6 +1541,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         companion_record = records[1]
         companion_path = (
             self.root
+            / gate.CAPTURE_RELATIVE
             / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
         )
         other_profile_process = gate.ProcessRecord(
@@ -1581,6 +1611,40 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             unavailable_public_observation.reason,
             "public_exposure_observation_unavailable",
         )
+
+    def test_companion_process_identification_uses_capture_copy_path(self) -> None:
+        context = self.make_row_context()
+        records, _identities = self.companion_process_fixture()
+        capture_companion = gate._companion_path(context)
+        repository_companion = self._write_companion_install(self.root)
+        repository_record = gate.ProcessRecord(
+            556,
+            444,
+            os.getuid(),
+            datetime(2026, 11, 11, 11, 2, 0),
+            "repository-copy-child",
+            shlex.join(
+                [
+                    str(repository_companion),
+                    "serve",
+                    "--profile",
+                    gate.DEFAULT_PROFILE,
+                ]
+            ),
+        )
+
+        matches = gate._matching_companion_processes(
+            (*records, repository_record),
+            capture_companion,
+            gate.DEFAULT_PROFILE,
+        )
+
+        expected_capture_path = (
+            context.companion_install_root
+            / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        )
+        self.assertEqual(capture_companion, expected_capture_path)
+        self.assertEqual(matches, (records[1],))
 
     def test_l02_initializes_once_checks_projection_and_cleanup(self) -> None:
         initial = {
@@ -2632,6 +2696,11 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertTrue(plan["plan_only"])
         self.assertFalse(plan["side_effects"])
         self.assertEqual(plan["gate_verdict"], "PENDING")
+        self.assertEqual(plan["companion_install_root"], "tmp/combat_capture")
+        self.assertEqual(
+            plan["companion_missing_refusal"],
+            "companion_not_installed_in_capture_root",
+        )
         after = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
         self.assertEqual(before, after)
         help_output = io.StringIO()
@@ -2973,6 +3042,29 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertIn("companion_digest_invalid", result["infrastructure_failures"])
         self.assertEqual(self.host_factory_calls, 0)
+
+    def test_repo_root_only_companion_is_refused_before_host_start(self) -> None:
+        capture_runtime = self.root / gate.CAPTURE_RELATIVE / "runtime"
+        shutil.rmtree(capture_runtime)
+        repository_companion = self._write_companion_install(self.root)
+        self.assertTrue(repository_companion.is_file())
+
+        result = gate.run_live_gate(self.make_dependencies(), self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(
+            result["platform_verdicts"]["macos-arm64"]["reason"],
+            "companion_not_installed_in_capture_root",
+        )
+        self.assertIn(
+            "companion_not_installed_in_capture_root",
+            result["infrastructure_failures"],
+        )
+        self.assertEqual(self.host_factory_calls, 0)
+        self.assertFalse(
+            (self.root / gate.EVIDENCE_BASE / self.run_id / "capture").exists()
+        )
 
     def test_gate_state_cache_path_policy_and_pre_side_effect_refusals(self) -> None:
         home = Path("/Users/facilitator")
