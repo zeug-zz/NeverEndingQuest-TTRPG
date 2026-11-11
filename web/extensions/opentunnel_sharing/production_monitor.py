@@ -25,7 +25,6 @@ from web.extensions.opentunnel_sharing.relay_supervision import (
     RelayHealthObservation,
 )
 from utils.provider_attempt_budget import _is_isolated_capture_root
-from utils.repo_paths import repository_root
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,7 +70,7 @@ def production_recovery_policy(web_port: object) -> RecoveryPolicy:
             default_policy, "recovery_override_out_of_range"
         )
 
-    context_reason = _n3_recovery_context_reason(web_port)
+    context_reason = _n3_recovery_context_reason(web_port, source_path=__file__)
     if context_reason is not None:
         return _ignored_recovery_override(default_policy, context_reason)
 
@@ -84,7 +83,9 @@ def production_recovery_policy(web_port: object) -> RecoveryPolicy:
     )
 
 
-def _n3_recovery_context_reason(web_port: object) -> str | None:
+def _n3_recovery_context_reason(
+    web_port: object, *, source_path: str | Path = __file__
+) -> str | None:
     if type(web_port) is not int or web_port != 8360:
         return "web_port_mismatch"
 
@@ -93,14 +94,25 @@ def _n3_recovery_context_reason(web_port: object) -> str | None:
         return "run_id_invalid"
 
     try:
-        source_path = Path(os.path.abspath(__file__))
-        if source_path != source_path.resolve(strict=True):
+        runtime_source = Path(os.path.abspath(os.fspath(source_path)))
+        resolved_source = runtime_source.resolve(strict=True)
+        if runtime_source != resolved_source:
             return "runtime_root_symlinked"
-        runtime_root = Path(repository_root(source_path))
+        if not runtime_source.is_file():
+            return "runtime_root_unavailable"
+        if (
+            len(runtime_source.parents) < 4
+            or runtime_source.name != "production_monitor.py"
+            or runtime_source.parents[0].name != "opentunnel_sharing"
+            or runtime_source.parents[1].name != "extensions"
+            or runtime_source.parents[2].name != "web"
+        ):
+            return "runtime_root_not_isolated"
+        runtime_root = runtime_source.parents[3]
         if runtime_root.is_symlink():
             return "runtime_root_symlinked"
         resolved_root = runtime_root.resolve(strict=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (IndexError, OSError, RuntimeError, TypeError, ValueError):
         return "runtime_root_unavailable"
 
     if runtime_root != resolved_root:

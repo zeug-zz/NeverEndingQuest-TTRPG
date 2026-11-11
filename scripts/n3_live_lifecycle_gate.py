@@ -2031,7 +2031,10 @@ class L08HostExitRestartExecutor:
                 if owner_state == "present":
                     return _failed("owner_record_remains_after_host_exit")
                 return _blocked("owner_record_observation_unavailable")
-            processes = _run_processes_absent(context, (owner_pid,), layout)
+            owned_host_pids = getattr(context.host, "owned_pids", None)
+            if not isinstance(owned_host_pids, (list, tuple)) or not owned_host_pids:
+                return _blocked("host_process_ownership_unavailable")
+            processes = _run_processes_absent(context, owned_host_pids, layout)
             if processes is None:
                 return _blocked("run_process_observation_unavailable")
             if not processes:
@@ -2272,8 +2275,8 @@ class L10CleanTeardownExecutor:
                 return _blocked("owner_record_observation_unavailable")
             if owner_state != "absent":
                 return _failed("owner_record_remains_after_host_stop")
-            owned_host_pids = getattr(context.host, "owned_pids", (host_pid,))
-            if not isinstance(owned_host_pids, (list, tuple)):
+            owned_host_pids = getattr(context.host, "owned_pids", None)
+            if not isinstance(owned_host_pids, (list, tuple)) or not owned_host_pids:
                 return _blocked("host_process_ownership_unavailable")
             processes_absent = _run_processes_absent(
                 context, owned_host_pids, layout
@@ -2350,18 +2353,17 @@ class L10CleanTeardownExecutor:
             state_root = Path(context.host.state_root)
             if not _private_state_tree_matches(state_root, state_identity):
                 return _blocked("gate_state_root_ownership_changed")
-            try:
-                shutil.rmtree(state_root)
-            except OSError:
-                return _failed("gate_state_root_removal_failed")
-            if state_root.exists() or state_root.is_symlink():
-                return _failed("gate_state_root_remains")
-            parent_identity = getattr(context.host, "_state_parent_identity", None)
-            parent_removed = _remove_private_state_parent_if_empty(
-                state_root.parent, parent_identity
+            state_path_sha256 = _state_path_sha256(state_root)
+            cleanup = _cleanup_driver_state_root(
+                context.host,
+                run_id=context.run_id,
+                repository_root=context.root,
             )
-            if parent_removed is None:
+            if cleanup is None:
                 return _blocked("gate_state_parent_removal_unavailable")
+            state_root_removed, parent_removed = cleanup
+            if not state_root_removed:
+                return _failed("gate_state_root_removal_failed")
 
             try:
                 public_after = client.request("GET", "/")
@@ -2380,9 +2382,9 @@ class L10CleanTeardownExecutor:
                     "identity_up_invocations_before_teardown": up_count,
                     "ports_free": True,
                     "run_processes_absent": True,
-                    "gate_state_root_removed": True,
+                    "gate_state_root_removed": state_root_removed,
                     "gate_state_root_id8": _state_root_id8(context.run_id),
-                    "gate_state_path_sha256": _state_path_sha256(state_root),
+                    "gate_state_path_sha256": state_path_sha256,
                     "gate_state_parent_removed_if_empty": parent_removed,
                     "public_url_unreachable": True,
                     "installed_companion_preserved": True,
@@ -2449,7 +2451,9 @@ def _run_processes_absent(
     try:
         records = context.process_table.snapshot()
         path = _companion_path(context)
-        matches = _matching_companion_processes(records, path, layout.profile)
+        # The orphan check covers every process executing this capture-copy
+        # binary, including a process that selected a different profile.
+        matches = _matching_companion_processes(records, path, profile=None)
     except (GateError, ProcessTableError, OSError, ValueError):
         return None
     if matches is None:
@@ -2459,11 +2463,29 @@ def _run_processes_absent(
     return not matches
 
 
+def _process_group_id(host: object, pid: int) -> int | None:
+    probe = getattr(host, "_getpgid", os.getpgid)
+    if not callable(probe):
+        return None
+    try:
+        result = probe(pid)
+    except Exception:
+        return None
+    return result if type(result) is int and result > 0 else None
+
+
 def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
     host = context.host
-    pid = getattr(host, "owner_pid", None)
+    pid = getattr(host, "launcher_pid", None)
+    owner_pid = getattr(host, "owner_pid", None)
     process = getattr(host, "process", None)
-    if type(pid) is not int or pid <= 0 or process is None:
+    if (
+        type(pid) is not int
+        or pid <= 0
+        or type(owner_pid) is not int
+        or owner_pid <= 0
+        or process is None
+    ):
         return None
     if getattr(process, "pid", None) != pid:
         return None
@@ -2471,13 +2493,19 @@ def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
         if process.poll() is not None:
             return None
         records = context.process_table.snapshot()
-        record = next((item for item in records if item.pid == pid), None)
+        by_pid = {item.pid: item for item in records}
+        record = by_pid.get(pid)
+        server_record = by_pid.get(owner_pid)
         identity = context.process_identity_probe(pid)
+        server_identity = context.process_identity_probe(owner_pid)
         expected_python = (context.root / ".venv" / "bin" / "python").resolve(
             strict=True
         )
         executable = Path(
             str(getattr(identity, "executable_path", ""))
+        ).resolve(strict=True)
+        server_executable = Path(
+            str(getattr(server_identity, "executable_path", ""))
         ).resolve(strict=True)
         argv = getattr(identity, "argv", ())
         command_line = getattr(identity, "command_line", "")
@@ -2487,21 +2515,56 @@ def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
             else ()
         )
         command = " ".join(arguments) if arguments else str(command_line)
+        server_argv = getattr(server_identity, "argv", ())
+        server_command_line = getattr(server_identity, "command_line", "")
+        server_arguments = (
+            tuple(str(item) for item in server_argv)
+            if isinstance(server_argv, (tuple, list))
+            else tuple(shlex.split(str(server_command_line)))
+        )
+        expected_server = (
+            context.sandbox_root / "web" / "web_interface.py"
+        ).resolve(strict=True)
+        observed_server = (
+            Path(server_arguments[1]).resolve(strict=True)
+            if len(server_arguments) >= 2
+            else None
+        )
         owned_pids = getattr(host, "owned_pids", ())
+        port_observation = _inspect_port(context, HOST_PORT)
         if (
             record is None
+            or server_record is None
             or record.uid != os.getuid()
+            or server_record.uid != os.getuid()
             or not _identity_matches_record(identity, record)
+            or not _identity_matches_record(server_identity, server_record)
             or executable != expected_python
+            or server_executable != expected_python
             or "run_web.main()" not in command
+            or observed_server != expected_server
             or pid not in owned_pids
+            or owner_pid not in owned_pids
+            or owner_pid == pid
+            or server_record.parent_pid != pid
+            or _process_group_id(host, owner_pid) != pid
+            or _process_is_descendant(by_pid, owner_pid, pid) is not True
+            or port_observation is None
+            or not _port_is_owned_by(port_observation, HOST_PORT, owner_pid)
         ):
             return None
         process_args = _process_arguments(record, expected_python)
         if process_args is None or "run_web.main()" not in " ".join(process_args):
             return None
         return record
-    except (OSError, RuntimeError, TypeError, ValueError, ProcessTableError):
+    except (
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        ProcessTableError,
+        RecursionError,
+    ):
         return None
 
 
@@ -3102,18 +3165,42 @@ def _validated_owned_companion(
     candidate: ProcessRecord,
 ) -> _OwnedCompanionTarget | None:
     host_pid = context.host.owner_pid
-    if type(host_pid) is not int or host_pid <= 0 or candidate.uid != os.getuid():
+    launcher_pid = getattr(context.host, "launcher_pid", None)
+    process = getattr(context.host, "process", None)
+    if type(launcher_pid) is not int and process is not None:
+        launcher_pid = getattr(process, "pid", None)
+    if (
+        type(host_pid) is not int
+        or host_pid <= 0
+        or host_pid == launcher_pid
+        or candidate.uid != os.getuid()
+    ):
+        return None
+    if type(launcher_pid) is not int or launcher_pid <= 0:
         return None
     by_pid = {record.pid: record for record in records}
     host_record = by_pid.get(host_pid)
-    if host_record is None or host_record.uid != os.getuid():
+    launcher_record = by_pid.get(launcher_pid)
+    owned_pids = getattr(context.host, "owned_pids", ())
+    if (
+        host_record is None
+        or host_record.uid != os.getuid()
+        or launcher_record is None
+        or launcher_record.uid != os.getuid()
+        or host_pid not in owned_pids
+        or launcher_pid not in owned_pids
+    ):
         return None
     try:
         host_identity = context.process_identity_probe(host_pid)
+        launcher_identity = context.process_identity_probe(launcher_pid)
         candidate_identity = context.process_identity_probe(candidate.pid)
         expected_python = (context.root / ".venv" / "bin" / "python").resolve(strict=True)
         host_executable = Path(
             str(getattr(host_identity, "executable_path", ""))
+        ).resolve(strict=True)
+        launcher_executable = Path(
+            str(getattr(launcher_identity, "executable_path", ""))
         ).resolve(strict=True)
         executable = Path(
             str(getattr(candidate_identity, "executable_path", ""))
@@ -3122,16 +3209,44 @@ def _validated_owned_companion(
         return None
     host_command = str(getattr(host_identity, "command_line", ""))
     host_argv = getattr(host_identity, "argv", ())
-    if isinstance(host_argv, tuple):
+    if isinstance(host_argv, (tuple, list)):
         host_command = " ".join(str(item) for item in host_argv)
+    launcher_command = str(getattr(launcher_identity, "command_line", ""))
+    launcher_argv = getattr(launcher_identity, "argv", ())
+    if isinstance(launcher_argv, (tuple, list)):
+        launcher_command = " ".join(str(item) for item in launcher_argv)
+    host_listener = _inspect_port(context, HOST_PORT)
     if (
         not _identity_matches_record(host_identity, host_record)
         or host_executable != expected_python
-        or "run_web.main()" not in host_command
+        or not _identity_matches_record(launcher_identity, launcher_record)
+        or launcher_executable != expected_python
+        or "run_web.main()" not in launcher_command
         or not _identity_matches_record(candidate_identity, candidate)
         or executable != companion_path
+        or host_listener is None
+        or not _port_is_owned_by(host_listener, HOST_PORT, host_pid)
+        or _process_group_id(context.host, host_pid) != launcher_pid
+        or _process_is_descendant(by_pid, host_pid, launcher_pid) is not True
         or candidate.started_at <= host_record.started_at
     ):
+        return None
+    host_arguments = getattr(host_identity, "argv", ())
+    if not isinstance(host_arguments, (tuple, list)):
+        try:
+            host_arguments = shlex.split(host_command)
+        except ValueError:
+            return None
+    if len(host_arguments) < 2:
+        return None
+    try:
+        server_script = Path(str(host_arguments[1])).resolve(strict=True)
+        expected_script = (
+            context.sandbox_root / "web" / "web_interface.py"
+        ).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if server_script != expected_script:
         return None
     if _process_is_descendant(by_pid, candidate.pid, host_pid) is not True:
         return None
@@ -3300,6 +3415,7 @@ class ManagedHostHarness:
         port_inspector: preflight_gate.PortInspector | None = None,
         readiness_probe: Callable[[], bool] | None = None,
         signal_group: Callable[[int, int], None] | None = None,
+        getpgid: Callable[[int], int] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         start_timeout: float = HOST_START_TIMEOUT_SECONDS,
@@ -3315,6 +3431,7 @@ class ManagedHostHarness:
         self._port_inspector = port_inspector or preflight_gate.SystemPortInspector()
         self._readiness_probe = readiness_probe or self._http_readiness_probe
         self._signal_group = signal_group or os.killpg
+        self._getpgid = getpgid or os.getpgid
         self._monotonic = monotonic
         self._sleep = sleep
         self._start_timeout = start_timeout
@@ -3322,16 +3439,23 @@ class ManagedHostHarness:
         self._poll_interval = poll_interval
         self.process: subprocess.Popen[bytes] | None = None
         self._pgid: int | None = None
+        self._server_pid: int | None = None
         self.process_generation = 0
         self.owned_pids: list[int] = []
+        self.listener_pids: list[int] = []
         self._state_root_identity: tuple[int, int] | None = None
         self._state_parent_identity: tuple[int, int] | None = None
+        self._state_parent_created = False
         self.output = ManagedHostOutputCounters()
         self._drainers: list[threading.Thread] = []
         self._stop_signal_error = False
 
     @property
     def owner_pid(self) -> int | None:
+        return None if self.process is None else self._server_pid
+
+    @property
+    def launcher_pid(self) -> int | None:
         return None if self.process is None else self.process.pid
 
     def start(self) -> bool:
@@ -3343,7 +3467,7 @@ class ManagedHostHarness:
         if not python_path.is_file():
             return False
         if self._state_root_identity is None:
-            _create_private_state_tree(self.state_root)
+            self._state_parent_created = _create_private_state_tree(self.state_root)
             self._state_root_identity = _private_state_tree_identity(self.state_root)
             self._state_parent_identity = _private_state_parent_identity(
                 self.state_root.parent
@@ -3372,15 +3496,35 @@ class ManagedHostHarness:
         self.process = child
         self._pgid = child.pid
         self.process_generation += 1
-        self.owned_pids.append(child.pid)
+        if child.pid not in self.owned_pids:
+            self.owned_pids.append(child.pid)
         self._start_drainers(child)
         if not self._wait_until_ready():
             self.stop()
             return False
-        observation = self._port_inspector.inspect(HOST_PORT)
-        if not _port_is_owned_by(observation, HOST_PORT, child.pid):
+        try:
+            observation = self._port_inspector.inspect(HOST_PORT)
+            server_pid = _single_listener_pid(observation, HOST_PORT)
+            server_pgid = (
+                self._getpgid(server_pid) if server_pid is not None else None
+            )
+        except Exception:
+            server_pid = None
+            server_pgid = None
+        if (
+            type(server_pid) is not int
+            or server_pid <= 0
+            or server_pid == child.pid
+            or type(server_pgid) is not int
+            or server_pgid != child.pid
+            or self._pgid != child.pid
+        ):
             self.stop()
-            return False
+            raise GateError("managed_host_port_ownership_failed")
+        self._server_pid = server_pid
+        if server_pid not in self.owned_pids:
+            self.owned_pids.append(server_pid)
+        self.listener_pids.append(server_pid)
         player = self._port_inspector.inspect(PLAYER_PORT)
         if player.state != "free" or player.pids:
             self.stop()
@@ -3418,6 +3562,7 @@ class ManagedHostHarness:
         if ports_free:
             self.process = None
             self._pgid = None
+            self._server_pid = None
         return ports_free and not self._stop_signal_error
 
     def _signal_owned_group(self, selected_signal: int) -> bool:
@@ -4341,7 +4486,7 @@ def _private_state_tree_identity(state_root: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
-def _create_private_state_tree(state_root: Path) -> None:
+def _create_private_state_tree(state_root: Path) -> bool:
     if state_root.exists() or state_root.is_symlink():
         raise GateError("gate_state_root_exists")
     created_parents = _ensure_private_state_parents(state_root)
@@ -4361,6 +4506,7 @@ def _create_private_state_tree(state_root: Path) -> None:
         os.chmod(state_root, 0o700)
         if not _private_state_tree_matches(state_root, created_identity):
             raise GateError("gate_state_root_invalid")
+        return state_root.parent in created_parents
     except BaseException:
         cleanup_ok = not created
         if created and created_identity is not None:
@@ -4410,6 +4556,85 @@ def _remove_private_state_parent_if_empty(
     return False
 
 
+def _cleanup_driver_state_root(
+    host: object, *, run_id: str, repository_root: Path
+) -> tuple[bool, bool] | None:
+    """Remove only this run's identity-verified state tree and owned empty parent."""
+    try:
+        state_root = Path(os.fspath(getattr(host, "state_root")))
+    except (OSError, TypeError, ValueError):
+        return None
+    if (
+        not state_root.is_absolute()
+        or state_root.name != _state_root_id8(run_id)
+        or state_root.parent.name != "neq-n3g"
+        or {".venv", "venv"}.intersection(state_root.parts)
+    ):
+        return None
+    try:
+        repository = repository_root.resolve(strict=True)
+        state_root.relative_to(repository)
+        inside_repository = True
+    except ValueError:
+        inside_repository = False
+    except (OSError, RuntimeError, TypeError):
+        return None
+    try:
+        repository.relative_to(state_root)
+        contains_repository = True
+    except ValueError:
+        contains_repository = False
+    if inside_repository or contains_repository:
+        return None
+
+    identity = getattr(host, "_state_root_identity", None)
+    if not isinstance(identity, tuple) or len(identity) != 2 or any(
+        type(part) is not int or part < 0 for part in identity
+    ):
+        if state_root.exists() or state_root.is_symlink():
+            return None
+        return True, False
+    parent_identity = getattr(host, "_state_parent_identity", None)
+    parent_created = getattr(host, "_state_parent_created", False) is True
+    if state_root.is_symlink():
+        return None
+    parent_exists = state_root.parent.exists() or state_root.parent.is_symlink()
+    if parent_exists:
+        if (
+            not isinstance(parent_identity, tuple)
+            or len(parent_identity) != 2
+            or any(type(part) is not int or part < 0 for part in parent_identity)
+            or not _private_state_parent_matches(
+                state_root.parent, parent_identity
+            )
+        ):
+            return None
+    if state_root.exists():
+        if (
+            not _private_state_tree_matches(state_root, identity)
+        ):
+            return None
+        try:
+            shutil.rmtree(state_root)
+        except OSError:
+            return False, False
+    if state_root.exists() or state_root.is_symlink():
+        return False, False
+
+    parent_removed = False
+    if parent_created:
+        if not state_root.parent.exists() and not state_root.parent.is_symlink():
+            parent_removed = True
+        else:
+            parent_removed_result = _remove_private_state_parent_if_empty(
+                state_root.parent, parent_identity
+            )
+            if parent_removed_result is None:
+                return None
+            parent_removed = parent_removed_result
+    return True, parent_removed
+
+
 def _ports_are_free(inspector: preflight_gate.PortInspector) -> bool:
     for port in (HOST_PORT, PLAYER_PORT):
         try:
@@ -4433,6 +4658,17 @@ def _port_is_owned_by(
         and observation.state == "occupied"
         and observation.pids == (pid,)
     )
+
+
+def _single_listener_pid(observation: object, port: int) -> int | None:
+    if (
+        not _port_observation_valid(observation, port)
+        or observation.state != "occupied"
+        or len(observation.pids) != 1
+    ):
+        return None
+    pid = observation.pids[0]
+    return pid if type(pid) is int and pid > 0 else None
 
 
 def _verify_lock(
@@ -4593,7 +4829,8 @@ def _validate_provider_ledger(
             raise GateError("provider_ledger_invalid")
         if event == "activated":
             if (
-                activation_count >= len(owned_pids)
+                activation_count >= FROZEN_CAPS["companion_serve_launches"]
+                or activation_count >= len(owned_pids)
                 or record_pid != owned_pids[activation_count]
                 or reservations
                 or record.get("transport_guard") != "httpx-client-single-request"
@@ -4750,6 +4987,8 @@ class LiveGateRunner:
             "host_stop_attempted": False,
             "host_stopped": False,
             "ports_free": False,
+            "gate_state_root_removed": False,
+            "gate_state_parent_removed_if_empty": False,
         }
         self.started_at = _iso_utc(dependencies.utc_now())
         self.counter_snapshot: dict[str, int] = {
@@ -5217,7 +5456,7 @@ class LiveGateRunner:
             status = _validate_provider_ledger(
                 ledger_path,
                 self.arguments.run_id,
-                expected_pids=getattr(self.host, "owned_pids", None),
+                expected_pids=getattr(self.host, "listener_pids", None),
             )
         except GateError as exc:
             self._add_infrastructure(exc.reason)
@@ -5287,7 +5526,7 @@ class LiveGateRunner:
             status = _validate_provider_ledger(
                 expected_path,
                 self.arguments.run_id,
-                expected_pids=getattr(self.host, "owned_pids", None),
+                expected_pids=getattr(self.host, "listener_pids", None),
             )
         except GateError as exc:
             self.provider_ledger = {"status": exc.reason}
@@ -5361,7 +5600,10 @@ class LiveGateRunner:
         else:
             self.teardown["sharing_stopped"] = False
         if self.context is not None:
-            self.context.public_client.disconnect()
+            try:
+                self.context.public_client.disconnect()
+            except Exception:
+                self._add_infrastructure("public_client_disconnect_failed")
         if self.host is not None:
             self.teardown["host_stop_attempted"] = True
             try:
@@ -5373,6 +5615,39 @@ class LiveGateRunner:
         self.teardown["ports_free"] = _ports_are_free(
             self.dependencies.port_inspector
         )
+        if self.host is None or self.state_root is None:
+            self.teardown["gate_state_root_removed"] = True
+        else:
+            try:
+                host_state_root = Path(os.fspath(self.host.state_root))
+            except (AttributeError, OSError, TypeError, ValueError):
+                host_state_root = None
+            if host_state_root != self.state_root:
+                self.teardown["gate_state_root_removed"] = False
+                self._add_infrastructure("gate_state_cleanup_failed")
+            elif not self.teardown["host_stopped"] or not self.teardown["ports_free"]:
+                self.teardown["gate_state_root_removed"] = not (
+                    host_state_root.exists() or host_state_root.is_symlink()
+                )
+                if not self.teardown["gate_state_root_removed"]:
+                    self._add_infrastructure("gate_state_cleanup_failed")
+            else:
+                try:
+                    cleanup = _cleanup_driver_state_root(
+                        self.host,
+                        run_id=self.arguments.run_id,
+                        repository_root=self.dependencies.root,
+                    )
+                except Exception:
+                    cleanup = None
+                if cleanup is None or not cleanup[0]:
+                    self.teardown["gate_state_root_removed"] = False
+                    self._add_infrastructure("gate_state_cleanup_failed")
+                else:
+                    self.teardown["gate_state_root_removed"] = True
+                    self.teardown[
+                        "gate_state_parent_removed_if_empty"
+                    ] = cleanup[1]
         if (
             self.host_started
             and not self.teardown["sharing_stop_attempted"]
@@ -5462,7 +5737,12 @@ class LiveGateRunner:
             "provider_attempts": self.provider_ledger.get("attempt_count", 0),
             "teardown_complete": all(
                 self.teardown.get(key) is True
-                for key in ("sharing_stopped", "host_stopped", "ports_free")
+                for key in (
+                    "sharing_stopped",
+                    "host_stopped",
+                    "ports_free",
+                    "gate_state_root_removed",
+                )
             ),
             **verdicts,
         }

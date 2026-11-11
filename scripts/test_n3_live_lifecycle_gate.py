@@ -49,6 +49,7 @@ SCRATCH_ROOT = gate.REPO_ROOT / "tmp" / "n3-live-lifecycle-gate-tests"
 class FakePortInspector:
     def __init__(self) -> None:
         self.host_pid: int | None = None
+        self.host_pids: tuple[int, ...] | None = None
         self.busy_ports: set[int] = set()
         self.seen: list[int] = []
 
@@ -56,6 +57,8 @@ class FakePortInspector:
         self.seen.append(port)
         if port in self.busy_ports:
             return preflight_gate.PortObservation(port, "occupied", (999,))
+        if port == gate.HOST_PORT and self.host_pids is not None:
+            return preflight_gate.PortObservation(port, "occupied", self.host_pids)
         if port == gate.HOST_PORT and self.host_pid is not None:
             return preflight_gate.PortObservation(port, "occupied", (self.host_pid,))
         return preflight_gate.PortObservation(port, "free")
@@ -65,9 +68,11 @@ class FakeHost:
     def __init__(self, root: Path, sandbox: Path, state_root: Path, run_id: str, ports: FakePortInspector) -> None:
         self.owner_pid = 444
         self.owned_pids: list[int] = []
+        self.listener_pids: list[int] = []
         self.state_root = state_root
         self._state_root_identity: tuple[int, int] | None = None
         self._state_parent_identity: tuple[int, int] | None = None
+        self._state_parent_created = False
         self.environment = gate.build_host_environment(sandbox, state_root, run_id)
         self.output = gate.ManagedHostOutputCounters()
         self.ports = ports
@@ -78,7 +83,9 @@ class FakeHost:
 
     def start(self) -> bool:
         if self._state_root_identity is None:
-            gate._create_private_state_tree(self.state_root)
+            self._state_parent_created = gate._create_private_state_tree(
+                self.state_root
+            )
             self._state_root_identity = gate._private_state_tree_identity(
                 self.state_root
             )
@@ -88,6 +95,7 @@ class FakeHost:
         self.started = True
         self.ports.host_pid = self.owner_pid
         self.owned_pids.append(self.owner_pid)
+        self.listener_pids.append(self.owner_pid)
         ledger = Path(self.environment["NEQ_PROVIDER_ATTEMPT_LEDGER"])
         ledger.parent.mkdir(parents=True, exist_ok=True)
         records = [
@@ -659,6 +667,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
     def _prepare_sandbox(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         (sandbox / "web" / "frontend").mkdir(parents=True)
+        (sandbox / "web" / "web_interface.py").write_text(
+            "# isolated web server\n", encoding="ascii"
+        )
         (sandbox / "run_web.py").write_text("# isolated host\n", encoding="ascii")
         (sandbox / "config.py").write_text("WEB_PORT = 8360\n", encoding="ascii")
         (sandbox / "web" / "frontend" / "index.html").write_text("", encoding="ascii")
@@ -819,7 +830,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         assert companion is not None
         context.companion_sha256 = hashlib.sha256(companion.read_bytes()).hexdigest()
         state_root = self.state_root_for(context.run_id)
-        gate._create_private_state_tree(state_root)
+        state_parent_created = gate._create_private_state_tree(state_root)
         install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
         install_marker = "neq-" + hashlib.sha256(
             os.fsencode(install_path)
@@ -837,7 +848,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
         class MutablePorts:
             def __init__(self) -> None:
-                self.host_pid: int | None = 444
+                self.host_pid: int | None = 445
                 self.player_pid: int | None = None
                 self.unknown: set[int] = set()
 
@@ -869,12 +880,33 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         identity_map: dict[int, object] = {}
         host_started = datetime(2026, 11, 11, 11, 0, 0)
 
-        def host_record(pid: int, token: str, started_at: datetime) -> gate.ProcessRecord:
+        def host_record(
+            pid: int, token: str, started_at: datetime
+        ) -> gate.ProcessRecord:
             python = str(self.root / ".venv" / "bin" / "python")
             argv = (python, "-c", "import run_web; run_web.main()")
             command = shlex.join(argv)
             record = gate.ProcessRecord(
                 pid, 1, os.getuid(), started_at, token, command
+            )
+            identity_map[pid] = SimpleNamespace(
+                pid=pid,
+                creation_token=token,
+                executable_path=python,
+                argv=argv,
+                command_line=command,
+            )
+            return record
+
+        def server_record(
+            pid: int, parent_pid: int, token: str, started_at: datetime
+        ) -> gate.ProcessRecord:
+            python = str(self.root / ".venv" / "bin" / "python")
+            script = str(context.sandbox_root / "web" / "web_interface.py")
+            argv = (python, script)
+            command = shlex.join(argv)
+            record = gate.ProcessRecord(
+                pid, parent_pid, os.getuid(), started_at, token, command
             )
             identity_map[pid] = SimpleNamespace(
                 pid=pid,
@@ -916,20 +948,36 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 self._state_parent_identity = gate._private_state_parent_identity(
                     state_root.parent
                 )
+                self._state_parent_created = state_parent_created
                 self.environment = gate.build_host_environment(
                     context.sandbox_root, state_root, context.run_id
                 )
                 self.process_generation = 1
-                self.owned_pids = [444]
+                self.owned_pids = [444, 445]
+                self.listener_pids = [445]
+                ports.host_pid = 445
                 self.process: OwnedProcess | None = OwnedProcess(444)
-                self._next_pid = 445
+                self._server_pid: int | None = 445
+                self._next_launcher_pid = 446
+                self._next_server_pid = 447
                 self.on_stop = None
                 self.on_restart = None
                 self._refresh_processes(False)
 
             @property
             def owner_pid(self) -> int | None:
+                return None if self.process is None else self._server_pid
+
+            @property
+            def launcher_pid(self) -> int | None:
                 return None if self.process is None else self.process.pid
+
+            def _getpgid(self, pid: int) -> int:
+                if pid == self.owner_pid and self.launcher_pid is not None:
+                    return self.launcher_pid
+                if pid == self.launcher_pid and self.launcher_pid is not None:
+                    return self.launcher_pid
+                return -1
 
             def _refresh_processes(self, with_companion: bool) -> None:
                 process = self.process
@@ -941,8 +989,17 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                     "host-token-%d" % process.pid,
                     host_started + timedelta(seconds=self.process_generation),
                 )
+                server_pid = self._server_pid
+                if server_pid is None:
+                    raise AssertionError("fake server process is missing")
+                server = server_record(
+                    server_pid,
+                    process.pid,
+                    "server-token-%d" % server_pid,
+                    host_started + timedelta(seconds=self.process_generation),
+                )
                 if with_companion:
-                    table.records = (start, companion_record(555, process.pid))
+                    table.records = (start, server, companion_record(555, server_pid))
                     record = OwnedProcessRecord(
                         profile=gate.DEFAULT_PROFILE,
                         uid=os.getuid(),
@@ -956,12 +1013,13 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                     if not write_owner_record(layout, record):
                         raise AssertionError("fake companion owner record setup failed")
                 else:
-                    table.records = (start,)
+                    table.records = (start, server)
 
             def stop(self) -> bool:
                 if self.process is not None:
                     self.process.returncode = 0
                 self.process = None
+                self._server_pid = None
                 ports.host_pid = None
                 ports.player_pid = None
                 self._refresh_processes(False)
@@ -974,12 +1032,15 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 return True
 
             def start(self) -> bool:
-                process = OwnedProcess(self._next_pid)
-                self._next_pid += 1
+                process = OwnedProcess(self._next_launcher_pid)
+                self._server_pid = self._next_server_pid
+                self._next_launcher_pid += 2
+                self._next_server_pid += 2
                 self.process = process
                 self.process_generation += 1
-                self.owned_pids.append(process.pid)
-                ports.host_pid = process.pid
+                self.owned_pids.extend((process.pid, self._server_pid))
+                self.listener_pids.append(self._server_pid)
+                ports.host_pid = self._server_pid
                 ports.player_pid = None
                 self._refresh_processes(False)
                 if callable(self.on_restart):
@@ -1137,7 +1198,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         child_started = datetime(2026, 11, 11, 11, 1, 0)
         host_token = "host-created-20261111-110000"
         child_token = "child-created-20261111-110000"
-        host_record = gate.ProcessRecord(
+        launcher_record = gate.ProcessRecord(
             444,
             1,
             uid,
@@ -1145,9 +1206,22 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             host_token,
             "python run_web.main()",
         )
+        python = str(self.root / ".venv" / "bin" / "python")
+        server_script = str(
+            self.root / gate.CAPTURE_RELATIVE / "web" / "web_interface.py"
+        )
+        server_token = "server-created-20261111-110010"
+        server_record = gate.ProcessRecord(
+            445,
+            444,
+            uid,
+            host_started + timedelta(seconds=10),
+            server_token,
+            shlex.join([python, server_script]),
+        )
         child_record = gate.ProcessRecord(
             555,
-            444,
+            445,
             uid,
             child_started,
             child_token,
@@ -1160,9 +1234,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             444: SimpleNamespace(
                 pid=444,
                 creation_token=host_token,
-                executable_path=str(self.root / ".venv/bin/python"),
-                argv=("python", "run_web.main()"),
+                executable_path=python,
+                argv=(python, "-c", "import run_web; run_web.main()"),
                 command_line="python run_web.main()",
+            ),
+            445: SimpleNamespace(
+                pid=445,
+                creation_token=server_token,
+                executable_path=python,
+                argv=(python, server_script),
+                command_line=server_record.command,
             ),
             555: SimpleNamespace(
                 pid=555,
@@ -1179,7 +1260,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 ),
             ),
         }
-        return (host_record, child_record), identities
+        return (launcher_record, server_record, child_record), identities
 
     def make_l05_context(
         self, *, origin_changed: bool = False, mismatch_child_token: bool = False
@@ -1189,6 +1270,13 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         service = FakePublicService(old_origin)
         records, identities = self.companion_process_fixture(
             mismatch_child_token=mismatch_child_token
+        )
+        context = self.make_row_context(public_service=service)
+        context.host = SimpleNamespace(
+            owner_pid=445,
+            launcher_pid=444,
+            owned_pids=[444, 445],
+            _getpgid=lambda _pid: 444,
         )
         signal_calls: list[tuple[int, int]] = []
 
@@ -1281,36 +1369,20 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         ports = MappedPortInspector(
             {
                 gate.HOST_PORT: preflight_gate.PortObservation(
-                    gate.HOST_PORT, "occupied", (444,)
+                    gate.HOST_PORT, "occupied", (445,)
                 ),
                 gate.PLAYER_PORT: preflight_gate.PortObservation(
-                    gate.PLAYER_PORT, "occupied", (444,)
+                    gate.PLAYER_PORT, "occupied", (445,)
                 ),
             }
         )
-        context = gate.RowContext(
-            self.run_id,
-            self.root,
-            self.root / gate.EVIDENCE_BASE / self.run_id,
-            self.root / gate.EVIDENCE_BASE / self.run_id / "executor-capture",
-            self.root / gate.CAPTURE_RELATIVE,
-            api,
-            SimpleNamespace(owner_pid=444),
-            self.root / gate.CAPTURE_RELATIVE,
-            public_client=client,
-            public_client_factory=client_factory,
-            process_table=FakeProcessTable(records),
-            process_identity_probe=lambda pid: identities.get(pid),
-            signal_process=signal_process,
-            port_inspector=ports,
-            companion_path=(
-                self.root
-                / gate.CAPTURE_RELATIVE
-                / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
-            ),
-            monotonic=lambda: 1000.0,
-            sleep=lambda _seconds: None,
-        )
+        context.host_api = api
+        context.public_client = client
+        context.public_client_factory = client_factory
+        context.process_table = FakeProcessTable(records)
+        context.process_identity_probe = lambda pid: identities.get(pid)
+        context.signal_process = signal_process
+        context.port_inspector = ports
         context.remember_secret(service.credential)
         context.remember_secret(session.cookie)
         context.remember_secret(session.csrf_token)
@@ -1644,7 +1716,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
         )
         self.assertEqual(capture_companion, expected_capture_path)
-        self.assertEqual(matches, (records[1],))
+        self.assertEqual(matches, (records[2],))
 
     def test_l02_initializes_once_checks_projection_and_cleanup(self) -> None:
         initial = {
@@ -2012,8 +2084,11 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         records, identities = self.companion_process_fixture()
         ports = MappedPortInspector(
             {
+                gate.HOST_PORT: preflight_gate.PortObservation(
+                    gate.HOST_PORT, "occupied", (445,)
+                ),
                 gate.PLAYER_PORT: preflight_gate.PortObservation(
-                    gate.PLAYER_PORT, "occupied", (444,)
+                    gate.PLAYER_PORT, "occupied", (445,)
                 )
             }
         )
@@ -2031,10 +2106,19 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             process_table=FakeProcessTable(records),
             process_identity_probe=lambda pid: identities.get(pid),
         )
+        context.host = SimpleNamespace(
+            owner_pid=445,
+            launcher_pid=444,
+            owned_pids=[444, 445],
+            _getpgid=lambda _pid: 444,
+        )
         result = gate.L04DuplicateStartExecutor().execute(context)
         self.assertEqual(result.verdict, "PASS")
         self.assertEqual(result.observed["companion_process_count"], 1)
-        self.assertEqual(ports.calls, [gate.PLAYER_PORT, gate.PLAYER_PORT])
+        self.assertEqual(
+            ports.calls,
+            [gate.PLAYER_PORT, gate.HOST_PORT, gate.PLAYER_PORT, gate.HOST_PORT],
+        )
 
         changed_api = LifecycleFakeApi(
             status=ready,
@@ -2049,18 +2133,23 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 )
             },
         )
-        changed = gate.L04DuplicateStartExecutor().execute(
-            self.make_row_context(
+        changed_context = self.make_row_context(
                 api=changed_api,
                 ports=ports,
                 process_table=FakeProcessTable(records),
                 process_identity_probe=lambda pid: identities.get(pid),
             )
+        changed_context.host = SimpleNamespace(
+            owner_pid=445,
+            launcher_pid=444,
+            owned_pids=[444, 445],
+            _getpgid=lambda _pid: 444,
         )
+        changed = gate.L04DuplicateStartExecutor().execute(changed_context)
         self.assertEqual(changed.verdict, "FAIL")
         self.assertEqual(changed.reason, "duplicate_start_changed_generation")
 
-        host_record, child_record = records
+        launcher_record, server_record, child_record = records
         replacement_record = gate.ProcessRecord(
             child_record.pid,
             child_record.parent_pid,
@@ -2085,7 +2174,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             def snapshot(self) -> tuple[gate.ProcessRecord, ...]:
                 self.calls += 1
                 child = child_record if self.calls == 1 else replacement_record
-                return host_record, child
+                return launcher_record, server_record, child
 
         process_table = RestartedProcessTable()
 
@@ -2094,8 +2183,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 return replacement_identity.get(pid)
             return identities.get(pid)
 
-        restarted = gate.L04DuplicateStartExecutor().execute(
-            self.make_row_context(
+        restarted_context = self.make_row_context(
                 api=LifecycleFakeApi(
                     status=ready,
                     post_handlers={
@@ -2108,7 +2196,13 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 process_table=process_table,
                 process_identity_probe=restarted_process_probe,
             )
+        restarted_context.host = SimpleNamespace(
+            owner_pid=445,
+            launcher_pid=444,
+            owned_pids=[444, 445],
+            _getpgid=lambda _pid: 444,
         )
+        restarted = gate.L04DuplicateStartExecutor().execute(restarted_context)
         self.assertEqual(restarted.verdict, "FAIL")
         self.assertEqual(restarted.reason, "duplicate_companion_created")
 
@@ -2116,14 +2210,19 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             mismatch_child_token=True
         )
         blocked_api = LifecycleFakeApi(status=ready)
-        blocked = gate.L04DuplicateStartExecutor().execute(
-            self.make_row_context(
+        blocked_context = self.make_row_context(
                 api=blocked_api,
                 ports=ports,
                 process_table=FakeProcessTable(records),
                 process_identity_probe=lambda pid: mismatched_identities.get(pid),
             )
+        blocked_context.host = SimpleNamespace(
+            owner_pid=445,
+            launcher_pid=444,
+            owned_pids=[444, 445],
+            _getpgid=lambda _pid: 444,
         )
+        blocked = gate.L04DuplicateStartExecutor().execute(blocked_context)
         self.assertEqual(blocked.verdict, "BLOCKED")
         self.assertFalse(
             any(
@@ -2166,6 +2265,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             mismatch_child_token=True
         )
         result = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "owned_companion_target_unproven")
+        self.assertEqual(signal_calls, [])
+
+    def test_l05_rejects_launcher_pid_as_listener_pid(self) -> None:
+        context, _service, signal_calls = self.make_l05_context()
+        context.host.launcher_pid = context.host.owner_pid
+
+        result = gate.L05RelayLossRecoveryExecutor().execute(context)
+
         self.assertEqual(result.verdict, "BLOCKED")
         self.assertEqual(result.reason, "owned_companion_target_unproven")
         self.assertEqual(signal_calls, [])
@@ -2742,6 +2851,65 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 gate._create_private_state_tree(state_root)
         self.assertFalse(state_root.exists())
 
+    def test_failed_host_start_teardown_removes_only_driver_owned_state(self) -> None:
+        original_start = FakeHost.start
+
+        def fail_after_state_creation(host: FakeHost) -> bool:
+            self.assertTrue(original_start(host))
+            return False
+
+        with patch.object(FakeHost, "start", fail_after_state_creation):
+            result = gate.run_live_gate(self.dependencies, self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertIsNotNone(self.fake_host)
+        assert self.fake_host is not None
+        self.assertTrue(self.fake_host.stopped)
+        self.assertFalse(self.fake_host.state_root.exists())
+        self.assertFalse(self.fake_host.state_root.parent.exists())
+        self.assertIsNotNone(result["evidence_path"])
+        run_record = json.loads(
+            (
+                self.root
+                / str(result["evidence_path"])
+                / "run.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertTrue(run_record["teardown"]["gate_state_root_removed"])
+        self.assertTrue(
+            run_record["teardown"]["gate_state_parent_removed_if_empty"]
+        )
+        summary_record = json.loads(
+            (
+                self.root
+                / str(result["evidence_path"])
+                / "summary.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertTrue(summary_record["teardown_complete"])
+
+    def test_state_cleanup_refuses_a_replaced_run_root(self) -> None:
+        state_root = self.state_root_for(self.run_id)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            state_root,
+            self.run_id,
+            self.ports,
+        )
+        self.assertTrue(host.start())
+        original_root = state_root.with_name(state_root.name + "-owned")
+        state_root.rename(original_root)
+        gate._create_private_state_tree(state_root)
+
+        cleanup = gate._cleanup_driver_state_root(
+            host, run_id=self.run_id, repository_root=self.root
+        )
+
+        self.assertIsNone(cleanup)
+        self.assertTrue(state_root.is_dir())
+        self.assertTrue(original_root.is_dir())
+
     def test_preflight_report_accepts_frozen_n3_and_compact_n2_shapes(self) -> None:
         n3_path = self.write_preflight()
         self.assertEqual(
@@ -3154,7 +3322,26 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             [row["reason"] for row in result["rows"][6:]], ["fail-fast"] * 4
         )
         self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
+        assert self.fake_host is not None
+        self.assertFalse(self.fake_host.state_root.exists())
+        self.assertFalse(self.fake_host.state_root.parent.exists())
         self.assertIn(("POST", ("stop", {})), self.fake_api.calls)
+        run_record = json.loads(
+            (
+                self.root
+                / str(result["evidence_path"])
+                / "run.json"
+            ).read_text(encoding="utf-8")
+        )
+        summary_record = json.loads(
+            (
+                self.root
+                / str(result["evidence_path"])
+                / "summary.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertTrue(run_record["teardown"]["gate_state_root_removed"])
+        self.assertTrue(summary_record["teardown_complete"])
 
     def test_full_simulated_run_passes_rows_but_stays_pending_and_redacts(self) -> None:
         secrets = [
@@ -3650,7 +3837,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "FAIL")
         self.assertEqual(result["reservation_count"], 1)
 
-    def test_provider_ledger_accepts_only_owned_host_restart_activations(self) -> None:
+    def test_provider_ledger_activations_follow_listener_pid_sequence(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
         ledger = Path(
@@ -3669,13 +3856,13 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             {
                 "event": "activated",
                 **record_base,
-                "pid": 444,
+                "pid": 445,
                 "transport_guard": "httpx-client-single-request",
             },
             {
                 "event": "activated",
                 **record_base,
-                "pid": 445,
+                "pid": 447,
                 "transport_guard": "httpx-client-single-request",
             },
         ]
@@ -3684,12 +3871,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             encoding="ascii",
         )
         result = gate._validate_provider_ledger(
-            ledger, self.run_id, expected_pids=[444, 445]
+            ledger, self.run_id, expected_pids=[445, 447]
         )
         self.assertEqual(result["activation_count"], 2)
         with self.assertRaisesRegex(gate.GateError, "provider_ledger_invalid"):
             gate._validate_provider_ledger(
-                ledger, self.run_id, expected_pids=[444]
+                ledger, self.run_id, expected_pids=[444, 445]
             )
         reused_pid_records = records[:2] + [dict(records[1])]
         ledger.write_text(
@@ -3699,7 +3886,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             encoding="ascii",
         )
         reused = gate._validate_provider_ledger(
-            ledger, self.run_id, expected_pids=[444, 444]
+            ledger, self.run_id, expected_pids=[445, 445]
         )
         self.assertEqual(reused["activation_count"], 2)
 
@@ -3769,13 +3956,14 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess()
+        server_pid = 202
         factory_calls: list[tuple[list[str], dict[str, object]]] = []
         clock = [10.0]
         readiness = [False, True]
 
         def process_factory(command: list[str], **kwargs: object) -> FakeProcess:
             factory_calls.append((command, kwargs))
-            ports.host_pid = process.pid
+            ports.host_pid = server_pid
             return process
 
         def ready() -> bool:
@@ -3792,6 +3980,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 process.returncode = -signal.SIGKILL
                 ports.host_pid = None
 
+        getpgid_calls: list[int] = []
+
+        def getpgid(pid: int) -> int:
+            getpgid_calls.append(pid)
+            return process.pid
+
         host = gate.ManagedHostHarness(
             self.root,
             sandbox,
@@ -3801,6 +3995,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=ports,
             readiness_probe=ready,
             signal_group=signal_group,
+            getpgid=getpgid,
             monotonic=lambda: clock[0],
             sleep=sleep,
             start_timeout=1,
@@ -3808,6 +4003,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             poll_interval=0.1,
         )
         self.assertTrue(host.start())
+        self.assertEqual(host.owner_pid, server_pid)
+        self.assertEqual(host.launcher_pid, process.pid)
+        self.assertEqual(host.owned_pids, [process.pid, server_pid])
         command, options = factory_calls[0]
         self.assertEqual(
             command,
@@ -3820,6 +4018,10 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(options["env"]["NEQ_OPEN_BROWSER"], "0")
         self.assertEqual(options["env"]["NEQ_N3_GATE_MAX_RECOVERY_ATTEMPTS"], "1")
         self.assertTrue(host.stop())
+        self.assertEqual(host.owner_pid, None)
+        self.assertEqual(host.launcher_pid, None)
+        self.assertEqual(host.owned_pids, [process.pid, server_pid])
+        self.assertEqual(getpgid_calls, [server_pid])
         self.assertEqual(signalled, [signal.SIGTERM, signal.SIGKILL])
         self.assertTrue(all(port in {8360, 8370} for port in ports.seen))
         snapshot = host.output.snapshot()
@@ -3829,14 +4031,54 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertNotIn("stderr-secret-sentinel", output)
         self.assertGreater(snapshot["processes"][0]["stdout"]["bytes_observed"], 0)
 
+    def test_host_harness_rejects_listener_outside_launcher_process_group(self) -> None:
+        sandbox = self.root / gate.CAPTURE_RELATIVE
+        state = self.state_root_for(self.run_id)
+        ports = FakePortInspector()
+        process = FakeProcess(pid=501, term_exits=True)
+        server_pid = 502
+
+        def process_factory(_command: list[str], **_kwargs: object) -> FakeProcess:
+            ports.host_pid = server_pid
+            return process
+
+        def signal_group(_pgid: int, _signal: int) -> None:
+            process.returncode = 0
+            ports.host_pid = None
+
+        host = gate.ManagedHostHarness(
+            self.root,
+            sandbox,
+            state,
+            self.run_id,
+            process_factory=process_factory,
+            port_inspector=ports,
+            readiness_probe=lambda: True,
+            signal_group=signal_group,
+            getpgid=lambda _pid: 777,
+            monotonic=lambda: 100.0,
+            sleep=lambda _seconds: None,
+            stop_timeout=0.1,
+            poll_interval=0.05,
+        )
+        with self.assertRaisesRegex(
+            gate.GateError, "managed_host_port_ownership_failed"
+        ):
+            host.start()
+        self.assertEqual(host.launcher_pid, None)
+        self.assertEqual(host.owner_pid, None)
+        self.assertEqual(host.owned_pids, [process.pid])
+        self.assertIsNotNone(process.returncode)
+
     def test_host_harness_term_success_avoids_sigkill(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess(term_exits=True)
+        server_pid = 401
 
         def process_factory(_command: list[str], **_kwargs: object) -> FakeProcess:
-            ports.host_pid = process.pid
+            ports.host_pid = server_pid
             return process
 
         def signal_group(_pgid: int, selected_signal: int) -> None:
@@ -3853,6 +4095,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=ports,
             readiness_probe=lambda: True,
             signal_group=signal_group,
+            getpgid=lambda pid: process.pid if pid == server_pid else -1,
             monotonic=lambda: 100.0,
             sleep=lambda _seconds: None,
             stop_timeout=0.1,
@@ -3869,14 +4112,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             FakeProcess(pid=201, term_exits=True),
             FakeProcess(pid=202, term_exits=True),
         ]
+        server_pids = [301, 302]
         by_pid = {process.pid: process for process in processes}
+        server_to_launcher = dict(zip(server_pids, (201, 202)))
         factory_calls = 0
 
         def process_factory(_command: list[str], **_kwargs: object) -> FakeProcess:
             nonlocal factory_calls
             process = processes[factory_calls]
+            ports.host_pid = server_pids[factory_calls]
             factory_calls += 1
-            ports.host_pid = process.pid
             return process
 
         def signal_group(pgid: int, selected_signal: int) -> None:
@@ -3893,6 +4138,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=ports,
             readiness_probe=lambda: True,
             signal_group=signal_group,
+            getpgid=lambda pid: server_to_launcher.get(pid, -1),
             monotonic=lambda: 100.0,
             sleep=lambda _seconds: None,
             stop_timeout=0.1,
@@ -3904,7 +4150,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertTrue(host.start())
         self.assertTrue(host.stop())
         self.assertEqual(host.process_generation, 2)
-        self.assertEqual(host.owned_pids, [201, 202])
+        self.assertEqual(host.owned_pids, [201, 301, 202, 302])
+        self.assertEqual(host.listener_pids, [301, 302])
+        self.assertEqual(host.owner_pid, None)
         self.assertEqual((state.stat().st_dev, state.stat().st_ino), state_identity)
         self.assertEqual(factory_calls, 2)
 
@@ -3913,9 +4161,10 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess(pid=301, term_exits=True)
+        server_pid = 401
 
         def process_factory(_command: list[str], **_kwargs: object) -> FakeProcess:
-            ports.host_pid = process.pid
+            ports.host_pid = server_pid
             return process
 
         def signal_group(_pgid: int, selected_signal: int) -> None:
@@ -3932,6 +4181,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             port_inspector=ports,
             readiness_probe=lambda: True,
             signal_group=signal_group,
+            getpgid=lambda pid: process.pid if pid == server_pid else -1,
             monotonic=lambda: 100.0,
             sleep=lambda _seconds: None,
             stop_timeout=0.1,
