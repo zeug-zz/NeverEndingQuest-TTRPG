@@ -1058,6 +1058,7 @@ class RowContext:
     sandbox_root: Path
     host_api: HostApiClient
     host: "ManagedHostHarness"
+    companion_install_root: Path
     secrets: list[str] = field(default_factory=list, repr=False)
     public_client: PublicUrlClient = field(default_factory=PublicUrlClient)
     public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
@@ -2632,20 +2633,23 @@ def _login_public_session(
 
 
 def _installed_companion_matches(context: RowContext, path: Path) -> bool:
-    digest = context.companion_sha256
-    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-        return False
     try:
-        root = (context.root / "runtime/opentunnel/v0.6.2").resolve(strict=True)
-        path.relative_to(root)
-        metadata = path.lstat()
-    except (OSError, RuntimeError, TypeError, ValueError):
+        if not isinstance(context.companion_install_root, Path):
+            return False
+        installed = verify_installed_companion(
+            context.companion_install_root, "macos-arm64"
+        )
+        installed_path = installed.get("path")
+        digest = installed.get("sha256")
+        verified_path = Path(installed_path).resolve(strict=True)
+        selected_path = path.resolve(strict=True)
+    except (GateError, OSError, RuntimeError, TypeError, ValueError):
         return False
     return bool(
-        not stat.S_ISLNK(metadata.st_mode)
-        and stat.S_ISREG(metadata.st_mode)
-        and path.name == "opentunnel"
-        and verify_companion_digest(path, digest)
+        isinstance(context.companion_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", context.companion_sha256) is not None
+        and digest == context.companion_sha256
+        and verified_path == selected_path
     )
 
 
@@ -2816,13 +2820,20 @@ def _observe_player_listener(context: RowContext) -> bool | None:
 
 def _companion_path(context: RowContext) -> Path:
     value = context.companion_path
-    if not isinstance(value, Path):
+    install_root = context.companion_install_root
+    if not isinstance(value, Path) or not isinstance(install_root, Path):
         raise GateError("companion_path_unavailable")
     try:
+        _assert_no_symlink_components(install_root, value)
+        runtime_root = (
+            install_root / "runtime/opentunnel/v0.6.2"
+        ).resolve(strict=True)
         resolved = value.resolve(strict=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+        resolved.relative_to(runtime_root)
+        metadata = value.lstat()
+    except (GateError, OSError, RuntimeError, TypeError, ValueError):
         raise GateError("companion_path_unavailable") from None
-    if not resolved.is_file():
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise GateError("companion_path_unavailable")
     return resolved
 
@@ -4030,19 +4041,25 @@ def _config_has_exact_web_port(source_bytes: bytes) -> bool:
     return True
 
 
-def verify_installed_companion(root: Path, platform_key: str) -> Mapping[str, object]:
-    """Load runtime pins, resolve the installed companion, and verify its digest."""
+def verify_installed_companion(
+    companion_install_root: Path, platform_key: str
+) -> Mapping[str, object]:
+    """Verify the operator-installed companion beneath its validated install root."""
     if platform_key != "macos-arm64":
         raise GateError("live_platform_not_supported")
     try:
         from web.extensions.opentunnel_sharing.service import load_companion_manifest
 
-        manifest = load_companion_manifest(root)
-    except Exception:
+        manifest = load_companion_manifest(companion_install_root)
+    except Exception as exc:
+        if getattr(exc, "reason", None) == "manifest_missing":
+            raise GateError("companion_not_installed_in_capture_root") from None
         raise GateError("companion_manifest_unavailable") from None
     resolution = resolve_companion(
-        root, manifest, system="Darwin", machine="arm64"
+        companion_install_root, manifest, system="Darwin", machine="arm64"
     )
+    if resolution.state == "missing_asset":
+        raise GateError("companion_not_installed_in_capture_root")
     if (
         resolution.state != "resolved"
         or resolution.path is None
@@ -4050,9 +4067,9 @@ def verify_installed_companion(root: Path, platform_key: str) -> Mapping[str, ob
         or not verify_companion_digest(resolution.path, resolution.expected_sha256)
     ):
         raise GateError("companion_digest_invalid")
+    root = Path(companion_install_root).resolve(strict=True)
     expected = (
-        root
-        / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        root / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
     ).resolve(strict=True)
     if resolution.path.resolve(strict=True) != expected:
         raise GateError("companion_path_mismatch")
@@ -4751,6 +4768,7 @@ class LiveGateRunner:
         self.secrets: list[str] = []
         self.companion_record: dict[str, object] = {"verified": False}
         self.companion_path: Path | None = None
+        self.companion_install_root: Path | None = None
 
     def run(self) -> dict[str, object]:
         try:
@@ -4763,6 +4781,7 @@ class LiveGateRunner:
         assert self.run_root is not None
         assert self.capture_dir is not None
         assert self.state_root is not None
+        assert self.companion_install_root is not None
         try:
             self.capture_dir.mkdir(mode=0o700, exist_ok=False)
             self.capture_created = True
@@ -4778,7 +4797,7 @@ class LiveGateRunner:
             assert self.state_root is not None
             self.host = self.dependencies.host_factory(
                 self.dependencies.root,
-                self.dependencies.root / CAPTURE_RELATIVE,
+                self.companion_install_root,
                 self.state_root,
                 self.arguments.run_id,
             )
@@ -4788,9 +4807,10 @@ class LiveGateRunner:
                 self.dependencies.root,
                 self.run_root,
                 self.capture_dir,
-                self.dependencies.root / CAPTURE_RELATIVE,
+                self.companion_install_root,
                 self.api,
                 self.host,
+                self.companion_install_root,
                 self.secrets,
                 public_client=self.dependencies.public_client_factory(),
                 public_client_factory=self.dependencies.public_client_factory,
@@ -4919,12 +4939,14 @@ class LiveGateRunner:
             raise GateError("capture_sandbox_invalid") from None
         if sandbox != self.dependencies.root / CAPTURE_RELATIVE:
             raise GateError("capture_sandbox_path_mismatch")
+        self.companion_install_root = sandbox
         _validate_provider_ledger_target(
             sandbox, self.arguments.run_id, must_not_exist=True
         )
         try:
+            assert self.companion_install_root is not None
             companion = self.dependencies.companion_verifier(
-                self.dependencies.root, platform_key
+                self.companion_install_root, platform_key
             )
             if not isinstance(companion, Mapping):
                 raise GateError("companion_unavailable")
@@ -4942,7 +4964,10 @@ class LiveGateRunner:
             try:
                 selected_path_real = selected_path.resolve(strict=True)
                 selected_path_real.relative_to(
-                    (self.dependencies.root / "runtime/opentunnel/v0.6.2").resolve(
+                    (
+                        self.companion_install_root
+                        / "runtime/opentunnel/v0.6.2"
+                    ).resolve(
                         strict=True
                     )
                 )
@@ -5180,9 +5205,12 @@ class LiveGateRunner:
                 return
 
     def _check_provider_ledger_during_run(self) -> None:
+        if self.companion_install_root is None:
+            self._add_infrastructure("capture_sandbox_path_mismatch")
+            return
         try:
             ledger_path = _validate_provider_ledger_target(
-                self.dependencies.root / CAPTURE_RELATIVE,
+                self.companion_install_root,
                 self.arguments.run_id,
                 must_not_exist=False,
             )
@@ -5239,9 +5267,12 @@ class LiveGateRunner:
         if not isinstance(ledger_value, str):
             self._add_infrastructure("provider_ledger_path_unavailable")
             return
+        if self.companion_install_root is None:
+            self._add_infrastructure("capture_sandbox_path_mismatch")
+            return
         try:
             expected_path = _validate_provider_ledger_target(
-                self.dependencies.root / CAPTURE_RELATIVE,
+                self.companion_install_root,
                 self.arguments.run_id,
                 must_not_exist=False,
             )
@@ -5504,6 +5535,8 @@ class LiveGateRunner:
     def _copy_provider_ledger(self) -> bool:
         if self.capture_dir is None:
             return False
+        if self.companion_install_root is None:
+            return False
         destination = self.capture_dir / PROVIDER_LEDGER_NAME
         value = (
             getattr(self.host, "environment", {}).get("NEQ_PROVIDER_ATTEMPT_LEDGER")
@@ -5515,7 +5548,7 @@ class LiveGateRunner:
             return False
         try:
             source = _validate_provider_ledger_target(
-                self.dependencies.root / CAPTURE_RELATIVE,
+                self.companion_install_root,
                 self.arguments.run_id,
                 must_not_exist=False,
             )
@@ -5918,6 +5951,9 @@ def _plan_document() -> dict[str, object]:
     return {
         "manifest": live_manifest(),
         "manifest_sha256": calculate_manifest_digest(),
+        "companion_install_root": CAPTURE_RELATIVE.as_posix(),
+        "companion_installation": "operator-installed-before-run; driver-never-installs",
+        "companion_missing_refusal": "companion_not_installed_in_capture_root",
         "plan_only": True,
         "side_effects": False,
         "gate_verdict": "PENDING",

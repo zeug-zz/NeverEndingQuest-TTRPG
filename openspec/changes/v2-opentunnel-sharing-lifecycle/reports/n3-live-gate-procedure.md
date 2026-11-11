@@ -49,14 +49,52 @@ facilitator's real OpenTunnel profile.
    procedure (`scripts/seed_combat_capture.py --prepare --party 1`). Confirm it
    is not a symlink and has `WEB_PORT == 8360`. Do not substitute the installed
    campaign or a user campaign.
-4. Confirm the OD-6 provider-free preflight report has zero infrastructure
+4. From the repository root, install the pinned companion into that prepared
+   copy using the explicit operator-consent flags:
+
+   ```sh
+   PYTHONPATH=. .venv/bin/python -m \
+     scripts.network_packaging.opentunnel_installer \
+     --install-root tmp/combat_capture --install
+   ```
+
+   The live driver never installs or downloads the companion. Confirm the
+   runtime manifest and digest resolve from `tmp/combat_capture` (a companion
+   present only under the repository root is irrelevant):
+
+   ```sh
+   PYTHONPATH=. .venv/bin/python - <<'PY'
+   from pathlib import Path
+   from web.extensions.opentunnel_sharing.companion import (
+       resolve_companion,
+       verify_companion_digest,
+   )
+   from web.extensions.opentunnel_sharing.service import load_companion_manifest
+
+   install_root = Path("tmp/combat_capture")
+   manifest = load_companion_manifest(install_root)
+   result = resolve_companion(
+       install_root, manifest, system="Darwin", machine="arm64"
+   )
+   if (
+       result.state != "resolved"
+       or result.path is None
+       or result.expected_sha256 is None
+       or not verify_companion_digest(result.path, result.expected_sha256)
+   ):
+       raise SystemExit("Capture-copy companion digest verification failed.")
+   print("Capture-copy companion digest verified:", result.expected_sha256)
+   PY
+   ```
+
+5. Confirm the OD-6 provider-free preflight report has zero infrastructure
    failures, covers every required preflight row and teardown check, and binds
    the same SHA and run ID. Its expected path is
    `tmp/router-rollout/v2-network/n3/<run-id>/preflight/preflight.json`.
    Follow [`n3-lifecycle-gate-procedure.md`](n3-lifecycle-gate-procedure.md)
    for the preflight invocation. Preflight is not the live gate and does not
    prove public lifecycle behavior.
-5. Obtain the separate owner authorization and booking. The primary acquires
+6. Obtain the separate owner authorization and booking. The primary acquires
    the shared `git-common-dir/neq-coordination/live-window.lock` using the
    exact `holder.json`/`bookings.log` protocol and fields in the contract; the
    driver does not acquire, release, or repair the lock. Confirm the booking,
