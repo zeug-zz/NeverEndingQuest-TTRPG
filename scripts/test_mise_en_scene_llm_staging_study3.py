@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -3818,6 +3819,114 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
         ledger.initialize()
         return ledger
 
+    def _check_runs_document(self, head_sha: str) -> dict[str, object]:
+        check_runs = []
+        for name in study3_readiness.REQUIRED_CI_CHECK_NAMES:
+            app_slug, app_name, app_id = study3_readiness._CI_APP_BY_CHECK[name]
+            check_runs.append(
+                {
+                    "name": name,
+                    "head_sha": head_sha,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "app": {
+                        "id": app_id,
+                        "slug": app_slug,
+                        "name": app_name,
+                    },
+                }
+            )
+        return {"total_count": len(check_runs), "check_runs": check_runs}
+
+    def _save_ci_evidence(
+        self,
+        head_sha: str,
+        *,
+        raw: bytes | None = None,
+        name: str = "check-runs.json",
+        mtime: float | None = None,
+        create_file: bool = True,
+    ) -> tuple[str, str]:
+        directory = self.fixture_parent / "ci-input"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        path = directory / name
+        contents = (
+            study3_readiness._canonical_bytes(self._check_runs_document(head_sha))
+            if raw is None
+            else raw
+        )
+        if create_file:
+            path.write_bytes(contents)
+            path.chmod(0o600)
+            if mtime is not None:
+                os.utime(path, (mtime, mtime))
+        relative_path = path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+        return relative_path, hashlib.sha256(contents).hexdigest()
+
+    def _readiness_arguments(
+        self,
+        head_sha: str,
+        ci_evidence: tuple[str, str],
+        *,
+        dispatch_ruling_id: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "expected_sha": head_sha,
+            "ci_evidence_path": ci_evidence[0],
+            "ci_evidence_sha256": ci_evidence[1],
+            "source_repository": study3_readiness.GITHUB_REPOSITORY,
+            "pr_number": study3_readiness.GITHUB_PR_MINIMUM,
+            "dispatch_ruling_id": dispatch_ruling_id,
+        }
+
+    def _passing_preflight_summary(self) -> object:
+        checks = []
+        for gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS:
+            stdout = b"synthetic gate metadata"
+            if gate_id.startswith("frozen-study1-study2-inventory-"):
+                stdout = study3_readiness._canonical_bytes(
+                    {
+                        "file_counts": study3_frozen_inventory.FROZEN_FILE_COUNTS,
+                        "inventory_sha256": study3_frozen_inventory.FROZEN_INVENTORY_SHA256,
+                        "status": "PASS",
+                    }
+                )
+            checks.append(
+                {
+                    "gate_id": gate_id,
+                    "argv": list(
+                        study3_readiness.REQUIRED_PREFLIGHT_GATE_COMMANDS[gate_id]
+                    ),
+                    "exit_code": 0,
+                    "stdout_sha256": _sha256(stdout),
+                    "stderr_sha256": _sha256(b""),
+                }
+            )
+        return study3_readiness._PreflightSummary(
+            started_at="2026-11-11T00:00:00Z",
+            completed_at="2026-11-11T00:01:00Z",
+            checks=tuple(checks),
+            gate_failures=(),
+            infrastructure_failures=(),
+        )
+
+    def _synthetic_ruling_source(self) -> tuple[Path, bytes]:
+        standing_id = study3_preflight.STANDING_AUTHORITY_RULING_ID
+        cap_id = study3_preflight.CAP_APPROVAL_RULING_ID
+        runner_id = study3_readiness.RUNNER_REVISION_RULING_ID
+        dispatch_id = study3_readiness.DISPATCH_RULING_ID
+        contents = (
+            f"## {standing_id}\nstanding synthetic authority\n"
+            f"## {cap_id}\ncap references {standing_id}\n"
+            f"## Ruling: {runner_id}\nrunner revision synthetic approval\n"
+            f"## Ruling: {dispatch_id}\nunblock synthetic approval\n"
+            "<!-- /ruling -->\n"
+        ).encode("ascii")
+        path = self.fixture_parent / "synthetic-rulings" / "B.md"
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(contents)
+        return path, contents
+
     def test_fake_runner_uses_reserved_dispatch_exact_720_second_profile(self) -> None:
         responses = [
             (
@@ -4247,25 +4356,24 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
         self.assertNotIn(secret.encode("ascii"), ledger.path.read_bytes())
         self.assertNotIn(secret, repr(result))
 
-    def test_check_run_api_assumptions_are_removed_and_provenance_gaps_are_named(self) -> None:
-        self.assertFalse(hasattr(study3_readiness, "_verify_check_runs"))
-        self.assertFalse(hasattr(study3_readiness, "_fetch_github_snapshot"))
-        self.assertFalse(hasattr(study3_readiness, "_run_gh_command"))
-        self.assertFalse(hasattr(study3_readiness, "_CI_PROVENANCE_PINS"))
+    def test_primary_supplied_check_runs_bridge_and_default_off_dispatch(self) -> None:
         self.assertEqual(len(study3_readiness.REQUIRED_CI_CHECK_NAMES), 11)
-        self.assertFalse(study3_readiness.LIVE_DISPATCH_ENABLED)
+        self.assertNotIn("LIVE_DISPATCH_ENABLED", vars(study3_readiness))
         self.assertEqual(
-            set(study3_readiness.CI_PROVENANCE_BLOCKER_CODES),
-            {
-                "GITHUB_CI_APP_ID_AND_SLUG_NOT_EXPOSED_BY_SUPPORTED_GH_JSON_FIELDS",
-                "GITHUB_CI_HEAD_SHA_NOT_EXPOSED_FOR_ALL_REQUIRED_CHECKS",
-                "GITHUB_CI_WORKFLOW_PATH_NOT_BINDABLE_TO_EACH_CHECK",
-                "GITHUB_CI_ADVANCED_SECURITY_RUN_IDENTITY_NOT_EXPOSED_BY_SUPPORTED_GH_CLI",
-                "GITHUB_CI_CHECK_RUN_API_UNAVAILABLE_WITH_REQUIRED_GH_REPO_FLAG",
-            },
+            study3_readiness.READINESS_TRUST_BOUNDARY,
+            "PRIMARY_DIRECT_GITHUB_PUBLIC_API_RETRIEVAL_IS_TRUST_ROOT; "
+            "SHA256_CHECKS_BYTES_ONLY_NOT_ORIGIN",
+        )
+        self.assertEqual(
+            study3_readiness.DISPATCH_RULING_ID,
+            "neq-s-study3-unblock-20261111",
+        )
+        self.assertEqual(
+            study3_readiness._REQUIRED_CI_APP_COUNTS,
+            {"github-actions": 9, "github-advanced-security": 2},
         )
 
-    def test_readiness_fails_closed_before_github_and_preflight(self) -> None:
+    def test_readiness_rejects_missing_or_invalid_input_before_github_and_preflight(self) -> None:
         current_sha = "8" * 40
         with patch.object(
             study3_readiness,
@@ -4283,11 +4391,7 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             verification = study3_readiness.verify_readiness_evidence()
 
         self.assertEqual(verification.status, "BLOCKED")
-        self.assertEqual(verification.current_head_sha, current_sha)
-        self.assertEqual(
-            verification.reason_codes,
-            tuple(sorted(study3_readiness.CI_PROVENANCE_BLOCKER_CODES)),
-        )
+        self.assertEqual(verification.reason_codes, ("EXACT_HEAD_SHA_REQUIRED",))
         self.assertFalse(verification.external_provenance_verified)
         self.assertFalse(verification.live_dispatch_permitted)
         self.assertFalse(study3_readiness.is_verified_readiness(verification))
@@ -4332,25 +4436,32 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             {"PATH": "/trusted/system/bin"},
         )
 
-    def test_dirty_worktree_and_clean_head_without_ci_provenance_stay_blocked(self) -> None:
+    def test_dirty_worktree_and_exact_head_mismatch_stop_before_ci_or_github(self) -> None:
         current_sha = "f" * 40
+        ci_evidence = self._save_ci_evidence(current_sha)
+        arguments = self._readiness_arguments(current_sha, ci_evidence)
         with patch.object(
             study3_readiness,
             "_read_local_git_state",
             return_value=(current_sha, b" M scripts/changed.py\n"),
         ), patch.object(
             study3_readiness,
-            "_run_process",
-            side_effect=AssertionError("dirty worktree must stop before subprocesses"),
-        ) as process, patch.object(
+            "_read_study3_file",
+            side_effect=AssertionError("dirty worktree must stop before CI evidence"),
+        ) as ci_file, patch.object(
+            study3_readiness,
+            "_verify_pull_request_head",
+            side_effect=AssertionError("dirty worktree must stop before GitHub"),
+        ) as pull_request, patch.object(
             study3_readiness,
             "_run_provider_free_preflight",
             side_effect=AssertionError("dirty worktree must stop before preflight"),
         ) as preflight:
-            dirty = study3_readiness.verify_readiness_evidence()
+            dirty = study3_readiness.verify_readiness_evidence(**arguments)
         self.assertEqual(dirty.status, "BLOCKED")
         self.assertEqual(dirty.reason_codes, ("LOCAL_WORKTREE_NOT_CLEAN",))
-        process.assert_not_called()
+        ci_file.assert_not_called()
+        pull_request.assert_not_called()
         preflight.assert_not_called()
 
         with patch.object(
@@ -4359,21 +4470,857 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             return_value=(current_sha, b""),
         ), patch.object(
             study3_readiness,
-            "_run_process",
-            side_effect=AssertionError("unsupported CI provenance must not query GitHub"),
-        ) as process, patch.object(
+            "_read_study3_file",
+            side_effect=AssertionError("head mismatch must stop before CI evidence"),
+        ) as ci_file, patch.object(
             study3_readiness,
             "_run_provider_free_preflight",
-            side_effect=AssertionError("unsupported CI provenance must stop before preflight"),
+            side_effect=AssertionError("head mismatch must stop before preflight"),
         ) as preflight:
-            clean_but_unverified = study3_readiness.verify_readiness_evidence()
-        self.assertEqual(clean_but_unverified.status, "BLOCKED")
-        self.assertEqual(
-            clean_but_unverified.reason_codes,
-            tuple(sorted(study3_readiness.CI_PROVENANCE_BLOCKER_CODES)),
-        )
-        process.assert_not_called()
+            mismatched = study3_readiness.verify_readiness_evidence(
+                **self._readiness_arguments("e" * 40, ci_evidence)
+            )
+        self.assertEqual(mismatched.status, "BLOCKED")
+        self.assertEqual(mismatched.reason_codes, ("LOCAL_HEAD_SHA_MISMATCH",))
+        ci_file.assert_not_called()
         preflight.assert_not_called()
+
+    def test_check_runs_require_exact_head_complete_success_and_expected_apps(self) -> None:
+        head_sha = "a" * 40
+        valid = self._check_runs_document(head_sha)
+        summary = study3_readiness._validate_check_runs(
+            study3_readiness._canonical_bytes(valid),
+            head_sha,
+        )
+        self.assertEqual(summary["required_check_count"], 11)
+        self.assertEqual(
+            summary["app_identities"],
+            {
+                "github-actions": {
+                    "slug": "github-actions",
+                    "name": "GitHub Actions",
+                    "id": 15368,
+                },
+                "github-advanced-security": {
+                    "slug": "github-advanced-security",
+                    "name": "GitHub Advanced Security",
+                    "id": 57789,
+                },
+            },
+        )
+
+        cases: list[tuple[str, dict[str, object], str]] = []
+        missing = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        missing["check_runs"].pop()
+        missing["total_count"] -= 1
+        cases.append(("missing-required", missing, "CI_REQUIRED_CHECK_SET_INCOMPLETE"))
+
+        wrong_head = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        wrong_head["check_runs"][0]["head_sha"] = "b" * 40
+        cases.append(("wrong-head", wrong_head, "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID"))
+
+        failed = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        failed["check_runs"][0]["conclusion"] = "failure"
+        cases.append(("failed-check", failed, "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID"))
+
+        wrong_app = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        wrong_app["check_runs"][0]["app"]["slug"] = "untrusted-app"
+        cases.append(("wrong-app", wrong_app, "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID"))
+
+        wrong_actions_id = json.loads(
+            study3_readiness._canonical_bytes(valid).decode("ascii")
+        )
+        actions_row = next(
+            row
+            for row in wrong_actions_id["check_runs"]
+            if row["name"] == "Analyze (python)"
+        )
+        actions_row["app"]["id"] += 1
+        cases.append(
+            (
+                "wrong-actions-id",
+                wrong_actions_id,
+                "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID",
+            )
+        )
+
+        missing_app_id = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        missing_app_id["check_runs"][0]["app"].pop("id")
+        cases.append(
+            (
+                "missing-app-id",
+                missing_app_id,
+                "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID",
+            )
+        )
+
+        wrong_advanced_security_id = json.loads(
+            study3_readiness._canonical_bytes(valid).decode("ascii")
+        )
+        codeql_row = next(
+            row
+            for row in wrong_advanced_security_id["check_runs"]
+            if row["name"] == "CodeQL"
+        )
+        codeql_row["app"]["id"] += 1
+        cases.append(
+            (
+                "wrong-advanced-security-id",
+                wrong_advanced_security_id,
+                "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID",
+            )
+        )
+
+        swapped_app_ids = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        actions_row = next(
+            row for row in swapped_app_ids["check_runs"] if row["name"] == "Analyze (python)"
+        )
+        codeql_row = next(
+            row for row in swapped_app_ids["check_runs"] if row["name"] == "CodeQL"
+        )
+        actions_row["app"]["id"], codeql_row["app"]["id"] = (
+            codeql_row["app"]["id"],
+            actions_row["app"]["id"],
+        )
+        cases.append(
+            (
+                "swapped-app-ids",
+                swapped_app_ids,
+                "CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID",
+            )
+        )
+
+        duplicate_name = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        duplicate_name["check_runs"].append(dict(duplicate_name["check_runs"][0]))
+        duplicate_name["total_count"] += 1
+        cases.append(("duplicate-name", duplicate_name, "CI_CHECK_RUN_NAME_DUPLICATE_OR_INVALID"))
+
+        wrong_count = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        wrong_count["total_count"] += 1
+        cases.append(("incomplete-page", wrong_count, "CI_CHECK_RUN_SET_INVALID"))
+
+        for name, document, expected_code in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(ReadinessVerificationError) as caught:
+                    study3_readiness._validate_check_runs(
+                        study3_readiness._canonical_bytes(document),
+                        head_sha,
+                    )
+                self.assertEqual(caught.exception.code, expected_code)
+
+        with self.assertRaises(ReadinessVerificationError) as malformed:
+            study3_readiness._validate_check_runs(b"{bad-json", head_sha)
+        self.assertEqual(malformed.exception.code, "CI_EVIDENCE_JSON_INVALID")
+
+    def test_duplicate_nonrequired_checks_are_allowed_but_required_duplicates_block(self) -> None:
+        head_sha = "a" * 40
+        with_duplicate_unrelated = self._check_runs_document(head_sha)
+        with_duplicate_unrelated["check_runs"].extend(
+            [
+                {
+                    "name": "opencode",
+                    "head_sha": head_sha,
+                    "status": "completed",
+                    "conclusion": "skipped",
+                }
+                for _ in range(3)
+            ]
+        )
+        with_duplicate_unrelated["total_count"] += 3
+        summary = study3_readiness._validate_check_runs(
+            study3_readiness._canonical_bytes(with_duplicate_unrelated),
+            head_sha,
+        )
+        self.assertEqual(summary["required_check_count"], 11)
+        self.assertEqual(summary["total_check_run_count"], 14)
+        self.assertTrue(
+            all(
+                row["status"] == "completed" and row["conclusion"] == "success"
+                for row in summary["required_checks"]
+            )
+        )
+
+        base = self._check_runs_document(head_sha)
+        required_row = next(
+            row for row in base["check_runs"] if row["name"] == "ascii-check"
+        )
+        failed_duplicate = deepcopy(required_row)
+        failed_duplicate["conclusion"] = "failure"
+        cases = (
+            ("success-then-failed", [*base["check_runs"], failed_duplicate]),
+            (
+                "failed-then-success",
+                [failed_duplicate, *base["check_runs"]],
+            ),
+        )
+        for name, rows in cases:
+            document = {"total_count": len(rows), "check_runs": rows}
+            with self.subTest(name=name), self.assertRaises(
+                ReadinessVerificationError
+            ) as caught:
+                study3_readiness._validate_check_runs(
+                    study3_readiness._canonical_bytes(document),
+                    head_sha,
+                )
+            self.assertEqual(
+                caught.exception.code,
+                "CI_CHECK_RUN_NAME_DUPLICATE_OR_INVALID",
+            )
+
+    def test_rehashed_ci_json_cannot_substitute_untrusted_or_swapped_app_ids(self) -> None:
+        head_sha = "a" * 40
+        valid = self._check_runs_document(head_sha)
+        cases = []
+
+        wrong_actions_id = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        next(
+            row
+            for row in wrong_actions_id["check_runs"]
+            if row["name"] == "Analyze (python)"
+        )["app"]["id"] = 15369
+        cases.append(("wrong-actions-id", wrong_actions_id))
+
+        wrong_advanced_security_id = json.loads(
+            study3_readiness._canonical_bytes(valid).decode("ascii")
+        )
+        next(
+            row
+            for row in wrong_advanced_security_id["check_runs"]
+            if row["name"] == "CodeQL"
+        )["app"]["id"] = 57790
+        cases.append(("wrong-advanced-security-id", wrong_advanced_security_id))
+
+        swapped_app_ids = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        actions_row = next(
+            row for row in swapped_app_ids["check_runs"] if row["name"] == "Analyze (python)"
+        )
+        codeql_row = next(
+            row for row in swapped_app_ids["check_runs"] if row["name"] == "CodeQL"
+        )
+        actions_row["app"]["id"], codeql_row["app"]["id"] = 57789, 15368
+        cases.append(("swapped-app-ids", swapped_app_ids))
+
+        missing_app_id = json.loads(study3_readiness._canonical_bytes(valid).decode("ascii"))
+        next(
+            row
+            for row in missing_app_id["check_runs"]
+            if row["name"] == "CodeQL"
+        )["app"].pop("id")
+        cases.append(("missing-app-id", missing_app_id))
+
+        for index, (name, document) in enumerate(cases):
+            raw = study3_readiness._canonical_bytes(document)
+            evidence = self._save_ci_evidence(
+                head_sha,
+                raw=raw,
+                name=f"rehashed-app-{index}.json",
+            )
+            self.assertEqual(evidence[1], hashlib.sha256(raw).hexdigest())
+            with self.subTest(name=name), patch.object(
+                study3_readiness,
+                "_read_local_git_state",
+                return_value=(head_sha, b""),
+            ), patch.object(
+                study3_readiness,
+                "_verify_pinned_approval",
+                side_effect=AssertionError("untrusted CI producer must stop before approval"),
+            ) as approval, patch.object(
+                study3_readiness,
+                "_verify_pull_request_head",
+                side_effect=AssertionError("untrusted CI producer must stop before GitHub"),
+            ) as pull_request, patch.object(
+                study3_readiness,
+                "_run_provider_free_preflight",
+                side_effect=AssertionError("untrusted CI producer must stop before gates"),
+            ) as preflight:
+                verification = study3_readiness.verify_readiness_evidence(
+                    **self._readiness_arguments(head_sha, evidence)
+                )
+            self.assertEqual(verification.status, "BLOCKED")
+            self.assertEqual(
+                verification.reason_codes,
+                ("CI_REQUIRED_CHECK_IDENTITY_OR_STATE_INVALID",),
+            )
+            approval.assert_not_called()
+            pull_request.assert_not_called()
+            preflight.assert_not_called()
+
+    def test_saved_ci_evidence_must_be_present_well_formed_hashed_and_fresh(self) -> None:
+        head_sha = "c" * 40
+        now = time.time()
+        old_time = now - study3_readiness.MAX_CI_EVIDENCE_AGE_SECONDS - 10
+        stale = self._save_ci_evidence(head_sha, name="stale.json", mtime=old_time)
+        malformed = self._save_ci_evidence(
+            head_sha,
+            raw=b"{malformed-json",
+            name="malformed.json",
+        )
+        mismatch = self._save_ci_evidence(head_sha, name="hash-mismatch.json")
+        missing = self._save_ci_evidence(
+            head_sha,
+            name="missing.json",
+            create_file=False,
+        )
+        cases = (
+            ("missing", missing, missing[1], "CI_EVIDENCE_UNAVAILABLE"),
+            ("malformed", malformed, malformed[1], "CI_EVIDENCE_JSON_INVALID"),
+            ("stale", stale, stale[1], "CI_EVIDENCE_STALE"),
+            ("hash-mismatch", mismatch, "0" * 64, "CI_EVIDENCE_SHA256_MISMATCH"),
+        )
+        for name, evidence, digest, expected_code in cases:
+            arguments = self._readiness_arguments(head_sha, evidence)
+            arguments["ci_evidence_sha256"] = digest
+            with self.subTest(name=name), patch.object(
+                study3_readiness,
+                "_read_local_git_state",
+                return_value=(head_sha, b""),
+            ), patch.object(
+                study3_readiness,
+                "_verify_pinned_approval",
+                side_effect=AssertionError("invalid CI evidence must stop before pins"),
+            ) as approval, patch.object(
+                study3_readiness,
+                "_verify_pull_request_head",
+                side_effect=AssertionError("invalid CI evidence must stop before GitHub"),
+            ) as pull_request, patch.object(
+                study3_readiness,
+                "_run_provider_free_preflight",
+                side_effect=AssertionError("invalid CI evidence must stop before gates"),
+            ) as preflight:
+                verification = study3_readiness.verify_readiness_evidence(**arguments)
+            self.assertEqual(verification.status, "BLOCKED")
+            self.assertEqual(verification.reason_codes, (expected_code,))
+            approval.assert_not_called()
+            pull_request.assert_not_called()
+            preflight.assert_not_called()
+
+    def test_synthetic_readiness_evidence_is_metadata_only_and_dispatch_is_opt_in(self) -> None:
+        head_sha = "d" * 40
+        ci_evidence = self._save_ci_evidence(head_sha)
+        ci_raw = (REPO_ROOT / ci_evidence[0]).read_bytes()
+        gates = self._passing_preflight_summary()
+        approval_summary = {
+            "attempt_cap": 3,
+            "cap_envelope_sha256": "1" * 64,
+            "conservative_total_usd_estimate": "0.0324461",
+        }
+        pr_summary = {
+            "number": study3_readiness.GITHUB_PR_MINIMUM,
+            "state": "OPEN",
+            "is_draft": True,
+            "head_sha": head_sha,
+            "repository": study3_readiness.GITHUB_REPOSITORY,
+        }
+        evidence_root = (
+            self.fixture_parent.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+            + "/readiness-evidence"
+        )
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(head_sha, b""),
+        ), patch.object(
+            study3_readiness,
+            "_verify_pinned_approval",
+            return_value=approval_summary,
+        ), patch.object(
+            study3_readiness,
+            "_verify_pull_request_head",
+            return_value=pr_summary,
+        ) as pull_request, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            return_value=gates,
+        ) as preflight, patch.object(
+            study3_readiness,
+            "_READINESS_EVIDENCE_RELATIVE",
+            evidence_root,
+        ):
+            default_off = study3_readiness.verify_readiness_evidence(
+                **self._readiness_arguments(head_sha, ci_evidence)
+            )
+            enabled = study3_readiness.verify_readiness_evidence(
+                **self._readiness_arguments(
+                    head_sha,
+                    ci_evidence,
+                    dispatch_ruling_id=study3_readiness.DISPATCH_RULING_ID,
+                )
+            )
+
+        self.assertEqual(default_off.status, "READY")
+        self.assertFalse(default_off.live_dispatch_permitted)
+        self.assertTrue(study3_readiness.is_verified_readiness(default_off))
+        self.assertEqual(enabled.status, "READY")
+        self.assertTrue(enabled.live_dispatch_permitted)
+        self.assertTrue(study3_readiness.is_verified_readiness(enabled))
+        self.assertEqual(pull_request.call_count, 4)
+        self.assertEqual(preflight.call_args_list[0].args, (head_sha,))
+        for verification in (default_off, enabled):
+            evidence_path = REPO_ROOT / str(verification.evidence_relative_path)
+            evidence_bytes = evidence_path.read_bytes()
+            self.assertEqual(_sha256(evidence_bytes), verification.evidence_sha256)
+            self.assertNotIn(ci_raw, evidence_bytes)
+            record = json.loads(evidence_bytes.decode("ascii"))
+            self.assertEqual(record["trust_boundary"], study3_readiness.READINESS_TRUST_BOUNDARY)
+            self.assertEqual(record["ci_evidence"]["sha256"], ci_evidence[1])
+            self.assertEqual(record["head_sha"], head_sha)
+        self.assertFalse(
+            json.loads(
+                (REPO_ROOT / str(default_off.evidence_relative_path)).read_text(
+                    encoding="ascii"
+                )
+            )["live_dispatch_permitted"]
+        )
+        self.assertTrue(
+            json.loads(
+                (REPO_ROOT / str(enabled.evidence_relative_path)).read_text(
+                    encoding="ascii"
+                )
+            )["live_dispatch_permitted"]
+        )
+
+    def test_ci_evidence_that_stales_during_gates_blocks_readiness(self) -> None:
+        head_sha = "b" * 40
+        ci_evidence = self._save_ci_evidence(head_sha)
+        evidence_file = REPO_ROOT / ci_evidence[0]
+        stale_at = time.time() - study3_readiness.MAX_CI_EVIDENCE_AGE_SECONDS - 10
+        evidence_root = (
+            self.fixture_parent.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+            + "/readiness-stale-evidence"
+        )
+
+        def age_evidence(_head_sha: str) -> object:
+            os.utime(evidence_file, (stale_at, stale_at))
+            return self._passing_preflight_summary()
+
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(head_sha, b""),
+        ), patch.object(
+            study3_readiness,
+            "_verify_pinned_approval",
+            return_value={"attempt_cap": 3},
+        ), patch.object(
+            study3_readiness,
+            "_verify_pull_request_head",
+            return_value={
+                "number": study3_readiness.GITHUB_PR_MINIMUM,
+                "state": "OPEN",
+                "is_draft": True,
+                "head_sha": head_sha,
+                "repository": study3_readiness.GITHUB_REPOSITORY,
+            },
+        ) as pull_request, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            side_effect=age_evidence,
+        ), patch.object(
+            study3_readiness,
+            "_READINESS_EVIDENCE_RELATIVE",
+            evidence_root,
+        ):
+            verification = study3_readiness.verify_readiness_evidence(
+                **self._readiness_arguments(head_sha, ci_evidence)
+            )
+
+        self.assertEqual(verification.status, "BLOCKED")
+        self.assertEqual(verification.reason_codes, ("CI_EVIDENCE_STALE",))
+        self.assertFalse(verification.live_dispatch_permitted)
+        self.assertFalse(study3_readiness.is_verified_readiness(verification))
+        self.assertEqual(pull_request.call_count, 2)
+        saved = json.loads(
+            (REPO_ROOT / str(verification.evidence_relative_path)).read_text(
+                encoding="ascii"
+            )
+        )
+        self.assertEqual(saved["status"], "BLOCKED")
+        self.assertEqual(saved["reason_codes"], ["CI_EVIDENCE_STALE"])
+
+    def test_ci_evidence_mutation_during_gates_blocks_readiness_proof(self) -> None:
+        head_sha = "6" * 40
+        ci_evidence = self._save_ci_evidence(head_sha)
+        evidence_file = REPO_ROOT / ci_evidence[0]
+        changed_document = self._check_runs_document(head_sha)
+        changed_document["check_runs"].append({"name": "synthetic unrelated check"})
+        changed_document["total_count"] += 1
+        changed_bytes = study3_readiness._canonical_bytes(changed_document)
+        self.assertNotEqual(hashlib.sha256(changed_bytes).hexdigest(), ci_evidence[1])
+        evidence_root = (
+            self.fixture_parent.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+            + "/readiness-mutated-evidence"
+        )
+
+        def mutate_evidence(_head_sha: str) -> object:
+            evidence_file.write_bytes(changed_bytes)
+            return self._passing_preflight_summary()
+
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(head_sha, b""),
+        ), patch.object(
+            study3_readiness,
+            "_verify_pinned_approval",
+            return_value={"attempt_cap": 3},
+        ), patch.object(
+            study3_readiness,
+            "_verify_pull_request_head",
+            return_value={
+                "number": study3_readiness.GITHUB_PR_MINIMUM,
+                "state": "OPEN",
+                "is_draft": True,
+                "head_sha": head_sha,
+                "repository": study3_readiness.GITHUB_REPOSITORY,
+            },
+        ) as pull_request, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            side_effect=mutate_evidence,
+        ), patch.object(
+            study3_readiness,
+            "_READINESS_EVIDENCE_RELATIVE",
+            evidence_root,
+        ):
+            verification = study3_readiness.verify_readiness_evidence(
+                **self._readiness_arguments(
+                    head_sha,
+                    ci_evidence,
+                    dispatch_ruling_id=study3_readiness.DISPATCH_RULING_ID,
+                )
+            )
+
+        self.assertEqual(verification.status, "BLOCKED")
+        self.assertEqual(
+            verification.reason_codes,
+            ("CI_EVIDENCE_SHA256_MISMATCH_AFTER_PREFLIGHT",),
+        )
+        self.assertFalse(verification.live_dispatch_permitted)
+        self.assertFalse(study3_readiness.is_verified_readiness(verification))
+        self.assertEqual(pull_request.call_count, 2)
+        saved = json.loads(
+            (REPO_ROOT / str(verification.evidence_relative_path)).read_text(
+                encoding="ascii"
+            )
+        )
+        self.assertEqual(saved["status"], "BLOCKED")
+        self.assertEqual(
+            saved["reason_codes"],
+            ["CI_EVIDENCE_SHA256_MISMATCH_AFTER_PREFLIGHT"],
+        )
+
+    def test_failed_or_infrastructure_preflight_gate_blocks_dispatch_readiness(self) -> None:
+        head_sha = "7" * 40
+        ci_evidence = self._save_ci_evidence(head_sha)
+        passing = self._passing_preflight_summary()
+        cases = (
+            (
+                "gate-failure",
+                replace(
+                    passing,
+                    gate_failures=("PREFLIGHT_GATE_FAILED_FOCUSED_STUDY3_TESTS",),
+                ),
+                "PREFLIGHT_GATE_FAILED_FOCUSED_STUDY3_TESTS",
+            ),
+            (
+                "infrastructure-failure",
+                replace(
+                    passing,
+                    infrastructure_failures=("PREFLIGHT_INFRASTRUCTURE_FAILURE_ASCII",),
+                ),
+                "PREFLIGHT_INFRASTRUCTURE_FAILURE_ASCII",
+            ),
+        )
+        for name, preflight_summary, expected_code in cases:
+            evidence_root = (
+                self.fixture_parent.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+                + "/readiness-"
+                + name
+            )
+            with self.subTest(name=name), patch.object(
+                study3_readiness,
+                "_read_local_git_state",
+                return_value=(head_sha, b""),
+            ), patch.object(
+                study3_readiness,
+                "_verify_pinned_approval",
+                return_value={"attempt_cap": 3},
+            ), patch.object(
+                study3_readiness,
+                "_verify_pull_request_head",
+                return_value={
+                    "number": study3_readiness.GITHUB_PR_MINIMUM,
+                    "state": "OPEN",
+                    "is_draft": True,
+                    "head_sha": head_sha,
+                    "repository": study3_readiness.GITHUB_REPOSITORY,
+                },
+            ), patch.object(
+                study3_readiness,
+                "_run_provider_free_preflight",
+                return_value=preflight_summary,
+            ), patch.object(
+                study3_readiness,
+                "_READINESS_EVIDENCE_RELATIVE",
+                evidence_root,
+            ):
+                verification = study3_readiness.verify_readiness_evidence(
+                    **self._readiness_arguments(
+                        head_sha,
+                        ci_evidence,
+                        dispatch_ruling_id=study3_readiness.DISPATCH_RULING_ID,
+                    )
+                )
+            self.assertEqual(verification.status, "BLOCKED")
+            self.assertIn(expected_code, verification.reason_codes)
+            self.assertFalse(verification.live_dispatch_permitted)
+            self.assertFalse(study3_readiness.is_verified_readiness(verification))
+            evidence_record = json.loads(
+                (REPO_ROOT / str(verification.evidence_relative_path)).read_text(
+                    encoding="ascii"
+                )
+            )
+            self.assertEqual(evidence_record["status"], "BLOCKED")
+            self.assertIn(expected_code, evidence_record["reason_codes"])
+
+    def test_ruling_parser_bounds_unmarked_section_and_marked_final_section(self) -> None:
+        ruling_path, _contents = self._synthetic_ruling_source()
+        with patch.object(study3_readiness, "RULING_SOURCE_PATH", ruling_path):
+            sections = study3_readiness._read_pinned_ruling_sections()
+
+        runner_id = study3_readiness.RUNNER_REVISION_RULING_ID
+        dispatch_id = study3_readiness.DISPATCH_RULING_ID
+        runner_section = sections[runner_id]
+        dispatch_section = sections[dispatch_id]
+        self.assertEqual(
+            runner_section,
+            f"## Ruling: {runner_id}\nrunner revision synthetic approval".encode("ascii"),
+        )
+        self.assertNotIn(dispatch_id.encode("ascii"), runner_section)
+        self.assertEqual(
+            dispatch_section,
+            (
+                f"## Ruling: {dispatch_id}\nunblock synthetic approval\n"
+            ).encode("ascii"),
+        )
+
+    def test_ruling_parser_rejects_spoof_duplicate_and_incomplete_sections(self) -> None:
+        ruling_path, contents = self._synthetic_ruling_source()
+        runner_id = study3_readiness.RUNNER_REVISION_RULING_ID
+
+        spoofed = contents.replace(
+            b"runner revision synthetic approval\n",
+            b"runner revision synthetic approval\ntext spoof ## Ruling: "
+            + runner_id.encode("ascii")
+            + b"\n",
+        )
+        duplicate = contents.replace(
+            f"## Ruling: {study3_readiness.DISPATCH_RULING_ID}".encode("ascii"),
+            (
+                f"## Ruling: {runner_id}\nsecond runner section\n"
+                f"## Ruling: {study3_readiness.DISPATCH_RULING_ID}"
+            ).encode("ascii"),
+        )
+        incomplete = contents.replace(b"<!-- /ruling -->\n", b"")
+
+        cases = (
+            ("spoofed-heading", spoofed, "PINNED_RULING_ID_MISSING_OR_DUPLICATE"),
+            ("duplicate-heading", duplicate, "PINNED_RULING_ID_MISSING_OR_DUPLICATE"),
+            ("incomplete-final-section", incomplete, "PINNED_RULING_SECTION_INCOMPLETE"),
+        )
+        for index, (name, altered, expected_code) in enumerate(cases):
+            path = self.fixture_parent / f"synthetic-rulings-{index}" / "B.md"
+            path.parent.mkdir(mode=0o700, exist_ok=True)
+            path.write_bytes(altered)
+            with self.subTest(name=name), patch.object(
+                study3_readiness,
+                "RULING_SOURCE_PATH",
+                path,
+            ):
+                with self.assertRaises(ReadinessVerificationError) as caught:
+                    study3_readiness._read_pinned_ruling_sections()
+            self.assertEqual(caught.exception.code, expected_code)
+
+    def test_pinned_approval_uses_synthetic_rulings_and_rejects_changed_text(self) -> None:
+        ruling_path, _contents = self._synthetic_ruling_source()
+        with patch.object(study3_readiness, "RULING_SOURCE_PATH", ruling_path):
+            sections = study3_readiness._read_pinned_ruling_sections()
+        pins_by_ruling = {
+            ruling_id: _sha256(section) for ruling_id, section in sections.items()
+        }
+        config_sha256 = "e" * 64
+        sizing_report = {
+            "expected_total_usd_estimate": "0.0125671",
+            "conservative_total_usd_estimate": "0.0324461",
+            "hard_ceiling_usd": "0.05",
+            "rates": {"source_sha256": study3_sizing.RATE_LISTING_SHA256},
+        }
+        with patch.object(
+            study3_readiness,
+            "RULING_SOURCE_PATH",
+            ruling_path,
+        ), patch.object(
+            study3_readiness,
+            "PINNED_RULING_SHA256",
+            pins_by_ruling,
+        ), patch.object(
+            study3_readiness,
+            "request_transport_metadata",
+            return_value={"generation_config_sha256": config_sha256},
+        ), patch.object(
+            study3_readiness.protocol,
+            "_safe_project_read",
+            return_value=b"synthetic manifest",
+        ), patch.object(
+            study3_preflight,
+            "_verify_approval",
+            return_value=None,
+        ) as approval, patch.object(
+            study3_preflight,
+            "_verify_fixed_generation_envelope",
+            return_value=config_sha256,
+        ), patch.object(
+            study3_sizing,
+            "_fresh_preflight_sizing_report",
+            return_value=(sizing_report, Decimal("0.0324461")),
+        ):
+            summary = study3_readiness._verify_pinned_approval()
+
+        self.assertEqual(summary["attempt_cap"], 3)
+        self.assertEqual(summary["attempts_per_scene"], 1)
+        self.assertEqual(summary["conservative_total_usd_estimate"], "0.0324461")
+        self.assertEqual(summary["hard_ceiling_usd"], "0.05")
+        approval_pins, standing_bytes, cap_bytes, envelope_bytes, _manifest = (
+            approval.call_args.args
+        )
+        self.assertEqual(standing_bytes, sections[study3_preflight.STANDING_AUTHORITY_RULING_ID])
+        self.assertEqual(cap_bytes, sections[study3_preflight.CAP_APPROVAL_RULING_ID])
+        self.assertEqual(approval_pins.generation_config_sha256, config_sha256)
+        self.assertEqual(approval_pins.cap_envelope_sha256, _sha256(envelope_bytes))
+        envelope = json.loads(envelope_bytes.decode("ascii"))
+        self.assertEqual(envelope["attempt_cap"], 3)
+        self.assertEqual(envelope["attempts_per_scene"], 1)
+        self.assertEqual(envelope["max_tokens"], 16384)
+        self.assertEqual(envelope["timeout_seconds"], 720)
+        self.assertEqual(envelope["hard_ceiling_usd"], "0.05")
+
+        ruling_path.write_bytes(ruling_path.read_bytes().replace(b"standing synthetic", b"changed synthetic"))
+        with patch.object(study3_readiness, "RULING_SOURCE_PATH", ruling_path), patch.object(
+            study3_readiness,
+            "PINNED_RULING_SHA256",
+            pins_by_ruling,
+        ):
+            with self.assertRaises(ReadinessVerificationError) as caught:
+                study3_readiness._verify_pinned_approval()
+        self.assertEqual(caught.exception.code, "PINNED_RULING_TEXT_MISMATCH")
+
+    def test_pr_head_query_requires_fixed_repo_open_draft_and_exact_sha(self) -> None:
+        head_sha = "f" * 40
+        expected = {
+            "number": study3_readiness.GITHUB_PR_MINIMUM,
+            "state": "OPEN",
+            "isDraft": True,
+            "headRefOid": head_sha,
+        }
+        with patch.object(
+            study3_readiness,
+            "_resolve_trusted_executable",
+            return_value="/usr/bin/gh",
+        ), patch.object(
+            study3_readiness,
+            "_run_process",
+            return_value=study3_readiness._CommandResult(
+                0,
+                study3_readiness._canonical_bytes(expected),
+                b"",
+            ),
+        ) as process:
+            result = study3_readiness._verify_pull_request_head(
+                study3_readiness.GITHUB_PR_MINIMUM,
+                head_sha,
+            )
+        self.assertEqual(result["head_sha"], head_sha)
+        self.assertEqual(
+            process.call_args.args[0][1:],
+            (
+                "pr",
+                "view",
+                str(study3_readiness.GITHUB_PR_MINIMUM),
+                "--repo",
+                study3_readiness.GITHUB_REPOSITORY,
+                "--json",
+                "number,state,isDraft,headRefOid",
+            ),
+        )
+
+        invalid_records = (
+            {**expected, "state": "CLOSED"},
+            {**expected, "isDraft": False},
+            {**expected, "headRefOid": "0" * 40},
+        )
+        for record in invalid_records:
+            with self.subTest(record=record), patch.object(
+                study3_readiness,
+                "_resolve_trusted_executable",
+                return_value="/usr/bin/gh",
+            ), patch.object(
+                study3_readiness,
+                "_run_process",
+                return_value=study3_readiness._CommandResult(
+                    0,
+                    study3_readiness._canonical_bytes(record),
+                    b"",
+                ),
+            ):
+                with self.assertRaises(ReadinessVerificationError) as caught:
+                    study3_readiness._verify_pull_request_head(
+                        study3_readiness.GITHUB_PR_MINIMUM,
+                        head_sha,
+                    )
+                self.assertEqual(
+                    caught.exception.code,
+                    "DRAFT_PULL_REQUEST_HEAD_OR_STATE_MISMATCH",
+                )
+
+    def test_runner_requires_explicit_dispatch_ruling_before_side_effects(self) -> None:
+        readiness_proof = ReadinessVerification(
+            status="READY",
+            reason_codes=(),
+            current_head_sha="9" * 40,
+            ci_check_count=11,
+            preflight_gate_count=len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS),
+            external_provenance_verified=True,
+            live_dispatch_permitted=True,
+            dispatch_ruling_id=study3_readiness.DISPATCH_RULING_ID,
+            evidence_relative_path=PREP_ROOT_RELATIVE + "/readiness/synthetic.json",
+            evidence_sha256="a" * 64,
+            _proof=study3_readiness._READY_PROOF,
+        )
+        with patch.object(
+            study3_runner_module.readiness,
+            "verify_readiness_evidence",
+            return_value=readiness_proof,
+        ) as verify, patch.object(
+            study3_runner_module,
+            "Study3Ledger",
+            side_effect=AssertionError("dispatch opt-in must precede real ledger"),
+        ) as ledger, patch.object(
+            study3_runner_module,
+            "_UrllibHTTP",
+            side_effect=AssertionError("dispatch opt-in must precede HTTP"),
+        ) as http, patch.object(
+            study3_runner_module,
+            "_load_transport_config",
+            side_effect=AssertionError("dispatch opt-in must precede credentials"),
+        ) as credentials:
+            with self.assertRaises(Study3RunnerBlocked) as caught:
+                Study3Runner().run()
+        self.assertEqual(caught.exception.code, "READINESS_DISPATCH_NOT_PERMITTED")
+        verify.assert_called_once()
+        self.assertIsNone(verify.call_args.kwargs["dispatch_ruling_id"])
+        ledger.assert_not_called()
+        http.assert_not_called()
+        credentials.assert_not_called()
 
     def test_readiness_refusal_precedes_real_ledger_http_and_credentials(self) -> None:
         blocked = ReadinessVerification(
@@ -4396,7 +5343,7 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
         for verification, expected_code in (
             (blocked, "READINESS_BLOCKED"),
             (forged_ready, "READINESS_PROOF_INVALID"),
-            (proof_marked_ready, "LIVE_DISPATCH_HARD_DISABLED"),
+            (proof_marked_ready, "READINESS_PROOF_INVALID"),
         ):
             with self.subTest(status=verification.status, code=expected_code), patch.object(
                 study3_runner_module.readiness,
@@ -4509,16 +5456,27 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
         self,
     ) -> None:
         current_sha = "4" * 40
-        results = [
-            study3_readiness._CommandResult(
-                1 if index == 0 else 0,
-                b"synthetic gate output that must not persist",
-                b"synthetic stderr that must not persist",
+        inventory_output = study3_readiness._canonical_bytes(
+            {
+                "file_counts": study3_frozen_inventory.FROZEN_FILE_COUNTS,
+                "inventory_sha256": study3_frozen_inventory.FROZEN_INVENTORY_SHA256,
+                "status": "PASS",
+            }
+        )
+        results = []
+        for index, gate_id in enumerate(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS):
+            output = (
+                inventory_output
+                if gate_id.startswith("frozen-study1-study2-inventory-")
+                else b"synthetic gate output that must not persist"
             )
-            for index, _gate_id in enumerate(
-                study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS
+            results.append(
+                study3_readiness._CommandResult(
+                    1 if index == 0 else 0,
+                    output,
+                    b"synthetic stderr that must not persist",
+                )
             )
-        ]
         with patch.object(
             study3_readiness,
             "_run_preflight_command",
@@ -4534,7 +5492,7 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             [call.args[0] for call in command.call_args_list],
             list(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS),
         )
-        self.assertEqual(len(summary.checks), 7)
+        self.assertEqual(len(summary.checks), len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS))
         self.assertEqual(
             summary.gate_failures,
             ("PREFLIGHT_GATE_FAILED_FOCUSED_STUDY3_TESTS",),
@@ -4671,9 +5629,12 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             summary.infrastructure_failures,
             tuple(
                 sorted(
-                    "PREFLIGHT_INFRASTRUCTURE_FAILURE_"
-                    + gate_id.upper().replace("-", "_")
-                    for gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS
+                    [
+                        "PREFLIGHT_INFRASTRUCTURE_FAILURE_"
+                        + gate_id.upper().replace("-", "_")
+                        for gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS
+                    ]
+                    + ["FROZEN_INVENTORY_COMPARISON_INCOMPLETE"]
                 )
             ),
         )
@@ -4699,6 +5660,17 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
         self.assertEqual(
             [argument.arg for argument in real_run.args.args],
             ["self"],
+        )
+        self.assertEqual(
+            [argument.arg for argument in real_run.args.kwonlyargs],
+            [
+                "expected_sha",
+                "ci_evidence_path",
+                "ci_evidence_sha256",
+                "source_repository",
+                "pr_number",
+                "dispatch_ruling_id",
+            ],
         )
 
         def call_name(node: ast.Call) -> str:
@@ -4747,8 +5719,10 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             if isinstance(node, ast.Call)
         ]
         self.assertIn("_execute_reserved_scenes", synthetic_calls)
-        self.assertIs(study3_runner_module._LIVE_DISPATCH_HARD_DISABLED, True)
-        self.assertIs(study3_readiness.LIVE_DISPATCH_ENABLED, False)
+        self.assertNotIn("_LIVE_DISPATCH_HARD_DISABLED", vars(study3_runner_module))
+        self.assertNotIn("LIVE_DISPATCH_ENABLED", vars(study3_readiness))
+        self.assertIn("dispatch_ruling_id", ast.unparse(real_run))
+        self.assertIn("DISPATCH_RULING_ID", ast.unparse(real_run))
 
 
 class Study3TripwireTest(Study3GuardedTestCase):
