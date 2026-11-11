@@ -11,19 +11,24 @@ import contextlib
 import http.client
 import io
 import json
+import math
 import os
 import signal
 import socket
+import shlex
 import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping
 from unittest.mock import patch
 
 import scripts.n3_lifecycle_gate as preflight_gate
 import scripts.n3_live_lifecycle_gate as gate
+from web.extensions.opentunnel_sharing.identity_bootstrap import Observation
+from web.extensions.player.contracts import make_snapshot_envelope
 
 
 TEST_SHA = "a" * 40
@@ -133,6 +138,323 @@ class FakeProcess:
         return self.returncode
 
 
+class PassingExecutor:
+    def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+        return gate.RowExecutionResult("PASS", "injected-core-test")
+
+
+class LifecycleFakeApi:
+    def __init__(
+        self,
+        status: Mapping[str, object] | None = None,
+        *,
+        status_sequence: list[Mapping[str, object]] | None = None,
+        on_status=None,
+        post_handlers: Mapping[str, object] | None = None,
+    ) -> None:
+        self.status = dict(status or {})
+        self.status_sequence = list(status_sequence or [])
+        self.on_status = on_status
+        self.post_handlers = dict(post_handlers or {})
+        self.status_calls = 0
+        self.calls: list[tuple[str, object]] = []
+
+    def get_status(self) -> gate.HostApiResponse:
+        self.calls.append(("GET", "/api/player-sharing/status"))
+        if self.status_sequence:
+            selected = self.status_sequence.pop(0)
+        else:
+            selected = self.status
+        self.status_calls += 1
+        if callable(self.on_status):
+            self.on_status(selected, self.status_calls)
+        return gate.HostApiResponse(200, {"ok": True, "status": dict(selected)})
+
+    def post(
+        self, action: str, payload: Mapping[str, object] | None = None
+    ) -> gate.HostApiResponse:
+        clean_payload = dict(payload or {})
+        self.calls.append(("POST", (action, clean_payload)))
+        handler = self.post_handlers.get(action)
+        if callable(handler):
+            return handler(clean_payload)
+        if action == "copy-invitation":
+            return gate.HostApiResponse(
+                409, {"ok": False, "reason": "invitation_unavailable"}
+            )
+        return gate.HostApiResponse(
+            200,
+            {"ok": True, "reason": "ready", "status": self.status},
+        )
+
+
+class MappedPortInspector:
+    def __init__(
+        self, observations: Mapping[int, preflight_gate.PortObservation]
+    ) -> None:
+        self.observations = dict(observations)
+        self.calls: list[int] = []
+
+    def inspect(self, port: int) -> preflight_gate.PortObservation:
+        self.calls.append(port)
+        return self.observations.get(
+            port, preflight_gate.PortObservation(port, "unknown")
+        )
+
+
+class FakeProcessTable:
+    def __init__(self, records: tuple[gate.ProcessRecord, ...]) -> None:
+        self.records = records
+        self.calls = 0
+
+    def snapshot(self) -> tuple[gate.ProcessRecord, ...]:
+        self.calls += 1
+        return self.records
+
+
+class FakeIdentityObserver:
+    def __init__(self, state: str = "absent") -> None:
+        self.state = state
+
+    def service_manager_entries(self, _profile: str) -> Observation:
+        return Observation(self.state, "fake", 0)
+
+    def profile_processes(self, _profile: str) -> Observation:
+        return Observation(self.state, "fake", 0)
+
+    def helper_processes(self) -> Observation:
+        return Observation(self.state, "fake", 0)
+
+
+class FakePublicSocket:
+    def __init__(self, server: "FakePublicService") -> None:
+        self.server = server
+        self.connected = False
+        self.handlers: dict[tuple[str, str], object] = {}
+        self.eio = SimpleNamespace(state="disconnected")
+
+    def on(self, event: str, handler, *, namespace: str) -> None:
+        self.handlers[(namespace, event)] = handler
+
+    def connect(self, url: str, **kwargs: object) -> None:
+        if not self.server.available:
+            raise gate.socketio.exceptions.ConnectionError("transport unavailable")
+        if kwargs.get("namespaces") == ["/"]:
+            self.eio.state = "connected"
+            if self.server.allow_host_namespace:
+                self.connected = True
+                return
+            raise gate.socketio.exceptions.ConnectionError("namespace / refused")
+        headers = kwargs.get("headers")
+        auth = kwargs.get("auth")
+        if (
+            url != self.server.accepted_origin
+            or self.server.player_namespace_refused
+            or not isinstance(headers, Mapping)
+            or headers.get("Origin") != self.server.accepted_origin
+            or not self.server._cookie_value(
+                headers.get("Cookie", ""), "neq_player_session"
+            )
+            or not isinstance(auth, Mapping)
+            or set(auth) != {"client_build_id", "protocol_version"}
+        ):
+            raise gate.socketio.exceptions.ConnectionError(
+                "namespace /player refused"
+            )
+        self.connected = True
+        self.eio.state = "connected"
+
+    def emit(self, event: str, _payload: object, *, namespace: str) -> None:
+        handler = self.handlers.get((namespace, "player.snapshot"))
+        if (
+            event == "player.snapshot.request"
+            and callable(handler)
+            and not self.server.suppress_socket_snapshot
+        ):
+            handler(self.server.snapshot)
+
+    def disconnect(self) -> None:
+        self.connected = False
+        self.eio.state = "disconnected"
+
+
+class FakePublicService:
+    def __init__(
+        self,
+        origin: str = "https://neq-share.account.opentunnel.xyz",
+        *,
+        credential: str = "credential-secret-sentinel",
+    ) -> None:
+        self.accepted_origin = origin
+        self.credential = credential
+        self.available = True
+        self.challenge_index = 0
+        self.session_index = 0
+        self.challenges: dict[str, tuple[str, str]] = {}
+        self.sessions: set[str] = set()
+        self.sockets: list[FakePublicSocket] = []
+        self.calls: list[tuple[str, str, str]] = []
+        self.overrides: dict[tuple[str, str], gate.PublicHttpResponse] = {}
+        self.suppress_socket_snapshot = False
+        self.allow_host_namespace = False
+        self.player_namespace_refused = False
+        self.accept_invalid_credentials = False
+        self.accept_forged_origin = False
+        self.session_cookie_attributes = "Secure; HttpOnly; SameSite=Strict"
+        self.snapshot = make_snapshot_envelope(
+            "instance-id-sentinel-000000000000",
+            "session-epoch-sentinel-000000000000",
+            0,
+            0,
+            {
+                "party": {
+                    "members": [],
+                    "active_character": None,
+                    "active_character_revision": 0,
+                    "world": {},
+                },
+                "busy": False,
+            },
+        )
+
+    def socket_factory(self) -> FakePublicSocket:
+        client = FakePublicSocket(self)
+        self.sockets.append(client)
+        return client
+
+    def set_available(self, value: bool) -> None:
+        self.available = value
+        if not value:
+            for client in self.sockets:
+                client.disconnect()
+
+    def request(
+        self,
+        hostname: str,
+        port: int,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        _timeout: float,
+    ) -> gate.PublicHttpResponse:
+        self.calls.append((method, path, hostname))
+        if not self.available:
+            raise gate.PublicClientError("public_transport_unavailable")
+        authority = hostname if port == 443 else "%s:%d" % (hostname, port)
+        origin = "https://" + authority
+        if headers.get("Host") != authority:
+            return self._json(403, {"error": "request_rejected"})
+        if origin != self.accepted_origin:
+            return self._json(404, {"error": "not_found"})
+        override = self.overrides.get((method, path))
+        if override is not None:
+            return override
+        request_origin = headers.get("Origin")
+        if path == "/" and method == "GET":
+            self.challenge_index += 1
+            nonce = "n" * 40 + str(self.challenge_index)
+            cookie = "p" * 40 + str(self.challenge_index)
+            self.challenges[cookie] = (
+                nonce,
+                request_origin or self.accepted_origin,
+            )
+            shell = (
+                '<html><head><meta name="neq-client-build" content="'
+                + "a" * 32
+                + '"><meta name="neq-protocol-version" content="1"></head>'
+                + '<body><input name="csrf_token" value="'
+                + nonce
+                + '"></body></html>'
+            ).encode("ascii")
+            return gate.PublicHttpResponse(
+                200,
+                (
+                    (
+                        "Set-Cookie",
+                        "neq_player_prelogin=%s; Path=/; Secure; HttpOnly; SameSite=Strict"
+                        % cookie,
+                    ),
+                    ("Content-Type", "text/html; charset=utf-8"),
+                ),
+                shell,
+            )
+        if path == "/api/player/login" and method == "POST":
+            try:
+                payload = json.loads((body or b"").decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError):
+                return self._json(400, {"error": "invalid_request"})
+            prelogin = self._cookie_value(
+                headers.get("Cookie", ""), "neq_player_prelogin"
+            )
+            challenge = self.challenges.get(prelogin or "")
+            if (
+                request_origin != self.accepted_origin
+                and not self.accept_forged_origin
+            ):
+                return self._json(403, {"error": "request_rejected"})
+            if (
+                challenge is None
+                or challenge[0] != payload.get("csrf_token")
+                or challenge[1] != self.accepted_origin
+            ):
+                return self._json(403, {"error": "csrf_rejected"})
+            if (
+                payload.get("password") != self.credential
+                and not self.accept_invalid_credentials
+            ):
+                return self._json(401, {"error": "invalid_credentials"})
+            self.session_index += 1
+            cookie = "s" * 40 + str(self.session_index)
+            self.sessions.add(cookie)
+            return gate.PublicHttpResponse(
+                200,
+                (
+                    (
+                        "Set-Cookie",
+                        "neq_player_session=%s; Path=/; Max-Age=14400; %s"
+                        % (cookie, self.session_cookie_attributes),
+                    ),
+                ),
+                json.dumps(
+                    {
+                        "csrf_token": "c" * 40 + str(self.session_index),
+                        "expires_at": 1900000000,
+                    }
+                ).encode("ascii"),
+            )
+        if path == "/api/player/snapshot" and method == "GET":
+            if request_origin != self.accepted_origin:
+                return self._json(403, {"error": "request_rejected"})
+            cookie = self._cookie_value(
+                headers.get("Cookie", ""), "neq_player_session"
+            )
+            if cookie is None or cookie not in self.sessions:
+                return self._json(404, {"error": "not_found"})
+            return self._json(200, self.snapshot)
+        if path.startswith("/api/player-sharing/"):
+            return self._json(404, {"error": "not_found"})
+        return self._json(404, {"error": "not_found"})
+
+    @staticmethod
+    def _cookie_value(header: object, name: str) -> str | None:
+        if not isinstance(header, str):
+            return None
+        for item in header.split(";"):
+            key, separator, value = item.strip().partition("=")
+            if separator and key == name:
+                return value
+        return None
+
+    @staticmethod
+    def _json(status: int, payload: Mapping[str, object]) -> gate.PublicHttpResponse:
+        return gate.PublicHttpResponse(
+            status,
+            (("Content-Type", "application/json"),),
+            json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        )
+
+
 @contextlib.contextmanager
 def network_process_tripwires():
     """Fail any accidental real process, socket, or HTTP activity in tests."""
@@ -142,6 +464,11 @@ def network_process_tripwires():
         stack.enter_context(patch.object(socket, "socket", side_effect=AssertionError("real socket")))
         stack.enter_context(patch.object(socket, "create_connection", side_effect=AssertionError("real socket connection")))
         stack.enter_context(patch.object(http.client, "HTTPConnection", side_effect=AssertionError("real HTTP connection")))
+        stack.enter_context(patch.object(http.client, "HTTPSConnection", side_effect=AssertionError("real HTTPS connection")))
+        stack.enter_context(patch.object(gate.socketio, "Client", side_effect=AssertionError("real Socket.IO client")))
+        stack.enter_context(patch.object(os, "kill", side_effect=AssertionError("real process signal")))
+        stack.enter_context(patch.object(os, "killpg", side_effect=AssertionError("real process-group signal")))
+        stack.enter_context(patch.object(socket, "getaddrinfo", side_effect=AssertionError("real DNS lookup")))
         yield
 
 
@@ -176,12 +503,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.ports = FakePortInspector()
         self._prepare_python()
         self._prepare_sandbox()
+        self._prepare_companion()
         self._prepare_run_root()
         self.write_preflight()
         self.write_lock()
         self.fake_host: FakeHost | None = None
         self.fake_api = FakeApi()
         self.host_factory_calls = 0
+        self.pass_registry = {
+            row.row_id: PassingExecutor() for row in gate.LIVE_ROWS
+        }
         self.dependencies = self.make_dependencies()
         self.arguments = gate.RunArguments(
             run_id=self.run_id,
@@ -206,6 +537,267 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         (sandbox / "run_web.py").write_text("# isolated host\n", encoding="ascii")
         (sandbox / "config.py").write_text("WEB_PORT = 8360\n", encoding="ascii")
         (sandbox / "web" / "frontend" / "index.html").write_text("", encoding="ascii")
+
+    def _prepare_companion(self) -> None:
+        companion = (
+            self.root
+            / "runtime"
+            / "opentunnel"
+            / "v0.6.2"
+            / "opentunnel-darwin-arm64"
+            / "opentunnel"
+        )
+        companion.parent.mkdir(parents=True)
+        companion.write_text("fake pinned companion", encoding="ascii")
+
+    def make_row_context(
+        self,
+        *,
+        api: object | None = None,
+        public_service: FakePublicService | None = None,
+        ports: MappedPortInspector | None = None,
+        process_table: FakeProcessTable | None = None,
+        process_identity_probe=None,
+        signal_process=None,
+        identity_observer_factory=None,
+        monotonic=None,
+        sleep=None,
+    ) -> gate.RowContext:
+        service = public_service or FakePublicService()
+        factory = lambda: gate.PublicUrlClient(
+            requester=service.request,
+            socket_factory=service.socket_factory,
+            timeout_seconds=0.1,
+        )
+
+        def unexpected_signal(*_args: object) -> None:
+            raise AssertionError("executor attempted an uninjected process signal")
+
+        run_root = self.root / gate.EVIDENCE_BASE / self.run_id
+        capture_dir = run_root / "executor-capture"
+        capture_dir.mkdir(exist_ok=True)
+        port_inspector = ports or MappedPortInspector(
+            {
+                gate.HOST_PORT: preflight_gate.PortObservation(
+                    gate.HOST_PORT, "occupied", (444,)
+                ),
+                gate.PLAYER_PORT: preflight_gate.PortObservation(
+                    gate.PLAYER_PORT, "free"
+                ),
+            }
+        )
+        selected_api = api or LifecycleFakeApi()
+        return gate.RowContext(
+            self.run_id,
+            self.root,
+            run_root,
+            capture_dir,
+            self.root / gate.CAPTURE_RELATIVE,
+            selected_api,
+            SimpleNamespace(owner_pid=444),
+            public_client=factory(),
+            public_client_factory=factory,
+            process_table=process_table or FakeProcessTable(()),
+            process_identity_probe=process_identity_probe or (lambda _pid: None),
+            signal_process=signal_process or unexpected_signal,
+            port_inspector=port_inspector,
+            companion_path=(
+                self.root
+                / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+            ),
+            identity_observer_factory=(
+                identity_observer_factory
+                or (lambda _layout, _path: FakeIdentityObserver())
+            ),
+            monotonic=monotonic or (lambda: 1000.0),
+            sleep=sleep or (lambda _seconds: None),
+        )
+
+    def companion_process_fixture(
+        self, *, mismatch_child_token: bool = False
+    ) -> tuple[tuple[gate.ProcessRecord, ...], dict[int, object]]:
+        companion = self.root / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        uid = os.getuid()
+        host_started = datetime(2026, 11, 11, 11, 0, 0)
+        child_started = datetime(2026, 11, 11, 11, 1, 0)
+        host_token = "host-created-20261111-110000"
+        child_token = "child-created-20261111-110000"
+        host_record = gate.ProcessRecord(
+            444,
+            1,
+            uid,
+            host_started,
+            host_token,
+            "python run_web.main()",
+        )
+        child_record = gate.ProcessRecord(
+            555,
+            444,
+            uid,
+            child_started,
+            child_token,
+            shlex.join(
+                [str(companion), "serve", "--profile", gate.DEFAULT_PROFILE]
+            ),
+        )
+        child_identity_token = "different-child-token" if mismatch_child_token else child_token
+        identities = {
+            444: SimpleNamespace(
+                pid=444,
+                creation_token=host_token,
+                executable_path=str(self.root / ".venv/bin/python"),
+                argv=("python", "run_web.main()"),
+                command_line="python run_web.main()",
+            ),
+            555: SimpleNamespace(
+                pid=555,
+                creation_token=child_identity_token,
+                executable_path=str(companion),
+                argv=(
+                    str(companion),
+                    "serve",
+                    "--profile",
+                    gate.DEFAULT_PROFILE,
+                ),
+                command_line=shlex.join(
+                    [str(companion), "serve", "--profile", gate.DEFAULT_PROFILE]
+                ),
+            ),
+        }
+        return (host_record, child_record), identities
+
+    def make_l05_context(
+        self, *, origin_changed: bool = False, mismatch_child_token: bool = False
+    ) -> tuple[gate.RowContext, FakePublicService, list[tuple[int, int]]]:
+        old_origin = "https://neq-share.account.opentunnel.xyz"
+        new_origin = "https://neq-share-next.account.opentunnel.xyz"
+        service = FakePublicService(old_origin)
+        records, identities = self.companion_process_fixture(
+            mismatch_child_token=mismatch_child_token
+        )
+        signal_calls: list[tuple[int, int]] = []
+
+        def on_status(status: Mapping[str, object], count: int) -> None:
+            if count == 3 and status.get("state") == "ready":
+                if origin_changed:
+                    service.accepted_origin = new_origin
+                service.set_available(True)
+
+        api = LifecycleFakeApi(
+            status_sequence=[
+                {
+                    "state": "ready",
+                    "reason": "ready",
+                    "generation": 1,
+                    "companion_launches": 1,
+                },
+                {
+                    "state": "degraded",
+                    "reason": "relay_unavailable",
+                    "generation": 1,
+                    "companion_launches": 1,
+                },
+                {
+                    "state": "ready",
+                    "reason": "ready",
+                    "generation": 1,
+                    "companion_launches": 2,
+                },
+                {
+                    "state": "ready",
+                    "reason": "ready",
+                    "generation": 1,
+                    "companion_launches": 2,
+                },
+            ],
+            on_status=on_status,
+            post_handlers={
+                "copy-invitation": lambda _payload: (
+                    gate.HostApiResponse(
+                        409,
+                        {"ok": False, "reason": "invitation_unavailable"},
+                    )
+                    if sum(
+                        1
+                        for method, request in api.calls
+                        if method == "POST"
+                        and isinstance(request, tuple)
+                        and request[0] == "copy-invitation"
+                    )
+                    == 1
+                    else gate.HostApiResponse(
+                        200,
+                        {
+                            "ok": True,
+                            "invitation": service.accepted_origin,
+                            "status": {
+                                "state": "ready",
+                                "reason": "ready",
+                                "generation": 1,
+                                "companion_launches": 2,
+                            },
+                        },
+                    )
+                )
+            },
+        )
+        # The callback closes over the API for the copy-invitation call counter.
+        client_factory = lambda: gate.PublicUrlClient(
+            requester=service.request,
+            socket_factory=service.socket_factory,
+            timeout_seconds=0.1,
+        )
+        client = client_factory()
+        client.bind_invitation(old_origin)
+        challenge_response, challenge = client.login_challenge()
+        if challenge_response.status != 200 or challenge is None:
+            raise AssertionError("fake public login challenge invalid")
+        login_response, session = client.login(challenge, service.credential)
+        if login_response.status != 200 or session is None:
+            raise AssertionError("fake public login failed")
+        snapshot = gate._decode_player_snapshot(client.authenticated_snapshot(session))
+        if snapshot is None or not client.connect_player_socket(session, snapshot):
+            raise AssertionError("fake public socket setup failed")
+
+        def signal_process(pid: int, selected_signal: int) -> None:
+            signal_calls.append((pid, selected_signal))
+            service.set_available(False)
+
+        ports = MappedPortInspector(
+            {
+                gate.HOST_PORT: preflight_gate.PortObservation(
+                    gate.HOST_PORT, "occupied", (444,)
+                ),
+                gate.PLAYER_PORT: preflight_gate.PortObservation(
+                    gate.PLAYER_PORT, "occupied", (444,)
+                ),
+            }
+        )
+        context = gate.RowContext(
+            self.run_id,
+            self.root,
+            self.root / gate.EVIDENCE_BASE / self.run_id,
+            self.root / gate.EVIDENCE_BASE / self.run_id / "executor-capture",
+            self.root / gate.CAPTURE_RELATIVE,
+            api,
+            SimpleNamespace(owner_pid=444),
+            public_client=client,
+            public_client_factory=client_factory,
+            process_table=FakeProcessTable(records),
+            process_identity_probe=lambda pid: identities.get(pid),
+            signal_process=signal_process,
+            port_inspector=ports,
+            companion_path=(
+                self.root
+                / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+            ),
+            monotonic=lambda: 1000.0,
+            sleep=lambda _seconds: None,
+        )
+        context.remember_secret(service.credential)
+        context.remember_secret(session.cookie)
+        context.remember_secret(session.csrf_token)
+        return context, service, signal_calls
 
     def _prepare_run_root(self) -> None:
         (self.root / gate.EVIDENCE_BASE / self.run_id / "preflight").mkdir(
@@ -349,7 +941,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         def check_companion(_root: Path, platform_key: str) -> Mapping[str, object]:
             if companion_error:
                 raise gate.GateError(companion_error)
-            return {"platform": platform_key, "sha256": "5" * 64}
+            return {
+                "platform": platform_key,
+                "sha256": "5" * 64,
+                "path": self.root
+                / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel",
+            }
 
         def check_sandbox(root: Path) -> Path:
             if sandbox_error:
@@ -365,10 +962,828 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             sandbox_validator=check_sandbox,
             host_factory=make_host,
             api_factory=lambda: selected_api,
-            executor_registry=executors or gate.ROW_EXECUTORS,
+            executor_registry=(
+                self.pass_registry if executors is None else executors
+            ),
             monotonic=lambda: 1000.0,
             utc_now=lambda: TEST_NOW,
         )
+
+    def test_l01_passes_both_inactive_states_and_fails_on_exposure(self) -> None:
+        for state in ("off", "initializing_required"):
+            with self.subTest(state=state):
+                context = self.make_row_context(
+                    api=LifecycleFakeApi(
+                        status={
+                            "state": state,
+                            "reason": state,
+                            "identity_initialized": False,
+                        }
+                    )
+                )
+                result = gate.L01SharingOffExecutor().execute(context)
+                self.assertEqual(result.verdict, "PASS")
+                self.assertEqual(result.observed["sharing_state"], state)
+
+        listener_ports = MappedPortInspector(
+            {
+                gate.PLAYER_PORT: preflight_gate.PortObservation(
+                    gate.PLAYER_PORT, "occupied", (999,)
+                )
+            }
+        )
+        listener = gate.L01SharingOffExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off", "identity_initialized": False}
+                ),
+                ports=listener_ports,
+            )
+        )
+        self.assertEqual(listener.verdict, "FAIL")
+        self.assertEqual(listener.reason, "unexpected_player_listener")
+
+        records, _identities = self.companion_process_fixture()
+        companion = gate.L01SharingOffExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off", "identity_initialized": False}
+                ),
+                process_table=FakeProcessTable(records),
+            )
+        )
+        self.assertEqual(companion.verdict, "FAIL")
+        self.assertEqual(companion.reason, "unexpected_companion_process")
+
+        companion_record = records[1]
+        companion_path = (
+            self.root
+            / "runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel"
+        )
+        other_profile_process = gate.ProcessRecord(
+            companion_record.pid,
+            companion_record.parent_pid,
+            companion_record.uid,
+            companion_record.started_at,
+            companion_record.creation_token,
+            shlex.join(
+                [
+                    str(companion_path),
+                    "serve",
+                    "--profile",
+                    "unrelated-profile",
+                ]
+            ),
+        )
+        other_profile = gate.L01SharingOffExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off", "identity_initialized": False}
+                ),
+                process_table=FakeProcessTable((other_profile_process,)),
+            )
+        )
+        self.assertEqual(other_profile.verdict, "FAIL")
+        self.assertEqual(other_profile.reason, "unexpected_companion_process")
+
+        unobservable = gate.L01SharingOffExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off", "identity_initialized": False}
+                ),
+                ports=MappedPortInspector({}),
+            )
+        )
+        self.assertEqual(unobservable.verdict, "BLOCKED")
+        self.assertEqual(
+            unobservable.reason, "player_listener_observation_unavailable"
+        )
+
+        def execute_public_probe(response: gate.HostApiResponse) -> gate.RowExecutionResult:
+            context = self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off", "identity_initialized": False},
+                    post_handlers={"copy-invitation": lambda _payload: response},
+                )
+            )
+            return gate.L01SharingOffExecutor().execute(context)
+
+        exposed = execute_public_probe(
+            gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "invitation": "https://neq-share.account.opentunnel.xyz",
+                },
+            )
+        )
+        self.assertEqual(exposed.verdict, "FAIL")
+        self.assertEqual(exposed.reason, "unexpected_public_exposure")
+        unavailable_public_observation = execute_public_probe(
+            gate.HostApiResponse(503, {"ok": False, "reason": "service_unavailable"})
+        )
+        self.assertEqual(unavailable_public_observation.verdict, "BLOCKED")
+        self.assertEqual(
+            unavailable_public_observation.reason,
+            "public_exposure_observation_unavailable",
+        )
+
+    def test_l02_initializes_once_checks_projection_and_cleanup(self) -> None:
+        initial = {
+            "state": "initializing_required",
+            "reason": "initializing_required",
+            "identity_initialized": False,
+            "identity_up_invocations": 0,
+        }
+        initialized = {
+            "state": "off",
+            "reason": "off",
+            "identity_initialized": True,
+            "identity_up_invocations": 1,
+        }
+        init_calls = 0
+
+        def initialize(payload: Mapping[str, object]) -> gate.HostApiResponse:
+            nonlocal init_calls
+            init_calls += 1
+            self.assertEqual(dict(payload), {"confirm": True})
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "reason": "identity_initialized",
+                    "status": initialized,
+                },
+            )
+
+        context_for_profile = self.make_row_context(api=LifecycleFakeApi(status=initial))
+        profile_calls: list[tuple[Path, Mapping[str, object]]] = []
+
+        def fake_prepare_profile(path: Path, **kwargs: object) -> object:
+            profile_calls.append((path, kwargs))
+            return SimpleNamespace(state="ready", layout=object())
+
+        with patch.object(gate, "prepare_profile", side_effect=fake_prepare_profile):
+            self.assertIsNotNone(gate._gate_profile_layout(context_for_profile))
+        self.assertEqual(
+            profile_calls[0][0], context_for_profile.run_root / "state" / "state"
+        )
+
+        def execute(observer: FakeIdentityObserver) -> gate.RowExecutionResult:
+            context = self.make_row_context(
+                api=LifecycleFakeApi(
+                    status=initial,
+                    post_handlers={"initialize-identity": initialize},
+                ),
+                identity_observer_factory=lambda _layout, _path: observer,
+            )
+            with patch.object(
+                gate,
+                "prepare_profile",
+                return_value=SimpleNamespace(state="ready", layout=object()),
+            ):
+                return gate.L02IdentityInitExecutor().execute(context)
+
+        result = execute(FakeIdentityObserver())
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(init_calls, 2)
+        self.assertEqual(result.observed["identity_up_invocations"], 1)
+        self.assertTrue(
+            all(item["state"] == "absent" for item in result.observed["postchecks"])
+        )
+        residual = execute(FakeIdentityObserver("present"))
+        self.assertEqual(residual.verdict, "FAIL")
+        self.assertEqual(residual.reason, "identity_residual_resource_found")
+        unknown = execute(FakeIdentityObserver("unknown"))
+        self.assertEqual(unknown.verdict, "BLOCKED")
+        self.assertEqual(unknown.reason, "identity_postcheck_unavailable")
+
+        invalid_counter = gate.L02IdentityInitExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={**initial, "identity_up_invocations": True}
+                )
+            )
+        )
+        self.assertEqual(invalid_counter.verdict, "FAIL")
+
+    def test_l03_public_access_boundary_uses_only_injected_fakes(self) -> None:
+        service = FakePublicService()
+        ready = {
+            "state": "ready",
+            "reason": "ready",
+            "generation": 1,
+            "companion_launches": 1,
+        }
+        api = LifecycleFakeApi(
+            status={"state": "off", "reason": "off"},
+            post_handlers={
+                "issue-access": lambda _payload: gate.HostApiResponse(
+                    200, {"ok": True, "credential": service.credential}
+                ),
+                "start": lambda _payload: gate.HostApiResponse(
+                    200, {"ok": True, "reason": "ready", "status": ready}
+                ),
+                "copy-invitation": lambda _payload: gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "invitation": service.accepted_origin,
+                        "status": ready,
+                    },
+                ),
+            },
+        )
+        context = self.make_row_context(api=api, public_service=service)
+        result = gate.L03PublicAccessExecutor().execute(context)
+        self.assertEqual(result.verdict, "PASS")
+        self.assertTrue(result.observed["unauthenticated_snapshot_data_free"])
+        self.assertEqual(result.observed["unauthenticated_snapshot_status"], 404)
+        self.assertTrue(result.observed["authenticated_socket_snapshot_valid"])
+        self.assertTrue(result.observed["host_socket_namespace_refused"])
+        self.assertNotIn(service.credential, repr(result))
+        self.assertNotIn(service.accepted_origin, repr(result))
+        self.assertIn(service.credential, context.secrets)
+
+        exposed_service = FakePublicService()
+        exposed_service.overrides[("POST", "/api/player-sharing/start")] = (
+            FakePublicService._json(200, {"state": "ready"})
+        )
+        exposed = gate.L03PublicAccessExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off"},
+                    post_handlers={
+                        "issue-access": lambda _payload: gate.HostApiResponse(
+                            200,
+                            {"ok": True, "credential": exposed_service.credential},
+                        ),
+                        "start": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "reason": "ready", "status": ready}
+                        ),
+                        "copy-invitation": lambda _payload: gate.HostApiResponse(
+                            200,
+                            {
+                                "ok": True,
+                                "invitation": exposed_service.accepted_origin,
+                            },
+                        ),
+                    },
+                ),
+                public_service=exposed_service,
+            )
+        )
+        self.assertEqual(exposed.verdict, "FAIL")
+        self.assertEqual(exposed.reason, "public_host_route_exposed")
+
+        data_service = FakePublicService()
+        data_service.overrides[("GET", "/api/player/snapshot")] = (
+            FakePublicService._json(403, {"error": "not_found", "party": {"name": "secret"}})
+        )
+        data_exposure = gate.L03PublicAccessExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off"},
+                    post_handlers={
+                        "issue-access": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "credential": data_service.credential}
+                        ),
+                        "start": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "reason": "ready", "status": ready}
+                        ),
+                        "copy-invitation": lambda _payload: gate.HostApiResponse(
+                            200,
+                            {"ok": True, "invitation": data_service.accepted_origin},
+                        ),
+                    },
+                ),
+                public_service=data_service,
+            )
+        )
+        self.assertEqual(data_exposure.verdict, "FAIL")
+        self.assertEqual(
+            data_exposure.reason, "unauthenticated_snapshot_boundary_failed"
+        )
+
+        unavailable_service = FakePublicService()
+        unavailable_service.set_available(False)
+        unavailable = gate.L03PublicAccessExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={"state": "off"},
+                    post_handlers={
+                        "issue-access": lambda _payload: gate.HostApiResponse(
+                            200,
+                            {"ok": True, "credential": unavailable_service.credential},
+                        ),
+                        "start": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "reason": "ready", "status": ready}
+                        ),
+                        "copy-invitation": lambda _payload: gate.HostApiResponse(
+                            200,
+                            {
+                                "ok": True,
+                                "invitation": unavailable_service.accepted_origin,
+                            },
+                        ),
+                    },
+                ),
+                public_service=unavailable_service,
+            )
+        )
+        self.assertEqual(unavailable.verdict, "BLOCKED")
+
+        def execute_l03_variant(
+            variant_service: FakePublicService,
+        ) -> gate.RowExecutionResult:
+            variant_api = LifecycleFakeApi(
+                status={"state": "off", "reason": "off"},
+                post_handlers={
+                    "issue-access": lambda _payload: gate.HostApiResponse(
+                        200,
+                        {"ok": True, "credential": variant_service.credential},
+                    ),
+                    "start": lambda _payload: gate.HostApiResponse(
+                        200, {"ok": True, "reason": "ready", "status": ready}
+                    ),
+                    "copy-invitation": lambda _payload: gate.HostApiResponse(
+                        200,
+                        {
+                            "ok": True,
+                            "invitation": variant_service.accepted_origin,
+                        },
+                    ),
+                },
+            )
+            return gate.L03PublicAccessExecutor().execute(
+                self.make_row_context(
+                    api=variant_api, public_service=variant_service
+                )
+            )
+
+        unauthenticated_200_service = FakePublicService()
+        unauthenticated_200_service.overrides[("GET", "/api/player/snapshot")] = (
+            FakePublicService._json(200, unauthenticated_200_service.snapshot)
+        )
+        unauthenticated_200 = execute_l03_variant(unauthenticated_200_service)
+        self.assertEqual(unauthenticated_200.verdict, "FAIL")
+        self.assertEqual(
+            unauthenticated_200.reason,
+            "unauthenticated_snapshot_boundary_failed",
+        )
+
+        exposed_socket_service = FakePublicService()
+        exposed_socket_service.allow_host_namespace = True
+        exposed_socket = execute_l03_variant(exposed_socket_service)
+        self.assertEqual(exposed_socket.verdict, "FAIL")
+        self.assertEqual(
+            exposed_socket.reason, "public_host_socket_namespace_exposed"
+        )
+
+        accepted_wrong_password_service = FakePublicService()
+        accepted_wrong_password_service.accept_invalid_credentials = True
+        accepted_wrong_password = execute_l03_variant(
+            accepted_wrong_password_service
+        )
+        self.assertEqual(accepted_wrong_password.verdict, "FAIL")
+        self.assertEqual(accepted_wrong_password.reason, "invalid_credential_accepted")
+
+        accepted_forged_origin_service = FakePublicService()
+        accepted_forged_origin_service.accept_forged_origin = True
+        accepted_forged_origin = execute_l03_variant(accepted_forged_origin_service)
+        self.assertEqual(accepted_forged_origin.verdict, "FAIL")
+        self.assertEqual(accepted_forged_origin.reason, "forged_origin_accepted")
+
+        refused_socket_service = FakePublicService()
+        refused_socket_service.player_namespace_refused = True
+        refused_socket = execute_l03_variant(refused_socket_service)
+        self.assertEqual(refused_socket.verdict, "FAIL")
+        self.assertEqual(refused_socket.reason, "public_response_contract_invalid")
+
+        insecure_cookie_service = FakePublicService()
+        insecure_cookie_service.session_cookie_attributes = "HttpOnly; SameSite=Lax"
+        insecure_cookie = execute_l03_variant(insecure_cookie_service)
+        self.assertEqual(insecure_cookie.verdict, "FAIL")
+        self.assertEqual(insecure_cookie.reason, "public_response_contract_invalid")
+
+        missing_socket_snapshot_service = FakePublicService()
+        missing_socket_snapshot_service.suppress_socket_snapshot = True
+        missing_socket_snapshot = execute_l03_variant(
+            missing_socket_snapshot_service
+        )
+        self.assertEqual(missing_socket_snapshot.verdict, "FAIL")
+        self.assertEqual(
+            missing_socket_snapshot.reason, "public_response_contract_invalid"
+        )
+
+    def test_public_url_client_rejects_unsafe_inputs_and_bounds_failures(self) -> None:
+        service = FakePublicService()
+        client = gate.PublicUrlClient(
+            requester=service.request,
+            socket_factory=service.socket_factory,
+            timeout_seconds=0.1,
+        )
+        client.bind_invitation(service.accepted_origin)
+        for unsafe in (
+            "http://neq-share.account.opentunnel.xyz",
+            "https://user@neq-share.account.opentunnel.xyz",
+            "https://neq-share.account.opentunnel.xyz/path",
+            "https://neq-share.account.opentunnel.xyz?query=1",
+            "https://neq-share.account.opentunnel.xyz#fragment",
+            "https://*.account.opentunnel.xyz",
+            "https://NEQ-share.account.opentunnel.xyz",
+        ):
+            with self.subTest(unsafe=unsafe):
+                with self.assertRaises(gate.PublicClientError):
+                    client.bind_invitation(unsafe)
+        with self.assertRaisesRegex(gate.PublicClientError, "public_request_invalid"):
+            client.request("DELETE", "/api/player/snapshot")
+        with self.assertRaisesRegex(gate.PublicClientError, "public_request_invalid"):
+            client.request("GET", "/not-allowlisted")
+        with self.assertRaisesRegex(
+            gate.PublicClientError, "public_host_override_refused"
+        ):
+            client.request("GET", "/", headers={"Host": "attacker.invalid"})
+        with self.assertRaisesRegex(ValueError, "public_client_timeout_invalid"):
+            gate.PublicUrlClient(timeout_seconds=31)
+
+        def timeout_requester(*_args: object) -> gate.PublicHttpResponse:
+            raise TimeoutError("credential-secret-sentinel")
+
+        timed = gate.PublicUrlClient(requester=timeout_requester, timeout_seconds=0.1)
+        timed.bind_invitation(service.accepted_origin)
+        with self.assertRaises(gate.PublicClientError) as raised:
+            timed.request("GET", "/")
+        self.assertEqual(raised.exception.reason, "public_transport_unavailable")
+        self.assertNotIn("credential-secret-sentinel", str(raised.exception))
+
+        delayed_service = FakePublicService()
+        delayed_service.suppress_socket_snapshot = True
+        delayed_client = gate.PublicUrlClient(
+            requester=delayed_service.request,
+            socket_factory=delayed_service.socket_factory,
+            timeout_seconds=0.01,
+        )
+        delayed_client.bind_invitation(delayed_service.accepted_origin)
+        _response, challenge = delayed_client.login_challenge()
+        self.assertIsNotNone(challenge)
+        assert challenge is not None
+        _login_response, session = delayed_client.login(
+            challenge, delayed_service.credential
+        )
+        self.assertIsNotNone(session)
+        assert session is not None
+        snapshot = gate._decode_player_snapshot(
+            delayed_client.authenticated_snapshot(session)
+        )
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        with self.assertRaisesRegex(
+            gate.PublicClientError, "public_socket_snapshot_timeout"
+        ):
+            delayed_client.connect_player_socket(session, snapshot)
+
+    def test_l04_duplicate_start_checks_generation_listener_and_owned_process(self) -> None:
+        ready = {
+            "state": "ready",
+            "reason": "ready",
+            "generation": 3,
+            "companion_launches": 1,
+        }
+        records, identities = self.companion_process_fixture()
+        ports = MappedPortInspector(
+            {
+                gate.PLAYER_PORT: preflight_gate.PortObservation(
+                    gate.PLAYER_PORT, "occupied", (444,)
+                )
+            }
+        )
+        api = LifecycleFakeApi(
+            status=ready,
+            post_handlers={
+                "start": lambda _payload: gate.HostApiResponse(
+                    200, {"ok": True, "reason": "ready", "status": ready}
+                )
+            },
+        )
+        context = self.make_row_context(
+            api=api,
+            ports=ports,
+            process_table=FakeProcessTable(records),
+            process_identity_probe=lambda pid: identities.get(pid),
+        )
+        result = gate.L04DuplicateStartExecutor().execute(context)
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(result.observed["companion_process_count"], 1)
+        self.assertEqual(ports.calls, [gate.PLAYER_PORT, gate.PLAYER_PORT])
+
+        changed_api = LifecycleFakeApi(
+            status=ready,
+            post_handlers={
+                "start": lambda _payload: gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "reason": "ready",
+                        "status": {**ready, "generation": 4},
+                    },
+                )
+            },
+        )
+        changed = gate.L04DuplicateStartExecutor().execute(
+            self.make_row_context(
+                api=changed_api,
+                ports=ports,
+                process_table=FakeProcessTable(records),
+                process_identity_probe=lambda pid: identities.get(pid),
+            )
+        )
+        self.assertEqual(changed.verdict, "FAIL")
+        self.assertEqual(changed.reason, "duplicate_start_changed_generation")
+
+        host_record, child_record = records
+        replacement_record = gate.ProcessRecord(
+            child_record.pid,
+            child_record.parent_pid,
+            child_record.uid,
+            child_record.started_at + timedelta(seconds=5),
+            "replacement-process-creation-token",
+            child_record.command,
+        )
+        replacement_identity = dict(identities)
+        replacement_identity[555] = SimpleNamespace(
+            pid=555,
+            creation_token=replacement_record.creation_token,
+            executable_path=identities[555].executable_path,
+            argv=identities[555].argv,
+            command_line=identities[555].command_line,
+        )
+
+        class RestartedProcessTable:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def snapshot(self) -> tuple[gate.ProcessRecord, ...]:
+                self.calls += 1
+                child = child_record if self.calls == 1 else replacement_record
+                return host_record, child
+
+        process_table = RestartedProcessTable()
+
+        def restarted_process_probe(pid: int) -> object | None:
+            if pid == 555 and process_table.calls > 1:
+                return replacement_identity.get(pid)
+            return identities.get(pid)
+
+        restarted = gate.L04DuplicateStartExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status=ready,
+                    post_handlers={
+                        "start": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "reason": "ready", "status": ready}
+                        )
+                    },
+                ),
+                ports=ports,
+                process_table=process_table,
+                process_identity_probe=restarted_process_probe,
+            )
+        )
+        self.assertEqual(restarted.verdict, "FAIL")
+        self.assertEqual(restarted.reason, "duplicate_companion_created")
+
+        _other_records, mismatched_identities = self.companion_process_fixture(
+            mismatch_child_token=True
+        )
+        blocked_api = LifecycleFakeApi(status=ready)
+        blocked = gate.L04DuplicateStartExecutor().execute(
+            self.make_row_context(
+                api=blocked_api,
+                ports=ports,
+                process_table=FakeProcessTable(records),
+                process_identity_probe=lambda pid: mismatched_identities.get(pid),
+            )
+        )
+        self.assertEqual(blocked.verdict, "BLOCKED")
+        self.assertFalse(
+            any(
+                method == "POST"
+                and isinstance(request, tuple)
+                and request[0] == "start"
+                for method, request in blocked_api.calls
+            )
+        )
+
+    def test_l05_uses_owned_sigkill_and_accepts_recovery_with_same_or_fresh_origin(self) -> None:
+        for origin_changed in (False, True):
+            with self.subTest(origin_changed=origin_changed):
+                context, _service, signal_calls = self.make_l05_context(
+                    origin_changed=origin_changed
+                )
+                result = gate.L05RelayLossRecoveryExecutor().execute(context)
+                self.assertEqual(result.verdict, "PASS")
+                self.assertEqual(signal_calls, [(555, signal.SIGKILL)])
+                self.assertEqual(result.recovery_attempts, 1)
+                self.assertTrue(result.observed["host_health_preserved"])
+                self.assertGreaterEqual(result.observed["host_health_observations"], 4)
+                self.assertTrue(result.observed["player_listener_preserved"])
+                self.assertGreaterEqual(
+                    result.observed["player_listener_observations"], 4
+                )
+                self.assertTrue(result.observed["fresh_session_snapshot_valid"])
+                self.assertTrue(result.observed["unauthenticated_snapshot_data_free"])
+                self.assertEqual(
+                    result.observed["public_origin_changed"], origin_changed
+                )
+                self.assertEqual(
+                    result.observed["stale_origin_accepted"], not origin_changed
+                )
+                self.assertNotIn("credential-secret-sentinel", repr(result))
+                self.assertNotIn("neq-share.account.opentunnel.xyz", repr(result))
+
+    def test_l05_blocks_before_signal_when_child_identity_is_unproven(self) -> None:
+        context, _service, signal_calls = self.make_l05_context(
+            mismatch_child_token=True
+        )
+        result = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "owned_companion_target_unproven")
+        self.assertEqual(signal_calls, [])
+
+    def test_l05_revalidates_process_creation_identity_before_signal(self) -> None:
+        context, _service, signal_calls = self.make_l05_context()
+        records, identities = self.companion_process_fixture()
+        child_observations = 0
+
+        def changing_probe(pid: int) -> object | None:
+            nonlocal child_observations
+            identity = identities.get(pid)
+            if pid != 555 or identity is None:
+                return identity
+            child_observations += 1
+            if child_observations == 1:
+                return identity
+            return SimpleNamespace(
+                pid=555,
+                creation_token="reused-pid-different-creation",
+                executable_path=identity.executable_path,
+                argv=identity.argv,
+                command_line=identity.command_line,
+            )
+
+        context.process_table = FakeProcessTable(records)
+        context.process_identity_probe = changing_probe
+        result = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "owned_companion_target_changed")
+        self.assertEqual(child_observations, 2)
+        self.assertEqual(signal_calls, [])
+
+    def test_l05_fails_exhausted_recovery_and_host_health_loss(self) -> None:
+        context, _service, signal_calls = self.make_l05_context()
+        context.host_api.status_sequence = [
+            {
+                "state": "ready",
+                "reason": "ready",
+                "generation": 1,
+                "companion_launches": 1,
+            },
+            {
+                "state": "degraded",
+                "reason": "relay_unavailable",
+                "generation": 1,
+                "companion_launches": 1,
+            },
+            {
+                "state": "failed",
+                "reason": "recovery_exhausted",
+                "generation": 1,
+                "companion_launches": 2,
+            },
+        ]
+        failed_recovery = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(failed_recovery.verdict, "FAIL")
+        self.assertEqual(failed_recovery.reason, "bounded_recovery_failed")
+        self.assertEqual(signal_calls, [(555, signal.SIGKILL)])
+
+        context, _service, signal_calls = self.make_l05_context()
+        context.port_inspector = MappedPortInspector(
+            {
+                gate.HOST_PORT: preflight_gate.PortObservation(
+                    gate.HOST_PORT, "free"
+                )
+            }
+        )
+        lost_host = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(lost_host.verdict, "FAIL")
+        self.assertEqual(
+            lost_host.reason, "host_health_lost_before_relay_loss"
+        )
+        self.assertEqual(signal_calls, [])
+
+    def test_l05_fails_if_generation_changes_or_player_listener_is_lost(self) -> None:
+        context, _service, _signal_calls = self.make_l05_context()
+        context.host_api.status_sequence = [
+            {
+                "state": "ready",
+                "reason": "ready",
+                "generation": 1,
+                "companion_launches": 1,
+            },
+            {
+                "state": "degraded",
+                "reason": "relay_unavailable",
+                "generation": 1,
+                "companion_launches": 1,
+            },
+            {
+                "state": "ready",
+                "reason": "ready",
+                "generation": 2,
+                "companion_launches": 2,
+            },
+        ]
+        changed_generation = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(changed_generation.verdict, "FAIL")
+        self.assertEqual(
+            changed_generation.reason, "sharing_generation_changed_during_recovery"
+        )
+
+        context, _service, signal_calls = self.make_l05_context()
+        original_signal = context.signal_process
+
+        def lose_player_listener(pid: int, selected_signal: int) -> None:
+            original_signal(pid, selected_signal)
+            assert isinstance(context.port_inspector, MappedPortInspector)
+            context.port_inspector.observations[gate.PLAYER_PORT] = (
+                preflight_gate.PortObservation(gate.PLAYER_PORT, "free")
+            )
+
+        context.signal_process = lose_player_listener
+        lost_listener = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(lost_listener.verdict, "FAIL")
+        self.assertEqual(
+            lost_listener.reason, "player_listener_lost_during_relay_loss"
+        )
+        self.assertEqual(signal_calls, [(555, signal.SIGKILL)])
+
+    def test_l05_polling_remains_bounded_with_a_stalled_injected_clock(self) -> None:
+        context, _service, signal_calls = self.make_l05_context()
+        still_ready = {
+            "state": "ready",
+            "reason": "ready",
+            "generation": 1,
+            "companion_launches": 1,
+        }
+        context.host_api.status = still_ready
+        context.host_api.status_sequence = [still_ready]
+        result = gate.L05RelayLossRecoveryExecutor().execute(context)
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "degraded_transition_not_observed")
+        expected_max = (
+            math.ceil(
+                gate.RecoveryPolicy(
+                    max_attempts=1, backoff_schedule=(1.0,)
+                ).health_check_interval
+                / gate.PUBLIC_POLL_INTERVAL_SECONDS
+            )
+            + 2
+        )
+        self.assertEqual(context.host_api.status_calls, expected_max)
+        self.assertEqual(signal_calls, [(555, signal.SIGKILL)])
+
+    def test_process_table_is_bounded_and_parses_fixed_system_output(self) -> None:
+        output = (
+            b"123 1 501 Wed Nov 11 11:00:00 2026 "
+            b"/runtime/opentunnel serve --profile neq\n"
+        )
+
+        def runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.CompletedProcess([], 0, output, b"")
+
+        records = gate.SystemProcessTable(runner=runner).snapshot()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].pid, 123)
+        self.assertEqual(records[0].parent_pid, 1)
+        self.assertEqual(records[0].uid, 501)
+        self.assertEqual(
+            records[0].command, "/runtime/opentunnel serve --profile neq"
+        )
+
+        oversized = gate.SystemProcessTable(
+            runner=lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                [], 0, b"x" * (gate.MAX_PROCESS_TABLE_BYTES + 1), b""
+            )
+        )
+        with self.assertRaises(gate.ProcessTableError):
+            oversized.snapshot()
+
+        def timeout_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            raise subprocess.TimeoutExpired("ps", 3)
+
+        with self.assertRaises(gate.ProcessTableError):
+            gate.SystemProcessTable(runner=timeout_runner).snapshot()
 
     def test_frozen_manifest_digest_and_contract_rows(self) -> None:
         self.assertTrue(gate.verify_frozen_manifest())
@@ -939,7 +2354,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertFalse(gate._bounded_json({"number": float("inf")}))
 
     def test_placeholder_executors_block_and_driver_summary_is_not_pass(self) -> None:
-        result = gate.run_live_gate(self.dependencies, self.arguments)
+        placeholders = {
+            row.row_id: gate.PlaceholderRowExecutor(row.row_id, row.name)
+            for row in gate.LIVE_ROWS
+        }
+        dependencies = self.make_dependencies(executors=placeholders)
+        result = gate.run_live_gate(dependencies, self.arguments)
         self.assertEqual(result["gate_verdict"], "BLOCKED")
         self.assertFalse(result["is_gate_pass"])
         self.assertEqual(result["rows"][0]["row_id"], "L01")

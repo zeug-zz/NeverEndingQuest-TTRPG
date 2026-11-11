@@ -4,6 +4,8 @@
 
 This report is the authoritative frozen contract for the primary-owned N3 live lifecycle gate (Tasks 6.2-6.6). Its live manifest id is `n3-live-lifecycle-v1`. The driver manifest and its digest MUST identify exactly the row definitions and frozen limits below. A change to a row, cap, platform verdict rule, or safety boundary requires a reviewed contract revision and a new manifest identity/digest; a builder MUST NOT silently reinterpret this report.
 
+The authorized L01/L02 and L03/L05 observation clarifications below retain manifest id `n3-live-lifecycle-v1`. The manifest SHA-256 changed from `7a06f3e17ec96f442dfcabb6ef1c43410ab1330d39a1cac1c77ff5c12bde8e02` to `5c17c8e9187140b5d662bdb07e2e13704fef637ae45a6d71e4689ea1d790cde1`; the live driver and this report MUST pin the latter after implementation reconciliation.
+
 ## Platform and run environment
 
 - This live run covers macOS arm64 only. Party size is 1.
@@ -73,21 +75,24 @@ For every row, an observed unmet PASS criterion with complete and reliable evide
 
 - **Precondition:** Owned host is up; sharing is OFF.
 - **Action:** Query `GET /api/player-sharing/status`; inspect listener, companion process, and public exposure.
-- **Expected observations (PASS):** Sharing is off; port 8370 is not listening; no companion process exists; there is no public exposure.
+- **Expected observations (PASS):** Status is `off` or `initializing_required` (both sharing-inactive); port 8370 is not listening; no companion process exists; there is no public exposure.
+- **Planner clarification (2026-11-11):** `off` and `initializing_required` are both acceptable sharing-inactive status states. This does not relax the required closed player port, absent companion, or no-public-exposure checks.
 - **BLOCKED conditions:** Host ownership or the required status/listener/process/public-exposure observations cannot be established safely. Any positive evidence of an unexpected listener, companion, or public exposure is FAIL.
 
 ### L02 — `identity-init-once`
 
 - **Precondition:** Owned host is up; the dedicated profile identity is uninitialized; sharing is OFF.
 - **Action:** POST `initialize-identity` with `{confirm:true}`, then call it a second time.
-- **Expected observations (PASS):** The first call initializes only after a real guarded `up -> status -> down`; post-checks show no residual helper or service-manager entry. The second call returns `already_initialized` and causes zero new `up` invocations.
+- **Expected observations (PASS):** The first call initializes only after a real guarded `up -> status -> down`; the host API reports `identity_initialized=true` and `identity_up_invocations=1`; post-checks show no residual helper or service-manager entry. The second call reports `identity_initialized=true`, an already-initialized reason, and `identity_up_invocations` remains exactly 1.
+- **Planner clarification (2026-11-11):** Observe only the existing host API projection (`identity_initialized`, `identity_up_invocations`, and exposed `reason`); do not require internal `bootstrap_state` because it is not projected.
 - **BLOCKED conditions:** The companion operation or positive post-checks for helper/service-manager cleanup cannot be performed or observed safely. A failed/extra `up`, missing cleanup, or unexpected second initialization is FAIL.
 
 ### L03 — `issue-access-start-auth-entry`
 
 - **Precondition:** Owned host is up; identity initialization has passed; sharing is OFF.
 - **Action:** Issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only.
-- **Expected observations (PASS):** `issue-access` returns plaintext once; start returns ready; `copy-invitation` returns an HTTPS URL. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401/403; host-only paths (`/api/player-sharing/*`, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to `/player` receives initial state. A wrong credential is rejected and a forged Origin is rejected.
+- **Expected observations (PASS):** `issue-access` returns plaintext once; start returns ready; `copy-invitation` returns an HTTPS URL. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (`/api/player-sharing/*`, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to `/player` receives initial state. A wrong credential is rejected and a forged Origin is rejected.
+- **Planner clarification (2026-11-11):** N1 deliberately returns 404 for unauthenticated protected player paths, including `GET /api/player/snapshot`; accepting 404 preserves the N1 boundary. This clarifies the L03 observation criterion only and does not change product behavior.
 - **BLOCKED conditions:** The public URL/client path or any required boundary observation cannot be reached or measured safely. Any secret persisted or logged, public host-surface access, rejected valid login, accepted invalid credential/Origin, or missing required cookie/socket property is FAIL.
 
 ### L04 — `duplicate-start-idempotent`
@@ -101,7 +106,8 @@ For every row, an observed unmet PASS criterion with complete and reliable evide
 
 - **Precondition:** Sharing is ready; the owned host and companion ancestry are known; the target child satisfies every approved relay-loss injection identity check.
 - **Action:** Inject relay loss only by the approved SIGKILL method above, then observe status, invitation, public URL, recovery, host health, and sessions.
-- **Expected observations (PASS):** Status becomes degraded within the health interval; the invitation is withdrawn and copy-invitation is refused; the public URL stops serving the player; bounded recovery returns to ready within the overridden policy; host port 8360 health remains unaffected throughout. Document sessions after recovery; re-authentication is required. The expected result is recovered ready; observed bounded failed/exhausted recovery is FAIL.
+- **Expected observations (PASS):** Status becomes degraded within the health interval; the invitation is withdrawn and copy-invitation is refused; the public URL stops serving the player; bounded recovery returns to ready within the overridden policy; host port 8360 health remains unaffected throughout. Recovery restarts only the companion and re-verifies readiness; it does not restart the player listener, so existing valid player sessions are preserved by design. Record, but do not pass/fail on, whether the pre-loss authenticated cookie/socket still works over the public URL (expected observation: the cookie remains valid; the socket must be re-established by the client). PASS additionally requires a fresh authenticated login over the public URL to work after recovery, a request using a stale pre-recovery Origin/Host to be accepted only if it equals the freshly bound origin (record whether the public origin changed), and no unauthenticated access to be possible. The expected result is recovered ready; observed bounded failed/exhausted recovery is FAIL.
+- **Planner clarification (2026-11-11):** Recovery is companion-only and preserves the player listener; pre-loss cookie/socket observations are recorded rather than gated, while fresh login, freshly bound origin, and unauthenticated-access checks remain PASS requirements. This clarifies the L05 evidence contract only and does not change product behavior.
 - **BLOCKED conditions:** The exact owned child cannot be positively identified (do not signal), or required health/public/session observations cannot be safely collected. Any signal to another process is a safety failure and FAIL.
 
 ### L06 — `credential-rotation-revocation`
