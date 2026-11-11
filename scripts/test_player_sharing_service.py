@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -38,6 +39,7 @@ from web.extensions.opentunnel_sharing.service import (
     _ProductionComposition,
     _parse_companion_status,
     create_production_player_sharing_service,
+    validate_tunnel_target,
 )
 from web.extensions.opentunnel_sharing.verifier_store import (
     IssuedCredential,
@@ -47,6 +49,8 @@ from web.extensions.opentunnel_sharing.verifier_store import (
 from web.extensions.player.auth import PlayerSecurity
 from web.extensions.player.constants import PLAYER_HOST, PLAYER_PORT
 from web.extensions.player.listener import PlayerListener
+from utils.web_boundary import DEFAULT_WEB_HOST, resolve_web_host
+from config_template import WEB_HOST as CONFIG_TEMPLATE_WEB_HOST
 
 SENTINEL_CREDENTIAL = "SENTINEL_CREDENTIAL_VALUE"
 SENTINEL_ORIGIN = "https://sharing-route.example"
@@ -402,6 +406,17 @@ class PlayerSharingServiceTests(unittest.TestCase):
             route_table = _ProfileRouteTable(layout)
 
             self.assertTrue(route_table.ensure())
+            route_contents = (config_home / "opentunnel" / "neq-share.toml").read_text(
+                encoding="ascii"
+            )
+            self.assertEqual(
+                route_contents,
+                '[routes]\n"neq-share" = "127.0.0.1:8370"\n',
+            )
+            self.assertEqual(
+                re.findall(r' = "([^\"]+)"', route_contents),
+                ["127.0.0.1:8370"],
+            )
             self.assertEqual(
                 route_table.lookup("neq-share", None),
                 RouteObservation("owned", "neq-share", "neq-share"),
@@ -445,6 +460,82 @@ class PlayerSharingServiceTests(unittest.TestCase):
                 "neq-share",
             )
         )
+        for target in (
+            "127.0.0.1:8360",
+            "127.0.0.1:8357",
+            "127.0.0.1:0",
+            "0.0.0.0:8370",
+            "localhost:8370",
+            "::1:8370",
+            "192.168.1.25:8370",
+            "127.0.0.1:8370/player",
+            "user@127.0.0.1:8370",
+        ):
+            with self.subTest(target=target):
+                self.assertIsNone(
+                    _parse_companion_status(
+                        accepted.replace("127.0.0.1:8370", target),
+                        "neq-share",
+                    )
+                )
+
+    def test_tunnel_target_validation_and_service_listener_are_loopback_only(self) -> None:
+        self.assertEqual(PLAYER_HOST, "127.0.0.1")
+        self.assertEqual(PLAYER_PORT, 8370)
+        self.assertEqual(CONFIG_TEMPLATE_WEB_HOST, "127.0.0.1")
+        self.assertEqual(DEFAULT_WEB_HOST, "127.0.0.1")
+        self.assertEqual(resolve_web_host(None), "127.0.0.1")
+        target = validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
+        self.assertEqual(target, "127.0.0.1:8370")
+
+        invalid_targets = (
+            ("127.0.0.1", 8360),
+            ("127.0.0.1", 8357),
+            ("127.0.0.1", 0),
+            ("127.0.0.1", 8371),
+            ("0.0.0.0", 8370),
+            ("localhost", 8370),
+            ("::1", 8370),
+            ("192.168.1.25", 8370),
+            ("127.0.0.1/player", 8370),
+            ("127.0.0.1:8370/player", 8370),
+            ("user@127.0.0.1", 8370),
+            ("https://127.0.0.1", 8370),
+        )
+        for host, port in invalid_targets:
+            with self.subTest(host=host, port=port):
+                with self.assertRaisesRegex(ValueError, "tunnel_target_invalid"):
+                    validate_tunnel_target(host, port)
+
+        with tempfile.TemporaryDirectory(dir="tmp") as scratch:
+            root = Path(scratch)
+            layout = _layout(root)
+            composition = _ProductionComposition(
+                object(),  # type: ignore[arg-type]
+                lambda: True,
+                companion_manifest=None,
+                install_root=root,
+                state_root=root / "state",
+                state_root_provider=None,
+                install_marker=None,
+                profile="neq-share",
+                player_build_root=None,
+            )
+
+            class CapturingListener:
+                is_running = True
+
+                def __init__(self) -> None:
+                    self.binds: list[tuple[str, int]] = []
+
+                def start(self, *, host: str, port: int) -> None:
+                    self.binds.append((host, port))
+
+            listener = CapturingListener()
+            controller = composition._controller_factory(layout)
+            with mock.patch.object(composition, "_get_listener", return_value=listener):
+                self.assertTrue(controller._deps.start_player_listener())
+            self.assertEqual(listener.binds, [("127.0.0.1", 8370)])
 
     def test_status_probe_uses_fixed_argv_environment_and_deadline_with_fake_runner(self) -> None:
         with tempfile.TemporaryDirectory(dir="tmp") as scratch:
@@ -491,6 +582,8 @@ class PlayerSharingServiceTests(unittest.TestCase):
             self.assertEqual(result.origin, "https://neq-share.account.opentunnel.xyz")
             self.assertEqual(calls[0][0], (str(root / "opentunnel"), "status", "--profile", "neq-share"))
             self.assertEqual(calls[0][2], MAX_STATUS_COMMAND_SECONDS)
+            self.assertNotIn("127.0.0.1:8370", calls[0][0])
+            self.assertNotIn("127.0.0.1:8370", calls[0][1].values())
             self.assertNotIn("PATH", calls[0][1])
 
     def test_player_listener_accepts_injected_n1_security_without_binding(self) -> None:

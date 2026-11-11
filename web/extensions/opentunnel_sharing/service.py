@@ -147,6 +147,23 @@ _SAFE_BOOTSTRAP_REASONS = frozenset(
 )
 
 
+def validate_tunnel_target(host: object, port: object) -> str:
+    """Accept only the exact player listener as an OpenTunnel route target."""
+    expected_host = "127.0.0.1"
+    expected_port = 8370
+    if (
+        PLAYER_HOST != expected_host
+        or type(PLAYER_PORT) is not int
+        or PLAYER_PORT != expected_port
+        or not isinstance(host, str)
+        or host != expected_host
+        or type(port) is not int
+        or port != expected_port
+    ):
+        raise ValueError("tunnel_target_invalid")
+    return "%s:%d" % (expected_host, expected_port)
+
+
 @dataclass(frozen=True, slots=True)
 class SharingServiceStatus:
     """Safe status projection; it contains no raw URL, verifier, or process data."""
@@ -816,6 +833,7 @@ class _ProductionComposition:
 
         def start_player_listener() -> bool:
             try:
+                validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
                 listener = self._get_listener(layout)
                 listener.start(host=PLAYER_HOST, port=PLAYER_PORT)
                 return listener.is_running
@@ -928,6 +946,7 @@ class _ProductionComposition:
             return False
         connection: http.client.HTTPConnection | None = None
         try:
+            validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
             connection = http.client.HTTPConnection(
                 PLAYER_HOST,
                 PLAYER_PORT,
@@ -992,12 +1011,14 @@ class _ProductionComposition:
         except Exception:
             if was_running and listener is not None:
                 try:
+                    validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
                     listener.start(host=PLAYER_HOST, port=PLAYER_PORT)
                 except Exception:
                     pass
             raise
         if was_running and listener is not None:
             try:
+                validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
                 listener.start(host=PLAYER_HOST, port=PLAYER_PORT)
             except Exception:
                 # The verifier has rotated and old sessions are invalid. The
@@ -1026,9 +1047,9 @@ class _ProfileRouteTable:
         self._layout = layout
         self._directory = layout.config_home / "opentunnel"
         self._filename = layout.profile + ".toml"
+        target = validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
         self._payload = (
-            '[routes]\n"%s" = "127.0.0.1:%d"\n'
-            % (layout.profile, PLAYER_PORT)
+            '[routes]\n"%s" = "%s"\n' % (layout.profile, target)
         ).encode("ascii")
 
     def ensure(self) -> bool:
@@ -1237,9 +1258,13 @@ def _parse_companion_status(output: str, profile: str) -> str | None:
     if len(route_lines) != 1:
         return None
     route_host, target = route_lines[0]
+    try:
+        expected_target = validate_tunnel_target(PLAYER_HOST, PLAYER_PORT)
+    except ValueError:
+        return None
     if (
         route_host.casefold() != (profile + "." + hostname).casefold()
-        or target != "%s:%d" % (PLAYER_HOST, PLAYER_PORT)
+        or target != expected_target
     ):
         return None
     origin = "https://" + route_host.casefold()

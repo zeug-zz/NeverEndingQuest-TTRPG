@@ -32,6 +32,7 @@ from web.extensions.opentunnel_sharing.supervisor import (
     Identity,
     OwnedCompanion,
 )
+from web.extensions.player.constants import PLAYER_HOST, PLAYER_PORT
 
 
 class FakeProcess:
@@ -250,10 +251,12 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
             owner, factory, process = self._owner()
             self.assertEqual(owner.start(1.0), "running")
         argv, environment = factory.calls[0]
+        target = "%s:%d" % (PLAYER_HOST, PLAYER_PORT)
         self.assertEqual(
             argv,
             (str(self.binary.resolve()), "serve", "--profile", DEFAULT_PROFILE),
         )
+        self.assertNotIn(target, argv)
         self.assertEqual(
             set(environment),
             {
@@ -265,6 +268,7 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
             },
         )
         self.assertNotIn("PATH", environment)
+        self.assertNotIn(target, environment.values())
         self.assertNotEqual(environment["HOME"], "user-home-sentinel")
         self.assertNotIn("API_KEY", environment)
         self.assertNotIn("SECRET", environment)
