@@ -42,6 +42,7 @@ from types import MappingProxyType
 from typing import Callable, Mapping, Protocol, Sequence
 
 import scripts.n3_lifecycle_gate as preflight_gate
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing.companion import (
     resolve_companion,
     verify_companion_digest,
@@ -979,6 +980,7 @@ class ProcessRecord:
     started_at: datetime
     creation_token: str = field(repr=False)
     command: str = field(repr=False)
+    native_info: process_info.ProcessInfo | None = field(default=None, repr=False)
 
 
 class ProcessTableError(RuntimeError):
@@ -994,18 +996,72 @@ class ProcessTable(Protocol):
 
 
 class SystemProcessTable:
-    """Read a bounded process table without retaining raw output in evidence."""
+    """Use native facts by default; runner is an explicit legacy test seam."""
 
     def __init__(
         self,
         *,
         runner: Callable[..., subprocess.CompletedProcess[bytes]] | None = None,
     ) -> None:
-        self._runner = runner or subprocess.run
+        self._runner = runner
 
     def snapshot(self) -> tuple[ProcessRecord, ...]:
+        if self._runner is None:
+            return self._native_snapshot()
+        return self._runner_snapshot()
+
+    def _native_snapshot(self) -> tuple[ProcessRecord, ...]:
         try:
-            result = self._runner(
+            infos = process_info.snapshot_current_user()
+        except process_info.ProcessInfoUnavailable as exc:
+            raise ProcessTableError(exc.reason) from None
+        if not isinstance(infos, tuple) or len(infos) > process_info.MAX_PROCESS_COUNT:
+            raise ProcessTableError("process_table_invalid")
+        rows: list[ProcessRecord] = []
+        for info in infos:
+            if (
+                not isinstance(info, process_info.ProcessInfo)
+                or info.uid != os.getuid()
+            ):
+                raise ProcessTableError("process_table_invalid")
+            try:
+                command = (
+                    shlex.join(info.argv)
+                    if info.argv
+                    else shlex.quote(info.comm)
+                    if info.comm
+                    else ""
+                )
+                started_at = datetime.fromtimestamp(info.start_time)
+                creation_token = process_info.creation_token(info)
+            except (OverflowError, OSError, TypeError, ValueError):
+                raise ProcessTableError("process_table_invalid") from None
+            if len(command) > 8192:
+                raise ProcessTableError("process_table_invalid")
+            rows.append(
+                ProcessRecord(
+                    info.pid,
+                    info.ppid,
+                    info.uid,
+                    started_at,
+                    creation_token,
+                    command,
+                    info,
+                )
+            )
+        if len(rows) > process_info.MAX_PROCESS_COUNT:
+            raise ProcessTableError("process_table_too_large")
+        if len({record.pid for record in rows}) != len(rows):
+            raise ProcessTableError("process_table_invalid")
+        return tuple(rows)
+
+    def _runner_snapshot(self) -> tuple[ProcessRecord, ...]:
+        # Secondary compatibility seam: only an explicit runner uses ps output.
+        runner = self._runner
+        if runner is None:
+            raise ProcessTableError()
+        try:
+            result = runner(
                 ["/bin/ps", "-axo", "pid=,ppid=,uid=,lstart=,command=", "-ww"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -2914,6 +2970,15 @@ def _parse_process_record(line: str) -> ProcessRecord:
 
 
 def _process_arguments(record: ProcessRecord, expected_path: Path) -> tuple[str, ...] | None:
+    if record.native_info is not None:
+        candidate = process_info.could_be_companion(
+            record.native_info, expected_path
+        )
+        if candidate is False:
+            return ()
+        if candidate is None or record.native_info.executable is None:
+            return None
+        return record.native_info.argv or None
     try:
         arguments = tuple(shlex.split(record.command, posix=True))
     except ValueError:

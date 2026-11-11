@@ -2758,6 +2758,101 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         with self.assertRaises(gate.ProcessTableError):
             gate.SystemProcessTable(runner=timeout_runner).snapshot()
 
+    def test_default_process_table_uses_native_snapshot_without_ps(self) -> None:
+        info = gate.process_info.ProcessInfo(
+            pid=123,
+            ppid=1,
+            pgid=123,
+            uid=os.getuid(),
+            start_time=1_700_000_000.125,
+            executable="/bin/echo",
+            argv=("/bin/echo", "native-process-info-marker"),
+        )
+        with (
+            patch.object(
+                gate.process_info, "snapshot_current_user", return_value=(info,)
+            ) as native,
+            patch.object(
+                gate.subprocess,
+                "run",
+                side_effect=AssertionError("default process table spawned /bin/ps"),
+            ),
+        ):
+            record = gate.SystemProcessTable().snapshot()[0]
+        self.assertEqual(record.pid, info.pid)
+        self.assertEqual(record.parent_pid, info.ppid)
+        self.assertEqual(record.uid, info.uid)
+        self.assertEqual(record.command, "/bin/echo native-process-info-marker")
+        self.assertEqual(record.creation_token, gate.process_info.creation_token(info))
+        native.assert_called_once_with()
+        with patch.object(
+            gate.process_info,
+            "snapshot_current_user",
+            side_effect=gate.process_info.ProcessInfoUnavailable(
+                "process_list_incomplete"
+            ),
+        ):
+            with self.assertRaises(gate.ProcessTableError) as raised:
+                gate.SystemProcessTable().snapshot()
+        self.assertEqual(raised.exception.reason, "process_list_incomplete")
+
+    def test_mixed_native_process_census_blocks_unknown_companion_absence(self) -> None:
+        context = self.make_row_context()
+        companion_path = gate._companion_path(context)
+        unrelated = gate.process_info.ProcessInfo(
+            pid=101,
+            ppid=1,
+            pgid=101,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable="/bin/echo",
+            argv=("/bin/echo", "worker"),
+            comm="echo",
+        )
+        unknown_candidate = gate.process_info.ProcessInfo(
+            pid=102,
+            ppid=1,
+            pgid=102,
+            uid=os.getuid(),
+            start_time=1_700_000_001.0,
+            executable=None,
+            argv=(str(companion_path), "serve", "--profile", gate.DEFAULT_PROFILE),
+            comm="opentunnel",
+        )
+        with patch.object(
+            gate.process_info,
+            "snapshot_current_user",
+            return_value=(unrelated, unknown_candidate),
+        ):
+            observed = gate.SystemProcessTable().snapshot()
+        self.assertEqual(len(observed), 2)
+        self.assertIsNone(
+            gate._matching_companion_processes(
+                observed, companion_path, gate.DEFAULT_PROFILE
+            )
+        )
+
+        exact = gate.process_info.ProcessInfo(
+            pid=103,
+            ppid=1,
+            pgid=103,
+            uid=os.getuid(),
+            start_time=1_700_000_002.0,
+            executable=str(companion_path),
+            argv=(str(companion_path), "serve", "--profile", gate.DEFAULT_PROFILE),
+            comm="opentunnel",
+        )
+        with patch.object(
+            gate.process_info, "snapshot_current_user", return_value=(exact,)
+        ):
+            exact_record = gate.SystemProcessTable().snapshot()[0]
+        self.assertEqual(
+            gate._matching_companion_processes(
+                (exact_record,), companion_path, gate.DEFAULT_PROFILE
+            ),
+            (exact_record,),
+        )
+
     def test_frozen_manifest_digest_and_contract_rows(self) -> None:
         self.assertTrue(gate.verify_frozen_manifest())
         self.assertEqual(gate.calculate_manifest_digest(), gate.FROZEN_MANIFEST_SHA256)

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Literal, Mapping, Protocol, Sequence
 
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
 from web.extensions.opentunnel_sharing.profile_state import (
     ProfileLayout,
@@ -40,6 +41,9 @@ BOOTSTRAP_SCHEMA = "neq.opentunnel.bootstrap.v1"
 BOOTSTRAP_MARKER_FILENAME = "identity_bootstrap.json"
 MAX_BOOTSTRAP_MARKER_BYTES = 1024
 MAX_COMMAND_OUTPUT_CHARS = 64 * 1024
+MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES = 1024 * 1024
+MAX_LAUNCHCTL_PRINT_LINES = 16 * 1024
+MAX_LAUNCHCTL_PRINT_ROW_CHARS = 2048
 MAX_RESULT_FACTS = 24
 MAX_STATUS_TIMEOUT_SECONDS = 30.0
 MAX_DOWN_TIMEOUT_SECONDS = 30.0
@@ -95,6 +99,7 @@ _KNOWN_OBSERVATION_BASES = frozenset(
         "observed_user_view",
         "isolated_service_files_checked",
         "proc_scan_complete",
+        "native_process_info_complete",
         "ps_snapshot_complete",
         "unresolvable_on_empty_path",
         "observation_failed",
@@ -102,6 +107,11 @@ _KNOWN_OBSERVATION_BASES = frozenset(
     }
 )
 _INSTALL_MARKER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_LAUNCHCTL_PRINT_ROW_RE = re.compile(
+    r"\t\t {1,16}([0-9]{1,10}) {1,16}"
+    r"(-|-[0-9]{1,10}|[0-9]{1,10}|\([A-Za-z]{1,8}\))"
+    r" {1,16}\t([^\t\r\n]{1,1024})\Z"
+)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -228,6 +238,54 @@ def parse_launchctl_entries(output: str, profile: str) -> Observation:
     return Observation("absent", "observed_user_view")
 
 
+def parse_launchctl_print_services(output: str, profile: str) -> Observation:
+    """Parse only launchctl's bounded ``services = {}`` block."""
+    if not _valid_profile(profile) or not isinstance(output, str):
+        return Observation("unknown", "invalid_observation")
+    if len(output) > MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES:
+        return Observation("unknown", "invalid_observation")
+    try:
+        output_bytes = len(output.encode("utf-8", "replace"))
+    except (MemoryError, UnicodeError):
+        return Observation("unknown", "invalid_observation")
+    if output_bytes > MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES:
+        return Observation("unknown", "invalid_observation")
+
+    lines = output.splitlines()
+    if len(lines) > MAX_LAUNCHCTL_PRINT_LINES:
+        return Observation("unknown", "invalid_observation")
+    headers = [index for index, line in enumerate(lines) if line == "\tservices = {"]
+    if len(headers) != 1:
+        return Observation("unknown", "invalid_observation")
+    start = headers[0]
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index] == "\t}"),
+        None,
+    )
+    if end is None:
+        return Observation("unknown", "invalid_observation")
+    rows = lines[start + 1 : end]
+    if not rows:
+        return Observation("unknown", "invalid_observation")
+
+    matches = 0
+    for line in rows:
+        if len(line) > MAX_LAUNCHCTL_PRINT_ROW_CHARS:
+            return Observation("unknown", "invalid_observation")
+        match = _LAUNCHCTL_PRINT_ROW_RE.fullmatch(line)
+        if match is None:
+            return Observation("unknown", "invalid_observation")
+        pid_text, _status, label = match.groups()
+        if int(pid_text) > process_info.MAX_PID or not label.isprintable():
+            return Observation("unknown", "invalid_observation")
+        lowered_label = label.casefold()
+        if "opentunnel" in lowered_label or profile.casefold() in lowered_label:
+            matches += 1
+    if matches:
+        return Observation("present", "observed_user_view", matches)
+    return Observation("absent", "observed_user_view")
+
+
 def parse_systemd_unit_files(output: str, profile: str) -> Observation:
     """Parse a bounded ``systemctl --user list-unit-files`` fixture."""
     if not _valid_profile(profile) or not isinstance(output, str):
@@ -320,6 +378,84 @@ def parse_ps_processes(
     if processes:
         return Observation("present", "ps_snapshot_complete", len(processes), tuple(processes))
     return Observation("absent", "ps_snapshot_complete")
+
+
+def parse_process_info_processes(
+    processes: Sequence[process_info.ProcessInfo],
+    *,
+    profile: str,
+    executable_path: Path,
+    uid: int,
+) -> Observation:
+    """Reduce native process records to bounded ownership predicates."""
+    if (
+        not _valid_profile(profile)
+        or not isinstance(processes, Sequence)
+        or isinstance(processes, (str, bytes))
+        or len(processes) > process_info.MAX_PROCESS_COUNT
+        or type(uid) is not int
+        or uid < 0
+    ):
+        return Observation("unknown", "invalid_observation")
+    try:
+        expected_executable = Path(executable_path).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return Observation("unknown", "invalid_observation")
+
+    evidence: list[ProcessEvidence] = []
+    for process in processes:
+        if (
+            not isinstance(process, process_info.ProcessInfo)
+            or type(process.pid) is not int
+            or process.pid <= 0
+            or type(process.uid) is not int
+            or process.uid < 0
+            or (
+                process.executable is not None
+                and not isinstance(process.executable, str)
+            )
+            or not isinstance(process.comm, str)
+            or not isinstance(process.argv, tuple)
+            or any(not isinstance(argument, str) for argument in process.argv)
+        ):
+            return Observation("unknown", "invalid_observation")
+        companion_candidate = process_info.could_be_companion(
+            process, expected_executable
+        )
+        if companion_candidate is False:
+            continue
+        executable_matches: bool | None = None
+        if process.executable is not None:
+            try:
+                observed_executable = Path(process.executable).resolve(strict=False)
+                executable_matches = observed_executable == expected_executable
+            except (OSError, RuntimeError, TypeError, ValueError):
+                executable_matches = None
+        lowered_command = " ".join(process.argv).casefold()
+        command_mentions_profile = profile.casefold() in lowered_command
+        profile_argument = _profile_argument(process.argv)
+        if profile_argument is not None:
+            profile_matches: bool | None = profile_argument == profile
+        elif command_mentions_profile:
+            profile_matches = True
+        elif companion_candidate is True or companion_candidate is None:
+            profile_matches = None
+        else:
+            continue
+        if profile_matches is False:
+            continue
+        evidence.append(
+            ProcessEvidence(
+                executable_matches=executable_matches,
+                profile_matches=profile_matches,
+                uid_matches=process.uid == uid,
+            )
+        )
+    if evidence:
+        return Observation(
+            "present", "native_process_info_complete", len(evidence), tuple(evidence)
+        )
+    return Observation("absent", "native_process_info_complete")
 
 
 def parse_linux_process_record(
@@ -535,6 +671,15 @@ def bootstrap_identity(
 class DefaultCommandRunner:
     """Run a fixed argv with a strict timeout and bounded retained output."""
 
+    def __init__(self, *, max_output_bytes: int = MAX_COMMAND_OUTPUT_CHARS) -> None:
+        if (
+            type(max_output_bytes) is not int
+            or max_output_bytes <= 0
+            or max_output_bytes > MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES
+        ):
+            raise ValueError("command_output_limit_invalid")
+        self._max_output_bytes = max_output_bytes
+
     def __call__(
         self,
         argv: Sequence[str],
@@ -585,7 +730,7 @@ class DefaultCommandRunner:
                         if not chunk:
                             selector.unregister(key.fileobj)
                             continue
-                        available = MAX_COMMAND_OUTPUT_CHARS - len(output)
+                        available = self._max_output_bytes - len(output)
                         if available > 0:
                             output.extend(chunk[:available])
                         if len(chunk) > available:
@@ -636,6 +781,7 @@ class DefaultCommandRunner:
             return
 
 
+# TABLETOP MODE: Bootstrap postchecks use native process facts by default.
 class DefaultIdentityObserver:
     """Best-effort, read-only macOS/Linux service and process observations."""
 
@@ -648,11 +794,21 @@ class DefaultIdentityObserver:
         | None = None,
         system_name: str | None = None,
         proc_root: Path = Path("/proc"),
+        process_snapshot: Callable[[], tuple[process_info.ProcessInfo, ...]] | None = None,
     ) -> None:
         self._layout = layout
         self._companion_path = Path(companion_path)
-        self._runner = command_runner or DefaultCommandRunner()
         self._system_name = platform.system() if system_name is None else system_name
+        self._output_limit = (
+            MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES
+            if self._system_name == "Darwin"
+            else MAX_COMMAND_OUTPUT_CHARS
+        )
+        self._runner = command_runner or DefaultCommandRunner(
+            max_output_bytes=self._output_limit
+        )
+        self._process_snapshot = process_snapshot or process_info.snapshot_current_user
+        self._custom_process_snapshot = process_snapshot is not None
         self._proc_root = Path(proc_root)
 
     def service_manager_entries(self, profile: str) -> Observation:
@@ -666,14 +822,14 @@ class DefaultIdentityObserver:
 
         if self._system_name == "Darwin":
             manager = "launchctl"
-            argv = ("/bin/launchctl", "list")
+            argv = ("/bin/launchctl", "print", "gui/%d" % os.getuid())
             env = {
                 "PATH": "",
                 "HOME": str(self._layout.data_home),
                 "LANG": "C",
                 "LC_ALL": "C",
             }
-            parser = parse_launchctl_entries
+            parser = parse_launchctl_print_services
             manager_available = Path("/bin/launchctl").is_file()
         elif self._system_name == "Linux":
             manager = "systemctl"
@@ -722,35 +878,37 @@ class DefaultIdentityObserver:
     def profile_processes(self, profile: str) -> Observation:
         if not _valid_profile(profile) or profile != self._layout.profile:
             return Observation("unknown", "invalid_observation")
-        if self._system_name == "Linux":
+        if self._system_name == "Linux" and self._proc_root != Path("/proc"):
             return self._scan_linux_processes(profile, helpers=False)
-        if self._system_name == "Darwin":
-            result = self._run_ps()
-            if result is None:
-                return Observation("unknown", "observation_failed")
-            return parse_ps_processes(
-                result,
-                profile=profile,
-                executable_path=self._companion_path,
-                uid=os.getuid(),
-            )
-        return Observation("unknown", "observation_failed")
+        return self._observe_process_info(profile)
 
     def helper_processes(self) -> Observation:
         profile = self._layout.profile
-        if self._system_name == "Linux":
+        if self._system_name == "Linux" and self._proc_root != Path("/proc"):
             return self._scan_linux_processes(profile, helpers=True)
-        if self._system_name == "Darwin":
-            result = self._run_ps()
-            if result is None:
-                return Observation("unknown", "observation_failed")
-            return parse_ps_processes(
-                result,
-                profile=profile,
-                executable_path=self._companion_path,
-                uid=os.getuid(),
-            )
-        return Observation("unknown", "observation_failed")
+        return self._observe_process_info(profile)
+
+    def _observe_process_info(self, profile: str) -> Observation:
+        if self._system_name not in {"Darwin", "Linux"}:
+            return Observation("unknown", "observation_failed")
+        if not self._custom_process_snapshot and self._system_name != platform.system():
+            return Observation("unknown", "observation_failed")
+        try:
+            processes = self._process_snapshot()
+        except (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
+            return Observation("unknown", "observation_failed")
+        return parse_process_info_processes(
+            processes,
+            profile=profile,
+            executable_path=self._companion_path,
+            uid=os.getuid(),
+        )
 
     def _isolated_service_files(self, profile: str) -> Observation:
         if self._system_name == "Darwin":
@@ -775,21 +933,6 @@ class DefaultIdentityObserver:
         if found:
             return Observation("present", "isolated_service_files_checked", found)
         return Observation("absent", "isolated_service_files_checked")
-
-    def _run_ps(self) -> str | None:
-        result = self._runner(
-            ("/bin/ps", "-axo", "pid=,uid=,command="),
-            {"PATH": "", "LC_ALL": "C"},
-            10.0,
-        )
-        if (
-            not isinstance(result, RunResult)
-            or result.returncode != 0
-            or result.timed_out
-            or result.output_truncated
-        ):
-            return None
-        return result.bounded_output
 
     def _scan_linux_processes(self, profile: str, *, helpers: bool) -> Observation:
         try:

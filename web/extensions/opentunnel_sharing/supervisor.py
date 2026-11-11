@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import ctypes
 import math
 import os
 import platform
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable, Literal, Mapping, Protocol, Sequence
 
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing.profile_state import (
     ProfileLayout,
     companion_environment,
@@ -47,9 +47,9 @@ ReadinessResult = bool | Literal["ready", "pending", "not_ready"]
 ReadinessProbe = Callable[[], ReadinessResult]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class Identity:
-    """Positive live-process facts used only for ownership checks."""
+    """Positive live-process facts, excluding argv/environment from repr."""
 
     pid: int
     creation_token: str
@@ -57,6 +57,16 @@ class Identity:
     argv: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
     command_line: str = ""
+    uid: int | None = None
+    start_time: float | None = None
+    legacy_creation_token: str | None = None
+
+    def __repr__(self) -> str:
+        return "Identity(pid=%r, uid=%r, profile_evidence=%r)" % (
+            self.pid,
+            self.uid,
+            bool(self.argv or self.command_line),
+        )
 
 
 IdentityProbe = Callable[[int], Identity | None]
@@ -136,22 +146,41 @@ def default_process_factory(
     return _PopenCompanionProcess(process)
 
 
+# TABLETOP MODE: Ownership probes use native process facts and fail closed.
 def probe_process_identity(pid: int) -> Identity | None:
-    """Return best-effort executable, creation, argv, and profile evidence.
-
-    Linux uses the /proc start-time field and reads the live command line and
-    environment. macOS uses proc_pidpath for the executable and fixed, bounded
-    ps invocations for a creation-time token and command line. Unsupported or
-    incomplete observations fail closed.
-    """
+    """Return native executable, creation, argv, UID, and profile evidence."""
     if type(pid) is not int or pid <= 0:
         return None
-    selected_platform = platform.system()
-    if selected_platform == "Linux":
-        return _linux_process_identity(pid)
-    if selected_platform == "Darwin":
-        return _darwin_process_identity(pid)
-    return None
+    try:
+        info = process_info.lookup(pid)
+    except (OSError, RuntimeError, TypeError, ValueError, OverflowError):
+        return None
+    if info is None:
+        return None
+    if info.executable is None:
+        return None
+    environment: tuple[tuple[str, str], ...] = ()
+    if platform.system() == "Linux":
+        try:
+            environment = _linux_process_environment(pid)
+        except OSError:
+            return None
+        if environment is None:
+            return None
+    command_line = " ".join(info.argv)
+    if len(command_line) > MAX_IDENTITY_FIELD_BYTES:
+        return None
+    return Identity(
+        pid=info.pid,
+        creation_token=process_info.creation_token(info),
+        executable_path=info.executable,
+        argv=info.argv,
+        environment=environment,
+        command_line=command_line,
+        uid=info.uid,
+        start_time=info.start_time,
+        legacy_creation_token=process_info.legacy_creation_token(info),
+    )
 
 
 class OwnedCompanion:
@@ -354,6 +383,8 @@ class OwnedCompanion:
             type(identity.pid) is not int
             or self._pid is None
             or identity.pid != self._pid
+            or type(identity.uid) is not int
+            or identity.uid != os.getuid()
             or not isinstance(identity.creation_token, str)
             or not identity.creation_token
             or len(identity.creation_token) > 128
@@ -602,27 +633,11 @@ def _bucket_exit_code(
     return "signal" if exit_code < 0 else "failure"
 
 
-def _linux_process_identity(pid: int) -> Identity | None:
-    proc_root = Path("/proc") / str(pid)
-    try:
-        first_token = _linux_start_token(proc_root / "stat")
-        executable = Path(os.readlink(proc_root / "exe")).resolve(strict=True)
-        argv_payload = _read_bounded(proc_root / "cmdline", MAX_IDENTITY_FIELD_BYTES)
-        environment_payload = _read_bounded(
-            proc_root / "environ", MAX_IDENTITY_FIELD_BYTES
-        )
-        second_token = _linux_start_token(proc_root / "stat")
-    except (OSError, RuntimeError, ValueError):
-        return None
-    if (
-        first_token is None
-        or first_token != second_token
-        or argv_payload is None
-        or environment_payload is None
-    ):
-        return None
-    argv = tuple(os.fsdecode(part) for part in argv_payload.split(b"\0") if part)
-    if not argv:
+def _linux_process_environment(pid: int) -> tuple[tuple[str, str], ...] | None:
+    environment_payload = _read_bounded(
+        Path("/proc") / str(pid) / "environ", MAX_IDENTITY_FIELD_BYTES
+    )
+    if environment_payload is None:
         return None
     environment: list[tuple[str, str]] = []
     for item in environment_payload.split(b"\0"):
@@ -630,79 +645,10 @@ def _linux_process_identity(pid: int) -> Identity | None:
             continue
         key, value = item.split(b"=", 1)
         environment.append((os.fsdecode(key), os.fsdecode(value)))
-    return Identity(
-        pid=pid,
-        creation_token=first_token,
-        executable_path=str(executable),
-        argv=argv,
-        environment=tuple(environment),
-    )
-
-
-def _linux_start_token(stat_path: Path) -> str | None:
-    raw = stat_path.read_text(encoding="ascii")
-    closing_paren = raw.rfind(")")
-    if closing_paren < 0:
-        return None
-    fields_after_comm = raw[closing_paren + 1 :].split()
-    if len(fields_after_comm) <= 19:
-        return None
-    return fields_after_comm[19]
+    return tuple(environment)
 
 
 def _read_bounded(path: Path, maximum: int) -> bytes | None:
     with path.open("rb") as stream:
         value = stream.read(maximum + 1)
     return None if len(value) > maximum else value
-
-
-def _darwin_process_identity(pid: int) -> Identity | None:
-    executable = _darwin_executable_path(pid)
-    creation_token = _darwin_ps_field(pid, "lstart")
-    command_line = _darwin_ps_field(pid, "command")
-    if not executable or not creation_token or not command_line:
-        return None
-    return Identity(
-        pid=pid,
-        creation_token=creation_token,
-        executable_path=executable,
-        command_line=command_line,
-    )
-
-
-def _darwin_executable_path(pid: int) -> str | None:
-    try:
-        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-        proc_pidpath = libproc.proc_pidpath
-        proc_pidpath.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
-        proc_pidpath.restype = ctypes.c_int
-        buffer = ctypes.create_string_buffer(4096)
-        size = proc_pidpath(pid, buffer, ctypes.sizeof(buffer))
-        if size <= 0:
-            return None
-        return os.fsdecode(buffer.value)
-    except (OSError, AttributeError, TypeError, ValueError):
-        return None
-
-
-def _darwin_ps_field(pid: int, field: str) -> str | None:
-    if field not in {"lstart", "command"}:
-        return None
-    try:
-        result = subprocess.run(
-            ["/bin/ps", "-o", field + "=", "-p", str(pid)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=1.0,
-            check=False,
-            env={"LC_ALL": "C"},
-            close_fds=True,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    value = result.stdout.strip()
-    return value if value and len(value) <= MAX_IDENTITY_FIELD_BYTES else None

@@ -77,6 +77,7 @@ For every row, an observed unmet PASS criterion with complete and reliable evide
 - **Action:** Query `GET /api/player-sharing/status`; inspect listener, companion process, and public exposure.
 - **Expected observations (PASS):** Status is `off` or `initializing_required` (both sharing-inactive); port 8370 is not listening; no companion process exists; there is no public exposure.
 - **Planner clarification (2026-11-11):** `off` and `initializing_required` are both acceptable sharing-inactive status states. This does not relax the required closed player port, absent companion, or no-public-exposure checks.
+- **Planner clarification (2026-11-11):** Process enumeration and positive identity use bounded native APIs (`libproc`/`sysctl` on macOS and `/proc` on Linux); default backends do not invoke `ps`. The native census is scoped to the current UID. A readable BSD/process identity with an unavailable executable path remains in the census with bounded `comm` and best-effort argv; a possible or indeterminate companion blocks absence proof. Positive ownership still requires the exact executable path. Unreadable BSD/process identity, UID changes, unavailable PID listing, or an unconfirmed process-exit race makes the census incomplete; only confirmed process-exit races may be skipped.
 - **BLOCKED conditions:** Host ownership or the required status/listener/process/public-exposure observations cannot be established safely. Any positive evidence of an unexpected listener, companion, or public exposure is FAIL.
 
 ### L02 — `identity-init-once`
