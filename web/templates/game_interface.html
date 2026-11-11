@@ -4907,6 +4907,98 @@
             color: #388e3c;
         }
 
+        /* TABLETOP MODE: Facilitator-local player sharing controls. */
+        #player-sharing-panel {
+            position: fixed;
+            top: 68px;
+            right: 16px;
+            z-index: 1200;
+            width: min(360px, calc(100vw - 32px));
+            color: #e0e0e0;
+            background: #222;
+            border: 1px solid #666;
+            border-radius: 6px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+            font: 13px Arial, sans-serif;
+        }
+
+        #player-sharing-panel summary {
+            padding: 9px 12px;
+            color: #c8e6c9;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #player-sharing-controls {
+            padding: 0 12px 12px;
+        }
+
+        #player-sharing-status {
+            margin: 0 0 9px;
+            padding: 7px;
+            min-height: 30px;
+            background: #151515;
+            border: 1px solid #444;
+            overflow-wrap: anywhere;
+        }
+
+        #player-sharing-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px;
+        }
+
+        #player-sharing-buttons button,
+        #player-sharing-dismiss {
+            padding: 7px;
+            color: #fff;
+            background: #3c573f;
+            border: 1px solid #719575;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #player-sharing-buttons button:disabled {
+            color: #888;
+            background: #333;
+            border-color: #444;
+            cursor: not-allowed;
+        }
+
+        #player-sharing-secret[hidden] {
+            display: none;
+        }
+
+        #player-sharing-secret {
+            position: fixed;
+            inset: 0;
+            z-index: 1300;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            background: rgba(0, 0, 0, 0.78);
+        }
+
+        #player-sharing-secret-content {
+            width: min(520px, 100%);
+            padding: 18px;
+            color: #e0e0e0;
+            background: #242424;
+            border: 2px solid #c89b38;
+            border-radius: 8px;
+            overflow-wrap: anywhere;
+        }
+
+        #player-sharing-secret-value {
+            display: block;
+            margin: 12px 0;
+            padding: 10px;
+            color: #f6e7bd;
+            background: #111;
+            user-select: all;
+        }
+
     </style>
 </head>
 <body>
@@ -5027,6 +5119,34 @@
             </button>
             
             <button class="exit-button" id="exit-button" onclick="exitGame()" title="Exit Game">x Exit</button>
+        </div>
+    </div>
+
+    <!-- TABLETOP MODE: Host-only local controls; the player application does not use this template. -->
+    <details id="player-sharing-panel">
+        <summary>Share with players</summary>
+        <div id="player-sharing-controls">
+            <p id="player-sharing-status" role="status" aria-live="polite">Sharing status is loading.</p>
+            <div id="player-sharing-buttons">
+                <button type="button" id="player-sharing-initialize">Initialize sharing identity</button>
+                <button type="button" id="player-sharing-issue">Create player access</button>
+                <button type="button" id="player-sharing-start">Start sharing</button>
+                <button type="button" id="player-sharing-copy">Copy invitation</button>
+                <button type="button" id="player-sharing-rotate">Rotate access</button>
+                <button type="button" id="player-sharing-revoke">Revoke access</button>
+                <button type="button" id="player-sharing-stop">Stop sharing</button>
+                <button type="button" id="player-sharing-refresh">Refresh status</button>
+            </div>
+        </div>
+    </details>
+
+    <!-- TABLETOP MODE: One-time credential display is cleared when Dismiss is pressed. -->
+    <div id="player-sharing-secret" role="dialog" aria-modal="true" aria-labelledby="player-sharing-secret-title" hidden>
+        <div id="player-sharing-secret-content">
+            <h2 id="player-sharing-secret-title">Player access created</h2>
+            <p>Copy and share this credential now. It will not be shown again.</p>
+            <code id="player-sharing-secret-value"></code>
+            <button type="button" id="player-sharing-dismiss">Dismiss and clear</button>
         </div>
     </div>
     
@@ -10848,6 +10968,9 @@
     
     <!-- TABLETOP MODE: TTS Queue Manager for sequential playback -->
     <script src="{{ url_for('static', filename='js/tts_queue_manager.js') }}"></script>
+
+    <!-- TABLETOP MODE: Facilitator-local sharing controls; not part of the player bundle. -->
+    <script src="{{ url_for('static', filename='js/player_sharing.js') }}"></script>
     
     {% if multiplayer_mode or party_members|length > 1 %}
     <script src="{{ url_for('static', filename='js/tabletop_mode.js') }}"></script>
