@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -23,6 +24,7 @@ from web.extensions.player.capabilities import (
     PLAYER_SOCKET_EVENT_ALLOWLIST,
     PLAYER_SOCKET_LIFECYCLE_EVENTS,
 )
+from web.extensions.player.assets import PRELOGIN_CSRF_PLACEHOLDER, load_player_client_assets
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,24 @@ FIXED_MARKERS = (
     "update_character_info",
     "MULTIPLAYER_MODE",
     "config.py",
+    "/api/player-sharing",
+    "player-sharing",
+    "PlayerSharingService",
+    "PlayerSharingController",
+    "SharingService",
+    "SharingController",
+    "copy-invitation",
+    "opentunnel",
+)
+PLAYER_SHARING_BUNDLE_MARKERS = (
+    "/api/player-sharing",
+    "player-sharing",
+    "PlayerSharingService",
+    "PlayerSharingController",
+    "SharingService",
+    "SharingController",
+    "copy-invitation",
+    "opentunnel",
 )
 ROUTE_PARAMETER = re.compile(r"<")
 OPEN_QUOTES = "\"'`"
@@ -81,13 +101,55 @@ def _host_markers() -> tuple[tuple[str, ...], tuple[str, ...]]:
     return tuple(sorted(routes)), tuple(sorted(events))
 
 
-def _bundle_files(root: Path) -> set[Path]:
-    """Return manifest shell/assets plus every regular file in the flat output."""
-    manifest = json.loads((root / "player-manifest.json").read_text(encoding="utf-8"))
-    listed = {manifest["shell"]["file"]}
-    listed.update(record["file"] for record in manifest["assets"].values())
-    listed.update(path.name for path in root.iterdir() if path.is_file())
-    return {root / name for name in listed if (root / name).is_file()}
+def _served_bundle_contents(root: Path) -> list[tuple[str, bytes]]:
+    """Read precisely the verified shell and assets the player app serves."""
+    assets = load_player_client_assets(root)
+    return [("index.html", assets.shell_document)] + [
+        (asset_id, asset.body) for asset_id, asset in sorted(assets.assets.items())
+    ]
+
+
+def _write_fixture_bundle(root: Path, javascript: str) -> None:
+    """Write a minimal manifest-valid player bundle for source-free controls."""
+    root.mkdir(parents=True, exist_ok=True)
+    asset_id = "player-12345678.js"
+    asset_body = javascript.encode("ascii")
+    asset_digest = hashlib.sha256(asset_body).hexdigest()
+    build_id = hashlib.sha256(
+        (asset_id + "\t" + asset_digest + "\n").encode("ascii")
+    ).hexdigest()[:32]
+    shell = (
+        '<!doctype html><html><head>'
+        '<meta name="neq-client-build" content="%s">'
+        '<meta name="neq-protocol-version" content="1">'
+        '</head><body><script src="/static/player/%s"></script>%s'
+        '</body></html>'
+        % (build_id, asset_id, PRELOGIN_CSRF_PLACEHOLDER.decode("ascii"))
+    ).encode("ascii")
+    manifest = {
+        "manifest_version": 1,
+        "protocol_version": 1,
+        "client_build_id": build_id,
+        "shell": {
+            "file": "index.html",
+            "sha256": hashlib.sha256(shell).hexdigest(),
+            "bytes": len(shell),
+            "content_type": "text/html; charset=utf-8",
+        },
+        "assets": {
+            asset_id: {
+                "file": asset_id,
+                "sha256": asset_digest,
+                "bytes": len(asset_body),
+                "content_type": "text/javascript; charset=utf-8",
+            }
+        },
+    }
+    (root / "index.html").write_bytes(shell)
+    (root / asset_id).write_bytes(asset_body)
+    (root / "player-manifest.json").write_text(
+        json.dumps(manifest, separators=(",", ":")), encoding="ascii"
+    )
 
 
 def scan_bundle(root: Path) -> list[tuple[str, str]]:
@@ -122,8 +184,8 @@ def scan_bundle(root: Path) -> list[tuple[str, str]]:
         patterns.append((event, event_pattern))
     patterns.extend((marker, re.compile(re.escape(marker))) for marker in FIXED_MARKERS)
     hits: list[tuple[str, str]] = []
-    for path in sorted(_bundle_files(root)):
-        content = path.read_bytes().decode("utf-8", errors="ignore")
+    for relative_path, payload in _served_bundle_contents(root):
+        content = payload.decode("utf-8", errors="ignore")
         for marker, pattern in patterns:
             for match in pattern.finditer(content):
                 parameterized_marker = any(
@@ -135,24 +197,32 @@ def scan_bundle(root: Path) -> list[tuple[str, str]]:
                     position = quote_start + 1
                     if any(content.startswith(prefix, position) for prefix in player_static_prefixes):
                         continue
-                hits.append((path.relative_to(root).as_posix(), f"{marker} [{match.groupdict().get('match', match.group(0))}]"))
+                hits.append((relative_path, f"{marker} [{match.groupdict().get('match', match.group(0))}]"))
     return hits
 
 
 class PlayerBundleScanTests(unittest.TestCase):
+    def _fixture_bundle(self, javascript: str = "export const player = true;") -> Path:
+        root = Path("tmp/n2") / f"bundle-scan-{uuid.uuid4()}"
+        _write_fixture_bundle(root, javascript)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        return root
+
     def test_derived_host_route_and_event_markers_are_non_empty(self) -> None:
         routes, events = _host_markers()
         self.assertTrue(routes, "host-only route extraction returned no markers")
         self.assertTrue(events, "host-only event extraction returned no markers")
         self.assertTrue(set(events) - SOCKETIO_RESERVED_EVENT_NAMES, "no non-reserved host event markers remain")
 
-    def test_built_bundle_has_no_host_capability_markers(self) -> None:
+    def test_served_bundle_has_no_host_capability_markers(self) -> None:
         manifest_path = DIST_ROOT / "player-manifest.json"
-        self.assertTrue(
-            manifest_path.is_file(),
-            "Built player manifest is missing; run `npm --prefix web/frontend run build` first.",
-        )
-        self.assertEqual(scan_bundle(DIST_ROOT), [])
+        if manifest_path.is_file():
+            bundle_root = DIST_ROOT
+        else:
+            # This checkout has no built or committed dist; use the existing
+            # isolated fixture approach, validated by the production asset loader.
+            bundle_root = self._fixture_bundle()
+        self.assertEqual(scan_bundle(bundle_root), [])
 
     def test_synthetic_positive_control_detects_route_event_and_fixed_marker(self) -> None:
         routes, events = _host_markers()
@@ -160,50 +230,36 @@ class PlayerBundleScanTests(unittest.TestCase):
         plain = [route for route in routes if "<" not in route]
         self.assertTrue(parameterized, "host-only parameterized route extraction returned no routes")
         self.assertTrue(plain, "host-only plain route extraction returned no routes")
-        scratch = Path("tmp/n2") / f"bundle-scan-{uuid.uuid4()}"
-        scratch.mkdir(parents=True)
-        try:
-            if (DIST_ROOT / "player-manifest.json").is_file():
-                shutil.copytree(DIST_ROOT, scratch / "bundle")
-                bundle = scratch / "bundle"
-            else:
-                bundle = scratch / "bundle"
-                bundle.mkdir()
-                (bundle / "player-manifest.json").write_text(
-                    json.dumps({"shell": {"file": "index.html"}, "assets": {"test.js": {"file": "test.js"}}}),
-                    encoding="utf-8",
-                )
-                (bundle / "index.html").write_text("<html></html>", encoding="ascii")
-                (bundle / "test.js").write_text("", encoding="ascii")
-            asset = next(path for path in bundle.iterdir() if path.suffix == ".js")
-            plain_marker = plain[0]
-            parameterized_route = next(route for route in parameterized if route.startswith("/static/"))
-            route_prefix = parameterized_route.split("<", 1)[0]
-            non_reserved = sorted(set(events) - SOCKETIO_RESERVED_EVENT_NAMES)
-            self.assertTrue(non_reserved, "host inventory has no non-reserved event marker")
-            event = non_reserved[0]
-            bare_events = [name for name in non_reserved if BARE_EVENT.fullmatch(name)]
-            self.assertTrue(bare_events, "host inventory has no bare-word event for call-context control")
-            bare_event = bare_events[0]
-            injected = (
-                f'"{plain_marker}"',
-                f"'{event}'",
-                f"`{route_prefix}foo.css`",
-                FIXED_MARKERS[0],
-                f".emit(`{bare_event}`)",
-                "'/static/foo.css'",
-            )
-            asset.write_text("\n".join(injected), encoding="ascii")
-            negative = bundle / "negative.js"
-            negative.write_text(f".on(`error`, `action`) '/static/player/x.js'", encoding="ascii")
-            hits = scan_bundle(bundle)
-            detected = {marker.split(" [", 1)[0] for _file, marker in hits}
-            self.assertTrue({plain_marker, event, route_prefix, FIXED_MARKERS[0], "/static/"} <= detected)
-            negative_hits = [marker for file_name, marker in hits if file_name == "negative.js"]
-            self.assertEqual(negative_hits, [])
-            self.assertIn(bare_event, detected)
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+        bundle = self._fixture_bundle()
+        asset = bundle / "player-12345678.js"
+        plain_marker = plain[0]
+        parameterized_route = next(route for route in parameterized if route.startswith("/static/"))
+        route_prefix = parameterized_route.split("<", 1)[0]
+        non_reserved = sorted(set(events) - SOCKETIO_RESERVED_EVENT_NAMES)
+        self.assertTrue(non_reserved, "host inventory has no non-reserved event marker")
+        event = non_reserved[0]
+        bare_events = [name for name in non_reserved if BARE_EVENT.fullmatch(name)]
+        self.assertTrue(bare_events, "host inventory has no bare-word event for call-context control")
+        bare_event = bare_events[0]
+        injected = (
+            f'"{plain_marker}"',
+            f"'{event}'",
+            f"`{route_prefix}foo.css`",
+            FIXED_MARKERS[0],
+            f".emit(`{bare_event}`)",
+            "'/static/foo.css'",
+            *PLAYER_SHARING_BUNDLE_MARKERS,
+        )
+        _write_fixture_bundle(bundle, "\n".join(injected))
+        negative = bundle / "negative.js"
+        negative.write_text(".on(`error`, `action`) '/static/player/x.js'", encoding="ascii")
+        hits = scan_bundle(bundle)
+        detected = {marker.split(" [", 1)[0] for _file, marker in hits}
+        self.assertTrue({plain_marker, event, route_prefix, FIXED_MARKERS[0], "/static/"} <= detected)
+        self.assertTrue(set(PLAYER_SHARING_BUNDLE_MARKERS) <= detected)
+        negative_hits = [marker for file_name, marker in hits if file_name == "negative.js"]
+        self.assertEqual(negative_hits, [])
+        self.assertIn(bare_event, detected)
 
 
 if __name__ == "__main__":

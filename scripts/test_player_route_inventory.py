@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_args
 
+from flask import Flask
 from flask_socketio import SocketIO as FlaskSocketIO
 
 from utils.player_host_publication import PlayerHostChangeKind, _validated_notice
@@ -32,6 +33,7 @@ from web.extensions.player.capabilities import (
     PLAYER_SOCKET_EVENT_ALLOWLIST,
     PLAYER_SOCKET_LIFECYCLE_EVENTS,
 )
+from web.routes.player_sharing_routes import register_player_sharing_routes
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +41,30 @@ PLAYER_PACKAGE_ROOT = REPOSITORY_ROOT / "web" / "extensions" / "player"
 ROUTE_PARAMETER_PATTERN = re.compile(r"<(?:(?P<converter>[^:<>]+):)?(?P<name>[^<>]+)>")
 PLAYER_CAPABILITIES_SPEC = (
     REPOSITORY_ROOT / "openspec" / "specs" / "player-capabilities" / "spec.md"
+)
+PLAYER_SHARING_ROUTE_PREFIX = "/api/player-sharing/"
+PLAYER_SHARING_EVENT_MARKERS = ("sharing", "opentunnel", "copy-invitation")
+
+# Pin the N1 contract independently of its parser so contract edits cannot make
+# the implementation and this inventory test drift together unnoticed.
+PINNED_N1_HTTP_ALLOWLIST = (
+    ("GET", "/"),
+    ("GET", "/api/player/media/<media-id>"),
+    ("GET", "/api/player/snapshot"),
+    ("GET", "/static/player/<asset-id>"),
+    ("POST", "/api/player/login"),
+    ("POST", "/api/player/logout"),
+)
+PINNED_N1_INBOUND_EVENT_ALLOWLIST = (
+    "player.active_pc.select",
+    "player.input.submit",
+    "player.snapshot.request",
+)
+PINNED_N1_EMISSION_ALLOWLIST = (
+    "player.error",
+    "player.event",
+    "player.input.receipt",
+    "player.snapshot",
 )
 
 
@@ -685,6 +711,41 @@ def _classification_differences(
     return unclassified, stale, invalid_categories
 
 
+def _assert_inventory_classified(
+    inventory: SurfaceInventory,
+    classification: Mapping[str, str] = HOST_SURFACE_CLASSIFICATION,
+) -> None:
+    unclassified, stale, invalid_categories = _classification_differences(
+        inventory, classification
+    )
+    if unclassified:
+        raise AssertionError(
+            "UNCLASSIFIED host surfaces: " + ", ".join(sorted(unclassified))
+        )
+    if stale:
+        raise AssertionError("stale host classifications: " + ", ".join(sorted(stale)))
+    if invalid_categories:
+        raise AssertionError(
+            "invalid host surface classes: " + ", ".join(sorted(invalid_categories))
+        )
+
+
+def _player_sharing_host_app() -> Flask:
+    """Register the real host routes on an inert, test-local Flask app."""
+    app = Flask("player-sharing-route-inventory", static_folder=None)
+    register_player_sharing_routes(app, lambda: None)
+    return app
+
+
+def _registered_player_sharing_routes(app: Flask) -> frozenset[str]:
+    """Read actual route registrations rather than duplicating route literals."""
+    return frozenset(
+        rule.rule
+        for rule in app.url_map.iter_rules()
+        if rule.rule.startswith(PLAYER_SHARING_ROUTE_PREFIX)
+    )
+
+
 def _sample_route(rule: str) -> str:
     def replace_parameter(match: re.Match[str]) -> str:
         converter = match.group("converter") or "string"
@@ -807,14 +868,29 @@ class PlayerRouteInventoryTests(unittest.TestCase):
 
     def test_every_discovered_host_surface_has_one_current_classification(self) -> None:
         self.assertEqual(self.inventory.discovery_errors, ())
-        unclassified, stale, invalid_categories = _classification_differences(self.inventory)
-        self.assertEqual(unclassified, set(), f"unclassified host surfaces: {sorted(unclassified)}")
-        self.assertEqual(stale, set(), f"stale host classifications: {sorted(stale)}")
-        self.assertEqual(
-            invalid_categories,
-            set(),
-            f"invalid host surface classes: {sorted(invalid_categories)}",
+        _assert_inventory_classified(self.inventory)
+
+    def test_registered_player_sharing_routes_are_discovered_and_host_only(self) -> None:
+        registered_routes = _registered_player_sharing_routes(
+            _player_sharing_host_app()
         )
+        self.assertTrue(registered_routes, "player-sharing routes were not registered")
+        self.assertTrue(
+            all(route.startswith(PLAYER_SHARING_ROUTE_PREFIX) for route in registered_routes)
+        )
+
+        host_only_routes = {
+            key.removeprefix("http:")
+            for key, classification in HOST_SURFACE_CLASSIFICATION.items()
+            if key.startswith("http:") and classification == HOST_ONLY
+        }
+        for route in sorted(registered_routes):
+            with self.subTest(route=route):
+                self.assertIn(route, self.inventory.http_routes)
+                self.assertIn(route, host_only_routes)
+                self.assertEqual(
+                    HOST_SURFACE_CLASSIFICATION.get("http:" + route), HOST_ONLY
+                )
 
     def test_player_app_registrations_equal_the_current_positive_allowlists(self) -> None:
         app = create_app(security=PlayerSecurity(lambda: None))
@@ -835,9 +911,38 @@ class PlayerRouteInventoryTests(unittest.TestCase):
 
     def test_implemented_allowlists_equal_the_n1_spec_exactly(self) -> None:
         spec_http, spec_events, spec_emissions = _player_allowlists_from_spec()
+        self.assertEqual(tuple(sorted(spec_http)), PINNED_N1_HTTP_ALLOWLIST)
+        self.assertEqual(tuple(sorted(spec_events)), PINNED_N1_INBOUND_EVENT_ALLOWLIST)
+        self.assertEqual(tuple(sorted(spec_emissions)), PINNED_N1_EMISSION_ALLOWLIST)
         self.assertEqual(PLAYER_HTTP_ALLOWLIST, spec_http)
         self.assertEqual(PLAYER_SOCKET_EVENT_ALLOWLIST, spec_events)
         self.assertEqual(PLAYER_SOCKET_EMISSION_ALLOWLIST, spec_emissions)
+
+    def test_player_allowlists_and_n1_spec_exclude_sharing_routes_and_events(self) -> None:
+        spec_http, spec_events, spec_emissions = _player_allowlists_from_spec()
+        http_allowlists = (PLAYER_HTTP_ALLOWLIST, spec_http)
+        event_allowlists = (
+            PLAYER_SOCKET_EVENT_ALLOWLIST,
+            PLAYER_SOCKET_EMISSION_ALLOWLIST,
+            spec_events,
+            spec_emissions,
+        )
+
+        for allowlist in http_allowlists:
+            self.assertFalse(
+                any(
+                    PLAYER_SHARING_ROUTE_PREFIX in path
+                    for _method, path in allowlist
+                )
+            )
+        for allowlist in event_allowlists:
+            self.assertFalse(
+                any(
+                    marker in name.casefold()
+                    for name in allowlist
+                    for marker in PLAYER_SHARING_EVENT_MARKERS
+                )
+            )
 
     def test_compression_callback_uses_host_default_namespace_not_player_emitter(self) -> None:
         host_path = REPOSITORY_ROOT / "web" / "web_interface.py"
@@ -1095,6 +1200,32 @@ class PlayerRouteInventoryTests(unittest.TestCase):
         self.assertIn("http:/synthetic-unclassified-route", unclassified)
         self.assertIn("inbound:synthetic_unclassified_event", unclassified)
         self.assertTrue(unclassified)
+
+    def test_synthetic_registered_lifecycle_route_fails_as_unclassified(self) -> None:
+        app = _player_sharing_host_app()
+        synthetic_route = PLAYER_SHARING_ROUTE_PREFIX + "synthetic-control"
+        app.add_url_rule(
+            synthetic_route,
+            endpoint="synthetic_player_sharing_control",
+            view_func=lambda: "",
+            methods=["POST"],
+        )
+        registered_routes = _registered_player_sharing_routes(app)
+        self.assertIn(synthetic_route, registered_routes)
+
+        synthetic_inventory = SurfaceInventory(
+            http_routes=self.inventory.http_routes | registered_routes,
+            inbound_events=self.inventory.inbound_events,
+            emissions=self.inventory.emissions,
+            dynamic_event_sites=self.inventory.dynamic_event_sites,
+            discovery_errors=self.inventory.discovery_errors,
+        )
+        with self.assertRaises(AssertionError) as raised:
+            _assert_inventory_classified(synthetic_inventory)
+        self.assertIn(
+            "UNCLASSIFIED host surfaces: http:" + synthetic_route,
+            str(raised.exception),
+        )
 
 
 if __name__ == "__main__":
