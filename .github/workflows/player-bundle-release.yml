@@ -1,0 +1,183 @@
+name: Player Bundle Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions: {}
+
+concurrency:
+  group: player-bundle-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'zeug-zz/NeverEndingQuest-TTRPG' && github.event_name == 'push' && github.event.created == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match v<major>.<minor>.<patch>." >&2
+            exit 1
+          fi
+
+      # Set the repository variable to a comma-separated list of up to ten
+      # Overseer GitHub logins. The variable is required; an unset value fails
+      # closed even when the repository owner is the tag actor.
+      - name: Authorize release publisher
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          PLAYER_BUNDLE_PUBLISHERS: ${{ vars.PLAYER_BUNDLE_PUBLISHERS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PLAYER_BUNDLE_PUBLISHERS" || ${#PLAYER_BUNDLE_PUBLISHERS} -gt 400 ]]; then
+            echo "PLAYER_BUNDLE_PUBLISHERS must be configured with a bounded login list." >&2
+            exit 1
+          fi
+          if [[ "$REPOSITORY_OWNER" != "zeug-zz" ]]; then
+            echo "Player bundle releases are restricted to the repository owner." >&2
+            exit 1
+          fi
+          IFS=',' read -r -a allowed_publishers <<< "$PLAYER_BUNDLE_PUBLISHERS"
+          if (( ${#allowed_publishers[@]} == 0 || ${#allowed_publishers[@]} > 10 )); then
+            echo "PLAYER_BUNDLE_PUBLISHERS must contain one to ten logins." >&2
+            exit 1
+          fi
+          authorized=0
+          for publisher in "${allowed_publishers[@]}"; do
+            if [[ ! "$publisher" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+              echo "PLAYER_BUNDLE_PUBLISHERS contains an invalid login." >&2
+              exit 1
+            fi
+            if [[ "${publisher,,}" == "${ACTOR,,}" ]]; then
+              authorized=1
+            fi
+          done
+          if [[ "${ACTOR,,}" != "${REPOSITORY_OWNER,,}" && "$authorized" -ne 1 ]]; then
+            echo "Actor is not an authorized player bundle publisher." >&2
+            exit 1
+          fi
+
+      - name: Check out source and tags
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag source is on origin/main
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Release source commit must be a full commit SHA." >&2
+            exit 1
+          fi
+          tag_ref="refs/tags/$RELEASE_TAG"
+          tag_object_type="$(git cat-file -t "$tag_ref")"
+          if [[ "$tag_object_type" != "tag" && "$tag_object_type" != "commit" ]]; then
+            echo "Release tag must be lightweight or annotated." >&2
+            exit 1
+          fi
+          TAG_COMMIT="$(git rev-parse --verify "${tag_ref}^{commit}")"
+          if [[ "$TAG_COMMIT" != "$SOURCE_COMMIT" ]]; then
+            echo "Release tag target does not match the push commit." >&2
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo "origin/main was not fetched; refusing to publish." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
+            echo "Release tag target is not on origin/main." >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        run: |
+          set -euo pipefail
+          npm --prefix web/frontend ci
+
+      - name: Typecheck frontend
+        run: |
+          set -euo pipefail
+          npm --prefix web/frontend run typecheck
+
+      - name: Test frontend
+        run: |
+          set -euo pipefail
+          npm --prefix web/frontend test -- --run
+
+      - name: Test player manifest generation
+        run: |
+          set -euo pipefail
+          npm --prefix web/frontend run test:manifest
+
+      - name: Build frontend
+        run: |
+          set -euo pipefail
+          npm --prefix web/frontend run build
+
+      # The bundle builder and player asset loader import only Python standard
+      # library and repository modules; no requirements-lock packages are needed.
+      - name: Build deterministic player bundle
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          PYTHONPATH=. .venv/bin/python scripts/network_packaging/build_player_bundle.py \
+            --tag "$RELEASE_TAG" \
+            --source-commit "$SOURCE_COMMIT" \
+            --output-dir tmp/player-bundle-release
+
+      - name: Publish immutable release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          TARBALL_NAME="neq-player-bundle-${VERSION}.tar.gz"
+          METADATA_NAME="neq-player-bundle-${VERSION}.metadata.json"
+          TARBALL_PATH="tmp/player-bundle-release/${TARBALL_NAME}"
+          METADATA_PATH="tmp/player-bundle-release/${METADATA_NAME}"
+          if [[ ! -f "$TARBALL_PATH" || ! -f "$METADATA_PATH" ]]; then
+            echo "Player bundle output is incomplete." >&2
+            exit 1
+          fi
+          if ! gh release view "$RELEASE_TAG" --repo "$GH_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "$GH_REPOSITORY" \
+              --verify-tag \
+              --title "Player bundle ${RELEASE_TAG}" \
+              --notes "Deterministic player bundle for ${RELEASE_TAG}."
+          fi
+          existing_assets="$(gh release view "$RELEASE_TAG" \
+            --repo "$GH_REPOSITORY" --json assets --jq '.assets[].name')"
+          while IFS= read -r asset_name; do
+            [[ -z "$asset_name" ]] && continue
+            if [[ "$asset_name" == "$TARBALL_NAME" || "$asset_name" == "$METADATA_NAME" ]]; then
+              echo "Release already contains asset ${asset_name}; refusing replacement." >&2
+              exit 1
+            fi
+          done <<< "$existing_assets"
+          gh release upload "$RELEASE_TAG" "$TARBALL_PATH" "$METADATA_PATH" \
+            --repo "$GH_REPOSITORY"
