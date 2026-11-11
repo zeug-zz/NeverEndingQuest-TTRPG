@@ -245,7 +245,8 @@ class PlayerOriginBindingTests(unittest.TestCase):
                 )
 
         self.binder.clear("stop")
-        self.assertTrue(self._bind("https://x.example:8443"))
+        self.assertTrue(self.binder.begin_generation(2))
+        self.assertTrue(self._bind("https://x.example:8443", generation=2))
         self.assertTrue(
             self.security.request_identity_is_valid(
                 "x.example:8443", "https://x.example:8443", require_origin=True

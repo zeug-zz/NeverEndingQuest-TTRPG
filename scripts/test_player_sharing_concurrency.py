@@ -53,6 +53,8 @@ class FakePlayerSecurity:
         self._lock = threading.Lock()
         self._origin: str | None = None
         self._generation: int | None = None
+        self._active_generation: int | None = None
+        self._highest_generation = 0
 
     @property
     def public_origin_status(self) -> tuple[bool, int | None]:
@@ -61,16 +63,36 @@ class FakePlayerSecurity:
 
     def bind_public_origin(self, generation: int, origin: str) -> bool:
         with self._lock:
+            if self._active_generation != generation:
+                return False
             if self._origin is not None:
                 return self._origin == origin and self._generation == generation
             self._origin = origin
             self._generation = generation
             return True
 
+    def set_active_origin_generation(self, generation: int | None) -> bool:
+        with self._lock:
+            if generation is None:
+                self._active_generation = None
+                self._origin = None
+                self._generation = None
+                return True
+            if type(generation) is not int or generation < self._highest_generation:
+                return False
+            if generation == self._active_generation:
+                return True
+            self._active_generation = generation
+            self._highest_generation = max(self._highest_generation, generation)
+            self._origin = None
+            self._generation = None
+            return True
+
     def clear_public_origin(self, _reason: str | None = None) -> None:
         with self._lock:
             self._origin = None
             self._generation = None
+            self._active_generation = None
 
 
 class ControlledBinder:

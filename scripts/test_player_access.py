@@ -510,6 +510,7 @@ class PlayerAccessTests(unittest.TestCase):
         assert grant is not None and challenge is not None
 
         public_origin = "https://sharing-player.example"
+        self.assertTrue(security.set_active_origin_generation(1))
         self.assertTrue(security.bind_public_origin(1, public_origin))
         assets = VerifiedPlayerClientAssets(
             shell_document=b"",
