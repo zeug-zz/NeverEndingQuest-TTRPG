@@ -1316,7 +1316,9 @@ def _run_preflight_command(gate_id: str) -> _CommandResult:
             raise ReadinessVerificationError("PROJECT_PYTHON_UNAVAILABLE") from None
         if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
             raise ReadinessVerificationError("PROJECT_PYTHON_UNAVAILABLE")
-        actual_executable = str(resolved)
+        # Validate the target, but invoke the fixed in-repository path: executing
+        # the resolved system binary bypasses pyvenv.cfg and loses the venv.
+        actual_executable = str(candidate)
     else:
         actual_executable = _resolve_trusted_executable(executable)
         if actual_executable is None:
