@@ -20,7 +20,9 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing import profile_state
+from web.extensions.opentunnel_sharing import service as sharing_service
 from web.extensions.opentunnel_sharing.cleanup import (
     OWNER_RECORD_FILENAME,
     OWNER_RECORD_SCHEMA,
@@ -33,6 +35,7 @@ from web.extensions.opentunnel_sharing.cleanup import (
     load_owner_record,
     reconcile_orphans,
     write_owner_record,
+    _identity_matches_record,
 )
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
 from web.extensions.opentunnel_sharing.controller import (
@@ -368,6 +371,28 @@ class PlayerSharingCleanupTests(unittest.TestCase):
         self.assertNotIn(TEST_SECRET, repr(loaded))
         self.assertTrue(clear_owner_record(layout, record))
         self.assertFalse((layout.state_home / OWNER_RECORD_FILENAME).exists())
+
+    def test_legacy_creation_token_remains_readable_and_requires_native_match(self) -> None:
+        layout, binary = self.make_layout()
+        legacy_token = "Wed Nov 11 11:00:00 2026"
+        record = self.make_record(layout, binary, creation_token=legacy_token)
+        self.assertTrue(write_owner_record(layout, record))
+        self.assertEqual(load_owner_record(layout).record, record)
+
+        live = ProcessIdentity(
+            pid=record.pid,
+            creation_token="pid-%d-start-ms-1794394800000" % record.pid,
+            exe_path=record.exe_path,
+            uid=record.uid,
+            profile_marker=record.profile,
+            legacy_creation_token=legacy_token,
+        )
+        self.assertEqual(_identity_matches_record(live, record, layout), "match")
+        mismatched = replace(live, legacy_creation_token="Wed Nov 11 11:00:01 2026")
+        self.assertEqual(
+            _identity_matches_record(mismatched, record, layout),
+            "process_identity_mismatch",
+        )
 
     def test_owner_writer_never_overwrites_foreign_or_invalid_record(self) -> None:
         layout, binary = self.make_layout()
@@ -786,6 +811,45 @@ class PlayerSharingCleanupTests(unittest.TestCase):
         self.assertFalse(result.sharing_available)
         self.assertEqual(routes.lookups, [])
         self.assertEqual(routes.removals, [])
+
+    def test_unknown_executable_companion_candidate_stays_untouched(self) -> None:
+        layout, binary = self.make_layout()
+        pid = 4242
+        record = self.make_record(layout, binary, pid=pid, route_id=TEST_ROUTE_ID)
+        self.assertTrue(write_owner_record(layout, record))
+        native_info = process_info.ProcessInfo(
+            pid=pid,
+            ppid=1,
+            pgid=pid,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable=None,
+            argv=(str(binary), "serve", "--profile", layout.profile),
+            comm="opentunnel",
+        )
+        with (
+            mock.patch.object(process_info, "lookup", return_value=native_info),
+            mock.patch.object(sharing_service, "_process_is_gone", return_value=False),
+        ):
+            observed = sharing_service._production_process_table(pid, layout)
+        self.assertEqual(observed, ProcessObservation("unknown"))
+
+        routes = FakeRouteTable()
+        signals: list[tuple[int, int]] = []
+        result = reconcile_orphans(
+            layout,
+            CompanionResolution("resolved", "resolved", binary),
+            process_table=lambda _pid: observed,
+            route_table=routes,
+            signaller=lambda selected_pid, sig: signals.append((selected_pid, sig)),
+        )
+
+        self.assertEqual(result.state, "ambiguous")
+        self.assertEqual(result.reason, "process_identity_unknown")
+        self.assertEqual(signals, [])
+        self.assertEqual(routes.lookups, [])
+        self.assertEqual(routes.removals, [])
+        self.assertEqual(load_owner_record(layout).record, record)
 
     def test_reconcile_does_not_auto_start_and_ambiguity_requires_acknowledged_rerun(self) -> None:
         fixture = CleanupControllerFixture(self)

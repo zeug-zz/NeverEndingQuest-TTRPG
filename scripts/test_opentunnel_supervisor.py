@@ -11,6 +11,7 @@ import ast
 import builtins
 import io
 import os
+import platform
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from typing import Mapping, Sequence
 from unittest import mock
 
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing import profile_state
 from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
@@ -31,6 +33,7 @@ from web.extensions.opentunnel_sharing.supervisor import (
     OUTPUT_BUFFER_BYTES,
     Identity,
     OwnedCompanion,
+    probe_process_identity,
 )
 from web.extensions.player.constants import PLAYER_HOST, PLAYER_PORT
 
@@ -165,7 +168,38 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
             executable_path=executable,
             argv=observed_argv,
             environment=tuple(observed_environment.items()),
+            uid=os.getuid() + 1 if mode == "wrong_uid" else os.getuid(),
         )
+
+    def test_default_identity_probe_uses_native_backend_without_ps(self) -> None:
+        if platform.system() not in {"Darwin", "Linux"}:
+            self.skipTest("native process backend is unsupported on this platform")
+        with mock.patch.object(
+            subprocess,
+            "run",
+            side_effect=AssertionError("default identity probe spawned subprocess"),
+        ):
+            identity = probe_process_identity(os.getpid())
+        self.assertIsNotNone(identity)
+        assert identity is not None
+        self.assertEqual(identity.pid, os.getpid())
+        self.assertEqual(identity.uid, os.getuid())
+        self.assertEqual(identity.start_time is not None, True)
+        self.assertNotIn("argv=", repr(identity))
+
+    def test_unknown_executable_candidate_never_proves_owned_identity(self) -> None:
+        info = process_info.ProcessInfo(
+            pid=4242,
+            ppid=1,
+            pgid=4242,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable=None,
+            argv=(str(self.binary), "serve", "--profile", DEFAULT_PROFILE),
+            comm="opentunnel",
+        )
+        with mock.patch.object(process_info, "lookup", return_value=info):
+            self.assertIsNone(probe_process_identity(info.pid))
 
     def _owner(
         self,
@@ -350,6 +384,7 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
         for mode in (
             "wrong_executable",
             "wrong_pid",
+            "wrong_uid",
             "wrong_profile_args",
             "wrong_profile_environment",
             "missing",

@@ -55,9 +55,15 @@ _TIMESTAMP_RE = re.compile(
 )
 
 
+# TABLETOP MODE: Persisted creation tokens stay opaque and are re-derived live.
 @dataclass(frozen=True, slots=True, repr=False)
 class OwnedProcessRecord:
-    """The minimum private identity needed to recognize one NEQ child."""
+    """The minimum private identity needed to recognize one NEQ child.
+
+    Creation tokens are opaque and re-derived by the native process observer.
+    Legacy tokens remain readable and are accepted only when that observer
+    independently derives the same prior-format token for the live process.
+    """
 
     profile: str
     uid: int
@@ -95,6 +101,7 @@ class ProcessIdentity:
     exe_path: str
     uid: int
     profile_marker: str | None
+    legacy_creation_token: str | None = None
 
     def __repr__(self) -> str:
         return "ProcessIdentity(pid=%r, uid=%r, profile_proven=%r)" % (
@@ -848,7 +855,15 @@ def _identity_matches_record(
         or identity.uid != record.uid
         or identity.uid != _current_uid()
         or not isinstance(identity.creation_token, str)
-        or identity.creation_token != record.creation_token
+        or len(identity.creation_token) > 128
+        or (
+            identity.creation_token != record.creation_token
+            and (
+                not isinstance(identity.legacy_creation_token, str)
+                or len(identity.legacy_creation_token) > 128
+                or identity.legacy_creation_token != record.creation_token
+            )
+        )
     ):
         return "process_identity_mismatch"
     if identity.profile_marker is None:

@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing.cleanup import (
     ReconcileResult,
     RouteObservation,
@@ -40,6 +41,7 @@ from web.extensions.opentunnel_sharing.service import (
     _parse_companion_status,
     create_production_player_sharing_service,
     validate_tunnel_target,
+    _process_uid,
 )
 from web.extensions.opentunnel_sharing.verifier_store import (
     IssuedCredential,
@@ -209,6 +211,26 @@ class FakeServiceDependencies:
 
 
 class PlayerSharingServiceTests(unittest.TestCase):
+    def test_process_uid_uses_native_process_info(self) -> None:
+        observed = process_info.ProcessInfo(
+            pid=4242,
+            ppid=1,
+            pgid=1,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable="/bin/echo",
+            argv=("/bin/echo",),
+        )
+        with mock.patch.object(process_info, "lookup", return_value=observed) as lookup:
+            self.assertEqual(_process_uid(4242), os.getuid())
+        lookup.assert_called_once_with(4242)
+        with mock.patch.object(
+            process_info,
+            "lookup",
+            side_effect=process_info.ProcessInfoUnavailable("process_info_unavailable"),
+        ):
+            self.assertIsNone(_process_uid(4242))
+
     def test_construction_and_uninitialized_status_do_not_initialize_or_start(self) -> None:
         with tempfile.TemporaryDirectory(dir="tmp") as scratch:
             missing_root = Path(scratch) / "missing-state"

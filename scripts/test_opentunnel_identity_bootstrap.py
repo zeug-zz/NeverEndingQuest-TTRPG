@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Mapping, Sequence
 from unittest import mock
 
+from web.extensions.opentunnel_sharing import identity_bootstrap
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing import profile_state
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
 from web.extensions.opentunnel_sharing.identity_bootstrap import (
@@ -32,6 +34,7 @@ from web.extensions.opentunnel_sharing.identity_bootstrap import (
     bootstrap_identity,
     parse_identity_status,
     parse_launchctl_entries,
+    parse_launchctl_print_services,
     parse_linux_process_record,
     parse_ps_processes,
     parse_systemd_unit_files,
@@ -58,6 +61,19 @@ STATUS_STOPPED = (
 SERVICE_ABSENT = Observation("absent", "observed_user_view")
 PROCESS_ABSENT = Observation("absent", "proc_scan_complete")
 HELPER_ABSENT = Observation("absent", "ps_snapshot_complete")
+LAUNCHCTL_PRINT_FIXTURE = (
+    "gui = {\n"
+    "\tservices = {\n"
+    "\t\t   64868      1 \tcom.apple.example\n"
+    "\t\t     976      - \tcom.apple.helper\n"
+    "\t\t       0      0 \tcom.apple.disabled\n"
+    "\t\t   90375   (pe) \tcom.apple.peer\n"
+    "\t\t   21538   (jt) \tcom.apple.job\n"
+    "\t\t   60196    -10 \tcom.apple.exit\n"
+    "\t}\n"
+    "\tdisabled services = {\n"
+    "\t}\n"
+)
 
 
 class FakeRunner:
@@ -544,6 +560,120 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
         self.assertEqual(parse_systemd_unit_files(systemd, "other-profile").state, "absent")
         self.assertEqual(parse_launchctl_entries("x" * (64 * 1024 + 1), DEFAULT_PROFILE).state, "unknown")
 
+    def test_launchctl_print_parser_reads_only_one_complete_services_block(self) -> None:
+        absent = parse_launchctl_print_services(
+            "outside opentunnel neq-share\n" + LAUNCHCTL_PRINT_FIXTURE,
+            DEFAULT_PROFILE,
+        )
+        self.assertEqual(absent, Observation("absent", "observed_user_view"))
+
+        by_label = parse_launchctl_print_services(
+            LAUNCHCTL_PRINT_FIXTURE.replace(
+                "com.apple.peer", "com.vendor.OpenTunnel.agent"
+            ),
+            DEFAULT_PROFILE,
+        )
+        self.assertEqual(by_label, Observation("present", "observed_user_view", 1))
+
+        by_profile = parse_launchctl_print_services(
+            LAUNCHCTL_PRINT_FIXTURE.replace(
+                "com.apple.peer", "com.vendor.NEQ-SHARE.agent"
+            ),
+            DEFAULT_PROFILE,
+        )
+        self.assertEqual(by_profile, Observation("present", "observed_user_view", 1))
+
+    def test_launchctl_print_parser_returns_unknown_for_incomplete_or_ambiguous_data(self) -> None:
+        unknown = Observation("unknown", "invalid_observation")
+        self.assertEqual(parse_launchctl_print_services("gui = {}\n", DEFAULT_PROFILE), unknown)
+        self.assertEqual(
+            parse_launchctl_print_services(
+                "\tservices = {\n\t}\n", DEFAULT_PROFILE
+            ),
+            unknown,
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(
+                LAUNCHCTL_PRINT_FIXTURE.split("\t}\n", 1)[0] + "\n",
+                DEFAULT_PROFILE,
+            ),
+            unknown,
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(
+                LAUNCHCTL_PRINT_FIXTURE + LAUNCHCTL_PRINT_FIXTURE,
+                DEFAULT_PROFILE,
+            ),
+            unknown,
+        )
+        invalid_row = LAUNCHCTL_PRINT_FIXTURE.replace(
+            "\t\t   64868      1 \tcom.apple.example",
+            "\t\t invalid row",
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(invalid_row, DEFAULT_PROFILE), unknown
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(
+                "x" * (identity_bootstrap.MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES + 1),
+                DEFAULT_PROFILE,
+            ),
+            unknown,
+        )
+
+    def test_default_macos_service_observer_uses_bounded_print_gui_command(self) -> None:
+        calls: list[tuple[tuple[str, ...], Mapping[str, str], float]] = []
+        large_output = (
+            "x" * (identity_bootstrap.MAX_COMMAND_OUTPUT_CHARS + 1)
+            + "\n"
+            + LAUNCHCTL_PRINT_FIXTURE
+        )
+
+        def runner(
+            argv: Sequence[str], env: Mapping[str, str], timeout: float
+        ) -> RunResult:
+            calls.append((tuple(argv), dict(env), timeout))
+            return RunResult(0, large_output)
+
+        with mock.patch.object(Path, "is_file", return_value=True):
+            observer = DefaultIdentityObserver(
+                self.layout,
+                self.binary,
+                command_runner=runner,
+                system_name="Darwin",
+            )
+            result = observer.service_manager_entries(DEFAULT_PROFILE)
+
+        self.assertEqual(result, Observation("absent", "observed_user_view"))
+        self.assertEqual(len(calls), 1)
+        argv, env, timeout = calls[0]
+        self.assertEqual(argv, ("/bin/launchctl", "print", "gui/%d" % os.getuid()))
+        self.assertEqual(env["PATH"], "")
+        self.assertEqual(env["HOME"], str(self.layout.data_home))
+        self.assertEqual(timeout, 10.0)
+        self.assertEqual(
+            observer._output_limit,
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES,
+        )
+
+    def test_default_macos_service_observer_rejects_failed_launchctl_print(self) -> None:
+        for failed_result in (
+            RunResult(1, "launchctl failed"),
+            RunResult(None, "partial output", timed_out=True),
+            RunResult(0, LAUNCHCTL_PRINT_FIXTURE, output_truncated=True),
+        ):
+            with self.subTest(result=failed_result), mock.patch.object(
+                Path, "is_file", return_value=True
+            ):
+                observer = DefaultIdentityObserver(
+                    self.layout,
+                    self.binary,
+                    command_runner=lambda _argv, _env, _timeout: failed_result,
+                    system_name="Darwin",
+                )
+                result = observer.service_manager_entries(DEFAULT_PROFILE)
+            self.assertEqual(result.state, "unknown")
+
     def test_empty_path_basis_requires_positive_resolution_check_and_no_manager_proof(self) -> None:
         calls: list[tuple[str, str | None]] = []
 
@@ -637,6 +767,84 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
             expected_environment=expected_env,
         )
         self.assertEqual(linux_mismatch, ProcessEvidence(False, True, False))
+
+    def test_default_process_observer_uses_native_snapshot_without_ps(self) -> None:
+        record = process_info.ProcessInfo(
+            pid=4242,
+            ppid=1,
+            pgid=4242,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable=str(self.binary.resolve()),
+            argv=(str(self.binary.resolve()), "--profile", DEFAULT_PROFILE, "up"),
+        )
+        with (
+            mock.patch.object(
+                process_info, "snapshot_current_user", return_value=(record,)
+            ) as native,
+            mock.patch.object(
+                identity_bootstrap.subprocess,
+                "run",
+                side_effect=AssertionError("default process observer spawned subprocess"),
+            ),
+        ):
+            observer = DefaultIdentityObserver(
+                self.layout,
+                self.binary,
+                system_name=identity_bootstrap.platform.system(),
+            )
+            result = observer.profile_processes(DEFAULT_PROFILE)
+        self.assertEqual(result.state, "present")
+        self.assertEqual(result.basis, "native_process_info_complete")
+        native.assert_called_once_with()
+
+    def test_incomplete_native_process_census_is_unknown_not_absent(self) -> None:
+        def incomplete_snapshot() -> tuple[process_info.ProcessInfo, ...]:
+            raise process_info.ProcessInfoUnavailable("process_list_incomplete")
+
+        observer = DefaultIdentityObserver(
+            self.layout,
+            self.binary,
+            system_name=identity_bootstrap.platform.system(),
+            process_snapshot=incomplete_snapshot,
+        )
+        result = observer.profile_processes(DEFAULT_PROFILE)
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(result.basis, "observation_failed")
+
+    def test_mixed_native_census_keeps_unknown_executable_candidate_uncertain(self) -> None:
+        unrelated = process_info.ProcessInfo(
+            pid=4241,
+            ppid=1,
+            pgid=4241,
+            uid=os.getuid(),
+            start_time=1_700_000_000.0,
+            executable="/bin/echo",
+            argv=("/bin/echo", "worker"),
+            comm="echo",
+        )
+        candidate = process_info.ProcessInfo(
+            pid=4242,
+            ppid=1,
+            pgid=4242,
+            uid=os.getuid(),
+            start_time=1_700_000_001.0,
+            executable=None,
+            argv=(str(self.binary), "--profile", DEFAULT_PROFILE, "up"),
+            comm="opentunnel",
+        )
+        observation = identity_bootstrap.parse_process_info_processes(
+            (unrelated, candidate),
+            profile=DEFAULT_PROFILE,
+            executable_path=self.binary,
+            uid=os.getuid(),
+        )
+        self.assertEqual(observation.state, "present")
+        self.assertEqual(observation.count, 1)
+        self.assertIsNone(observation.processes[0].executable_matches)
+        self.assertEqual(
+            _assess_observations((("process", observation),)), "unknown"
+        )
 
     def test_source_uses_no_shell_and_only_default_runner_invokes_subprocess(self) -> None:
         source_path = Path(__file__).resolve().parents[1] / (

@@ -15,7 +15,6 @@ import os
 import platform
 import re
 import stat
-import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -69,6 +68,7 @@ from web.extensions.opentunnel_sharing.profile_state import (
     default_state_root,
     prepare_profile,
 )
+from web.extensions.opentunnel_sharing import native_process_info as process_info
 from web.extensions.opentunnel_sharing.runtime_manifest import (
     ManifestError as RuntimeManifestError,
     load_companion_manifest as _read_companion_manifest,
@@ -1729,16 +1729,16 @@ def _production_process_table(
     identity = probe_process_identity(pid)
     if identity is None:
         return ProcessObservation("gone" if _process_is_gone(pid) else "unknown")
-    uid = _process_uid(pid)
-    if uid is None:
+    if type(identity.uid) is not int:
         return None
     profile_marker = _process_profile_marker(identity, layout)
     return ProcessIdentity(
         pid=identity.pid,
         creation_token=identity.creation_token,
         exe_path=identity.executable_path,
-        uid=uid,
+        uid=identity.uid,
         profile_marker=profile_marker,
+        legacy_creation_token=identity.legacy_creation_token,
     )
 
 
@@ -1761,34 +1761,11 @@ def _process_is_gone(pid: int) -> bool:
 
 
 def _process_uid(pid: int) -> int | None:
-    if platform.system() == "Linux":
-        try:
-            return os.stat(Path("/proc") / str(pid)).st_uid
-        except OSError:
-            return None
-    if platform.system() != "Darwin":
-        return None
     try:
-        result = subprocess.run(
-            ["/bin/ps", "-o", "uid=", "-p", str(pid)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=1.0,
-            check=False,
-            shell=False,
-            env={"LC_ALL": "C"},
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        info = process_info.lookup(pid)
+    except (OSError, RuntimeError, TypeError, ValueError, OverflowError):
         return None
-    value = result.stdout.strip()
-    if result.returncode != 0 or not value.isascii() or not value.isdigit():
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
+    return info.uid if info is not None else None
 
 
 def _process_profile_marker(identity: Identity, layout: ProfileLayout) -> str | None:
