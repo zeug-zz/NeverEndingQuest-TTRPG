@@ -98,6 +98,18 @@ The companion SHALL run as a foreground, process-supervised child with no unatte
 - **WHEN** the configured reconnect budget is exhausted
 - **THEN** sharing reports a clear failed/degraded diagnostic, withdraws the invitation, and exposes no unauthenticated replacement service
 
+### Requirement: Recovery defaults SHALL remain unchanged outside the isolated N3 gate host
+
+Production recovery SHALL retain its existing default maximum of 5 attempts and backoff delays. The gate override SHALL be honored only in the valid isolated N3 gate context and SHALL NOT change production defaults outside that context.
+
+#### Scenario: The isolated live-gate host supplies a valid recovery override
+- **WHEN** the process is running in the non-symlink isolated `tmp/combat_capture` copy with `WEB_PORT == 8360`, `NEQ_N3_GATE_RUN_ID` matching `^[a-z0-9-]{8,64}$`, and an integer `NEQ_N3_GATE_MAX_RECOVERY_ATTEMPTS` from 1 through 3
+- **THEN** the recovery policy honors that attempt limit, does not exceed the production default of 5, and retains the existing backoff delays
+
+#### Scenario: An override is invalid or supplied outside the isolated gate host
+- **WHEN** the override is malformed, outside 1 through 3, or the isolated-copy, port, or run-ID condition is not met
+- **THEN** the override is ignored with a bounded reason code, production recovery remains at its default of 5 attempts, and existing backoff delays remain unchanged
+
 ### Requirement: Sharing state transitions SHALL be serialized
 
 Start, stop, rotation, and recovery operations SHALL be linearized per NEQ profile so concurrent requests cannot create multiple listeners, tunnel processes, or routes. A stop accepted during startup SHALL cancel that startup generation and prevent it from later becoming ready.
