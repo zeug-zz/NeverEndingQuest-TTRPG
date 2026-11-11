@@ -76,10 +76,12 @@ class FakeSharingService:
         self.credential_state = "absent"
         self.credential_generation: int | None = None
         self.last_credential: IssuedCredential | None = None
+        self.invitation_value: str | None = SENTINEL_INVITATION
+        self.diagnostics_override: Any | None = None
 
-    def diagnostics(self) -> SharingServiceStatus:
+    def diagnostics(self) -> Any:
         self.calls.append("diagnostics")
-        return self._status()
+        return self.diagnostics_override or self._status()
 
     def initialize_identity(self, *, facilitator_confirmed: bool) -> SharingActionResult:
         self.calls.append("initialize_identity")
@@ -132,7 +134,7 @@ class FakeSharingService:
 
     def copy_invitation(self) -> SharingActionResult:
         self.calls.append("copy_invitation")
-        return self._result(True, "invitation_ready", invitation=SENTINEL_INVITATION)
+        return self._result(True, "invitation_ready", invitation=self.invitation_value)
 
     def _status(self) -> SharingServiceStatus:
         return SharingServiceStatus(
@@ -264,6 +266,10 @@ class PlayerSharingControlsTests(unittest.TestCase):
         )
         self.assertEqual(copied.status_code, 200)
         self.assertEqual(copied.json["invitation"], SENTINEL_INVITATION)
+        self.assertEqual(
+            set(copied.json),
+            {"ok", "reason", "status", "invitation"},
+        )
         self.assertIn("no-store", copied.headers["Cache-Control"])
 
         rotated = self.client.post(
@@ -441,6 +447,116 @@ class PlayerSharingControlsTests(unittest.TestCase):
         self.assertNotIn(SENTINEL_CREDENTIAL, logs)
         self.assertNotIn(ROTATED_CREDENTIAL, logs)
         self.assertNotIn(SENTINEL_INVITATION, logs)
+
+    def test_copy_invitation_rejects_non_origin_values_without_echoing_them(self) -> None:
+        invalid_invitations = (
+            "https://player-password-sentinel@neq-share.account.opentunnel.xyz",
+            "https://neq-share.account.opentunnel.xyz/player?token=invitation-token-sentinel",
+            "https://neq-share.account.opentunnel.xyz?credential=invitation-credential-sentinel",
+            "https://neq-share.account.opentunnel.xyz#cookie=cookie-sentinel",
+            "http://neq-share.account.opentunnel.xyz",
+            "https://neq-share.account.opentunnel.xyz\nprivate-key-sentinel",
+        )
+        for invitation in invalid_invitations:
+            with self.subTest(invitation=invitation):
+                self.service.invitation_value = invitation
+                response = self.client.post(
+                    "/api/player-sharing/copy-invitation",
+                    json={},
+                    headers=_headers(),
+                )
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(
+                    response.json,
+                    {"ok": False, "reason": "invitation_unavailable"},
+                )
+                self.assertNotIn(invitation, response.get_data(as_text=True))
+
+    def test_status_diagnostics_are_allowlisted_bounded_and_secret_free(self) -> None:
+        invitation = "https://neq-share.account.opentunnel.xyz?token=raw-invitation-canary"
+        credential = "raw-credential-canary"
+        cookie = "neq_player_session=raw-cookie-canary"
+        private_key = "-----BEGIN PRIVATE KEY-----raw-private-key-canary-----END PRIVATE KEY-----"
+        companion_output = "raw-companion-output-canary" + ("x" * (1024 * 1024))
+        checks = SimpleNamespace(
+            platform_supported=True,
+            listener_started=credential,
+        )
+        counters = SimpleNamespace(start_attempts=1 << 80)
+        lifecycle = SimpleNamespace(
+            state="ready",
+            reason=invitation,
+            generation=1 << 80,
+            checks=checks,
+            counters=counters,
+        )
+        self.service.diagnostics_override = SimpleNamespace(
+            lifecycle=lifecycle,
+            profile_state=private_key,
+            identity_initialized=True,
+            credential_state=cookie,
+            credential_generation=1 << 80,
+            credential_issued_at=credential,
+            invitation=invitation,
+            private_key=private_key,
+            cookie=cookie,
+            raw_companion_output=companion_output,
+        )
+
+        log_stream = io.StringIO()
+        handler = logging.StreamHandler(log_stream)
+        root_logger = logging.getLogger()
+        app_logger = self.app.logger
+        old_root_level = root_logger.level
+        old_app_level = app_logger.level
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.DEBUG)
+        app_logger.addHandler(handler)
+        app_logger.setLevel(logging.DEBUG)
+        try:
+            response = self.client.get(
+                "/api/player-sharing/status",
+                headers={"Host": HOST_AUTHORITY},
+            )
+        finally:
+            app_logger.removeHandler(handler)
+            app_logger.setLevel(old_app_level)
+            root_logger.removeHandler(handler)
+            root_logger.setLevel(old_root_level)
+            handler.close()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json
+        self.assertEqual(set(payload), {"ok", "status"})
+        safe_status = payload["status"]
+        self.assertEqual(
+            set(safe_status),
+            {
+                "state",
+                "reason",
+                "generation",
+                "checks",
+                "counters",
+                "profile_state",
+                "identity_initialized",
+                "credential_state",
+                "credential_generation",
+            },
+        )
+        self.assertEqual(safe_status["state"], "ready")
+        self.assertEqual(safe_status["reason"], "operation_failed")
+        self.assertEqual(safe_status["generation"], (1 << 31) - 1)
+        self.assertTrue(safe_status["checks"]["platform_supported"])
+        self.assertFalse(safe_status["checks"]["listener_started"])
+        self.assertEqual(safe_status["counters"]["start_attempts"], (1 << 31) - 1)
+        self.assertEqual(safe_status["profile_state"], "unavailable")
+        self.assertEqual(safe_status["credential_state"], "unavailable")
+        self.assertEqual(safe_status["credential_generation"], (1 << 31) - 1)
+        response_text = response.get_data(as_text=True)
+        self.assertLess(len(response_text), 2048)
+        for secret in (invitation, credential, cookie, private_key, companion_output):
+            self.assertNotIn(secret, response_text)
+            self.assertNotIn(secret, log_stream.getvalue())
 
     def test_player_asgi_app_has_no_sharing_routes_or_socket_events(self) -> None:
         player_app = create_app(security=PlayerSecurity(lambda: None))
