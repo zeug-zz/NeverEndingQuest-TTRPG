@@ -388,6 +388,7 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
         generation_id: str | None = None,
         content: str | None = None,
         include_cost: bool = True,
+        cost: object = 0.001,
     ) -> bytes:
         scene_index = protocol.SCENE_ORDER.index(scene_id) + 1
         if content is None:
@@ -404,7 +405,7 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
             "reasoning_tokens": 3,
         }
         if include_cost:
-            usage["cost"] = 0.001
+            usage["cost"] = cost
         payload = {
             "id": generation_id or "synthetic-gen-" + str(scene_index),
             "model": model,
@@ -482,6 +483,272 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
             {"network": 0, "credential": 0, "provider_import": 0},
         )
 
+    def test_contract_failure_completes_and_continues_in_frozen_order(self) -> None:
+        ledger = self._new_ledger("study3b-runner-contract-continuation-")
+        first_scene = protocol.SCENE_ORDER[0]
+        fake = study3b_runner.Study3bSyntheticHTTP(
+            ledger,
+            [
+                (200, self._provider_response(first_scene, content="not-json")),
+                *(
+                    (200, self._provider_response(scene_id))
+                    for scene_id in protocol.SCENE_ORDER[1:]
+                ),
+            ],
+        )
+
+        result = study3b_runner.Study3bRunner().run_synthetic(ledger, fake)
+
+        self.assertEqual(result.status, "COMPLETE")
+        self.assertEqual(result.remaining_scenes, ())
+        self.assertEqual(
+            tuple(attempt.scene_id for attempt in result.attempts),
+            protocol.SCENE_ORDER,
+        )
+        self.assertEqual(
+            [attempt.attempt_number for attempt in result.attempts], [1, 2, 3]
+        )
+        self.assertEqual(
+            [attempt.outcome for attempt in result.attempts],
+            ["CONTRACT_FAILURE", "ACCEPTED", "ACCEPTED"],
+        )
+        self.assertFalse(result.attempts[0].stop_study)
+        self.assertEqual(len(fake.calls), len(protocol.SCENE_ORDER))
+        self.assertEqual(fake.credential_reads, len(protocol.SCENE_ORDER))
+        self.assertEqual(
+            fake.reservation_visible_at_credential_read,
+            [True] * len(protocol.SCENE_ORDER),
+        )
+
+        records = [
+            json.loads(line)
+            for line in ledger.path.read_text(encoding="ascii").splitlines()
+        ]
+        result_records = [row for row in records if row.get("event") == "result"]
+        validator_metadata = result_records[0]["validator_metadata"]
+        self.assertEqual(
+            set(validator_metadata), {"code", "rule_id"}
+        )
+        self.assertEqual(
+            validator_metadata,
+            {
+                "code": result.attempts[0].validator_code,
+                "rule_id": result.attempts[0].validator_rule_id,
+            },
+        )
+        self.assertRegex(validator_metadata["code"], r"^[A-Z0-9][A-Z0-9_-]{0,127}$")
+        self.assertRegex(
+            validator_metadata["rule_id"],
+            r"^(?:S3|HOST)-[A-Z0-9][A-Z0-9_-]{0,127}$",
+        )
+        self.assertIsNone(result_records[0]["reason_code"])
+        self.assertIsNone(result_records[1]["validator_metadata"])
+        self.assertIsNone(result_records[2]["validator_metadata"])
+        self.assertNotIn(b"not-json", ledger.path.read_bytes())
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_unexpected_harness_failure_blocks_line_without_model_blame(self) -> None:
+        ledger = self._new_ledger("study3b-runner-harness-failure-")
+        fake = study3b_runner.Study3bSyntheticHTTP(
+            ledger,
+            [
+                (200, self._provider_response(scene_id))
+                for scene_id in protocol.SCENE_ORDER
+            ],
+        )
+        original_hydrate = study3b_runner.hydration.hydrate_delta_output
+        hydration_calls = 0
+        private_message = "synthetic harness exception prose"
+
+        def fail_once(output_bytes: object, *, scene_id: str):
+            nonlocal hydration_calls
+            hydration_calls += 1
+            if hydration_calls == 1:
+                raise RuntimeError(private_message)
+            return original_hydrate(output_bytes, scene_id=scene_id)
+
+        with patch.object(
+            study3b_runner.hydration, "hydrate_delta_output", side_effect=fail_once
+        ):
+            result = study3b_runner.Study3bRunner().run_synthetic(ledger, fake)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.remaining_scenes, ())
+        self.assertEqual(
+            tuple(attempt.scene_id for attempt in result.attempts),
+            protocol.SCENE_ORDER,
+        )
+        self.assertEqual(
+            [attempt.outcome for attempt in result.attempts],
+            ["HARNESS_FAILURE", "ACCEPTED", "ACCEPTED"],
+        )
+        self.assertEqual(result.attempts[0].reason_code, "STUDY3B_HARNESS_FAILURE")
+        self.assertIsNone(result.attempts[0].validator_code)
+        self.assertIsNone(result.attempts[0].validator_rule_id)
+        self.assertEqual(len(fake.calls), len(protocol.SCENE_ORDER))
+        self.assertNotIn(private_message.encode("ascii"), ledger.path.read_bytes())
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_host_contract_failure_blocks_line_but_keeps_frozen_dispatch(self) -> None:
+        ledger = self._new_ledger("study3b-runner-host-contract-failure-")
+        fake = study3b_runner.Study3bSyntheticHTTP(
+            ledger,
+            [
+                (200, self._provider_response(scene_id))
+                for scene_id in protocol.SCENE_ORDER
+            ],
+        )
+        original_hydrate = study3b_runner.hydration.hydrate_delta_output
+
+        def host_failure(output_bytes: object, *, scene_id: str):
+            if scene_id == protocol.SCENE_ORDER[0]:
+                raise study3b_runner.study3b_contract.ContractError(
+                    "STUDY3B_HYDRATION_SHAPE_INVALID",
+                    "HOST-CANONICAL-HASH-INTEGRITY",
+                    "/private/validator/path",
+                )
+            return original_hydrate(output_bytes, scene_id=scene_id)
+
+        with patch.object(
+            study3b_runner.hydration,
+            "hydrate_delta_output",
+            side_effect=host_failure,
+        ):
+            result = study3b_runner.Study3bRunner().run_synthetic(ledger, fake)
+
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(
+            [attempt.outcome for attempt in result.attempts],
+            ["HARNESS_FAILURE", "ACCEPTED", "ACCEPTED"],
+        )
+        self.assertEqual(
+            (result.attempts[0].validator_code, result.attempts[0].validator_rule_id),
+            (
+                "STUDY3B_HYDRATION_SHAPE_INVALID",
+                "HOST-CANONICAL-HASH-INTEGRITY",
+            ),
+        )
+        self.assertEqual(
+            result.attempts[0].reason_code, "STUDY3B_HARNESS_FAILURE"
+        )
+        self.assertEqual(len(fake.calls), len(protocol.SCENE_ORDER))
+        self.assertNotIn(b"/private/validator/path", ledger.path.read_bytes())
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_unknown_or_mismatched_validator_pair_is_generic_harness_failure(
+        self,
+    ) -> None:
+        forged_cases = (
+            (
+                "unknown_code",
+                "FORGED_VALIDATOR_CODE",
+                "S3-GUARDED-CONTENT-MARKERS",
+            ),
+            (
+                "mismatched_pair",
+                "OUTPUT_JSON_INVALID",
+                "S3-JSON-BYTE-LIMIT",
+            ),
+        )
+        private_source_path = "/private source prose: synthetic sentinel"
+        for label, code, rule_id in forged_cases:
+            with self.subTest(case=label):
+                ledger = self._new_ledger("study3b-runner-forged-validator-")
+                fake = study3b_runner.Study3bSyntheticHTTP(
+                    ledger,
+                    [
+                        (200, self._provider_response(scene_id))
+                        for scene_id in protocol.SCENE_ORDER
+                    ],
+                )
+                original_hydrate = study3b_runner.hydration.hydrate_delta_output
+
+                def forged_failure(output_bytes: object, *, scene_id: str):
+                    if scene_id == protocol.SCENE_ORDER[0]:
+                        raise study3b_runner.study3b_contract.ContractError(
+                            code, rule_id, private_source_path
+                        )
+                    return original_hydrate(output_bytes, scene_id=scene_id)
+
+                with patch.object(
+                    study3b_runner.hydration,
+                    "hydrate_delta_output",
+                    side_effect=forged_failure,
+                ):
+                    result = study3b_runner.Study3bRunner().run_synthetic(
+                        ledger, fake
+                    )
+
+                first_attempt = result.attempts[0]
+                self.assertEqual(result.status, "BLOCKED")
+                self.assertEqual(
+                    [attempt.outcome for attempt in result.attempts],
+                    ["HARNESS_FAILURE", "ACCEPTED", "ACCEPTED"],
+                )
+                self.assertEqual(
+                    first_attempt.reason_code, "STUDY3B_HARNESS_FAILURE"
+                )
+                self.assertIsNone(first_attempt.validator_code)
+                self.assertIsNone(first_attempt.validator_rule_id)
+                self.assertEqual(len(fake.calls), len(protocol.SCENE_ORDER))
+                serialized_result = repr(result).encode("utf-8")
+                ledger_bytes = ledger.path.read_bytes()
+                for untrusted in (code, rule_id, private_source_path):
+                    encoded = untrusted.encode("utf-8")
+                    self.assertNotIn(encoded, serialized_result)
+                    self.assertNotIn(encoded, ledger_bytes)
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_validator_metadata_rejects_prose_and_unbounded_values(self) -> None:
+        invalid_metadata = (
+            {
+                "code": "OUTPUT_JSON_INVALID",
+                "rule_id": "S3-JSON-OBJECT",
+                "message": "not allowlisted",
+            },
+            {"code": "contract failed", "rule_id": "S3-JSON-OBJECT"},
+            {"code": "OUTPUT_JSON_INVALID", "rule_id": "S3 rule with prose"},
+            {
+                "code": "FORGED_VALIDATOR_CODE",
+                "rule_id": "S3-GUARDED-CONTENT-MARKERS",
+            },
+            {"code": "OUTPUT_JSON_INVALID", "rule_id": "S3-JSON-BYTE-LIMIT"},
+            {
+                "code": "STUDY3B_HYDRATION_SHAPE_INVALID",
+                "rule_id": "HOST-CANONICAL-HASH-INTEGRITY",
+            },
+        )
+        for metadata in invalid_metadata:
+            with self.subTest(metadata=metadata):
+                ledger = self._new_ledger("study3b-runner-validator-metadata-")
+                scene_id = protocol.SCENE_ORDER[0]
+                reservation = ledger.reserve(
+                    scene_id=scene_id,
+                    request_sha256=study3b_ledger.request_sha256_for_scene(scene_id),
+                )
+                with self.assertRaises(study3b_ledger.Study3bLedgerError) as blocked:
+                    ledger.complete(
+                        reservation,
+                        outcome="CONTRACT_FAILURE",
+                        cost_receipt=None,
+                        validator_metadata=metadata,
+                    )
+                self.assertEqual(
+                    blocked.exception.code, "LEDGER_VALIDATOR_METADATA_INVALID"
+                )
+
     def test_failures_stop_without_retry_or_fallback(self) -> None:
         scene_id = protocol.SCENE_ORDER[0]
         valid = self._provider_response(scene_id)
@@ -508,10 +775,10 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
                 "UNRESOLVED",
             ),
             (
-                "protocol_defect",
-                [(200, self._provider_response(scene_id, content="not-json"))],
-                "STUDY3B_OUTPUT_PROTOCOL_DEFECT",
-                "RECONCILED",
+                "budget_over_cap",
+                [(200, self._provider_response(scene_id, cost=0.05))],
+                "REMAINING_BUDGET_UNSAFE",
+                "OVER_CAP",
             ),
         )
         for label, responses, reason_code, cost_status in cases:
@@ -521,6 +788,7 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
                 result = study3b_runner.Study3bRunner().run_synthetic(ledger, fake)
                 self.assertEqual(result.status, "STOPPED")
                 self.assertEqual(len(result.attempts), 1)
+                self.assertTrue(result.attempts[0].stop_study)
                 self.assertEqual(len(fake.calls), 1)
                 self.assertEqual(fake.credential_reads, 1)
                 self.assertEqual(fake.reservation_visible_at_credential_read, [True])
@@ -624,6 +892,115 @@ class Study3bProtocolAndRequestTests(unittest.TestCase):
         self.assertEqual(
             blocked.exception.code,
             "STUDY3B_EXPLICIT_EXACT_HEAD_OPT_IN_REQUIRED",
+        )
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_continuation_runner_requires_fresh_exact_head_opt_in(self) -> None:
+        with patch.object(
+            study3b_runner.preflight,
+            "verify_live_readiness",
+            side_effect=AssertionError("continuation must not reuse old readiness"),
+        ), patch.object(
+            study3b_runner,
+            "Study3bLedger",
+            side_effect=AssertionError("continuation must not open ledger first"),
+        ), patch.object(
+            study3b_runner,
+            "_Study3bPolicyAdapter",
+            side_effect=AssertionError("continuation must not construct transport"),
+        ):
+            with self.assertRaises(study3b_runner.Study3bRunnerBlocked) as blocked:
+                study3b_runner.Study3bRunner().continue_run()
+        self.assertEqual(
+            blocked.exception.code,
+            "STUDY3B_EXPLICIT_EXACT_HEAD_OPT_IN_REQUIRED",
+        )
+        self.assertEqual(
+            self.calls,
+            {"network": 0, "credential": 0, "provider_import": 0},
+        )
+
+    def test_continuation_runner_authenticates_existing_ledger_before_remaining_order(self) -> None:
+        readiness = study3b_runner.preflight.ReadinessVerification(
+            status="READY",
+            reason_codes=(),
+            study_id=protocol.STUDY_ID,
+            expected_head_sha="a" * 40,
+            current_head_sha="a" * 40,
+            ci_check_count=len(study3b_runner.preflight.REQUIRED_CI_CHECK_NAMES),
+            preflight_gate_count=len(
+                study3b_runner.preflight.REQUIRED_PREFLIGHT_COMMANDS
+            ),
+            external_provenance_verified=True,
+            live_dispatch_permitted=True,
+            ruling_id=study3b_runner.preflight.DISPATCH_RULING_ID,
+            ruling_section_sha256=(
+                study3b_runner.preflight.PINNED_RULING_SECTION_SHA256
+            ),
+            ci_evidence_path=PREP_ROOT_RELATIVE + "/synthetic-ci.json",
+            ci_evidence_sha256="b" * 64,
+            evidence_relative_path=(
+                PREP_ROOT_RELATIVE + "/readiness/synthetic.json"
+            ),
+            evidence_sha256="c" * 64,
+            _proof=study3b_runner.preflight._CONTINUATION_READY_PROOF,
+        )
+
+        class ExistingLedgerFixture:
+            def __init__(self) -> None:
+                self.readiness: object | None = None
+
+            def continue_from_stopped(self, *, readiness: object) -> None:
+                self.readiness = readiness
+
+        existing_ledger = ExistingLedgerFixture()
+        adapter = object()
+        expected_result = study3b_runner.Study3bRunResult(
+            study_id=protocol.STUDY_ID,
+            status="COMPLETE",
+            attempts=(),
+            remaining_scenes=(),
+            synthetic_only=False,
+        )
+        with patch.object(
+            study3b_runner.preflight,
+            "verify_live_readiness",
+            return_value=readiness,
+        ) as verify, patch.object(
+            study3b_runner,
+            "Study3bLedger",
+            return_value=existing_ledger,
+        ), patch.object(
+            study3b_runner, "_Study3bPolicyAdapter", return_value=adapter
+        ), patch.object(
+            study3b_runner,
+            "_execute_reserved_scenes",
+            return_value=expected_result,
+        ) as execute:
+            result = study3b_runner.Study3bRunner().continue_run(
+                expected_head_sha="a" * 40,
+                ci_evidence_path=readiness.ci_evidence_path,
+                ci_evidence_sha256=readiness.ci_evidence_sha256,
+                dispatch_ruling_id=study3b_runner.preflight.DISPATCH_RULING_ID,
+            )
+
+        self.assertIs(result, expected_result)
+        self.assertIs(existing_ledger.readiness, readiness)
+        verify.assert_called_once_with(
+            expected_head_sha="a" * 40,
+            ci_evidence_path=readiness.ci_evidence_path,
+            ci_evidence_sha256=readiness.ci_evidence_sha256,
+            dispatch_ruling_id=study3b_runner.preflight.DISPATCH_RULING_ID,
+            _allow_existing_run_root=True,
+        )
+        execute.assert_called_once_with(
+            existing_ledger,
+            adapter,
+            synthetic_only=False,
+            scene_ids=protocol.SCENE_ORDER[1:],
         )
         self.assertEqual(
             self.calls,

@@ -39,6 +39,7 @@ from .isolation import (
 GITHUB_REPOSITORY = "zeug-zz/NeverEndingQuest-TTRPG"
 GITHUB_PR_NUMBER = 127
 DISPATCH_RULING_ID = "neq-s-study3-adjudication-20261111"
+CONTINUATION_RULING_ID = "neq-s-study3b-adjudication-20261111"
 RULING_CAMPAIGN_TREE_ROOT = Path(
     "/Users/zeug/Projects/NeverEndingQuest/.git/overseer-relay/campaigns/neq-current-build"
 )
@@ -46,6 +47,9 @@ RULING_SOURCE_DIRECTORY = "rulings"
 RULING_SOURCE_NAME = "B.md"
 PINNED_RULING_SECTION_SHA256 = (
     "950ed79edc700cd1e81b58d9d8e1a43241c1348e975416cfeb324ff18b9917ca"
+)
+PINNED_CONTINUATION_RULING_SECTION_SHA256 = (
+    "b9e2a414e7b5234bd3453bd42b689515a3215ab2e6690580c6abe91c7746fce8"
 )
 PINNED_PRIOR_STUDY_BASELINE_SHA256 = (
     "62065f978894fe2de246b20ad462ca07dc1df733af44f27c91b48fdd8672a8f2"
@@ -170,6 +174,7 @@ _TRUSTED_TOOL_DIRECTORIES = (
 _TRUSTED_EXECUTABLE_PATH = os.pathsep.join(_TRUSTED_TOOL_DIRECTORIES)
 _READINESS_DIRECTORY_RELATIVE = PREP_ROOT_RELATIVE + "/readiness"
 _READY_PROOF = object()
+_CONTINUATION_READY_PROOF = object()
 _RULING_REQUIRED_SCOPE = (
     b"Authorized next (routine corrected rerun, no owner ask):",
     b"Study 3b: same three scenes in the same order, same model and caps "
@@ -241,7 +246,10 @@ def is_verified_readiness(value: object) -> bool:
 
     return (
         type(value) is ReadinessVerification
-        and value._proof is _READY_PROOF
+        and (
+            value._proof is _READY_PROOF
+            or value._proof is _CONTINUATION_READY_PROOF
+        )
         and value.status == "READY"
         and value.reason_codes == ()
         and value.study_id == protocol.STUDY_ID
@@ -265,12 +273,19 @@ def is_verified_readiness(value: object) -> bool:
     )
 
 
+def is_verified_continuation_readiness(value: object) -> bool:
+    """Return true only for fresh readiness produced for the existing ledger."""
+
+    return is_verified_readiness(value) and value._proof is _CONTINUATION_READY_PROOF
+
+
 def verify_live_readiness(
     *,
     expected_head_sha: object,
     ci_evidence_path: object,
     ci_evidence_sha256: object,
     dispatch_ruling_id: object,
+    _allow_existing_run_root: bool = False,
 ) -> ReadinessVerification:
     """Run exact-head checks and persist metadata-only immutable evidence.
 
@@ -291,6 +306,8 @@ def verify_live_readiness(
     reason_codes: list[str] = []
 
     try:
+        if type(_allow_existing_run_root) is not bool:
+            raise ReadinessBlocked("STUDY3B_RUN_ROOT_MODE_INVALID")
         _validate_inputs(
             expected_head_sha=expected_head_sha,
             ci_evidence_path=ci_evidence_path,
@@ -304,7 +321,8 @@ def verify_live_readiness(
             raise ReadinessBlocked("LOCAL_HEAD_SHA_MISMATCH")
 
         _validate_fixed_study_and_cost()
-        _assert_fresh_run_root()
+        if not _allow_existing_run_root:
+            _assert_fresh_run_root()
         ruling_summary = _verify_adjudication_ruling()
         ci_bytes, ci_stat = _read_ci_evidence(ci_evidence_path)
         if hashlib.sha256(ci_bytes).hexdigest() != ci_evidence_sha256:
@@ -317,6 +335,7 @@ def verify_live_readiness(
         gate_summary = _run_provider_free_preflight(
             expected_head_sha,
             baseline_pin,
+            require_fresh_run_root=not _allow_existing_run_root,
         )
         reason_codes.extend(gate_summary.gate_failures)
         reason_codes.extend(gate_summary.infrastructure_failures)
@@ -337,7 +356,8 @@ def verify_live_readiness(
             reason_codes.append("LOCAL_WORKTREE_NOT_CLEAN_AFTER_PREFLIGHT")
         if current_head != expected_head_sha:
             reason_codes.append("LOCAL_HEAD_SHA_CHANGED_DURING_PREFLIGHT")
-        _assert_fresh_run_root()
+        if not _allow_existing_run_root:
+            _assert_fresh_run_root()
     except ReadinessBlocked as error:
         reason_codes.append(error.code)
     except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
@@ -413,7 +433,11 @@ def verify_live_readiness(
             ci_evidence_sha256=ci_evidence_sha256,
             evidence_relative_path=evidence_relative_path,
             evidence_sha256=evidence_sha256,
-            _proof=_READY_PROOF,
+            _proof=(
+                _CONTINUATION_READY_PROOF
+                if _allow_existing_run_root
+                else _READY_PROOF
+            ),
         )
         try:
             _verify_persisted_readiness_evidence(
@@ -476,9 +500,17 @@ def verify_live_readiness(
 def assert_dispatch_readiness_current(value: object) -> None:
     """Repeat the immediate dispatch boundary without reserving or dispatching."""
 
+    _assert_dispatch_readiness_current(value, require_fresh_run_root=True)
+
+
+def _assert_dispatch_readiness_current(
+    value: object, *, require_fresh_run_root: bool
+) -> None:
     if not is_verified_readiness(value):
         raise ReadinessBlocked("LIVE_READINESS_PROOF_REQUIRED")
     assert isinstance(value, ReadinessVerification)
+    if type(require_fresh_run_root) is not bool:
+        raise ReadinessBlocked("STUDY3B_RUN_ROOT_MODE_INVALID")
     current_head, status = _read_local_git_state()
     if status:
         raise ReadinessBlocked("LOCAL_WORKTREE_NOT_CLEAN_BEFORE_LEDGER")
@@ -486,7 +518,8 @@ def assert_dispatch_readiness_current(value: object) -> None:
         raise ReadinessBlocked("LOCAL_HEAD_SHA_MISMATCH_BEFORE_LEDGER")
     _validate_fixed_study_and_cost()
     ruling_summary = _verify_adjudication_ruling()
-    _assert_fresh_run_root()
+    if require_fresh_run_root:
+        _assert_fresh_run_root()
     raw, _metadata = _read_ci_evidence(value.ci_evidence_path)
     if hashlib.sha256(raw).hexdigest() != value.ci_evidence_sha256:
         raise ReadinessBlocked("CI_EVIDENCE_CHANGED_BEFORE_LEDGER")
@@ -513,7 +546,17 @@ def assert_dispatch_readiness_current(value: object) -> None:
     current_head, status = _read_local_git_state()
     if status or current_head != value.expected_head_sha:
         raise ReadinessBlocked("LOCAL_GIT_STATE_CHANGED_BEFORE_LEDGER")
-    _assert_fresh_run_root()
+    if require_fresh_run_root:
+        _assert_fresh_run_root()
+
+
+def assert_study3b_continuation_readiness_current(value: object) -> dict[str, str]:
+    """Recheck exact-head readiness and the actual Study 3b adjudication."""
+
+    if not is_verified_continuation_readiness(value):
+        raise ReadinessBlocked("LIVE_CONTINUATION_READINESS_PROOF_REQUIRED")
+    _assert_dispatch_readiness_current(value, require_fresh_run_root=False)
+    return _verify_study3b_continuation_ruling()
 
 
 def _verify_persisted_readiness_evidence(
@@ -768,6 +811,18 @@ def _verify_adjudication_ruling() -> dict[str, str]:
     }
 
 
+def _verify_study3b_continuation_ruling() -> dict[str, str]:
+    raw = _read_ruling_source()
+    section = _extract_ruling_section(raw, ruling_id=CONTINUATION_RULING_ID)
+    digest = hashlib.sha256(section).hexdigest()
+    if digest != PINNED_CONTINUATION_RULING_SECTION_SHA256:
+        raise ReadinessBlocked("STUDY3B_CONTINUATION_RULING_HASH_MISMATCH")
+    return {
+        "ruling_id": CONTINUATION_RULING_ID,
+        "section_sha256": digest,
+    }
+
+
 def _read_ruling_source() -> bytes:
     campaign_fd: int | None = None
     rulings_fd: int | None = None
@@ -877,8 +932,15 @@ def _read_ruling_source() -> bytes:
     return raw
 
 
-def _extract_ruling_section(raw: bytes) -> bytes:
-    heading = b"## Ruling: " + DISPATCH_RULING_ID.encode("ascii")
+def _extract_ruling_section(
+    raw: bytes, *, ruling_id: str = DISPATCH_RULING_ID
+) -> bytes:
+    if type(ruling_id) is not str or ruling_id not in {
+        DISPATCH_RULING_ID,
+        CONTINUATION_RULING_ID,
+    }:
+        raise ReadinessBlocked("ADJUDICATION_RULING_ID_INVALID")
+    heading = b"## Ruling: " + ruling_id.encode("ascii")
     heading_lines = [
         match
         for match in re.finditer(rb"(?m)^## [^\r\n]*(?:\r?\n|$)", raw)
@@ -1258,14 +1320,19 @@ def _assert_baseline_unchanged(pin: _BaselinePin) -> None:
 def _run_provider_free_preflight(
     expected_sha: str,
     baseline_pin: _BaselinePin,
+    *,
+    require_fresh_run_root: bool = True,
 ) -> _GateSummary:
+    if type(require_fresh_run_root) is not bool:
+        raise ReadinessBlocked("STUDY3B_RUN_ROOT_MODE_INVALID")
     checks: list[dict[str, Any]] = []
     gate_failures: list[str] = []
     infrastructure_failures: list[str] = []
     for gate_id, command in REQUIRED_PREFLIGHT_COMMANDS:
         try:
             _assert_git_state(expected_sha, "BEFORE_" + gate_id)
-            _assert_fresh_run_root()
+            if require_fresh_run_root:
+                _assert_fresh_run_root()
             _assert_baseline_unchanged(baseline_pin)
             result = _run_process(
                 command,
@@ -1328,7 +1395,8 @@ def _run_provider_free_preflight(
         # even a failed test, before any later command can run.
         try:
             _assert_baseline_unchanged(baseline_pin)
-            _assert_fresh_run_root()
+            if require_fresh_run_root:
+                _assert_fresh_run_root()
             _assert_git_state(expected_sha, "AFTER_" + gate_id)
         except ReadinessBlocked as error:
             infrastructure_failures.append(error.code)
@@ -1779,8 +1847,10 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "CONTINUATION_RULING_ID",
     "DISPATCH_RULING_ID",
     "GITHUB_REPOSITORY",
+    "PINNED_CONTINUATION_RULING_SECTION_SHA256",
     "PINNED_RULING_SECTION_SHA256",
     "PINNED_PRIOR_STUDY_BASELINE_SHA256",
     "REQUIRED_CI_CHECK_NAMES",
@@ -1789,7 +1859,9 @@ __all__ = [
     "ReadinessBlocked",
     "ReadinessVerification",
     "assert_dispatch_readiness_current",
+    "assert_study3b_continuation_readiness_current",
     "is_verified_readiness",
+    "is_verified_continuation_readiness",
     "main",
     "verify_live_readiness",
 ]

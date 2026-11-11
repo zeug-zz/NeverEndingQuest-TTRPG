@@ -35,6 +35,7 @@ from .isolation import (
     STUDY3B_RUN_ROOT_RELATIVE,
     assert_study3b_write_target,
 )
+from .validator_metadata import validator_metadata_outcome
 
 
 LEDGER_ROOT_RELATIVE = STUDY3B_RUN_ROOT_RELATIVE
@@ -46,6 +47,13 @@ LEDGER_SCHEMA = "neq.llm_staging_study3b_durable_ledger.v3"
 LEDGER_SCHEMA_VERSION = 3
 MAX_LEDGER_BYTES = 64 * 1024
 HARD_CEILING_USD = Decimal("0.05")
+ORIGINAL_PREFIX_BYTES = 7495
+ORIGINAL_PREFIX_SHA256 = (
+    "a522e60692c4aa2c7f622998f2ac6cb165ef02211043abf949c319858fa7fd5e"
+)
+ORIGINAL_HA003_COST_USD = "0.004085175"
+ORIGINAL_HA003_VALIDATOR_CODE = "GUARDED_MARKER_IN_PUBLIC_DELTA"
+ORIGINAL_HA003_VALIDATOR_RULE_ID = "S3-GUARDED-CONTENT-MARKERS"
 RATE_LISTING_RELATIVE = (
     "tmp/router-rollout/mapping-pilot/mise-en-scene-offline/llm-staging/"
     "availability-check/model-listing.json"
@@ -178,6 +186,7 @@ class _LedgerState:
     pending: dict[str, Any] | None
     pending_sha256: str | None
     stopped: bool
+    continuation_used: bool
     unresolved_cost: bool
     actual_total: Decimal
     receipt_ids: frozenset[str]
@@ -420,6 +429,7 @@ class Study3bLedger:
         *,
         outcome: object,
         cost_receipt: object = None,
+        validator_metadata: object = None,
     ) -> Study3bCompletion:
         """Append a bound result and receipt, stopping on uncertain accounting."""
 
@@ -434,9 +444,15 @@ class Study3bLedger:
         if type(outcome) is not str or outcome not in {
             "ACCEPTED",
             "CONTRACT_FAILURE",
+            "HARNESS_FAILURE",
             "STOPPED",
         }:
             raise Study3bLedgerError("RESULT_OUTCOME_INVALID")
+        safe_validator_metadata = _normalize_validator_metadata(
+            validator_metadata,
+            outcome=outcome,
+            required=outcome == "CONTRACT_FAILURE",
+        )
 
         binding = _load_binding()
         with self._locked_existing() as (root_fd, ledger_fd):
@@ -455,7 +471,11 @@ class Study3bLedger:
             receipt: dict[str, Any] | None = None
             actual_cost: Decimal | None = None
             actual_status = "UNRESOLVED"
-            reason_code: str | None
+            reason_code: str | None = (
+                "STUDY3B_HARNESS_FAILURE"
+                if outcome == "HARNESS_FAILURE"
+                else None
+            )
             if cost_receipt is None:
                 reason_code = "COST_RECEIPT_MISSING"
             else:
@@ -481,6 +501,9 @@ class Study3bLedger:
                         actual_status = "RECONCILED"
                         reason_code = None
 
+            if actual_status == "RECONCILED" and outcome == "HARNESS_FAILURE":
+                reason_code = "STUDY3B_HARNESS_FAILURE"
+
             if actual_status == "UNRESOLVED":
                 receipt_for_record = None
                 actual_cost_text = None
@@ -488,9 +511,7 @@ class Study3bLedger:
                 receipt_for_record = receipt
                 actual_cost_text = _format_cost(actual_cost)
 
-            stop_study = (
-                outcome != "ACCEPTED" or actual_status != "RECONCILED"
-            )
+            stop_study = outcome == "STOPPED" or actual_status != "RECONCILED"
             result_payload = {
                 "event": "result",
                 "schema_version": LEDGER_SCHEMA_VERSION,
@@ -519,6 +540,7 @@ class Study3bLedger:
                 "actual_cost_usd": actual_cost_text,
                 "cost_receipt": receipt_for_record,
                 "reason_code": reason_code,
+                "validator_metadata": safe_validator_metadata,
             }
             try:
                 _append_record(
@@ -544,11 +566,112 @@ class Study3bLedger:
                 stop_study=stop_study,
             )
 
+    def continue_from_stopped(self, *, readiness: object) -> None:
+        """Append the sole authorized continuation to this existing ledger.
+
+        The existing root is opened without initialization. Readiness and both
+        rulings are reauthenticated while the exclusive ledger lock is held.
+        Only the hash-pinned stopped ha003 prefix can receive the transition.
+        """
+
+        self._ensure_process()
+        if self._initialized:
+            raise Study3bLedgerError("LEDGER_CONTINUATION_ALREADY_USED")
+        from . import preflight
+
+        if not preflight.is_verified_continuation_readiness(readiness):
+            raise Study3bLedgerError("LIVE_CONTINUATION_READINESS_PROOF_REQUIRED")
+        assert isinstance(readiness, preflight.ReadinessVerification)
+        binding = _load_binding()
+        with self._locked_existing(allow_uninitialized=True) as (
+            root_fd,
+            ledger_fd,
+        ):
+            if self._initialized:
+                raise Study3bLedgerError("LEDGER_CONTINUATION_ALREADY_USED")
+            try:
+                ruling = preflight.assert_study3b_continuation_readiness_current(
+                    readiness
+                )
+            except preflight.ReadinessBlocked as error:
+                raise Study3bLedgerError(error.code) from None
+            except Exception:
+                raise Study3bLedgerError(
+                    "STUDY3B_CONTINUATION_READINESS_FAILED_CLOSED"
+                ) from None
+            if (
+                type(ruling) is not dict
+                or set(ruling) != {"ruling_id", "section_sha256"}
+                or ruling.get("ruling_id") != preflight.CONTINUATION_RULING_ID
+                or ruling.get("section_sha256")
+                != preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256
+            ):
+                raise Study3bLedgerError("STUDY3B_CONTINUATION_RULING_INVALID")
+
+            prefix = _read_pinned_original_prefix(root_fd, ledger_fd)
+            state = _read_state(ledger_fd, binding)
+            _require_stopped_ha003_prefix(state)
+            if state.continuation_used:
+                raise Study3bLedgerError("LEDGER_CONTINUATION_ALREADY_USED")
+            if protocol.SCENE_ORDER[1] != "into_the_deepvault:scene:sd005-i03":
+                raise Study3bLedgerError("LEDGER_CONTINUATION_SCENE_ORDER_INVALID")
+
+            payload = {
+                "event": "continuation_transition",
+                "schema_version": LEDGER_SCHEMA_VERSION,
+                "study_id": protocol.STUDY_ID,
+                "lock_identity": LOCK_IDENTITY,
+                "ruling_id": ruling["ruling_id"],
+                "ruling_section_sha256": ruling["section_sha256"],
+                "readiness_head_sha": readiness.expected_head_sha,
+                "readiness_evidence_sha256": readiness.evidence_sha256,
+                "ci_evidence_sha256": readiness.ci_evidence_sha256,
+                "original_prefix_bytes": len(prefix),
+                "original_prefix_sha256": hashlib.sha256(prefix).hexdigest(),
+                "prior_attempt_number": 1,
+                "prior_scene_id": protocol.SCENE_ORDER[0],
+                "prior_result_record_sha256": state.records[-1][
+                    "record_sha256"
+                ],
+                "prior_result_outcome": "CONTRACT_FAILURE",
+                "prior_actual_cost_status": "RECONCILED",
+                "prior_actual_cost_usd": ORIGINAL_HA003_COST_USD,
+                "next_scene_id": protocol.SCENE_ORDER[1],
+                "remaining_scene_order": list(protocol.SCENE_ORDER[1:]),
+                "ha003_adjudication_supplement": {
+                    "code": ORIGINAL_HA003_VALIDATOR_CODE,
+                    "rule_id": ORIGINAL_HA003_VALIDATOR_RULE_ID,
+                },
+            }
+            try:
+                _append_record(
+                    ledger_fd,
+                    payload,
+                    state.records[-1]["record_sha256"],
+                    self.path,
+                )
+                os.fsync(ledger_fd)
+            except (OSError, Study3bLedgerError) as error:
+                self._poisoned = True
+                if isinstance(error, Study3bLedgerError):
+                    raise
+                raise Study3bLedgerError(
+                    "LEDGER_CONTINUATION_DURABILITY_UNCERTAIN"
+                ) from None
+            self._initialized = True
+
     @contextmanager
-    def _locked_existing(self) -> Iterator[tuple[int, int]]:
+    def _locked_existing(
+        self, *, allow_uninitialized: bool = False
+    ) -> Iterator[tuple[int, int]]:
         """Yield verified descriptors while holding thread and file locks."""
 
-        self._ensure_initialized()
+        self._ensure_process()
+        if allow_uninitialized:
+            if self._initialized:
+                raise Study3bLedgerError("LEDGER_CONTINUATION_ALREADY_USED")
+        elif not self._initialized:
+            raise Study3bLedgerError("LEDGER_INSTANCE_NOT_INITIALIZED")
         root_fd: int | None = None
         lock_fd: int | None = None
         ledger_fd: int | None = None
@@ -906,6 +1029,35 @@ def _estimate_sha256(estimate: _SceneCostEstimate) -> str:
     return hashlib.sha256(_canonical_bytes(estimate.as_record())).hexdigest()
 
 
+def _normalize_validator_metadata(
+    value: object,
+    *,
+    outcome: str,
+    required: bool,
+) -> dict[str, str] | None:
+    """Keep only an exact validator pair matching the recorded outcome."""
+
+    if value is None:
+        if required:
+            raise Study3bLedgerError("LEDGER_VALIDATOR_METADATA_INVALID")
+        return None
+    metadata_outcome = (
+        validator_metadata_outcome(value.get("code"), value.get("rule_id"))
+        if type(value) is dict
+        else None
+    )
+    if (
+        type(value) is not dict
+        or set(value) != {"code", "rule_id"}
+        or type(value.get("code")) is not str
+        or type(value.get("rule_id")) is not str
+        or outcome not in {"CONTRACT_FAILURE", "HARNESS_FAILURE"}
+        or metadata_outcome != outcome
+    ):
+        raise Study3bLedgerError("LEDGER_VALIDATOR_METADATA_INVALID")
+    return {"code": value["code"], "rule_id": value["rule_id"]}
+
+
 def _header_payload(binding: _Binding) -> dict[str, Any]:
     _validate_scene_estimate_binding(binding, 16384)
     pricing_provenance = dict(binding.pricing_provenance_items)
@@ -962,6 +1114,141 @@ def _header_payload(binding: _Binding) -> dict[str, Any]:
     }
 
 
+def _read_pinned_original_prefix(root_fd: int, descriptor: int) -> bytes:
+    """Read and authenticate the original byte prefix under the ledger lock."""
+
+    try:
+        _verify_named_regular_file(root_fd, LEDGER_NAME, descriptor)
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size != ORIGINAL_PREFIX_BYTES
+        ):
+            raise Study3bLedgerError("LEDGER_ORIGINAL_PREFIX_MISMATCH")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        contents = _read_descriptor(descriptor, MAX_LEDGER_BYTES + 1)
+        after = os.fstat(descriptor)
+        _verify_named_regular_file(root_fd, LEDGER_NAME, descriptor)
+    except Study3bLedgerError:
+        raise
+    except OSError:
+        raise Study3bLedgerError("LEDGER_ORIGINAL_PREFIX_UNAVAILABLE") from None
+    if (
+        len(contents) != ORIGINAL_PREFIX_BYTES
+        or len(contents) != before.st_size
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or hashlib.sha256(contents).hexdigest() != ORIGINAL_PREFIX_SHA256
+    ):
+        raise Study3bLedgerError("LEDGER_ORIGINAL_PREFIX_MISMATCH")
+    return contents
+
+
+def _require_stopped_ha003_prefix(state: _LedgerState) -> None:
+    if (
+        type(state) is not _LedgerState
+        or len(state.records) != 3
+        or len(state.reservations) != 1
+        or len(state.results) != 1
+        or state.pending is not None
+        or state.stopped is not True
+        or state.continuation_used is not False
+        or state.unresolved_cost is not False
+        or state.actual_total != Decimal(ORIGINAL_HA003_COST_USD)
+    ):
+        raise Study3bLedgerError("LEDGER_CONTINUATION_PRIOR_STATE_MISMATCH")
+    reservation = state.reservations[0]
+    result = state.results[0]
+    if (
+        reservation.get("attempt_number") != 1
+        or reservation.get("scene_id") != protocol.SCENE_ORDER[0]
+        or result.get("attempt_number") != 1
+        or result.get("scene_id") != protocol.SCENE_ORDER[0]
+        or result.get("outcome") != "CONTRACT_FAILURE"
+        or result.get("stop_study") is not True
+        or result.get("actual_cost_status") != "RECONCILED"
+        or result.get("actual_cost_usd") != ORIGINAL_HA003_COST_USD
+        or type(result.get("cost_receipt")) is not dict
+        or result["cost_receipt"].get("cost_usd") != ORIGINAL_HA003_COST_USD
+    ):
+        raise Study3bLedgerError("LEDGER_CONTINUATION_PRIOR_RESULT_MISMATCH")
+
+
+def _validate_continuation_payload(
+    payload: dict[str, Any],
+    *,
+    prefix: bytes,
+    state: _LedgerState,
+    prior_result_record_sha256: object,
+) -> None:
+    from . import preflight
+
+    _require_stopped_ha003_prefix(state)
+    supplement = payload.get("ha003_adjudication_supplement")
+    required_fields = {
+        "event",
+        "schema_version",
+        "study_id",
+        "lock_identity",
+        "ruling_id",
+        "ruling_section_sha256",
+        "readiness_head_sha",
+        "readiness_evidence_sha256",
+        "ci_evidence_sha256",
+        "original_prefix_bytes",
+        "original_prefix_sha256",
+        "prior_attempt_number",
+        "prior_scene_id",
+        "prior_result_record_sha256",
+        "prior_result_outcome",
+        "prior_actual_cost_status",
+        "prior_actual_cost_usd",
+        "next_scene_id",
+        "remaining_scene_order",
+        "ha003_adjudication_supplement",
+    }
+    if (
+        set(payload) != required_fields
+        or payload.get("event") != "continuation_transition"
+        or type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != LEDGER_SCHEMA_VERSION
+        or payload.get("study_id") != protocol.STUDY_ID
+        or payload.get("lock_identity") != LOCK_IDENTITY
+        or payload.get("ruling_id") != preflight.CONTINUATION_RULING_ID
+        or payload.get("ruling_section_sha256")
+        != preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256
+        or type(payload.get("readiness_head_sha")) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", payload["readiness_head_sha"]) is None
+        or type(payload.get("readiness_evidence_sha256")) is not str
+        or _SHA256_RE.fullmatch(payload["readiness_evidence_sha256"]) is None
+        or type(payload.get("ci_evidence_sha256")) is not str
+        or _SHA256_RE.fullmatch(payload["ci_evidence_sha256"]) is None
+        or type(payload.get("original_prefix_bytes")) is not int
+        or payload.get("original_prefix_bytes") != ORIGINAL_PREFIX_BYTES
+        or payload.get("original_prefix_bytes") != len(prefix)
+        or payload.get("original_prefix_sha256") != ORIGINAL_PREFIX_SHA256
+        or payload.get("original_prefix_sha256")
+        != hashlib.sha256(prefix).hexdigest()
+        or type(payload.get("prior_attempt_number")) is not int
+        or payload.get("prior_attempt_number") != 1
+        or payload.get("prior_scene_id") != protocol.SCENE_ORDER[0]
+        or payload.get("prior_result_record_sha256")
+        != prior_result_record_sha256
+        or payload.get("prior_result_outcome") != "CONTRACT_FAILURE"
+        or payload.get("prior_actual_cost_status") != "RECONCILED"
+        or payload.get("prior_actual_cost_usd") != ORIGINAL_HA003_COST_USD
+        or payload.get("next_scene_id")
+        != "into_the_deepvault:scene:sd005-i03"
+        or protocol.SCENE_ORDER[1] != payload.get("next_scene_id")
+        or payload.get("remaining_scene_order") != list(protocol.SCENE_ORDER[1:])
+        or type(supplement) is not dict
+        or set(supplement) != {"code", "rule_id"}
+        or supplement.get("code") != ORIGINAL_HA003_VALIDATOR_CODE
+        or supplement.get("rule_id") != ORIGINAL_HA003_VALIDATOR_RULE_ID
+    ):
+        raise Study3bLedgerError("LEDGER_CONTINUATION_RECORD_INVALID")
+
+
 def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
     metadata = os.fstat(descriptor)
     if (
@@ -974,11 +1261,17 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
     contents = _read_descriptor(descriptor, MAX_LEDGER_BYTES + 1)
     if len(contents) != metadata.st_size or not contents.endswith(b"\n"):
         raise Study3bLedgerError("LEDGER_TRUNCATED")
+    raw_lines = contents.splitlines(keepends=True)
+    if not raw_lines or b"".join(raw_lines) != contents:
+        raise Study3bLedgerError("LEDGER_CORRUPT")
     try:
-        records = tuple(_parse_record(line) for line in contents.splitlines())
+        records = tuple(
+            _parse_record(line[:-1] if line.endswith(b"\n") else line)
+            for line in raw_lines
+        )
     except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError, OverflowError):
         raise Study3bLedgerError("LEDGER_CORRUPT") from None
-    if not records or len(records) > 1 + 2 * len(protocol.SCENE_ORDER):
+    if not records or len(records) > 2 + 2 * len(protocol.SCENE_ORDER):
         raise Study3bLedgerError("LEDGER_CORRUPT")
 
     prior_hash: str | None = None
@@ -1010,6 +1303,7 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
     pending: dict[str, Any] | None = None
     pending_sha256: str | None = None
     stopped = False
+    continuation_used = False
     unresolved_cost = False
     actual_total = Decimal(0)
     receipt_ids: set[str] = set()
@@ -1070,9 +1364,39 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
             reservations.append(payload)
             continue
 
+        if payload.get("event") == "continuation_transition":
+            if pending is not None or continuation_used or not stopped:
+                raise Study3bLedgerError("LEDGER_CONTINUATION_SEQUENCE_INVALID")
+            prior_state = _LedgerState(
+                records=tuple(records[:index]),
+                reservations=tuple(reservations),
+                results=tuple(results),
+                pending=pending,
+                pending_sha256=pending_sha256,
+                stopped=stopped,
+                continuation_used=continuation_used,
+                unresolved_cost=unresolved_cost,
+                actual_total=actual_total,
+                receipt_ids=frozenset(receipt_ids),
+            )
+            prefix = b"".join(raw_lines[:index])
+            _validate_continuation_payload(
+                payload,
+                prefix=prefix,
+                state=prior_state,
+                prior_result_record_sha256=records[index - 1].get(
+                    "record_sha256"
+                )
+                if index > 0
+                else None,
+            )
+            continuation_used = True
+            stopped = False
+            continue
+
         if payload.get("event") != "result" or pending is None or stopped:
             raise Study3bLedgerError("LEDGER_EVENT_SEQUENCE_INVALID")
-        expected_fields = {
+        legacy_result_fields = {
             "event",
             "schema_version",
             "study_id",
@@ -1095,8 +1419,13 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
             "cost_receipt",
             "reason_code",
         }
+        current_result_fields = legacy_result_fields | {"validator_metadata"}
         if (
-            set(payload) != expected_fields
+            frozenset(payload)
+            not in {
+                frozenset(legacy_result_fields),
+                frozenset(current_result_fields),
+            }
             or type(payload.get("schema_version")) is not int
             or payload.get("schema_version") != LEDGER_SCHEMA_VERSION
             or payload.get("study_id") != protocol.STUDY_ID
@@ -1119,10 +1448,29 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
             != pending["pre_dispatch_estimated_total_usd"]
             or type(payload.get("outcome")) is not str
             or payload.get("outcome")
-            not in {"ACCEPTED", "CONTRACT_FAILURE", "STOPPED"}
+            not in {
+                "ACCEPTED",
+                "CONTRACT_FAILURE",
+                "HARNESS_FAILURE",
+                "STOPPED",
+            }
             or type(payload.get("stop_study")) is not bool
         ):
             raise Study3bLedgerError("LEDGER_RESULT_BINDING_INVALID")
+
+        legacy_result = set(payload) == legacy_result_fields
+        if legacy_result:
+            if (
+                payload["outcome"] == "CONTRACT_FAILURE"
+                and payload["stop_study"] is not True
+            ) or payload["outcome"] == "HARNESS_FAILURE":
+                raise Study3bLedgerError("LEDGER_RESULT_BINDING_INVALID")
+        else:
+            _normalize_validator_metadata(
+                payload.get("validator_metadata"),
+                outcome=payload["outcome"],
+                required=payload["outcome"] == "CONTRACT_FAILURE",
+            )
 
         status = payload.get("actual_cost_status")
         if status in {"RECONCILED", "OVER_CAP"}:
@@ -1144,10 +1492,21 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
                 ):
                     raise Study3bLedgerError("LEDGER_COST_ACCOUNTING_INVALID")
             else:
-                expected_stop = payload["outcome"] != "ACCEPTED"
+                legacy_contract_stop = (
+                    legacy_result
+                    and payload["outcome"] == "CONTRACT_FAILURE"
+                )
+                expected_stop = (
+                    payload["outcome"] == "STOPPED" or legacy_contract_stop
+                )
+                expected_reason_code = (
+                    "STUDY3B_HARNESS_FAILURE"
+                    if payload["outcome"] == "HARNESS_FAILURE"
+                    else None
+                )
                 if (
                     is_over_cap
-                    or payload.get("reason_code") is not None
+                    or payload.get("reason_code") != expected_reason_code
                     or payload.get("stop_study") is not expected_stop
                 ):
                     raise Study3bLedgerError("LEDGER_COST_ACCOUNTING_INVALID")
@@ -1183,6 +1542,7 @@ def _read_state(descriptor: int, binding: _Binding) -> _LedgerState:
         pending=pending,
         pending_sha256=pending_sha256,
         stopped=stopped,
+        continuation_used=continuation_used,
         unresolved_cost=unresolved_cost,
         actual_total=actual_total,
         receipt_ids=frozenset(receipt_ids),

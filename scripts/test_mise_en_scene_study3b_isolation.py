@@ -23,6 +23,7 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
+import threading
 import urllib.request
 import unittest
 from unittest.mock import patch
@@ -40,6 +41,7 @@ from scripts.mise_en_scene.llm_staging_study3b.isolation import (
     read_baseline_metadata,
 )
 from scripts.mise_en_scene.llm_staging_study3b import ledger as study3b_ledger
+from scripts.mise_en_scene.llm_staging_study3b import preflight as study3b_preflight
 from scripts.mise_en_scene.llm_staging.client import TransportResult
 
 
@@ -486,6 +488,84 @@ class Study3bLedgerTests(unittest.TestCase):
             request_sha256=study3b_ledger.request_sha256_for_scene(scene_id),
         )
 
+    def _stopped_prefix_fixture(
+        self,
+        *,
+        outcome: str = "CONTRACT_FAILURE",
+        cost_usd: str = study3b_ledger.ORIGINAL_HA003_COST_USD,
+    ) -> tuple[tempfile.TemporaryDirectory[str], study3b_ledger.Study3bLedger, bytes]:
+        temporary_directory, ledger = self._new_ledger()
+        reservation = self._reserve_scene(ledger, 0)
+        ledger.complete(
+            reservation,
+            outcome=outcome,
+            cost_receipt=self._verified_receipt(
+                reservation, cost_usd=cost_usd
+            ),
+            validator_metadata=(
+                {
+                    "code": study3b_ledger.ORIGINAL_HA003_VALIDATOR_CODE,
+                    "rule_id": study3b_ledger.ORIGINAL_HA003_VALIDATOR_RULE_ID,
+                }
+                if outcome == "CONTRACT_FAILURE"
+                else None
+            ),
+        )
+        records = [
+            json.loads(line)
+            for line in ledger.path.read_bytes().splitlines()
+        ]
+        if outcome == "CONTRACT_FAILURE":
+            records[-1].pop("validator_metadata", None)
+            records[-1]["stop_study"] = True
+        previous_sha256: str | None = None
+        encoded_lines: list[bytes] = []
+        for record in records:
+            record.pop("record_sha256", None)
+            record["previous_sha256"] = previous_sha256
+            record_sha256 = hashlib.sha256(
+                study3b_ledger._canonical_bytes(record)
+            ).hexdigest()
+            record["record_sha256"] = record_sha256
+            encoded_lines.append(study3b_ledger._canonical_bytes(record) + b"\n")
+            previous_sha256 = record_sha256
+        prefix = b"".join(encoded_lines)
+        assert_study3b_write_target(
+            ledger.path,
+            repository_root=REPO_ROOT,
+            action="write",
+        )
+        ledger.path.write_bytes(prefix)
+        return temporary_directory, ledger, prefix
+
+    def _readiness_fixture(self) -> study3b_preflight.ReadinessVerification:
+        return study3b_preflight.ReadinessVerification(
+            status="READY",
+            reason_codes=(),
+            study_id=study3b_ledger.protocol.STUDY_ID,
+            expected_head_sha="a" * 40,
+            current_head_sha="a" * 40,
+            ci_check_count=len(study3b_preflight.REQUIRED_CI_CHECK_NAMES),
+            preflight_gate_count=len(
+                study3b_preflight.REQUIRED_PREFLIGHT_COMMANDS
+            ),
+            external_provenance_verified=True,
+            live_dispatch_permitted=True,
+            ruling_id=study3b_preflight.DISPATCH_RULING_ID,
+            ruling_section_sha256=study3b_preflight.PINNED_RULING_SECTION_SHA256,
+            ci_evidence_path=PREP_ROOT_RELATIVE + "/synthetic-ci.json",
+            ci_evidence_sha256="b" * 64,
+            evidence_relative_path=PREP_ROOT_RELATIVE + "/readiness/synthetic.json",
+            evidence_sha256="c" * 64,
+            _proof=study3b_preflight._CONTINUATION_READY_PROOF,
+        )
+
+    def _synthetic_continuation_authority(self) -> dict[str, str]:
+        return {
+            "ruling_id": study3b_preflight.CONTINUATION_RULING_ID,
+            "section_sha256": study3b_preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256,
+        }
+
     def test_fixed_root_identity_and_no_caller_selected_runtime_root(self) -> None:
         ledger = study3b_ledger.Study3bLedger()
         self.assertEqual(
@@ -529,6 +609,374 @@ class Study3bLedgerTests(unittest.TestCase):
         with self.assertRaises(study3b_ledger.Study3bLedgerError):
             study3b_ledger.Study3bLedger._for_synthetic_test(
                 str(old_study3_root.parent / "synthetic-alias" / ".." / "durable-ledger")
+            )
+
+    def test_continuation_pins_are_exact_and_metadata_allowlist_is_fixed(self) -> None:
+        self.assertEqual(study3b_ledger.ORIGINAL_PREFIX_BYTES, 7495)
+        self.assertEqual(
+            study3b_ledger.ORIGINAL_PREFIX_SHA256,
+            "a522e60692c4aa2c7f622998f2ac6cb165ef02211043abf949c319858fa7fd5e",
+        )
+        self.assertEqual(
+            study3b_ledger.ORIGINAL_HA003_COST_USD, "0.004085175"
+        )
+        self.assertEqual(
+            study3b_ledger.ORIGINAL_HA003_VALIDATOR_CODE,
+            "GUARDED_MARKER_IN_PUBLIC_DELTA",
+        )
+        self.assertEqual(
+            study3b_ledger.ORIGINAL_HA003_VALIDATOR_RULE_ID,
+            "S3-GUARDED-CONTENT-MARKERS",
+        )
+        self.assertEqual(
+            study3b_ledger.protocol.SCENE_ORDER[1],
+            "into_the_deepvault:scene:sd005-i03",
+        )
+        self.assertEqual(
+            study3b_preflight.CONTINUATION_RULING_ID,
+            "neq-s-study3b-adjudication-20261111",
+        )
+
+    def test_valid_continuation_appends_once_without_changing_synthetic_prefix(self) -> None:
+        _temporary, source_ledger, prefix = self._stopped_prefix_fixture()
+        prefix_sha256 = hashlib.sha256(prefix).hexdigest()
+        readiness = self._readiness_fixture()
+        authorization = self._synthetic_continuation_authority()
+        continuation = study3b_ledger.Study3bLedger._for_synthetic_test(
+            source_ledger.root
+        )
+        with patch.object(
+            study3b_ledger, "ORIGINAL_PREFIX_BYTES", len(prefix)
+        ), patch.object(
+            study3b_ledger, "ORIGINAL_PREFIX_SHA256", prefix_sha256
+        ), patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            return_value=authorization,
+        ) as authorize, patch.object(
+            study3b_ledger.fcntl,
+            "flock",
+            wraps=study3b_ledger.fcntl.flock,
+        ) as flock:
+            continuation.continue_from_stopped(readiness=readiness)
+            authorize.assert_called_once_with(readiness)
+            appended = source_ledger.path.read_bytes()
+            self.assertEqual(appended[: len(prefix)], prefix)
+            event = json.loads(appended[len(prefix) :].decode("ascii"))
+            self.assertEqual(event["event"], "continuation_transition")
+            self.assertEqual(event["original_prefix_bytes"], len(prefix))
+            self.assertEqual(event["original_prefix_sha256"], prefix_sha256)
+            self.assertEqual(
+                event["next_scene_id"], "into_the_deepvault:scene:sd005-i03"
+            )
+            self.assertEqual(
+                event["remaining_scene_order"],
+                list(study3b_ledger.protocol.SCENE_ORDER[1:]),
+            )
+            self.assertEqual(
+                event["ha003_adjudication_supplement"],
+                {
+                    "code": "GUARDED_MARKER_IN_PUBLIC_DELTA",
+                    "rule_id": "S3-GUARDED-CONTENT-MARKERS",
+                },
+            )
+            self.assertEqual(
+                set(event["ha003_adjudication_supplement"]),
+                {"code", "rule_id"},
+            )
+            self.assertEqual(event["ruling_id"], authorization["ruling_id"])
+            self.assertEqual(
+                event["ruling_section_sha256"], authorization["section_sha256"]
+            )
+
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_CONTINUATION_ALREADY_USED",
+            ):
+                continuation.continue_from_stopped(readiness=readiness)
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_ALREADY_INITIALIZED",
+            ):
+                continuation.initialize()
+
+            restarted = study3b_ledger.Study3bLedger._for_synthetic_test(
+                source_ledger.root
+            )
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_ALREADY_INITIALIZED",
+            ):
+                restarted.initialize()
+            replay = study3b_ledger.Study3bLedger._for_synthetic_test(
+                source_ledger.root
+            )
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_ORIGINAL_PREFIX_MISMATCH",
+            ):
+                replay.continue_from_stopped(readiness=readiness)
+
+            next_scene = study3b_ledger.protocol.SCENE_ORDER[1]
+            reservation = continuation.reserve(
+                scene_id=next_scene,
+                request_sha256=study3b_ledger.request_sha256_for_scene(next_scene),
+            )
+            self.assertEqual(reservation.attempt_number, 2)
+            self.assertEqual(reservation.scene_id, next_scene)
+            self.assertEqual(
+                reservation.pre_dispatch_estimated_total_usd,
+                "0.025685875",
+            )
+            self.assertTrue(source_ledger.path.read_bytes().startswith(prefix))
+            self.assertTrue(
+                any(
+                    len(args) >= 2 and args[1] == study3b_ledger.fcntl.LOCK_EX
+                    for args, _kwargs in flock.call_args_list
+                )
+            )
+
+    def test_continuation_rejects_unverified_authority_and_prefix_mismatch(self) -> None:
+        _temporary, source_ledger, prefix = self._stopped_prefix_fixture()
+        original = source_ledger.path.read_bytes()
+        continuation = study3b_ledger.Study3bLedger._for_synthetic_test(
+            source_ledger.root
+        )
+        with patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            side_effect=AssertionError("invalid readiness reached authority check"),
+        ) as authorize:
+            for invalid_readiness in (
+                True,
+                replace(
+                    self._readiness_fixture(),
+                    _proof=study3b_preflight._READY_PROOF,
+                ),
+            ):
+                with self.subTest(readiness_type=type(invalid_readiness).__name__):
+                    with self.assertRaisesRegex(
+                        study3b_ledger.Study3bLedgerError,
+                        "LIVE_CONTINUATION_READINESS_PROOF_REQUIRED",
+                    ):
+                        continuation.continue_from_stopped(
+                            readiness=invalid_readiness
+                        )
+            authorize.assert_not_called()
+
+        readiness = self._readiness_fixture()
+        expected_authority = self._synthetic_continuation_authority()
+        invalid_authorities = (
+            {
+                "ruling_id": "neq-s-study3-adjudication-20261111",
+                "section_sha256": expected_authority["section_sha256"],
+            },
+            {
+                "ruling_id": expected_authority["ruling_id"],
+                "section_sha256": "0" * 64,
+            },
+            {**expected_authority, "unexpected": "value"},
+        )
+        for invalid_authority in invalid_authorities:
+            with self.subTest(authority=invalid_authority):
+                with patch.object(
+                    study3b_preflight,
+                    "assert_study3b_continuation_readiness_current",
+                    return_value=invalid_authority,
+                ):
+                    with self.assertRaisesRegex(
+                        study3b_ledger.Study3bLedgerError,
+                        "STUDY3B_CONTINUATION_RULING_INVALID",
+                    ):
+                        continuation.continue_from_stopped(readiness=readiness)
+                self.assertEqual(source_ledger.path.read_bytes(), original)
+
+        with patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            return_value=self._synthetic_continuation_authority(),
+        ):
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_ORIGINAL_PREFIX_MISMATCH",
+            ):
+                continuation.continue_from_stopped(readiness=readiness)
+        self.assertEqual(source_ledger.path.read_bytes(), original)
+
+    def test_continuation_rejects_nonstopped_or_wrong_cost_prior_result(self) -> None:
+        readiness = self._readiness_fixture()
+        authority = self._synthetic_continuation_authority()
+        for outcome, cost_usd in (
+            ("ACCEPTED", study3b_ledger.ORIGINAL_HA003_COST_USD),
+            ("CONTRACT_FAILURE", "0.004085176"),
+        ):
+            with self.subTest(outcome=outcome, cost_usd=cost_usd):
+                _temporary, source_ledger, prefix = self._stopped_prefix_fixture(
+                    outcome=outcome, cost_usd=cost_usd
+                )
+                before = source_ledger.path.read_bytes()
+                continuation = study3b_ledger.Study3bLedger._for_synthetic_test(
+                    source_ledger.root
+                )
+                with patch.object(
+                    study3b_ledger, "ORIGINAL_PREFIX_BYTES", len(prefix)
+                ), patch.object(
+                    study3b_ledger,
+                    "ORIGINAL_PREFIX_SHA256",
+                    hashlib.sha256(prefix).hexdigest(),
+                ), patch.object(
+                    study3b_preflight,
+                    "assert_study3b_continuation_readiness_current",
+                    return_value=authority,
+                ):
+                    with self.assertRaises(study3b_ledger.Study3bLedgerError):
+                        continuation.continue_from_stopped(readiness=readiness)
+                self.assertEqual(source_ledger.path.read_bytes(), before)
+
+    def test_continuation_rejects_exact_pin_mismatch_without_mutation(self) -> None:
+        _temporary, source_ledger, prefix = self._stopped_prefix_fixture()
+        before = source_ledger.path.read_bytes()
+        continuation = study3b_ledger.Study3bLedger._for_synthetic_test(
+            source_ledger.root
+        )
+        readiness = self._readiness_fixture()
+        with patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            return_value=self._synthetic_continuation_authority(),
+        ):
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_ORIGINAL_PREFIX_MISMATCH",
+            ):
+                continuation.continue_from_stopped(readiness=readiness)
+        self.assertEqual(len(prefix), len(before))
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(), hashlib.sha256(before).hexdigest())
+        self.assertEqual(source_ledger.path.read_bytes(), before)
+
+    def test_competing_continuations_allow_exactly_one_atomic_transition(self) -> None:
+        _temporary, source_ledger, prefix = self._stopped_prefix_fixture()
+        readiness = self._readiness_fixture()
+        contenders = [
+            study3b_ledger.Study3bLedger._for_synthetic_test(source_ledger.root)
+            for _ in range(2)
+        ]
+        self.assertEqual(contenders[0].root, source_ledger.root)
+        self.assertEqual(contenders[1].root, source_ledger.root)
+        self.assertEqual(contenders[0].path, source_ledger.path)
+        self.assertEqual(contenders[1].path, source_ledger.path)
+        barrier = threading.Barrier(2)
+        outcomes: list[tuple[str, str | None]] = []
+        outcome_lock = threading.Lock()
+
+        def compete(ledger: study3b_ledger.Study3bLedger) -> None:
+            barrier.wait()
+            try:
+                ledger.continue_from_stopped(readiness=readiness)
+            except study3b_ledger.Study3bLedgerError as error:
+                result = ("rejected", error.code)
+            else:
+                result = ("accepted", None)
+            with outcome_lock:
+                outcomes.append(result)
+
+        with patch.object(
+            study3b_ledger, "ORIGINAL_PREFIX_BYTES", len(prefix)
+        ), patch.object(
+            study3b_ledger,
+            "ORIGINAL_PREFIX_SHA256",
+            hashlib.sha256(prefix).hexdigest(),
+        ), patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            return_value=self._synthetic_continuation_authority(),
+        ):
+            threads = [threading.Thread(target=compete, args=(ledger,)) for ledger in contenders]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+
+        self.assertCountEqual(
+            outcomes,
+            [
+                ("accepted", None),
+                ("rejected", "LEDGER_ORIGINAL_PREFIX_MISMATCH"),
+            ],
+        )
+        appended = source_ledger.path.read_bytes()
+        self.assertEqual(appended[: len(prefix)], prefix)
+        events = [
+            json.loads(line)
+            for line in appended[len(prefix) :].splitlines()
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "continuation_transition")
+        self.assertEqual(
+            sum(event.get("event") == "reservation" for event in events), 0
+        )
+        self.assertEqual(appended[: len(prefix)], prefix)
+
+    def test_future_validator_metadata_is_codes_only_without_prose(self) -> None:
+        allowed = study3b_ledger._normalize_validator_metadata(
+            {
+                "code": study3b_ledger.ORIGINAL_HA003_VALIDATOR_CODE,
+                "rule_id": study3b_ledger.ORIGINAL_HA003_VALIDATOR_RULE_ID,
+            },
+            outcome="CONTRACT_FAILURE",
+            required=True,
+        )
+        self.assertEqual(
+            allowed,
+            {
+                "code": "GUARDED_MARKER_IN_PUBLIC_DELTA",
+                "rule_id": "S3-GUARDED-CONTENT-MARKERS",
+            },
+        )
+        for metadata in (
+            {"code": "GUARDED_MARKER_IN_PUBLIC_DELTA", "rule_id": "S3-GUARDED-CONTENT-MARKERS", "message": "synthetic prose"},
+            {"code": "GUARDED_MARKER_IN_PUBLIC_DELTA prose", "rule_id": "S3-GUARDED-CONTENT-MARKERS"},
+            {"code": "GUARDED_MARKER_IN_PUBLIC_DELTA", "rule_id": "S3-GUARDED-CONTENT-MARKERS prose"},
+        ):
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(study3b_ledger.Study3bLedgerError):
+                    study3b_ledger._normalize_validator_metadata(
+                        metadata, outcome="CONTRACT_FAILURE", required=True
+                    )
+
+    def test_continuation_fsync_failure_poisoned_without_prefix_rewrite(self) -> None:
+        _temporary, source_ledger, prefix = self._stopped_prefix_fixture()
+        readiness = self._readiness_fixture()
+        continuation = study3b_ledger.Study3bLedger._for_synthetic_test(
+            source_ledger.root
+        )
+        with patch.object(
+            study3b_ledger, "ORIGINAL_PREFIX_BYTES", len(prefix)
+        ), patch.object(
+            study3b_ledger,
+            "ORIGINAL_PREFIX_SHA256",
+            hashlib.sha256(prefix).hexdigest(),
+        ), patch.object(
+            study3b_preflight,
+            "assert_study3b_continuation_readiness_current",
+            return_value=self._synthetic_continuation_authority(),
+        ), patch.object(study3b_ledger.os, "fsync", side_effect=OSError):
+            with self.assertRaisesRegex(
+                study3b_ledger.Study3bLedgerError,
+                "LEDGER_CONTINUATION_DURABILITY_UNCERTAIN",
+            ):
+                continuation.continue_from_stopped(readiness=readiness)
+        self.assertTrue(source_ledger.path.read_bytes().startswith(prefix))
+        with self.assertRaisesRegex(
+            study3b_ledger.Study3bLedgerError,
+            "LEDGER_INSTANCE_POISONED",
+        ):
+            continuation.reserve(
+                scene_id=study3b_ledger.protocol.SCENE_ORDER[1],
+                request_sha256=study3b_ledger.request_sha256_for_scene(
+                    study3b_ledger.protocol.SCENE_ORDER[1]
+                ),
             )
 
     def test_reservation_binds_exact_hash_order_and_fsyncs_before_return(self) -> None:
@@ -671,6 +1119,69 @@ class Study3bLedgerTests(unittest.TestCase):
         self.assertEqual(
             result_record["cost_receipt"]["request_sha256"], expected_hash
         )
+
+    def test_legacy_result_prefix_is_readable_from_synthetic_copy(self) -> None:
+        temporary_directory, source_ledger = self._new_ledger()
+        reservation = self._reserve_scene(source_ledger, 0)
+        source_ledger.complete(
+            reservation,
+            outcome="ACCEPTED",
+            cost_receipt=self._verified_receipt(reservation),
+        )
+        synthetic_records = [
+            json.loads(line)
+            for line in source_ledger.path.read_bytes().splitlines()
+        ]
+        self.assertEqual(synthetic_records[-1]["event"], "result")
+        legacy_result = synthetic_records[-1]
+        legacy_result.pop("validator_metadata", None)
+        legacy_result["outcome"] = "CONTRACT_FAILURE"
+        legacy_result["stop_study"] = True
+        legacy_result["reason_code"] = None
+
+        previous_sha256: str | None = None
+        legacy_lines: list[bytes] = []
+        for record in synthetic_records:
+            record.pop("record_sha256", None)
+            record["previous_sha256"] = previous_sha256
+            record_sha256 = hashlib.sha256(
+                study3b_ledger._canonical_bytes(record)
+            ).hexdigest()
+            record["record_sha256"] = record_sha256
+            legacy_lines.append(study3b_ledger._canonical_bytes(record))
+            previous_sha256 = record_sha256
+        legacy_bytes = b"\n".join(legacy_lines) + b"\n"
+
+        legacy_root = Path(temporary_directory.name) / "synthetic-legacy-prefix-copy"
+        legacy_ledger = study3b_ledger.Study3bLedger._for_synthetic_test(
+            legacy_root
+        )
+        legacy_ledger.initialize()
+        assert_study3b_write_target(
+            legacy_ledger.path,
+            repository_root=REPO_ROOT,
+            action="write",
+        )
+        legacy_ledger.path.write_bytes(legacy_bytes)
+
+        with legacy_ledger._locked_existing() as (_root_fd, ledger_fd):
+            state = study3b_ledger._read_state(
+                ledger_fd, study3b_ledger._load_binding()
+            )
+        self.assertTrue(state.stopped)
+        self.assertEqual(len(state.results), 1)
+        self.assertEqual(state.results[0]["outcome"], "CONTRACT_FAILURE")
+        self.assertNotIn("validator_metadata", state.results[0])
+        self.assertEqual(state.actual_total, Decimal("0.001"))
+        with self.assertRaises(study3b_ledger.Study3bLedgerError) as blocked:
+            legacy_ledger.reserve(
+                scene_id=study3b_ledger.protocol.SCENE_ORDER[1],
+                request_sha256=study3b_ledger.request_sha256_for_scene(
+                    study3b_ledger.protocol.SCENE_ORDER[1]
+                ),
+            )
+        self.assertEqual(blocked.exception.code, "LEDGER_STUDY_STOPPED")
+        self.assertEqual(legacy_ledger.path.read_bytes(), legacy_bytes)
 
     def test_every_ledger_mutation_uses_the_prior_study_write_guard(self) -> None:
         prep_root = REPO_ROOT / PREP_ROOT_RELATIVE
