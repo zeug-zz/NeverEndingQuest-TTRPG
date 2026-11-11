@@ -44,15 +44,15 @@ Stage under a private install-relative `runtime/.network-staging/` directory on 
 
 **Simplest alternative considered:** pass hard-coded mappings to the service factory. Rejected because it duplicates pins in code, does not create the required runtime manifest, and cannot give the installer and resolver one auditable source of truth.
 
-### 2. Recommend a digest-pinned player bundle release asset, subject to owner approval
+### 2. Approved immutable GitHub Release player bundle
 
-Options considered:
+The Overseer ruling `neq-n3-packaging-release-route-20261111` approves option 2: publish a versioned player-bundle tarball as a GitHub Release asset on this fork, `zeug-zz/NeverEndingQuest-TTRPG`, built and uploaded by a new GitHub Actions publisher workflow. The workflow's Actions references must be pinned to full commit SHAs. Do not commit `web/frontend/dist/`, and do not add a tester-side Node build fallback. Node is a maintainer/CI build prerequisite only.
 
-1. Commit `web/frontend/dist/` into Git and remove or override its current ignore rule. This would let ordinary fast-forward updates deliver the bundle, but creates generated-file review/merge churn and couples release output to application source commits.
-2. Publish a versioned player-bundle tarball as a GitHub Release asset. A tagged-SHA build uses the pinned Node 22 toolchain, `npm ci`, type-checks/tests, `npm run build`, and validates `player-manifest.json`. A tracked `packaging/player-assets.manifest.json` pins the tag SHA, archive SHA-256, `client_build_id`, and player-manifest SHA-256. The installer verifies the outer artifact before unpacking, verifies the complete bundle with the existing Python player asset loader, and atomically replaces `web/frontend/dist`. Testers do not need Node; the prior verified bundle remains available for rollback.
-3. Build the player bundle during tester installation. Rejected because it makes Node a tester prerequisite and violates the Phase 3 release constraint.
+The deterministic bundle builder consumes an already-built `web/frontend/dist/`; it does not run npm. The publisher workflow owns the Node build and then invokes the bundle builder. Each release includes `neq-player-bundle-<version>.tar.gz` and a `.metadata.json` sidecar. The sidecar binds the version, Git tag, full source commit, outer SHA-256 and size, player-manifest SHA-256, and `client_build_id`; it has no `built_at` field. The tracked `packaging/player-assets.manifest.json` registry binds the same identity to the release asset names and starts with an empty `versions` object. The installer validates the complete extracted tree through the existing Python player asset loader and uses an atomic replacement that retains the prior verified bundle for rollback.
 
-**Recommendation:** option 2. It keeps generated output out of Git while making the producer SHA, artifact, manifest, and loader acceptance independently checkable. It requires owner approval to add a release artifact and a new GitHub Actions publisher with every third-party action pinned to a reviewed commit SHA. No publisher currently exists in `.github/workflows/`; do not introduce a workflow or publish an artifact before the approval gate in task 2.1. Do not treat a Vite manifest alone as a release authenticity pin; it validates bundle consistency, while committed release metadata pins which bundle is accepted.
+Release tags are immutable `v<semver>` tags created only from a commit on `main`; a fix ships as a new version and release assets are never replaced. The publisher is authorized only for a release tag created by the Overseer or repository owner, uses only the default `GITHUB_TOKEN` with `contents: write`, requires no other secrets, and never runs for pull requests or forks. Workers may build and test the workflow but may not create release tags. The release-asset route keeps generated output out of source history while independently checking source, bundle, manifest, and build identity. Do not treat the player manifest alone as an authenticity pin: it validates bundle consistency, while the tracked registry and sidecar bind the accepted release identity.
+
+**Simplest alternative considered:** commit `web/frontend/dist/` or build it on tester machines. Both are rejected: committing generated output creates review/merge churn, while a tester-side build makes Node a runtime prerequisite and breaks the approved release route.
 
 ### 3. Keep the installer action opt-in and keep Git updates separate from component transactions
 
@@ -74,10 +74,10 @@ The Linux arm64 N3 leg requires an owner-run Linux host or Docker arm64 executio
 
 ## Risks / Trade-offs
 
-- [A release asset or fetched checksum file could be replaced] -> Require committed archive and executable pins, check the exact upstream checksum entry, bind player bundle metadata to a tagged source SHA, and reject before activation on any mismatch.
+- [A release asset or fetched checksum file could be replaced] -> Require committed archive and executable pins, check the exact upstream checksum entry, bind player bundle metadata to a tagged source SHA, use immutable release tags/assets, and reject before activation on any mismatch.
 - [An interrupted component update could leave mixed versions] -> Stage both payloads, validate them before activation, publish the runtime manifest last, and preserve prior verified payloads until the complete transaction succeeds.
 - [A tarball could write outside its staging directory] -> Validate archive entries before extraction, reject traversal and unsafe links, and verify the final regular non-symlink executable remains under the install root.
-- [The release-artifact route adds CI governance and credentials/permissions] -> Do not create a publisher or publish artifacts without owner approval; pin all action references to reviewed SHAs and apply least privilege.
+- [The release-artifact route adds CI governance and permissions] -> Apply the approved actor/tag boundary, use only the default `GITHUB_TOKEN` with `contents: write`, use no other secrets, pin all action references to full commit SHAs, and never publish pull-request or fork builds.
 - [Linux arm64 validation may be unavailable to the primary] -> Use the owner-run Linux/Docker mechanism and leave N3 BLOCKED with the exact blocker rather than substituting macOS evidence.
 
 ## Migration Plan
@@ -89,9 +89,15 @@ The Linux arm64 N3 leg requires an owner-run Linux host or Docker arm64 executio
 5. Add operational docs, run focused tests and scans, then prepare exact-SHA N3 evidence. Only the primary orchestrator can book and judge task 6.2/live evidence.
 6. On failure, keep local play available, restore prior verified companion/assets and runtime manifest, leave unrelated profiles untouched, and record the bounded failure. No campaign data is removed or migrated.
 
-## Open Questions (Owner Approval Gates)
+## Rulings
 
-1. **Player asset publication:** approve or reject the recommended versioned GitHub Release tarball plus a new pinned-SHA Actions publisher. If rejected, explicitly choose whether generated `web/frontend/dist/` is to be committed/unignored; do not silently fall back to a tester-side Node build. This approval gates task 2.2.
-2. **Release identity policy:** approve the tracked metadata convention for associating each release asset with its Git tag, source commit, outer digest, player-manifest digest, and build ID, including who may publish or replace a release asset. The build/verification contract is fixed; this approval determines publishing authority and immutable release naming.
+### `neq-n3-packaging-release-route-20261111`
+
+The Overseer approved both the distribution route and release identity policy:
+
+1. **Player asset publication:** publish a versioned GitHub Release tarball on `zeug-zz/NeverEndingQuest-TTRPG`, built and uploaded by a new Actions publisher workflow pinned by commit SHA. Do not commit `web/frontend/dist/`; do not use a tester-side Node build fallback.
+2. **Release identity and authority:** bind each bundle release through its sidecar and tracked registry entry to the immutable Git tag, full source commit, outer SHA-256 and size, player-manifest SHA-256, `client_build_id`, and asset names. Tags use immutable `v<semver>` naming and must point to a commit on `main`; fixes ship as new versions and published assets are never replaced. The publisher runs only for a release tag created by the Overseer or repository owner, uses only the default `GITHUB_TOKEN` with `contents: write`, requires no other secrets, and never runs on pull requests or from forks. Workers may build/test the workflow but do not create release tags.
+
+Task 2.2 implements the offline bundle builder, strict empty-by-default pin registry, and explicit-action installer. A separate subsequent task owns the publisher workflow; no workflow file or release asset is created by this ruling task.
 
 The service-loader and runtime-ignore discrepancies above are source findings, not owner decisions: tasks 1.1 and 1.3 explicitly close them before lifecycle use.
