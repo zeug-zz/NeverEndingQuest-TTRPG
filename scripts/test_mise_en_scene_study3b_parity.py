@@ -23,7 +23,7 @@ import urllib.request
 from unittest.mock import patch
 
 _SCRIPT_PATH = os.path.abspath(__file__)
-sys.path.insert(0, os.path.dirname(_SCRIPT_PATH))
+sys.path.insert(0, os.path.dirname(os.path.dirname(_SCRIPT_PATH)))
 
 from jsonschema import Draft202012Validator
 

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ast
 import builtins
 from contextlib import ExitStack, contextmanager
 from decimal import Decimal
@@ -35,7 +36,7 @@ _PREP_RELATIVE = (
 _CAMPAIGN_ROOT = Path(
     "/Users/zeug/Projects/NeverEndingQuest/.git/overseer-relay/campaigns/neq-current-build"
 )
-sys.path.insert(0, _SCRIPTS_ROOT)
+sys.path.insert(0, os.fspath(_REPO_ROOT))
 
 
 def _path_text(path: object) -> str:
@@ -509,6 +510,57 @@ def _seed_bound_protocol_fixtures(
 
 
 class Study3bPathConfinementTests(unittest.TestCase):
+    def test_compat_uses_no_explicit_dynamic_compile_or_exec(self) -> None:
+        source_path = (
+            _REPO_ROOT
+            / "scripts/mise_en_scene/llm_staging_study3b/study3_compat.py"
+        )
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        dynamic_calls = [
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"compile", "exec"}
+        ]
+        self.assertEqual(dynamic_calls, [])
+
+    def test_prior_source_hashes_match_baseline_and_reject_tampering_first(self) -> None:
+        prefix = "scripts.mise_en_scene.llm_staging_study3b"
+        compat = importlib.import_module(prefix + ".study3_compat")
+        isolation = importlib.import_module(prefix + ".isolation")
+        baseline = isolation.read_baseline_metadata(repository_root=_REPO_ROOT)
+        baseline_hashes = {
+            entry["path"]: entry["sha256"] for entry in baseline["files"]
+        }
+        self.assertEqual(
+            compat._SOURCE_SHA256,
+            {
+                path: baseline_hashes[path]
+                for path in compat._SOURCE_SHA256
+            },
+        )
+
+        for relative_path in compat._SOURCE_SHA256:
+            with self.subTest(path=relative_path):
+                module_name = Path(relative_path).stem
+                finder = compat._FrozenStudy3SourceFinder(
+                    compat._PACKAGE_NAME + "." + module_name,
+                    relative_path,
+                    _REPO_ROOT,
+                )
+                with patch.object(
+                    compat,
+                    "_safe_project_read",
+                    return_value=b"\x00synthetic tampered source",
+                ):
+                    with self.assertRaisesRegex(
+                        compat.Study3CompatError,
+                        "STUDY3_SOURCE_HASH_MISMATCH",
+                    ):
+                        finder.find_spec(finder._name)
+                self.assertIsNone(finder.loader)
+
     def test_import_baseline_and_protocol_io_stay_inside_granted_roots(self) -> None:
         prefix = "scripts.mise_en_scene.llm_staging_study3b"
         staging_prefix = "scripts.mise_en_scene.llm_staging"
@@ -593,6 +645,11 @@ class Study3bPathConfinementTests(unittest.TestCase):
                     self.assertEqual(protocol.load_protocol_text(), artifact_protocol.decode())
 
                 study3_compat = importlib.import_module(prefix + ".study3_compat")
+                self.assertEqual(
+                    study3_compat.protocol.__name__,
+                    prefix + "._study3_source.protocol",
+                )
+                self.assertEqual(study3_compat.protocol.REPO_ROOT, _REPO_ROOT)
                 _seed_bound_protocol_fixtures(fixture_root, protocol, study3_compat)
                 cloned_protocol = study3_compat.protocol
                 cloned_contract = study3_compat.contract
@@ -763,6 +820,14 @@ class Study3bPathConfinementTests(unittest.TestCase):
                         for event in events
                     ),
                     "the original transport dependency import was not instrumented",
+                )
+                self.assertFalse(
+                    any(
+                        event[0] == "path-resolve"
+                        and "/llm_staging_study3/" in event[1]
+                        for event in events
+                    ),
+                    "immutable Study 3 import resolved a source ancestor",
                 )
                 self.assertTrue(
                     any(
