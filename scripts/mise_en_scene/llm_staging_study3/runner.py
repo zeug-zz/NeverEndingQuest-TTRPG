@@ -47,7 +47,6 @@ from .ledger import (
 )
 
 
-_LIVE_DISPATCH_HARD_DISABLED = True
 _MAX_COST_DECIMAL_PLACES = 12
 _USAGE_KEY_RE = re.compile(r"^[a-z_]{1,40}$")
 _COST_RE = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,12})?$")
@@ -335,17 +334,32 @@ class Study3SyntheticHTTP:
 class Study3Runner:
     """Public real-run entrypoint; no dependency injection is accepted."""
 
-    def run(self) -> Study3RunResult:
-        """Reject live execution while trusted exact-SHA CI provenance is absent.
+    def run(
+        self,
+        *,
+        expected_sha: str | None = None,
+        ci_evidence_path: str | None = None,
+        ci_evidence_sha256: str | None = None,
+        source_repository: str | None = None,
+        pr_number: int | None = None,
+        dispatch_ruling_id: str | None = None,
+    ) -> Study3RunResult:
+        """Run only after a fresh exact-head preflight and explicit ruling opt-in.
 
-        The readiness verifier currently fails closed before GitHub access or
-        local gates. The hard-disable guard also prevents an accidental future
-        READY object from reaching real ledger, HTTP, or credential code until
-        the provenance path is explicitly restored and verified.
+        The raw public CheckRuns JSON and its hash must be supplied from a direct
+        primary retrieval. The readiness helper revalidates that input and runs
+        all provider-free gates immediately before the real ledger is created.
         """
 
         try:
-            verification = readiness.verify_readiness_evidence()
+            verification = readiness.verify_readiness_evidence(
+                expected_sha=expected_sha,
+                ci_evidence_path=ci_evidence_path,
+                ci_evidence_sha256=ci_evidence_sha256,
+                source_repository=source_repository,
+                pr_number=pr_number,
+                dispatch_ruling_id=dispatch_ruling_id,
+            )
         except Exception:
             raise Study3RunnerBlocked("READINESS_VERIFICATION_FAILED") from None
         if type(verification) is not readiness.ReadinessVerification:
@@ -360,10 +374,10 @@ class Study3Runner:
         if (
             verification.live_dispatch_permitted is not True
             or verification.external_provenance_verified is not True
+            or verification.dispatch_ruling_id != readiness.DISPATCH_RULING_ID
+            or dispatch_ruling_id != readiness.DISPATCH_RULING_ID
         ):
             raise Study3RunnerBlocked("READINESS_DISPATCH_NOT_PERMITTED")
-        if _LIVE_DISPATCH_HARD_DISABLED or readiness.LIVE_DISPATCH_ENABLED is not True:
-            raise Study3RunnerBlocked("LIVE_DISPATCH_HARD_DISABLED")
 
         try:
             ledger = Study3Ledger()

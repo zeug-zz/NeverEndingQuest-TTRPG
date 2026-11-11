@@ -7,10 +7,11 @@
 
 The reusable functions validate synthetic in-memory snapshots only: they do
 not create a ledger, reserve an attempt, load credentials, or send HTTP. The
-explicit ``--exact-sha-readiness`` CLI delegates to readiness.py, which reports
-a fail-closed provenance blocker before GitHub CLI, credentials, or local
-preflight gates are touched. Synthetic decisions and the CLI result are
-metadata, never a dispatch token.
+explicit ``--exact-sha-readiness`` CLI verifies primary-supplied saved CheckRuns
+JSON, checks the DRAFT PR head with ``gh --repo``, runs only fixed provider-free
+gates, and emits immutable metadata/hash evidence. Its result is not a dispatch
+token; the runner separately requires the exact ruling-ID opt-in and repeats
+the readiness checks immediately before ledger initialization.
 """
 
 from __future__ import annotations
@@ -854,10 +855,11 @@ def _canonical_json(value: Any) -> bytes:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run fresh exact-SHA readiness; no saved evidence arguments are accepted."""
+    """Run the primary-supplied exact-SHA readiness bridge, never dispatch."""
 
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments != ["--exact-sha-readiness"]:
+    parsed = _parse_readiness_cli_arguments(arguments)
+    if parsed is None:
         print(
             '{"reason_codes":["READINESS_ARGUMENTS_NOT_ACCEPTED"],'
             '"status":"BLOCKED"}'
@@ -865,7 +867,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     from . import readiness
 
-    verification = readiness.verify_readiness_evidence()
+    try:
+        pr_number = int(parsed["--pr-number"])
+    except (KeyError, ValueError):
+        print('{"reason_codes":["DRAFT_PULL_REQUEST_NUMBER_INVALID"],"status":"BLOCKED"}')
+        return 2
+    verification = readiness.verify_readiness_evidence(
+        expected_sha=parsed.get("--head-sha"),
+        ci_evidence_path=parsed.get("--ci-json"),
+        ci_evidence_sha256=parsed.get("--ci-sha256"),
+        source_repository=parsed.get("--repository"),
+        pr_number=pr_number,
+        dispatch_ruling_id=parsed.get("--dispatch-ruling-id"),
+    )
     result = {
         "status": verification.status,
         "reason_codes": list(verification.reason_codes),
@@ -874,6 +888,12 @@ def main(argv: list[str] | None = None) -> int:
         "preflight_gate_count": verification.preflight_gate_count,
         "external_provenance_verified": verification.external_provenance_verified,
         "live_dispatch_permitted": verification.live_dispatch_permitted,
+        "trust_boundary": readiness.READINESS_TRUST_BOUNDARY,
+        "dispatch_ruling_id": verification.dispatch_ruling_id,
+        "evidence_relative_path": verification.evidence_relative_path,
+        "evidence_sha256": verification.evidence_sha256,
+        "gate_failures": list(verification.gate_failures),
+        "infrastructure_failures": list(verification.infrastructure_failures),
     }
     print(
         json.dumps(
@@ -885,6 +905,44 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0 if readiness.is_verified_readiness(verification) else 1
+
+
+def _parse_readiness_cli_arguments(arguments: list[str]) -> dict[str, str] | None:
+    """Accept only the explicit readiness verb and fixed metadata arguments."""
+
+    if type(arguments) is not list or not arguments or arguments[0] != "--exact-sha-readiness":
+        return None
+    allowed = {
+        "--head-sha",
+        "--ci-json",
+        "--ci-sha256",
+        "--repository",
+        "--pr-number",
+        "--dispatch-ruling-id",
+    }
+    tail = arguments[1:]
+    if len(tail) % 2:
+        return None
+    values: dict[str, str] = {}
+    for index in range(0, len(tail), 2):
+        key, value = tail[index : index + 2]
+        if (
+            key not in allowed
+            or key in values
+            or type(value) is not str
+            or not value
+            or value.startswith("--")
+        ):
+            return None
+        values[key] = value
+    required = {
+        "--head-sha",
+        "--ci-json",
+        "--ci-sha256",
+        "--repository",
+        "--pr-number",
+    }
+    return values if required <= set(values) else None
 
 
 if __name__ == "__main__":
