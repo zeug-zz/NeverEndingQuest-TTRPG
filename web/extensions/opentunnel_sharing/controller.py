@@ -199,6 +199,7 @@ class SharingCounters:
     degraded_transitions: int = 0
     stop_requests: int = 0
     cleanup_failures: int = 0
+    companion_launches: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -761,6 +762,9 @@ class SharingController:
 
         if not self._start_is_current(generation, cancel_event):
             return self._cancelled_start(generation)
+        # TABLETOP MODE: Count each owned serve launch attempt, including a
+        # launch that fails, so the N3 host status can enforce its frozen cap.
+        self._increment_counter("companion_launches")
         try:
             companion_state = companion.start(
                 self._deps.companion_start_deadline_seconds
@@ -1252,6 +1256,8 @@ class SharingController:
             self._companion = replacement
             self._companion_started = False
             self._companion_generation = generation
+        # TABLETOP MODE: Recovery creates a new foreground serve launch.
+        self._increment_counter("companion_launches")
         try:
             started_state = replacement.start(
                 self._deps.companion_start_deadline_seconds
