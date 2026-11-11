@@ -29,6 +29,9 @@ from web.extensions.opentunnel_sharing.companion import (
     resolve_companion,
     verify_companion_digest,
 )
+from web.extensions.opentunnel_sharing.runtime_manifest import (
+    load_companion_manifest,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SOURCE_MANIFEST = _ROOT / "packaging/opentunnel-v0.6.2.manifest.json"
@@ -303,6 +306,11 @@ class NetworkCompanionInstallerTests(unittest.TestCase):
                 self.assertFalse(stat.S_ISLNK(metadata.st_mode))
                 self.assertEqual(stat.S_IMODE(metadata.st_mode), 0o755)
                 self.assertEqual(installed.read_bytes(), executable)
+                runtime_manifest = load_companion_manifest(root)
+                self.assertEqual(
+                    runtime_manifest[platform_key],
+                    {"asset_stem": pin.asset_stem, "sha256": pin.sha256},
+                )
                 system, machine = _PLATFORM_IDENTITY[platform_key]
                 resolved = resolve_companion(
                     root,
@@ -639,6 +647,46 @@ class NetworkCompanionInstallerTests(unittest.TestCase):
         self.assertFalse(
             (root / "runtime/opentunnel/v0.6.2/opentunnel-linux-arm64.previous").exists()
         )
+        self._assert_stage_empty(root)
+
+    def test_failed_manifest_activation_restores_prior_manifest_and_binary(self) -> None:
+        root = self._root()
+        old_manifest, _old_archive, old_executable, _old_sums, old_downloader = self._fixture(
+            executable=b"old manifest rollback executable"
+        )
+        self.assertEqual(self._install(root, old_manifest, old_downloader).reason, "installed")
+        manifest_path = root / "runtime/opentunnel/v0.6.2/manifest.json"
+        previous_manifest_bytes = manifest_path.read_bytes()
+
+        new_manifest, _archive, new_executable, _sums, new_downloader = self._fixture(
+            executable=b"new manifest rollback executable",
+            manifest=old_manifest,
+        )
+        original_writer = installer.write_runtime_manifest
+
+        def write_then_fail(
+            install_root: Path,
+            pinned_manifest: PinnedManifest,
+            platform_key: str,
+        ) -> None:
+            original_writer(install_root, pinned_manifest, platform_key)
+            raise OSError("simulated manifest activation failure")
+
+        with mock.patch.object(
+            installer, "write_runtime_manifest", side_effect=write_then_fail
+        ):
+            result = self._install(root, new_manifest, new_downloader)
+
+        self.assertEqual(result.reason, "rolled_back")
+        self.assertNotEqual(old_executable, new_executable)
+        self.assertEqual(manifest_path.read_bytes(), previous_manifest_bytes)
+        restored_manifest = load_companion_manifest(root)
+        self.assertEqual(
+            restored_manifest["linux-arm64"]["sha256"],
+            old_manifest.platforms["linux-arm64"].sha256,
+        )
+        restored_binary = root / old_manifest.platforms["linux-arm64"].runtime_path
+        self.assertEqual(restored_binary.read_bytes(), old_executable)
         self._assert_stage_empty(root)
 
     def test_downloader_interruption_cleans_partial_staging(self) -> None:

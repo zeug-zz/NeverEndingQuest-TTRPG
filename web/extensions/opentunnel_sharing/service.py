@@ -62,6 +62,10 @@ from web.extensions.opentunnel_sharing.profile_state import (
     default_state_root,
     prepare_profile,
 )
+from web.extensions.opentunnel_sharing.runtime_manifest import (
+    ManifestError as RuntimeManifestError,
+    load_companion_manifest as _read_companion_manifest,
+)
 from web.extensions.opentunnel_sharing.supervisor import (
     Identity,
     OwnedCompanion,
@@ -145,6 +149,11 @@ _SAFE_BOOTSTRAP_REASONS = frozenset(
         "identity_initialized",
     }
 )
+
+
+def load_companion_manifest(install_root: Path) -> Mapping[str, Mapping[str, str]]:
+    """Load the strict install-relative runtime companion manifest."""
+    return _read_companion_manifest(install_root)
 
 
 def validate_tunnel_target(host: object, port: object) -> str:
@@ -688,9 +697,8 @@ def create_production_player_sharing_service(
 ) -> PlayerSharingService:
     """Build production seams lazily; construction performs no filesystem or runtime work.
 
-    The packaging change supplies the pinned companion manifest. Until supplied,
-    companion resolution fails closed as ``invalid_manifest``; this factory does
-    not invent an asset stem or digest.
+    The pinned runtime manifest is loaded lazily from the install root unless a
+    caller explicitly supplies the test/integration injection seam.
     """
     if not callable(local_runtime_check):
         raise TypeError("local_runtime_check_required")
@@ -730,9 +738,13 @@ class _ProductionComposition:
             raise ValueError("state_root_configuration_ambiguous")
         self._gateway = gateway
         self._local_runtime_check = local_runtime_check
-        self._manifest = companion_manifest
         self._install_root = (
             Path(install_root) if install_root is not None else Path(__file__).resolve().parents[3]
+        )
+        self._manifest = (
+            companion_manifest
+            if companion_manifest is not None
+            else lambda: load_companion_manifest(self._install_root)
         )
         if state_root_provider is not None:
             if not callable(state_root_provider):
@@ -787,12 +799,14 @@ class _ProductionComposition:
 
     def _resolve_companion(self) -> CompanionResolution:
         manifest = self._manifest
-        if manifest is None:
-            return CompanionResolution("invalid_manifest", "manifest_unavailable")
         try:
             selected_manifest = manifest() if callable(manifest) else manifest
+        except RuntimeManifestError as exc:
+            if exc.reason == "manifest_missing":
+                return CompanionResolution("missing_asset", "manifest_missing")
+            return CompanionResolution("invalid_manifest", "invalid_manifest")
         except Exception:
-            return CompanionResolution("invalid_manifest", "manifest_unavailable")
+            return CompanionResolution("invalid_manifest", "invalid_manifest")
         return resolve_companion(self._install_root, selected_manifest)
 
     def _initialize_identity(
