@@ -412,15 +412,36 @@ class N3LifecycleGateTests(unittest.TestCase):
 
     def test_system_port_inspector_fails_closed_on_lsof_errors(self) -> None:
         inspector = gate.SystemPortInspector()
-        with (
-            mock.patch.object(gate.shutil, "which", return_value="/usr/sbin/lsof"),
-            mock.patch.object(
-                gate.subprocess,
-                "run",
-                return_value=mock.Mock(returncode=1, stdout="", stderr=""),
-            ),
-        ):
-            self.assertEqual(inspector.inspect(gate.PLAYER_PORT).state, "free")
+        warnings = (
+            "lsof: WARNING: can't stat() apfs file system /Volumes/Media\n"
+            "      Output information may be incomplete.\n"
+            '      assuming "dev=1000018" from mount table\n'
+        )
+        cases = (
+            (1, "", warnings, "free", ()),
+            (0, "p1234\nnLISTEN\n", warnings, "occupied", (1234,)),
+            (1, "", warnings + "unexpected warning\n", "unknown", ()),
+            (1, "", "lsof: WARNING: something else\n", "unknown", ()),
+            (1, "", "x" * 301, "unknown", ()),
+            (1, "", "\n".join(["unexpected"] * 41), "unknown", ()),
+            (2, "", "", "unknown", ()),
+            (1, "", "", "free", ()),
+        )
+        for returncode, stdout, stderr, state, pids in cases:
+            with self.subTest(returncode=returncode, stderr=stderr[:40]):
+                with (
+                    mock.patch.object(gate.shutil, "which", return_value="/usr/sbin/lsof"),
+                    mock.patch.object(
+                        gate.subprocess,
+                        "run",
+                        return_value=mock.Mock(
+                            returncode=returncode, stdout=stdout, stderr=stderr
+                        ),
+                    ),
+                ):
+                    observation = inspector.inspect(gate.PLAYER_PORT)
+                self.assertEqual(observation.state, state)
+                self.assertEqual(observation.pids, pids)
         with (
             mock.patch.object(gate.shutil, "which", return_value="/usr/sbin/lsof"),
             mock.patch.object(

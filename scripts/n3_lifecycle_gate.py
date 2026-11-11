@@ -64,6 +64,23 @@ FAKE_ORIGIN = "https://n3-preflight.example.net"
 FAKE_PASSWORD = "n3-preflight-only-password"
 FAKE_ROTATED_PASSWORD = "n3-preflight-rotated-password"
 FAKE_PLAINTEXT_CREDENTIAL = "N3_PREFLIGHT_ONLY_CREDENTIAL"
+_LSOF_WARNING_PATTERNS = (
+    re.compile(r"^lsof: WARNING: can't stat\(\) [a-z0-9]+ file system /[^\n]{1,200}$"),
+    re.compile(r"^\s+Output information may be incomplete\.$"),
+    re.compile(r'^\s+assuming "dev=[0-9a-f]{1,16}" from mount table$'),
+)
+
+
+def lsof_stderr_is_tolerable(stderr: str) -> bool:
+    """Return whether stderr contains only the narrowly recognized lsof warnings."""
+    lines = stderr.splitlines()
+    if len(lines) > 40 or any(len(line) > 300 for line in lines):
+        return False
+    return all(
+        not line.strip()
+        or any(pattern.fullmatch(line) for pattern in _LSOF_WARNING_PATTERNS)
+        for line in lines
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,7 +549,7 @@ class SystemPortInspector:
             )
         except (OSError, subprocess.TimeoutExpired):
             return PortObservation(port, "unknown")
-        if result.stderr.strip():
+        if not lsof_stderr_is_tolerable(result.stderr):
             return PortObservation(port, "unknown")
         if result.returncode == 1 and not result.stdout.strip():
             return PortObservation(port, "free")
