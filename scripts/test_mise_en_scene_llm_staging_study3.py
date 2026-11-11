@@ -19,9 +19,11 @@ import importlib
 import importlib.util
 import io
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import re
+import stat
 import socket
 import subprocess
 import sys
@@ -98,6 +100,24 @@ try:
     )
     from scripts.mise_en_scene.llm_staging_study3 import sizing as study3_sizing
     from scripts.mise_en_scene.llm_staging_study3 import preflight as study3_preflight
+    from scripts.mise_en_scene.llm_staging_study3 import ledger as study3_ledger_module
+    from scripts.mise_en_scene.llm_staging_study3 import frozen_inventory as study3_frozen_inventory
+    from scripts.mise_en_scene.llm_staging_study3 import readiness as study3_readiness
+    from scripts.mise_en_scene.llm_staging_study3 import runner as study3_runner_module
+    from scripts.mise_en_scene.llm_staging_study3.ledger import (
+        Study3Ledger,
+        Study3LedgerError,
+        Study3Reservation,
+    )
+    from scripts.mise_en_scene.llm_staging_study3.readiness import (
+        ReadinessVerification,
+        ReadinessVerificationError,
+    )
+    from scripts.mise_en_scene.llm_staging_study3.runner import (
+        Study3Runner,
+        Study3RunnerBlocked,
+        Study3SyntheticHTTP,
+    )
 finally:
     _IMPORT_TRIPWIRE_STACK.close()
 STUDY1_PROTOCOL = (
@@ -142,6 +162,10 @@ def _tripwire_patch_snapshot() -> tuple[object, ...]:
         (Path, ("open",)),
         (os, ("open", "getenv", "getenvb", "chmod", "chown", "link", "makedirs", "mkdir", "mkfifo", "mknod", "remove", "rename", "replace", "rmdir", "symlink", "truncate", "unlink", "utime")),
         (importlib, ("import_module",)),
+        (
+            Study3Ledger,
+            ("initialize", "reserve", "complete"),
+        ),
         (socket, ("create_connection", "getaddrinfo", "gethostbyaddr", "gethostbyname", "gethostbyname_ex", "getnameinfo")),
         (socket.socket, ("connect", "connect_ex", "send", "sendall", "sendto", "sendmsg")),
     )
@@ -365,6 +389,100 @@ def _valid_synthetic_delta(binding: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _study3_provider_response(
+    scene_id: str,
+    generation_suffix: str,
+    *,
+    content: str | None = None,
+    cost: object = "0.001",
+    model_id: str = MODEL_ID,
+    credential_echo: str | None = None,
+    external_cost_receipt: object = None,
+) -> bytes:
+    bindings = {
+        row["scene_id"]: row for row in load_input_bindings()["scenes"]
+    }
+    selected_content = content
+    if credential_echo is not None:
+        selected_content = "credential echo: " + credential_echo
+    if selected_content is None:
+        delta = _valid_synthetic_delta(bindings[scene_id])
+        selected_content = json.dumps(
+            delta,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    usage: dict[str, object] = {
+        "prompt_tokens": 50,
+        "completion_tokens": 100,
+        "reasoning_tokens": 10,
+    }
+    if cost is not None:
+        if type(cost) is str:
+            try:
+                usage["cost"] = float(cost)
+            except ValueError:
+                usage["cost"] = cost
+        else:
+            usage["cost"] = cost
+    response: dict[str, object] = {
+        "id": "synthetic-generation-" + generation_suffix,
+        "model": model_id,
+        "provider": "OpenAI",
+        "usage": usage,
+        "choices": [{"message": {"content": selected_content}}],
+    }
+    if external_cost_receipt is not None:
+        response["cost_receipt"] = external_cost_receipt
+    return json.dumps(
+        response,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _study3_ledger_race_worker(
+    root_path: str,
+    scene_id: str,
+    request_sha256: str,
+    start_receiver: object,
+    result_sender: object,
+) -> None:
+    """Race one synthetic reservation in a separate process."""
+
+    result_sender.send_bytes(b"ready")
+    start_receiver.recv_bytes()
+    try:
+        ledger = Study3Ledger._for_synthetic_test(Path(root_path))
+        reservation = ledger.reserve(
+            scene_id=scene_id,
+            request_sha256=request_sha256,
+        )
+        result_sender.send_bytes(
+            json.dumps(("accepted", reservation.attempt_number)).encode("ascii")
+        )
+    except Study3LedgerError as error:
+        result_sender.send_bytes(json.dumps(("rejected", error.code)).encode("ascii"))
+    except BaseException as error:
+        result_sender.send_bytes(
+            json.dumps(("unexpected", type(error).__name__)).encode("ascii")
+        )
+
+
+def _study3_ledger_crash_after_reserve(
+    root_path: str,
+    scene_id: str,
+    request_sha256: str,
+) -> None:
+    """Exit without cleanup after a synthetic durable reservation."""
+
+    ledger = Study3Ledger._for_synthetic_test(Path(root_path))
+    ledger.reserve(scene_id=scene_id, request_sha256=request_sha256)
+    os._exit(0)
+
+
 class Study3GuardedTestCase(unittest.TestCase):
     """Install suite-wide external-effect guards before every test setup."""
 
@@ -390,6 +508,24 @@ class Study3GuardedTestCase(unittest.TestCase):
         self._study3_tripwire_stack = stack
         self.addCleanup(stack.close)
         self._study3_tripwire_calls = install_tripwires(stack, REPO_ROOT)
+
+        for method_name in ("initialize", "reserve", "complete"):
+            original = getattr(Study3Ledger, method_name)
+
+            def guarded_real_ledger_api(
+                ledger: Study3Ledger,
+                *args: object,
+                _original: object = original,
+                _calls: dict[str, int] = self._study3_tripwire_calls,
+                **kwargs: object,
+            ):
+                if not ledger._synthetic:
+                    study3_test_support._block(_calls, "real_study3_ledger_api")
+                return _original(ledger, *args, **kwargs)
+
+            stack.enter_context(
+                patch.object(Study3Ledger, method_name, guarded_real_ledger_api)
+            )
 
 
 class Study3ProtocolTest(Study3GuardedTestCase):
@@ -3119,6 +3255,1502 @@ class Study3SyntheticPreflightTest(Study3GuardedTestCase):
         self.assertEqual(stopped.remaining_attempts_unspent, 2)
 
 
+class Study3DurableLedgerTest(Study3GuardedTestCase):
+    def setUp(self) -> None:
+        PREP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = tempfile.TemporaryDirectory(
+            prefix="synthetic-study3-ledger-test-",
+            dir=PREP_ROOT,
+        )
+        self.addCleanup(self.temp_dir.cleanup)
+        self.fixture_parent = Path(self.temp_dir.name)
+        self.ledger_root = self.fixture_parent / "synthetic-ledger"
+        self.ledger = Study3Ledger._for_synthetic_test(self.ledger_root)
+        self.sizing_report = study3_sizing.build_sizing_report()
+
+    def _new_ledger(self, name: str = "synthetic-ledger") -> Study3Ledger:
+        return Study3Ledger._for_synthetic_test(self.fixture_parent / name)
+
+    def _request_hash(self, index: int = 0) -> str:
+        return self.sizing_report["scenes"][index]["request_sha256"]
+
+    def _reserve(
+        self,
+        ledger: Study3Ledger | None = None,
+        index: int = 0,
+    ) -> Study3Reservation:
+        target = ledger or self.ledger
+        return target.reserve(
+            scene_id=SCENE_ORDER[index],
+            request_sha256=self._request_hash(index),
+        )
+
+    def _receipt(
+        self,
+        reservation: Study3Reservation,
+        *,
+        cost: object = "0.01",
+        generation_id: str | None = None,
+    ) -> dict[str, object]:
+        generation = generation_id or (
+            "synthetic-generation-" + str(reservation.attempt_number)
+        )
+        return {
+            "receipt_id": generation,
+            "study_id": STUDY_ID,
+            "manifest_sha256": study3_ledger_module.protocol.STUDY3_MANIFEST_SHA256,
+            "scene_id": reservation.scene_id,
+            "attempt_number": reservation.attempt_number,
+            "request_sha256": reservation.request_sha256,
+            "response_sha256": (str(reservation.attempt_number) * 64),
+            "returned_model_id": MODEL_ID,
+            "upstream_provider": "OpenAI",
+            "generation_id": generation,
+            "cost_usd": cost,
+            "prompt_tokens": 100,
+            "completion_tokens": 30,
+            "reasoning_tokens": 10,
+        }
+
+    def _records(self, ledger: Study3Ledger | None = None) -> list[dict[str, object]]:
+        target = ledger or self.ledger
+        return [
+            json.loads(line)
+            for line in target.path.read_bytes().splitlines()
+        ]
+
+    def _assert_no_external_effects(self) -> None:
+        for name in (
+            "credential_lookup",
+            "credential_enumeration",
+            "network",
+            "provider_import",
+            "provider_construction",
+        ):
+            self.assertEqual(self._study3_tripwire_calls.get(name, 0), 0, name)
+
+    def test_initialization_is_private_fixed_and_manifest_bound(self) -> None:
+        self.ledger.initialize()
+        self.assertEqual(stat.S_IMODE(self.ledger.root.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(self.ledger.path.stat().st_mode), 0o600)
+        lock_path = self.ledger.root / study3_ledger_module.LOCK_NAME
+        self.assertEqual(stat.S_IMODE(lock_path.stat().st_mode), 0o600)
+
+        header = self._records()[0]
+        self.assertEqual(header["schema"], study3_ledger_module.LEDGER_SCHEMA)
+        self.assertEqual(header["study_id"], STUDY_ID)
+        self.assertEqual(
+            header["manifest_sha256"],
+            study3_ledger_module.protocol.STUDY3_MANIFEST_SHA256,
+        )
+        self.assertEqual(header["scene_order"], list(SCENE_ORDER))
+        self.assertEqual(header["attempt_cap"], 3)
+        self.assertEqual(header["hard_ceiling_usd"], "0.05")
+        self.assertEqual(
+            [row["request_sha256"] for row in header["scene_bindings"]],
+            [row["request_sha256"] for row in self.sizing_report["scenes"]],
+        )
+        self.assertNotIn("run_id", header)
+        self.assertNotIn("root_relative", header)
+
+        with self.assertRaises(Study3LedgerError) as caught:
+            self.ledger.initialize()
+        self.assertEqual(caught.exception.code, "LEDGER_ALREADY_INITIALIZED")
+        self._assert_no_external_effects()
+
+    def test_reservation_is_ordered_bound_and_fsynced_before_return(self) -> None:
+        self.ledger.initialize()
+        original_fsync = os.fsync
+        with patch.object(study3_ledger_module.os, "fsync", wraps=original_fsync) as fsync:
+            reservation = self._reserve()
+        self.assertIs(type(reservation), Study3Reservation)
+        self.assertEqual(reservation.attempt_number, 1)
+        self.assertEqual(reservation.scene_id, SCENE_ORDER[0])
+        self.assertEqual(reservation.request_sha256, self._request_hash(0))
+        self.assertGreaterEqual(fsync.call_count, 1)
+
+        record = self._records()[-1]
+        self.assertEqual(record["event"], "reservation")
+        self.assertEqual(record["study_id"], STUDY_ID)
+        self.assertEqual(
+            record["manifest_sha256"],
+            study3_ledger_module.protocol.STUDY3_MANIFEST_SHA256,
+        )
+        self.assertEqual(record["attempt_number"], 1)
+        self.assertEqual(record["scene_id"], SCENE_ORDER[0])
+        self.assertEqual(record["request_sha256"], self._request_hash(0))
+        self.assertNotIn("run_id", record)
+        self.assertNotIn("run_root_relative", record)
+
+        before = self.ledger.path.read_bytes()
+        invalid_reservations = (
+            (SCENE_ORDER[1], self._request_hash(1)),
+            (SCENE_ORDER[0], "0" * 64),
+            (SCENE_ORDER[0], True),
+        )
+        for scene_id, request_hash in invalid_reservations:
+            with self.subTest(scene_id=scene_id, request_hash=request_hash):
+                with self.assertRaises(Study3LedgerError):
+                    self.ledger.reserve(
+                        scene_id=scene_id,
+                        request_sha256=request_hash,
+                    )
+                self.assertEqual(self.ledger.path.read_bytes(), before)
+        self._assert_no_external_effects()
+
+    def test_exact_receipt_cost_is_counted_once_and_duplicate_receipt_stops(self) -> None:
+        self.ledger.initialize()
+        first = self._reserve()
+        receipt = self._receipt(first)
+        completed = self.ledger.complete(
+            first,
+            outcome="ACCEPTED",
+            reported_cost_usd="0.010",
+            cost_receipt=receipt,
+        )
+        self.assertEqual(completed.actual_cost_status, "RECONCILED")
+        self.assertEqual(completed.actual_cost_usd, "0.01")
+        self.assertFalse(completed.stop_study)
+
+        before_duplicate_complete = self.ledger.path.read_bytes()
+        with self.assertRaisesRegex(Study3LedgerError, "RESERVATION_HANDLE_INVALID"):
+            self.ledger.complete(
+                first,
+                outcome="ACCEPTED",
+                reported_cost_usd="0.01",
+                cost_receipt=receipt,
+            )
+        self.assertEqual(self.ledger.path.read_bytes(), before_duplicate_complete)
+
+        second = self._reserve(index=1)
+        duplicate = self._receipt(
+            second,
+            cost="0.01",
+            generation_id="synthetic-generation-1",
+        )
+        second_result = self.ledger.complete(
+            second,
+            outcome="CONTRACT_FAILURE",
+            reported_cost_usd="0.01",
+            cost_receipt=duplicate,
+        )
+        self.assertEqual(second_result.actual_cost_status, "UNRESOLVED")
+        self.assertTrue(second_result.stop_study)
+        records = self._records()
+        result_records = [row for row in records if row["event"] == "result"]
+        self.assertEqual(len(result_records), 2)
+        self.assertEqual(result_records[0]["cost_receipt"]["receipt_id"], "synthetic-generation-1")
+        self.assertIsNone(result_records[1]["cost_receipt"])
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_ACTUAL_COST_UNRESOLVED"):
+            self._reserve(index=2)
+        self._assert_no_external_effects()
+
+    def test_missing_mismatched_boolean_and_nonfinite_receipts_stop_dispatch(self) -> None:
+        cases = (
+            ("missing", None, None, None, "COST_RECEIPT_MISSING"),
+            ("reported mismatch", "0.02", "0.01", None, "COST_RECEIPT_MISMATCH"),
+            ("wrong request", "0.01", "0.01", "wrong request", "COST_RECEIPT_INVALID"),
+            ("boolean cost", True, True, None, "COST_RECEIPT_INVALID"),
+            ("nonfinite cost", float("nan"), float("nan"), None, "COST_RECEIPT_INVALID"),
+            ("boolean reported cost", True, "0.01", None, "COST_RECEIPT_INVALID"),
+            ("nonfinite reported cost", float("nan"), "0.01", None, "COST_RECEIPT_INVALID"),
+            ("boolean usage", "0.01", "0.01", "boolean_usage", "COST_RECEIPT_INVALID"),
+        )
+        for name, reported, receipt_cost, mutation, expected_reason in cases:
+            with self.subTest(name=name):
+                ledger = self._new_ledger("synthetic-ledger-" + name.replace(" ", "-"))
+                ledger.initialize()
+                reservation = self._reserve(ledger)
+                receipt = (
+                    self._receipt(reservation, cost=receipt_cost)
+                    if receipt_cost is not None
+                    else None
+                )
+                if mutation == "wrong request" and receipt is not None:
+                    receipt["request_sha256"] = "f" * 64
+                elif mutation == "boolean_usage" and receipt is not None:
+                    receipt["prompt_tokens"] = True
+                result = ledger.complete(
+                    reservation,
+                    outcome="ACCEPTED",
+                    reported_cost_usd=reported,
+                    cost_receipt=receipt,
+                )
+                self.assertEqual(result.actual_cost_status, "UNRESOLVED")
+                self.assertTrue(result.stop_study)
+                record = self._records(ledger)[-1]
+                self.assertEqual(record["reason_code"], expected_reason)
+                self.assertIsNone(record["actual_cost_usd"])
+                self.assertIsNone(record["cost_receipt"])
+                with self.assertRaisesRegex(
+                    Study3LedgerError, "LEDGER_ACTUAL_COST_UNRESOLVED"
+                ):
+                    ledger.reserve(
+                        scene_id=SCENE_ORDER[1],
+                        request_sha256=self._request_hash(1),
+                    )
+        self._assert_no_external_effects()
+
+    def test_actual_plus_conservative_remaining_must_be_strictly_below_cap(self) -> None:
+        remaining = sum(
+            (
+                Decimal(row["conservative_cost_usd_estimate"])
+                for row in self.sizing_report["scenes"][1:]
+            ),
+            Decimal(0),
+        )
+        cases = (
+            ("equal", Decimal("0.05") - remaining),
+            ("over", Decimal("0.045")),
+        )
+        for name, actual in cases:
+            with self.subTest(name=name):
+                ledger = self._new_ledger("synthetic-ledger-budget-" + name)
+                ledger.initialize()
+                reservation = self._reserve(ledger)
+                amount = format(actual, "f")
+                receipt = self._receipt(reservation, cost=amount)
+                completed = ledger.complete(
+                    reservation,
+                    outcome="ACCEPTED",
+                    reported_cost_usd=amount,
+                    cost_receipt=receipt,
+                )
+                self.assertTrue(completed.stop_study)
+                with self.assertRaises(Study3LedgerError) as caught:
+                    ledger.reserve(
+                        scene_id=SCENE_ORDER[1],
+                        request_sha256=self._request_hash(1),
+                    )
+                self.assertEqual(caught.exception.code, "LEDGER_STUDY_STOPPED")
+        self._assert_no_external_effects()
+
+    def test_pending_restart_corrupt_duplicate_and_reset_states_fail_closed(self) -> None:
+        self.ledger.initialize()
+        reservation = self._reserve()
+        restarted = self._new_ledger()
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_PENDING_RESERVATION"):
+            restarted.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+        with self.assertRaisesRegex(Study3LedgerError, "RESERVATION_HANDLE_INVALID"):
+            restarted.complete(
+                reservation,
+                outcome="ACCEPTED",
+                reported_cost_usd="0.01",
+                cost_receipt=self._receipt(reservation),
+            )
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_ALREADY_INITIALIZED"):
+            self.ledger.initialize()
+
+        corrupt_root_ledger = self._new_ledger("synthetic-ledger-corrupt")
+        corrupt_root_ledger.initialize()
+        corrupt_root_ledger.path.write_bytes(b'{"event":"header"}\n')
+        with self.assertRaises(Study3LedgerError):
+            corrupt_root_ledger.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+
+        duplicate_root_ledger = self._new_ledger("synthetic-ledger-duplicate")
+        duplicate_root_ledger.initialize()
+        duplicate_reservation = self._reserve(duplicate_root_ledger)
+        duplicate_line = duplicate_root_ledger.path.read_bytes().splitlines()[-1]
+        with duplicate_root_ledger.path.open("ab") as handle:
+            handle.write(duplicate_line + b"\n")
+        with self.assertRaises(Study3LedgerError):
+            duplicate_root_ledger.reserve(
+                scene_id=SCENE_ORDER[1],
+                request_sha256=self._request_hash(1),
+            )
+        self.assertEqual(duplicate_reservation.attempt_number, 1)
+
+        duplicate_artifact_ledger = self._new_ledger("synthetic-ledger-extra-artifact")
+        duplicate_artifact_ledger.initialize()
+        (duplicate_artifact_ledger.root / "study3-attempt-ledger-copy.jsonl").write_text(
+            "synthetic duplicate", encoding="ascii"
+        )
+        with self.assertRaisesRegex(
+            Study3LedgerError, "LEDGER_DUPLICATE_OR_MISSING_ARTIFACT"
+        ):
+            self._reserve(duplicate_artifact_ledger)
+
+        duplicate_result_ledger = self._new_ledger("synthetic-ledger-duplicate-result")
+        duplicate_result_ledger.initialize()
+        result_reservation = self._reserve(duplicate_result_ledger)
+        duplicate_result_ledger.complete(
+            result_reservation,
+            outcome="ACCEPTED",
+            reported_cost_usd="0.01",
+            cost_receipt=self._receipt(result_reservation),
+        )
+        result_line = duplicate_result_ledger.path.read_bytes().splitlines()[-1]
+        with duplicate_result_ledger.path.open("ab") as handle:
+            handle.write(result_line + b"\n")
+        with self.assertRaises(Study3LedgerError):
+            self._reserve(duplicate_result_ledger, index=1)
+
+        crash_ledger = self._new_ledger("synthetic-ledger-crashed-process")
+        crash_ledger.initialize()
+        methods = multiprocessing.get_all_start_methods()
+        context = multiprocessing.get_context("fork" if "fork" in methods else "spawn")
+        process = context.Process(
+            target=_study3_ledger_crash_after_reserve,
+            args=(
+                str(crash_ledger.root),
+                SCENE_ORDER[0],
+                self._request_hash(0),
+            ),
+        )
+        process.start()
+        process.join(timeout=30)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+        self.assertFalse(process.is_alive())
+        self.assertEqual(process.exitcode, 0)
+        crashed_restart = self._new_ledger("synthetic-ledger-crashed-process")
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_PENDING_RESERVATION"):
+            self._reserve(crashed_restart)
+        self._assert_no_external_effects()
+
+    def test_multiprocess_race_accepts_at_most_one_reservation(self) -> None:
+        self.ledger.initialize()
+        methods = multiprocessing.get_all_start_methods()
+        context = multiprocessing.get_context("fork" if "fork" in methods else "spawn")
+        start_senders = []
+        result_receivers = []
+        worker_connections = []
+        processes = []
+        for _ in range(2):
+            worker_start_receiver, parent_start_sender = context.Pipe(duplex=False)
+            parent_result_receiver, worker_result_sender = context.Pipe(duplex=False)
+            start_senders.append(parent_start_sender)
+            result_receivers.append(parent_result_receiver)
+            worker_connections.append((worker_start_receiver, worker_result_sender))
+            processes.append(
+                context.Process(
+                    target=_study3_ledger_race_worker,
+                    args=(
+                        str(self.ledger.root),
+                        SCENE_ORDER[0],
+                        self._request_hash(0),
+                        worker_start_receiver,
+                        worker_result_sender,
+                    ),
+                )
+            )
+        try:
+            for process, (worker_start_receiver, worker_result_sender) in zip(
+                processes, worker_connections
+            ):
+                process.start()
+                worker_start_receiver.close()
+                worker_result_sender.close()
+            for connection in result_receivers:
+                self.assertTrue(connection.poll(30))
+                self.assertEqual(connection.recv_bytes(), b"ready")
+            for connection in start_senders:
+                connection.send_bytes(b"go")
+            outcomes = [
+                json.loads(connection.recv_bytes().decode("ascii"))
+                for connection in result_receivers
+            ]
+            for process in processes:
+                process.join(timeout=30)
+                self.assertFalse(process.is_alive())
+                self.assertEqual(process.exitcode, 0)
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            for connection in start_senders + result_receivers:
+                connection.close()
+
+        self.assertEqual(sum(row[0] == "accepted" for row in outcomes), 1)
+        self.assertEqual(sum(row[0] == "rejected" for row in outcomes), 1)
+        self.assertEqual(
+            {row[1] for row in outcomes if row[0] == "rejected"},
+            {"LEDGER_PENDING_RESERVATION"},
+        )
+        self.assertEqual(
+            len([row for row in self._records() if row["event"] == "reservation"]),
+            1,
+        )
+        self._assert_no_external_effects()
+
+    def test_traversal_symlinked_ancestors_and_symlink_files_do_not_write_outside_root(self) -> None:
+        target_root = self.fixture_parent / "synthetic-outside-target"
+        target_root.mkdir()
+        sentinel = target_root / "sentinel.txt"
+        sentinel.write_text("unchanged", encoding="ascii")
+        sentinel.chmod(0o600)
+
+        with self.assertRaises(Study3LedgerError):
+            Study3Ledger._for_synthetic_test(
+                self.fixture_parent / "synthetic-ledger" / ".." / "synthetic-escape"
+            )
+
+        root_link = self.fixture_parent / "synthetic-root-link"
+        root_link.symlink_to(target_root, target_is_directory=True)
+        with self.assertRaises(Study3LedgerError):
+            Study3Ledger._for_synthetic_test(root_link).initialize()
+
+        ancestor_link = self.fixture_parent / "synthetic-ancestor-link"
+        ancestor_link.symlink_to(target_root, target_is_directory=True)
+        ancestor_ledger = Study3Ledger._for_synthetic_test(
+            ancestor_link / "synthetic-ledger"
+        )
+        with self.assertRaises(Study3LedgerError):
+            ancestor_ledger.initialize()
+        self.assertEqual(sentinel.read_text(encoding="ascii"), "unchanged")
+
+        file_link_ledger = self._new_ledger("synthetic-ledger-file-link")
+        file_link_ledger.initialize()
+        file_link_ledger.path.unlink()
+        file_link_ledger.path.symlink_to(sentinel)
+        with self.assertRaises(Study3LedgerError):
+            file_link_ledger.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+        self.assertEqual(sentinel.read_text(encoding="ascii"), "unchanged")
+
+        hardlink_ledger = self._new_ledger("synthetic-ledger-hardlink")
+        hardlink_ledger.initialize()
+        hardlink_ledger.path.unlink()
+        os.link(sentinel, hardlink_ledger.path)
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_FILE_UNSAFE"):
+            hardlink_ledger.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+        self.assertEqual(sentinel.read_text(encoding="ascii"), "unchanged")
+
+        lock_path = file_link_ledger.root / study3_ledger_module.LOCK_NAME
+        lock_path.unlink()
+        lock_path.symlink_to(sentinel)
+        with self.assertRaises(Study3LedgerError):
+            file_link_ledger.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+        self.assertEqual(sentinel.read_text(encoding="ascii"), "unchanged")
+        self._assert_no_external_effects()
+
+    def test_partial_append_and_completion_fsync_failure_poison_and_restart_closed(self) -> None:
+        self.ledger.initialize()
+        original_write = os.write
+        write_calls = 0
+
+        def partial_write(descriptor: int, contents: bytes) -> int:
+            nonlocal write_calls
+            write_calls += 1
+            if write_calls == 1:
+                return original_write(descriptor, contents[: max(1, len(contents) // 2)])
+            raise OSError("synthetic partial write")
+
+        with patch.object(study3_ledger_module.os, "write", side_effect=partial_write):
+            with self.assertRaisesRegex(
+                Study3LedgerError, "LEDGER_DURABILITY_UNCERTAIN"
+            ):
+                self._reserve()
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_INSTANCE_POISONED"):
+            self._reserve()
+        restarted = self._new_ledger()
+        with self.assertRaises(Study3LedgerError):
+            restarted.reserve(
+                scene_id=SCENE_ORDER[0],
+                request_sha256=self._request_hash(0),
+            )
+
+        completion_ledger = self._new_ledger("synthetic-ledger-completion-failure")
+        completion_ledger.initialize()
+        reservation = self._reserve(completion_ledger)
+        receipt = self._receipt(reservation)
+        original_fsync = os.fsync
+        fsync_calls = 0
+
+        def fail_result_fsync(descriptor: int) -> None:
+            nonlocal fsync_calls
+            fsync_calls += 1
+            if fsync_calls == 3:
+                raise OSError("synthetic result fsync failure")
+            original_fsync(descriptor)
+
+        with patch.object(study3_ledger_module.os, "fsync", side_effect=fail_result_fsync):
+            with self.assertRaisesRegex(
+                Study3LedgerError, "LEDGER_COMPLETION_DURABILITY_UNCERTAIN"
+            ):
+                completion_ledger.complete(
+                    reservation,
+                    outcome="ACCEPTED",
+                    reported_cost_usd="0.01",
+                    cost_receipt=receipt,
+                )
+        self.assertTrue(
+            (completion_ledger.root / study3_ledger_module.COMPLETION_MARKER_NAME).exists()
+        )
+        restarted_completion = self._new_ledger("synthetic-ledger-completion-failure")
+        with self.assertRaisesRegex(Study3LedgerError, "LEDGER_COMPLETION_UNCERTAIN"):
+            restarted_completion.reserve(
+                scene_id=SCENE_ORDER[1],
+                request_sha256=self._request_hash(1),
+            )
+        self._assert_no_external_effects()
+
+
+class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
+    def setUp(self) -> None:
+        PREP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = tempfile.TemporaryDirectory(
+            prefix="synthetic-study3-runner-",
+            dir=PREP_ROOT,
+        )
+        self.addCleanup(self.temp_dir.cleanup)
+        self.fixture_parent = Path(self.temp_dir.name)
+        self.ledger = self._new_ledger("synthetic-ledger-main")
+
+    def _new_ledger(self, name: str) -> Study3Ledger:
+        ledger = Study3Ledger._for_synthetic_test(self.fixture_parent / name)
+        ledger.initialize()
+        return ledger
+
+    def test_fake_runner_uses_reserved_dispatch_exact_720_second_profile(self) -> None:
+        responses = [
+            (
+                200,
+                _study3_provider_response(scene_id, str(index)),
+            )
+            for index, scene_id in enumerate(SCENE_ORDER, start=1)
+        ]
+        fake_http = Study3SyntheticHTTP(
+            self.ledger,
+            responses,
+            credential="synthetic-secret-do-not-persist",
+        )
+
+        with patch.object(
+            study3_runner_module,
+            "_execute_reserved_scenes",
+            wraps=study3_runner_module._execute_reserved_scenes,
+        ) as shared_engine:
+            result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        shared_engine.assert_called_once()
+        self.assertIs(shared_engine.call_args.args[0], self.ledger)
+        self.assertIs(shared_engine.call_args.kwargs["synthetic_only"], True)
+        self.assertEqual(result.status, "COMPLETE")
+        self.assertTrue(result.synthetic_only)
+        self.assertEqual(tuple(row.scene_id for row in result.attempts), SCENE_ORDER)
+        self.assertEqual(len(fake_http.calls), 3)
+        self.assertEqual(fake_http.credential_reads, 3)
+        self.assertEqual(fake_http.reservation_visible_at_credential_read, [True] * 3)
+        for index, (attempt, call, scene_id) in enumerate(
+            zip(result.attempts, fake_http.calls, SCENE_ORDER),
+            start=1,
+        ):
+            with self.subTest(scene_id=scene_id):
+                self.assertEqual(call["url"], "https://openrouter.ai/api/v1/chat/completions")
+                self.assertEqual(call["timeout"], 720.0)
+                self.assertIs(call["allow_redirects"], False)
+                self.assertIs(call["bearer_present"], True)
+                self.assertEqual(json.loads(call["body"]), build_request(scene_id))
+                self.assertEqual(attempt.outcome, "ACCEPTED")
+                self.assertEqual(attempt.http_status, 200)
+                self.assertEqual(attempt.actual_cost_status, "RECONCILED")
+                self.assertEqual(attempt.actual_cost_usd, "0.001")
+                self.assertEqual(attempt.attempt_number, index)
+                self.assertIsNotNone(attempt.response_relative_path)
+                self.assertIsNotNone(attempt.metadata_relative_path)
+                if index < 3:
+                    self.assertNotEqual(
+                        attempt.request_sha256,
+                        attempt.transport_request_sha256,
+                    )
+                else:
+                    self.assertEqual(
+                        attempt.request_sha256,
+                        attempt.transport_request_sha256,
+                    )
+
+        response_root = self.ledger.root.parent / (self.ledger.root.name + "-evidence")
+        self.assertEqual(response_root.stat().st_mode & 0o777, 0o700)
+        for attempt in result.attempts:
+            response_path = REPO_ROOT / str(attempt.response_relative_path)
+            metadata_path = REPO_ROOT / str(attempt.metadata_relative_path)
+            self.assertEqual(response_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(metadata_path.stat().st_mode & 0o777, 0o600)
+            self.assertIn(b"The first bound span.", response_path.read_bytes())
+            metadata_bytes = metadata_path.read_bytes()
+            self.assertNotIn(b"The first bound span.", metadata_bytes)
+            self.assertNotIn(b"synthetic-secret-do-not-persist", metadata_bytes)
+            metadata = json.loads(metadata_bytes)
+            self.assertEqual(metadata["http_status"], 200)
+            self.assertEqual(metadata["outcome"], "ACCEPTED")
+            self.assertEqual(metadata["returned_model_id"], MODEL_ID)
+        ledger_bytes = self.ledger.path.read_bytes()
+        self.assertNotIn(b"The first bound span.", ledger_bytes)
+        self.assertNotIn(b"synthetic-secret-do-not-persist", ledger_bytes)
+        self.assertNotIn("The first bound span.", repr(result))
+        self.assertNotIn("synthetic-secret-do-not-persist", repr(fake_http.calls))
+        ledger_records = [json.loads(line) for line in ledger_bytes.splitlines()]
+        result_records = [row for row in ledger_records if row["event"] == "result"]
+        self.assertEqual(
+            [row["actual_cost_usd"] for row in result_records],
+            ["0.001", "0.001", "0.001"],
+        )
+
+    def test_attempt_metadata_persist_failure_durably_stops_before_next_scene(self) -> None:
+        responses = [
+            (200, _study3_provider_response(SCENE_ORDER[0], "metadata-failure")),
+            (200, _study3_provider_response(SCENE_ORDER[1], "must-not-dispatch")),
+        ]
+        fake_http = Study3SyntheticHTTP(self.ledger, responses)
+
+        with patch.object(
+            study3_runner_module,
+            "_write_attempt_metadata",
+            return_value=None,
+        ):
+            result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        self.assertEqual(result.status, "STOPPED")
+        self.assertEqual(result.attempts[0].outcome, "STOPPED")
+        self.assertEqual(
+            result.attempts[0].reason_code,
+            "ATTEMPT_METADATA_PERSIST_FAILED",
+        )
+        self.assertEqual(result.attempts[0].actual_cost_status, "RECONCILED")
+        self.assertEqual(len(fake_http.calls), 1)
+        self.assertEqual(len(fake_http._responses), 1)
+        records = [
+            json.loads(line)
+            for line in self.ledger.path.read_bytes().splitlines()
+        ]
+        result_record = next(row for row in records if row["event"] == "result")
+        self.assertTrue(result_record["stop_study"])
+        self.assertEqual(result_record["outcome"], "STOPPED")
+        with self.assertRaises(Study3RunnerBlocked) as caught:
+            Study3Runner().run_synthetic(self.ledger, fake_http)
+        self.assertEqual(caught.exception.code, "LEDGER_STUDY_STOPPED")
+        self.assertEqual(len(fake_http.calls), 1)
+
+    def test_contract_failure_continues_only_after_response_cost_reconciles(self) -> None:
+        responses = [
+            (200, _study3_provider_response(SCENE_ORDER[0], "bad-content", content="not json")),
+            (200, _study3_provider_response(SCENE_ORDER[1], "second")),
+            (200, _study3_provider_response(SCENE_ORDER[2], "third")),
+        ]
+        fake_http = Study3SyntheticHTTP(self.ledger, responses)
+
+        result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        self.assertEqual(result.status, "COMPLETE")
+        self.assertEqual(result.attempts[0].outcome, "CONTRACT_FAILURE")
+        self.assertFalse(result.attempts[0].stop_study)
+        self.assertEqual(result.attempts[0].actual_cost_status, "RECONCILED")
+        self.assertEqual(len(fake_http.calls), 3)
+
+    def test_reconciled_cost_that_breaks_remaining_envelope_stops_before_next_scene(
+        self,
+    ) -> None:
+        fake_http = Study3SyntheticHTTP(
+            self.ledger,
+            [
+                (
+                    200,
+                    _study3_provider_response(
+                        SCENE_ORDER[0],
+                        "budget-stop",
+                        cost="0.03",
+                    ),
+                ),
+                (200, _study3_provider_response(SCENE_ORDER[1], "must-not-dispatch")),
+            ],
+        )
+
+        result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        self.assertEqual(result.status, "STOPPED")
+        self.assertEqual(result.attempts[0].outcome, "ACCEPTED")
+        self.assertTrue(result.attempts[0].stop_study)
+        self.assertEqual(result.attempts[0].reason_code, "REMAINING_BUDGET_UNSAFE")
+        self.assertEqual(result.attempts[0].actual_cost_status, "RECONCILED")
+        self.assertEqual(result.attempts[0].actual_cost_usd, "0.03")
+        self.assertEqual(result.remaining_scenes, SCENE_ORDER[1:])
+        self.assertEqual(len(fake_http.calls), 1)
+        self.assertEqual(len(fake_http._responses), 1)
+
+    def test_transport_non_200_identity_and_missing_cost_stop_with_later_scenes_unspent(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "transport",
+                [None],
+                "TRANSPORT_FAILED",
+                "UNRESOLVED",
+            ),
+            (
+                "non-200",
+                [(503, _study3_provider_response(SCENE_ORDER[0], "non-200"))],
+                "HTTP_STATUS_NOT_200",
+                "RECONCILED",
+            ),
+            (
+                "identity",
+                [
+                    (
+                        200,
+                        _study3_provider_response(
+                            SCENE_ORDER[0],
+                            "wrong-model",
+                            model_id="wrong/model",
+                        ),
+                    )
+                ],
+                "PROVIDER_IDENTITY_OR_USAGE_INVALID",
+                "UNRESOLVED",
+            ),
+            (
+                "missing-cost",
+                [(200, _study3_provider_response(SCENE_ORDER[0], "missing-cost", cost=None))],
+                "ACTUAL_COST_UNRESOLVED",
+                "UNRESOLVED",
+            ),
+            (
+                "malformed-cost",
+                [
+                    (
+                        200,
+                        _study3_provider_response(
+                            SCENE_ORDER[0],
+                            "malformed-cost",
+                            cost="not-a-cost",
+                        ),
+                    )
+                ],
+                "ACTUAL_COST_UNRESOLVED",
+                "UNRESOLVED",
+            ),
+        )
+        for name, responses, reason, accounting in cases:
+            with self.subTest(name=name):
+                ledger = self._new_ledger("synthetic-ledger-" + name)
+                fake_http = Study3SyntheticHTTP(ledger, responses)
+                result = Study3Runner().run_synthetic(ledger, fake_http)
+                self.assertEqual(result.status, "STOPPED")
+                self.assertEqual(len(result.attempts), 1)
+                self.assertEqual(result.attempts[0].reason_code, reason)
+                self.assertEqual(result.attempts[0].actual_cost_status, accounting)
+                self.assertEqual(result.remaining_scenes, SCENE_ORDER[1:])
+                self.assertEqual(len(fake_http.calls), 1)
+                self.assertEqual(fake_http.credential_reads, 1)
+                self.assertEqual(fake_http.reservation_visible_at_credential_read, [True])
+
+    def test_actual_cost_ignores_external_receipt_and_is_bound_to_sanitized_response(
+        self,
+    ) -> None:
+        forged_receipt = {"receipt_id": "caller", "cost_usd": "0.049"}
+        responses = [
+            (
+                200,
+                _study3_provider_response(
+                    scene_id,
+                    "actual-cost-%d" % index,
+                    cost="0.0025" if index == 1 else "0.001",
+                    external_cost_receipt=forged_receipt if index == 1 else None,
+                ),
+            )
+            for index, scene_id in enumerate(SCENE_ORDER, start=1)
+        ]
+        fake_http = Study3SyntheticHTTP(self.ledger, responses)
+
+        result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        self.assertEqual(result.status, "COMPLETE")
+        self.assertEqual(result.attempts[0].actual_cost_usd, "0.0025")
+        records = [
+            json.loads(line)
+            for line in self.ledger.path.read_bytes().splitlines()
+        ]
+        result_record = next(row for row in records if row["event"] == "result")
+        receipt = result_record["cost_receipt"]
+        self.assertEqual(receipt["cost_usd"], "0.0025")
+        self.assertEqual(receipt["response_sha256"], result.attempts[0].response_sha256)
+        self.assertNotEqual(receipt["receipt_id"], "caller")
+
+    def test_inconsistent_actual_usage_blocks_without_second_dispatch(self) -> None:
+        ledger = self._new_ledger("synthetic-ledger-inconsistent-usage")
+        response = json.loads(
+            _study3_provider_response(
+                SCENE_ORDER[0],
+                "inconsistent-usage",
+            ).decode("utf-8")
+        )
+        response["usage"]["completion_tokens_details"] = {
+            "reasoning_tokens": 11,
+        }
+        inconsistent_response = json.dumps(
+            response,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        fake_http = Study3SyntheticHTTP(
+            ledger,
+            [
+                (200, inconsistent_response),
+                (200, _study3_provider_response(SCENE_ORDER[1], "must-not-dispatch")),
+            ],
+        )
+
+        result = Study3Runner().run_synthetic(ledger, fake_http)
+
+        self.assertEqual(result.status, "STOPPED")
+        self.assertEqual(len(result.attempts), 1)
+        self.assertEqual(result.attempts[0].outcome, "ACCEPTED")
+        self.assertEqual(result.attempts[0].reason_code, "ACTUAL_COST_UNRESOLVED")
+        self.assertEqual(result.attempts[0].actual_cost_status, "UNRESOLVED")
+        self.assertEqual(result.remaining_scenes, SCENE_ORDER[1:])
+        self.assertEqual(len(fake_http.calls), 1)
+        self.assertEqual(len(fake_http._responses), 1)
+        self.assertEqual(fake_http.credential_reads, 1)
+        self.assertEqual(fake_http.reservation_visible_at_credential_read, [True])
+        records = [
+            json.loads(line)
+            for line in ledger.path.read_bytes().splitlines()
+        ]
+        reservation_count = sum(row["event"] == "reservation" for row in records)
+        result_record = next(row for row in records if row["event"] == "result")
+        self.assertEqual(reservation_count, 1)
+        self.assertEqual(result_record["actual_cost_status"], "UNRESOLVED")
+        self.assertIsNone(result_record["actual_cost_usd"])
+        self.assertIsNone(result_record["cost_receipt"])
+        self.assertEqual(self._study3_tripwire_calls.get("network", 0), 0)
+        self.assertEqual(self._study3_tripwire_calls.get("credential_lookup", 0), 0)
+
+    def test_completed_run_is_confined_and_cannot_be_replayed(self) -> None:
+        fake_http = Study3SyntheticHTTP(
+            self.ledger,
+            [
+                (200, _study3_provider_response(scene_id, str(index)))
+                for index, scene_id in enumerate(SCENE_ORDER, start=1)
+            ],
+        )
+        written_paths: list[Path] = []
+        original_writer = study3_runner_module._write_private_artifact
+
+        def record_write(response_root: Path, name: str, body: bytes) -> str:
+            written_paths.append(Path(response_root) / name)
+            return original_writer(response_root, name, body)
+
+        with patch.object(
+            study3_runner_module,
+            "_write_private_artifact",
+            side_effect=record_write,
+        ):
+            result = Study3Runner().run_synthetic(self.ledger, fake_http)
+
+        self.assertEqual(result.status, "COMPLETE")
+        self.assertEqual(len(fake_http.calls), 3)
+        self.assertEqual(len(written_paths), 6)
+        study3_root = PREP_ROOT.resolve()
+        for path in (self.ledger.root, self.ledger.path, *written_paths):
+            with self.subTest(path=path):
+                self.assertTrue(path.resolve().is_relative_to(study3_root))
+
+        ledger_before_replay = self.ledger.path.read_bytes()
+        replay_http = Study3SyntheticHTTP(self.ledger, [])
+        with self.assertRaises(Study3RunnerBlocked) as caught:
+            Study3Runner().run_synthetic(self.ledger, replay_http)
+        self.assertEqual(caught.exception.code, "LEDGER_ATTEMPT_CAP_EXHAUSTED")
+        self.assertEqual(replay_http.credential_reads, 0)
+        self.assertEqual(replay_http.calls, [])
+        self.assertEqual(self.ledger.path.read_bytes(), ledger_before_replay)
+        records = [
+            json.loads(line)
+            for line in ledger_before_replay.splitlines()
+        ]
+        self.assertEqual(
+            sum(row["event"] == "reservation" for row in records),
+            len(SCENE_ORDER),
+        )
+        self.assertEqual(self._study3_tripwire_calls.get("network", 0), 0)
+
+    def test_private_evidence_writer_rejects_escape_and_symlink_roots(self) -> None:
+        target_root = self.fixture_parent / "synthetic-response-target"
+        target_root.mkdir()
+        sentinel = target_root / "sentinel.txt"
+        sentinel.write_text("unchanged", encoding="ascii")
+        link_root = self.fixture_parent / "synthetic-response-link"
+        link_root.symlink_to(target_root, target_is_directory=True)
+        outside_root = PREP_ROOT.parent
+        traversal_root = PREP_ROOT / ".." / (
+            "synthetic-response-escape-" + str(os.getpid())
+        )
+
+        with patch.object(
+            study3_runner_module.os,
+            "mkdir",
+            side_effect=AssertionError("rejected evidence root must not be created"),
+        ) as mkdir, patch.object(
+            study3_runner_module.os,
+            "fchmod",
+            side_effect=AssertionError("rejected evidence root must not be changed"),
+        ) as fchmod:
+            for root in (outside_root, traversal_root):
+                with self.subTest(root=root):
+                    with self.assertRaises(Study3RunnerBlocked) as caught:
+                        study3_runner_module._open_private_directory(root)
+                    self.assertEqual(
+                        caught.exception.code,
+                        "RESPONSE_ROOT_OUTSIDE_STUDY3_PREP",
+                    )
+
+            with self.assertRaises(Study3RunnerBlocked) as caught:
+                study3_runner_module._write_private_artifact(
+                    link_root,
+                    "must-not-exist.response.json",
+                    b"synthetic response",
+                )
+            self.assertEqual(caught.exception.code, "RESPONSE_ROOT_UNSAFE")
+
+        mkdir.assert_not_called()
+        fchmod.assert_not_called()
+        self.assertFalse((target_root / "must-not-exist.response.json").exists())
+        self.assertEqual(sentinel.read_text(encoding="ascii"), "unchanged")
+
+    def test_credential_echo_is_redacted_and_never_written_to_metadata(self) -> None:
+        ledger = self._new_ledger("synthetic-ledger-credential-echo")
+        secret = "synthetic-credential-echo-marker"
+        response = _study3_provider_response(
+            SCENE_ORDER[0],
+            "credential-echo",
+            credential_echo=secret,
+        )
+        fake_http = Study3SyntheticHTTP(ledger, [(200, response)], credential=secret)
+
+        result = Study3Runner().run_synthetic(ledger, fake_http)
+
+        self.assertEqual(result.status, "STOPPED")
+        self.assertEqual(len(fake_http.calls), 1)
+        attempt = result.attempts[0]
+        self.assertEqual(attempt.actual_cost_status, "UNRESOLVED")
+        response_bytes = (REPO_ROOT / str(attempt.response_relative_path)).read_bytes()
+        metadata_bytes = (REPO_ROOT / str(attempt.metadata_relative_path)).read_bytes()
+        self.assertNotIn(secret.encode("ascii"), response_bytes)
+        self.assertNotIn(secret.encode("ascii"), metadata_bytes)
+        self.assertNotIn(secret.encode("ascii"), ledger.path.read_bytes())
+        self.assertNotIn(secret, repr(result))
+
+    def test_check_run_api_assumptions_are_removed_and_provenance_gaps_are_named(self) -> None:
+        self.assertFalse(hasattr(study3_readiness, "_verify_check_runs"))
+        self.assertFalse(hasattr(study3_readiness, "_fetch_github_snapshot"))
+        self.assertFalse(hasattr(study3_readiness, "_run_gh_command"))
+        self.assertFalse(hasattr(study3_readiness, "_CI_PROVENANCE_PINS"))
+        self.assertEqual(len(study3_readiness.REQUIRED_CI_CHECK_NAMES), 11)
+        self.assertFalse(study3_readiness.LIVE_DISPATCH_ENABLED)
+        self.assertEqual(
+            set(study3_readiness.CI_PROVENANCE_BLOCKER_CODES),
+            {
+                "GITHUB_CI_APP_ID_AND_SLUG_NOT_EXPOSED_BY_SUPPORTED_GH_JSON_FIELDS",
+                "GITHUB_CI_HEAD_SHA_NOT_EXPOSED_FOR_ALL_REQUIRED_CHECKS",
+                "GITHUB_CI_WORKFLOW_PATH_NOT_BINDABLE_TO_EACH_CHECK",
+                "GITHUB_CI_ADVANCED_SECURITY_RUN_IDENTITY_NOT_EXPOSED_BY_SUPPORTED_GH_CLI",
+                "GITHUB_CI_CHECK_RUN_API_UNAVAILABLE_WITH_REQUIRED_GH_REPO_FLAG",
+            },
+        )
+
+    def test_readiness_fails_closed_before_github_and_preflight(self) -> None:
+        current_sha = "8" * 40
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(current_sha, b""),
+        ), patch.object(
+            study3_readiness,
+            "_run_process",
+            side_effect=AssertionError("readiness must not invoke gh or another process"),
+        ) as process, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            side_effect=AssertionError("missing CI provenance must stop before local gates"),
+        ) as preflight:
+            verification = study3_readiness.verify_readiness_evidence()
+
+        self.assertEqual(verification.status, "BLOCKED")
+        self.assertEqual(verification.current_head_sha, current_sha)
+        self.assertEqual(
+            verification.reason_codes,
+            tuple(sorted(study3_readiness.CI_PROVENANCE_BLOCKER_CODES)),
+        )
+        self.assertFalse(verification.external_provenance_verified)
+        self.assertFalse(verification.live_dispatch_permitted)
+        self.assertFalse(study3_readiness.is_verified_readiness(verification))
+        process.assert_not_called()
+        preflight.assert_not_called()
+
+    def test_trusted_executable_resolution_and_subprocess_boundaries(self) -> None:
+        with patch.object(
+            study3_readiness,
+            "TRUSTED_EXECUTABLE_PATH",
+            "/trusted/system/bin",
+        ), patch.object(
+            study3_readiness.shutil,
+            "which",
+            return_value="/usr/bin/git",
+        ) as which:
+            resolved = study3_readiness._resolve_trusted_executable("git")
+        self.assertEqual(resolved, str(Path("/usr/bin/git").resolve()))
+        which.assert_called_once_with("git", path="/trusted/system/bin")
+
+        process_result = types.SimpleNamespace(
+            returncode=0,
+            stdout=b"metadata",
+            stderr=b"",
+        )
+        with patch.object(
+            study3_readiness.subprocess,
+            "run",
+            return_value=process_result,
+        ) as subprocess_run:
+            ran = study3_readiness._run_process(
+                ("/usr/bin/true",),
+                cwd=REPO_ROOT,
+                timeout=5,
+                env={"PATH": "/trusted/system/bin"},
+            )
+        self.assertEqual(ran.stdout, b"metadata")
+        self.assertIs(subprocess_run.call_args.kwargs["shell"], False)
+        self.assertIs(subprocess_run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(
+            subprocess_run.call_args.kwargs["env"],
+            {"PATH": "/trusted/system/bin"},
+        )
+
+    def test_dirty_worktree_and_clean_head_without_ci_provenance_stay_blocked(self) -> None:
+        current_sha = "f" * 40
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(current_sha, b" M scripts/changed.py\n"),
+        ), patch.object(
+            study3_readiness,
+            "_run_process",
+            side_effect=AssertionError("dirty worktree must stop before subprocesses"),
+        ) as process, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            side_effect=AssertionError("dirty worktree must stop before preflight"),
+        ) as preflight:
+            dirty = study3_readiness.verify_readiness_evidence()
+        self.assertEqual(dirty.status, "BLOCKED")
+        self.assertEqual(dirty.reason_codes, ("LOCAL_WORKTREE_NOT_CLEAN",))
+        process.assert_not_called()
+        preflight.assert_not_called()
+
+        with patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(current_sha, b""),
+        ), patch.object(
+            study3_readiness,
+            "_run_process",
+            side_effect=AssertionError("unsupported CI provenance must not query GitHub"),
+        ) as process, patch.object(
+            study3_readiness,
+            "_run_provider_free_preflight",
+            side_effect=AssertionError("unsupported CI provenance must stop before preflight"),
+        ) as preflight:
+            clean_but_unverified = study3_readiness.verify_readiness_evidence()
+        self.assertEqual(clean_but_unverified.status, "BLOCKED")
+        self.assertEqual(
+            clean_but_unverified.reason_codes,
+            tuple(sorted(study3_readiness.CI_PROVENANCE_BLOCKER_CODES)),
+        )
+        process.assert_not_called()
+        preflight.assert_not_called()
+
+    def test_readiness_refusal_precedes_real_ledger_http_and_credentials(self) -> None:
+        blocked = ReadinessVerification(
+            status="BLOCKED",
+            reason_codes=("GITHUB_CI_DATA_UNAVAILABLE",),
+            current_head_sha="6" * 40,
+            ci_check_count=0,
+            preflight_gate_count=0,
+        )
+        forged_ready = ReadinessVerification(
+            status="READY",
+            reason_codes=(),
+            current_head_sha="6" * 40,
+            ci_check_count=11,
+            preflight_gate_count=len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS),
+            external_provenance_verified=True,
+            live_dispatch_permitted=True,
+        )
+        proof_marked_ready = replace(forged_ready, _proof=study3_readiness._READY_PROOF)
+        for verification, expected_code in (
+            (blocked, "READINESS_BLOCKED"),
+            (forged_ready, "READINESS_PROOF_INVALID"),
+            (proof_marked_ready, "LIVE_DISPATCH_HARD_DISABLED"),
+        ):
+            with self.subTest(status=verification.status, code=expected_code), patch.object(
+                study3_runner_module.readiness,
+                "verify_readiness_evidence",
+                return_value=verification,
+            ), patch.object(
+                study3_runner_module,
+                "Study3Ledger",
+                side_effect=AssertionError("unverified readiness must not construct ledger"),
+            ) as real_ledger, patch.object(
+                study3_runner_module,
+                "_UrllibHTTP",
+                side_effect=AssertionError("unverified readiness must not construct HTTP"),
+            ) as real_http, patch.object(
+                study3_runner_module,
+                "_load_transport_config",
+                side_effect=AssertionError("unverified readiness must not read credentials"),
+            ) as real_config:
+                with self.assertRaises(Study3RunnerBlocked) as caught:
+                    Study3Runner().run()
+            self.assertEqual(caught.exception.code, expected_code)
+            real_ledger.assert_not_called()
+            real_http.assert_not_called()
+            real_config.assert_not_called()
+        with self.assertRaises(TypeError):
+            Study3Runner().run(fake_http=Study3SyntheticHTTP(self.ledger, []))
+
+
+    def test_frozen_inventory_hashes_non_python_files_and_only_omits_cache_bytecode(
+        self,
+    ) -> None:
+        root = self.fixture_parent / "synthetic-frozen-source"
+        root.mkdir()
+        (root / "source.py").write_text("value = 1\n", encoding="ascii")
+        (root / "source-metadata.json").write_text('{"value":1}\n', encoding="ascii")
+        cache = root / "__pycache__"
+        cache.mkdir()
+        (cache / "source.cpython-313.pyc").write_bytes(b"ephemeral bytecode")
+        relative_root = root.resolve().relative_to(REPO_ROOT).as_posix()
+        inventory = study3_frozen_inventory._scan_tree(
+            relative_root,
+            exclude_ephemeral_pycache=True,
+        )
+        self.assertEqual(set(inventory), {"source.py", "source-metadata.json"})
+
+        inventories = {"study1_source_code": inventory}
+        digest = hashlib.sha256(
+            study3_frozen_inventory._canonical_bytes(inventories)
+        ).hexdigest()
+        with patch.object(
+            study3_frozen_inventory,
+            "FROZEN_ROOTS",
+            {"study1_source_code": (relative_root, True)},
+        ), patch.object(
+            study3_frozen_inventory,
+            "FROZEN_FILE_COUNTS",
+            {"study1_source_code": 2},
+        ), patch.object(
+            study3_frozen_inventory,
+            "FROZEN_INVENTORY_SHA256",
+            digest,
+        ):
+            self.assertEqual(
+                study3_frozen_inventory.verify_frozen_inventories()["status"],
+                "PASS",
+            )
+            (root / "additional.txt").write_text("new frozen file\n", encoding="ascii")
+            with self.assertRaisesRegex(
+                study3_frozen_inventory.FrozenInventoryError,
+                "FROZEN_INVENTORY_FILE_COUNT_MISMATCH",
+            ):
+                study3_frozen_inventory.verify_frozen_inventories()
+
+            (root / "additional.txt").unlink()
+            (root / "source-metadata.json").write_text('{"value":2}\n', encoding="ascii")
+            with self.assertRaisesRegex(
+                study3_frozen_inventory.FrozenInventoryError,
+                "FROZEN_INVENTORY_HASH_MISMATCH",
+            ):
+                study3_frozen_inventory.verify_frozen_inventories()
+
+            (root / "source-metadata.json").write_text('{"value":1}\n', encoding="ascii")
+            (cache / "unexpected.txt").write_text("not bytecode\n", encoding="ascii")
+            with self.assertRaisesRegex(
+                study3_frozen_inventory.FrozenInventoryError,
+                "FROZEN_INVENTORY_FILE_COUNT_MISMATCH",
+            ):
+                study3_frozen_inventory.verify_frozen_inventories()
+
+
+    def test_caller_json_cannot_authorize_readiness_or_cli_preflight(self) -> None:
+        with self.assertRaises(TypeError):
+            study3_readiness.verify_readiness_evidence({"ready": True})
+
+        with patch.object(
+            builtins,
+            "print",
+        ) as print_result, patch.object(
+            study3_readiness,
+            "verify_readiness_evidence",
+            side_effect=AssertionError("caller JSON must not start live readiness"),
+        ) as verifier:
+            exit_code = study3_preflight.main(["readiness-evidence.json"])
+        self.assertEqual(exit_code, 2)
+        verifier.assert_not_called()
+        print_result.assert_called_once()
+
+
+    def test_provider_free_preflight_executes_only_fixed_gates_and_hashes_output(
+        self,
+    ) -> None:
+        current_sha = "4" * 40
+        results = [
+            study3_readiness._CommandResult(
+                1 if index == 0 else 0,
+                b"synthetic gate output that must not persist",
+                b"synthetic stderr that must not persist",
+            )
+            for index, _gate_id in enumerate(
+                study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS
+            )
+        ]
+        with patch.object(
+            study3_readiness,
+            "_run_preflight_command",
+            side_effect=results,
+        ) as command, patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(current_sha, b""),
+        ) as local_state:
+            summary = study3_readiness._run_provider_free_preflight(current_sha)
+
+        self.assertEqual(
+            [call.args[0] for call in command.call_args_list],
+            list(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS),
+        )
+        self.assertEqual(len(summary.checks), 7)
+        self.assertEqual(
+            summary.gate_failures,
+            ("PREFLIGHT_GATE_FAILED_FOCUSED_STUDY3_TESTS",),
+        )
+        self.assertEqual(summary.infrastructure_failures, ())
+        self.assertEqual(
+            summary.checks[0]["stdout_sha256"],
+            _sha256(b"synthetic gate output that must not persist"),
+        )
+        self.assertEqual(
+            local_state.call_count,
+            len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS),
+        )
+        serialized = study3_readiness._canonical_bytes(list(summary.checks))
+        self.assertNotIn(b"synthetic gate output", serialized)
+        self.assertNotIn(b"synthetic stderr", serialized)
+
+    def test_failed_gate_rechecks_exact_head_and_stops_after_mutation(self) -> None:
+        subject_sha = "5" * 40
+        failed_result = study3_readiness._CommandResult(
+            1,
+            b"failed gate output",
+            b"",
+        )
+        later_results = [
+            study3_readiness._CommandResult(0, b"downstream pass", b"")
+            for _gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS[1:]
+        ]
+        cases = (
+            ("head-changed", ("6" * 40, b"")),
+            ("worktree-dirty", (subject_sha, b" M scripts/changed.py\n")),
+        )
+        for name, changed_state in cases:
+            with self.subTest(name=name), patch.object(
+                study3_readiness,
+                "_run_preflight_command",
+                side_effect=[failed_result, *later_results],
+            ) as command, patch.object(
+                study3_readiness,
+                "_read_local_git_state",
+                return_value=changed_state,
+            ) as local_state:
+                summary = study3_readiness._run_provider_free_preflight(subject_sha)
+
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(local_state.call_count, 1)
+            self.assertEqual(
+                tuple(row["gate_id"] for row in summary.checks),
+                (study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS[0],),
+            )
+            self.assertEqual(summary.checks[0]["exit_code"], 1)
+            self.assertEqual(
+                summary.gate_failures,
+                (
+                    "PREFLIGHT_GATE_FAILED_"
+                    + study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS[0].upper().replace(
+                        "-", "_"
+                    ),
+                ),
+            )
+            self.assertIn(
+                "LOCAL_GIT_STATE_CHANGED_DURING_PREFLIGHT",
+                summary.infrastructure_failures,
+            )
+            self.assertIn(
+                "PREFLIGHT_GATE_SET_INCOMPLETE",
+                summary.infrastructure_failures,
+            )
+            self.assertNotIn(
+                b"downstream pass",
+                study3_readiness._canonical_bytes(list(summary.checks)),
+            )
+
+    def test_preflight_command_exception_rechecks_dirty_tree_before_next_gate(
+        self,
+    ) -> None:
+        subject_sha = "7" * 40
+        later_results = [
+            study3_readiness._CommandResult(0, b"downstream pass", b"")
+            for _gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS[1:]
+        ]
+        with patch.object(
+            study3_readiness,
+            "_run_preflight_command",
+            side_effect=[
+                ReadinessVerificationError("EXTERNAL_COMMAND_TIMEOUT"),
+                *later_results,
+            ],
+        ) as command, patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(subject_sha, b" M scripts/changed.py\n"),
+        ) as local_state:
+            summary = study3_readiness._run_provider_free_preflight(subject_sha)
+
+        self.assertEqual(command.call_count, 1)
+        self.assertEqual(local_state.call_count, 1)
+        self.assertEqual(len(summary.checks), 1)
+        self.assertIsNone(summary.checks[0]["exit_code"])
+        self.assertIn(
+            "PREFLIGHT_INFRASTRUCTURE_FAILURE_FOCUSED_STUDY3_TESTS",
+            summary.infrastructure_failures,
+        )
+        self.assertIn(
+            "LOCAL_GIT_STATE_CHANGED_DURING_PREFLIGHT",
+            summary.infrastructure_failures,
+        )
+        self.assertIn(
+            "PREFLIGHT_GATE_SET_INCOMPLETE",
+            summary.infrastructure_failures,
+        )
+        self.assertNotIn(
+            b"downstream pass",
+            study3_readiness._canonical_bytes(list(summary.checks)),
+        )
+
+    def test_preflight_infrastructure_failure_is_not_reported_as_pass(self) -> None:
+        current_sha = "5" * 40
+        with patch.object(
+            study3_readiness,
+            "_run_preflight_command",
+            side_effect=ReadinessVerificationError("EXTERNAL_COMMAND_UNAVAILABLE"),
+        ) as command, patch.object(
+            study3_readiness,
+            "_read_local_git_state",
+            return_value=(current_sha, b""),
+        ) as local_state:
+            summary = study3_readiness._run_provider_free_preflight(current_sha)
+
+        self.assertEqual(command.call_count, len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS))
+        self.assertEqual(local_state.call_count, len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS))
+        self.assertEqual(summary.gate_failures, ())
+        self.assertEqual(
+            summary.infrastructure_failures,
+            tuple(
+                sorted(
+                    "PREFLIGHT_INFRASTRUCTURE_FAILURE_"
+                    + gate_id.upper().replace("-", "_")
+                    for gate_id in study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS
+                )
+            ),
+        )
+        self.assertEqual(len(summary.checks), len(study3_readiness.REQUIRED_PREFLIGHT_GATE_IDS))
+        self.assertTrue(all(row["exit_code"] is None for row in summary.checks))
+
+
+    def test_real_and_synthetic_entries_share_fixed_reserved_execution_engine(self) -> None:
+        source = Path(study3_runner_module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        runner_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "Study3Runner"
+        )
+        methods = {
+            node.name: node
+            for node in runner_class.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        real_run = methods["run"]
+        synthetic_run = methods["run_synthetic"]
+        self.assertEqual(
+            [argument.arg for argument in real_run.args.args],
+            ["self"],
+        )
+
+        def call_name(node: ast.Call) -> str:
+            if isinstance(node.func, ast.Name):
+                return node.func.id
+            if isinstance(node.func, ast.Attribute):
+                return node.func.attr
+            return ""
+
+        real_calls = [node for node in ast.walk(real_run) if isinstance(node, ast.Call)]
+        call_by_name = {call_name(node): node for node in real_calls}
+        self.assertLess(
+            call_by_name["verify_readiness_evidence"].lineno,
+            call_by_name["Study3Ledger"].lineno,
+        )
+        self.assertLess(
+            call_by_name["Study3Ledger"].lineno,
+            call_by_name["initialize"].lineno,
+        )
+        self.assertLess(
+            call_by_name["initialize"].lineno,
+            call_by_name["_Study3PolicyAdapter"].lineno,
+        )
+        self.assertLess(
+            call_by_name["_Study3PolicyAdapter"].lineno,
+            call_by_name["_execute_reserved_scenes"].lineno,
+        )
+        adapter_call = call_by_name["_Study3PolicyAdapter"]
+        adapter_keywords = {item.arg: item.value for item in adapter_call.keywords}
+        self.assertIsInstance(adapter_keywords["http"], ast.Call)
+        self.assertEqual(call_name(adapter_keywords["http"]), "_UrllibHTTP")
+        self.assertIsInstance(adapter_keywords["config_loader"], ast.Name)
+        self.assertEqual(adapter_keywords["config_loader"].id, "_load_transport_config")
+        execute_kwargs = {
+            item.arg: item.value
+            for item in call_by_name["_execute_reserved_scenes"].keywords
+        }
+        self.assertIsInstance(execute_kwargs["response_root"], ast.Name)
+        self.assertEqual(execute_kwargs["response_root"].id, "DEFAULT_RESPONSE_ROOT")
+        self.assertIsInstance(execute_kwargs["synthetic_only"], ast.Constant)
+        self.assertIs(execute_kwargs["synthetic_only"].value, False)
+
+        synthetic_calls = [
+            call_name(node)
+            for node in ast.walk(synthetic_run)
+            if isinstance(node, ast.Call)
+        ]
+        self.assertIn("_execute_reserved_scenes", synthetic_calls)
+        self.assertIs(study3_runner_module._LIVE_DISPATCH_HARD_DISABLED, True)
+        self.assertIs(study3_readiness.LIVE_DISPATCH_ENABLED, False)
+
+
 class Study3TripwireTest(Study3GuardedTestCase):
     def test_every_discovered_study3_test_class_uses_the_guarded_base(self) -> None:
         test_classes = {
@@ -3260,6 +4892,12 @@ class Study3TripwireTest(Study3GuardedTestCase):
         with self.assertRaises(TripwireBlocked):
             object.__new__(study1_client)._append_ledger_event({})
 
+        real_study3_ledger = Study3Ledger()
+        self.assertFalse(real_study3_ledger.root.exists())
+        with self.assertRaises(TripwireBlocked):
+            real_study3_ledger.initialize()
+        self.assertFalse(real_study3_ledger.root.exists())
+
         for relative_root in REAL_LEDGER_ROOTS:
             ledger_path = REPO_ROOT / relative_root / "study-attempt-ledger.jsonl"
             self.assertTrue(protected_real_ledger_path(ledger_path, REPO_ROOT))
@@ -3296,6 +4934,9 @@ class Study3TripwireTest(Study3GuardedTestCase):
             )
 
         self.assertGreater(self._study3_tripwire_calls.get("real_ledger_api", 0), 0)
+        self.assertGreater(
+            self._study3_tripwire_calls.get("real_study3_ledger_api", 0), 0
+        )
         self.assertGreater(
             self._study3_tripwire_calls.get("real_ledger_path_write", 0), 0
         )
@@ -3353,7 +4994,6 @@ class Study3TripwireTest(Study3GuardedTestCase):
         }
         forbidden_ledger_suffixes = {
             "llm_staging.client",
-            "llm_staging.transport",
             "llm_staging_study2.client",
             "llm_staging_study2.ledger",
             "llm_staging_study2.transport",

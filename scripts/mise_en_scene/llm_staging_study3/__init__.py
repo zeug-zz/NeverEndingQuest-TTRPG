@@ -59,6 +59,24 @@ from .preflight import (
     classify_attempt_outcome,
     synthetic_preflight,
 )
+from .ledger import (
+    Study3Completion,
+    Study3Ledger,
+    Study3LedgerError,
+    Study3Reservation,
+)
+from .readiness import (
+    ReadinessVerification,
+    ReadinessVerificationError,
+    verify_readiness_evidence,
+)
+from .runner import (
+    Study3AttemptResult,
+    Study3RunResult,
+    Study3Runner,
+    Study3RunnerBlocked,
+    Study3SyntheticHTTP,
+)
 
 __all__ = [
     "ContractError",
@@ -74,11 +92,22 @@ __all__ = [
     "PreflightBlocked",
     "PreflightDecision",
     "ProviderIdentity",
+    "ReadinessVerification",
+    "ReadinessVerificationError",
     "RequestBuildError",
     "RequestParityError",
     "SCENE_ORDER",
     "STUDY_ID",
     "Study3OutputGateReport",
+    "Study3Completion",
+    "Study3AttemptResult",
+    "Study3Ledger",
+    "Study3LedgerError",
+    "Study3Reservation",
+    "Study3RunResult",
+    "Study3Runner",
+    "Study3RunnerBlocked",
+    "Study3SyntheticHTTP",
     "SizingBlocked",
     "SyntheticLedgerSnapshot",
     "audit_rule_parity",
@@ -101,4 +130,5 @@ __all__ = [
     "validate_delta_payload",
     "validate_delta_output",
     "validate_actual_cost_accounting",
+    "verify_readiness_evidence",
 ]
