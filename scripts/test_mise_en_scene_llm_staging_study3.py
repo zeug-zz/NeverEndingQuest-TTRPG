@@ -4436,6 +4436,35 @@ class Study3ReadinessAndRunnerTest(Study3GuardedTestCase):
             {"PATH": "/trusted/system/bin"},
         )
 
+    def test_preflight_project_python_preserves_virtualenv_and_jsonschema(self) -> None:
+        probe = (
+            "import json, jsonschema, sys; "
+            "print(json.dumps({'prefix': sys.prefix, 'executable': sys.executable}))"
+        )
+        expected_launcher = str(REPO_ROOT / ".venv/bin/python")
+        with patch.dict(
+            study3_readiness.REQUIRED_PREFLIGHT_GATE_COMMANDS,
+            {"focused-study3-tests": (".venv/bin/python", "-c", probe)},
+        ), patch.object(
+            study3_readiness.subprocess,
+            "run",
+            wraps=subprocess.run,
+        ) as subprocess_run:
+            result = study3_readiness._run_preflight_command("focused-study3-tests")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr.decode("utf-8", "replace"))
+        interpreter = json.loads(result.stdout.decode("utf-8"))
+        self.assertEqual(interpreter["prefix"], str((REPO_ROOT / ".venv").resolve()))
+        self.assertEqual(
+            Path(interpreter["executable"]).resolve(),
+            Path(expected_launcher).resolve(),
+        )
+        self.assertEqual(subprocess_run.call_args.args[0][0], expected_launcher)
+        self.assertEqual(subprocess_run.call_args.kwargs["cwd"], REPO_ROOT)
+        self.assertIs(subprocess_run.call_args.kwargs["shell"], False)
+        self.assertNotIn("OPENAI_API_KEY", subprocess_run.call_args.kwargs["env"])
+        self.assertNotIn("OPENROUTER_API_KEY", subprocess_run.call_args.kwargs["env"])
+
     def test_dirty_worktree_and_exact_head_mismatch_stop_before_ci_or_github(self) -> None:
         current_sha = "f" * 40
         ci_evidence = self._save_ci_evidence(current_sha)
