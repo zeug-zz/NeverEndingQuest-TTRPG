@@ -474,7 +474,12 @@ class PlayerRuntimeIntegrationTests(unittest.TestCase):
             and isinstance(node.func, ast.Name)
             and node.func.id == "create_player_runtime_gateway"
         ]
-        self.assertEqual(factory_calls, [])
+        service_provider = functions.get("_get_player_sharing_service")
+        self.assertIsNotNone(service_provider)
+        assert service_provider is not None
+        self.assertEqual(len(factory_calls), 1)
+        self.assertIn(factory_calls[0], ast.walk(service_provider))
+        self.assertIn("_player_sharing_service_lock", source)
         self.assertIn("os.environ.get('NEQ_PLAYER_DEV_LISTENER') == '1'", source)
         self.assertIn(
             "start_player_dev_listener(\n                create_player_runtime_gateway",

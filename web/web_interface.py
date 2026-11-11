@@ -223,6 +223,7 @@ from web.routes.character_sheet_routes import (
     readiness_repair_preview_impl,
 )
 from web.routes.memory_routes import register_memory_routes
+from web.routes.player_sharing_routes import register_player_sharing_routes
 from web.routes.tabletop_party_routes import register_tabletop_party_routes
 from web.routes.toolkit_homebrew_routes import register_toolkit_homebrew_routes
 from web.routes.world_narrative_routes import register_world_narrative_routes
@@ -469,6 +470,10 @@ user_input_queue = queue.Queue()
 game_thread = None
 startup_in_progress = False
 startup_guard_lock = threading.Lock()
+# TABLETOP MODE: Keep optional listener and sharing service ownership local to this host process.
+_player_dev_listener = None
+_player_sharing_service = None
+_player_sharing_service_lock = threading.Lock()
 original_stdout = sys.stdout
 original_stderr = sys.stderr
 original_stdin = sys.stdin
@@ -4039,6 +4044,56 @@ def handle_party_data_request():
 # ============================================================================
 register_tabletop_party_routes(app, user_input_queue)
 
+
+# TABLETOP MODE: Construct sharing only when an explicit local route or startup reconciliation needs it.
+def _player_sharing_runtime_available():
+    current_game_thread = game_thread
+    return bool(current_game_thread is not None and current_game_thread.is_alive())
+
+
+def _player_sharing_start_blocked_by_dev_listener():
+    listener = _player_dev_listener
+    return bool(listener is not None and listener.is_running)
+
+
+def _get_player_sharing_service():
+    global _player_sharing_service
+    if _player_sharing_service is None:
+        with _player_sharing_service_lock:
+            if _player_sharing_service is None:
+                from web.extensions.opentunnel_sharing.service import (
+                    create_production_player_sharing_service,
+                )
+
+                _player_sharing_service = create_production_player_sharing_service(
+                    gateway=create_player_runtime_gateway(),
+                    local_runtime_check=_player_sharing_runtime_available,
+                )
+    return _player_sharing_service
+
+
+def _reconcile_player_sharing_at_startup():
+    try:
+        result = _get_player_sharing_service().reconcile_startup()
+        if not result.ok:
+            warning(
+                "Player sharing startup reconciliation incomplete; sharing remains off",
+                category="player",
+            )
+    except Exception:
+        warning(
+            "Player sharing startup reconciliation unavailable; host startup continues",
+            category="player",
+        )
+
+
+register_player_sharing_routes(
+    app,
+    _get_player_sharing_service,
+    host_port=_configured_web_port,
+    start_blocked=_player_sharing_start_blocked_by_dev_listener,
+)
+
 @socketio.on('request_initiative_data')
 def handle_initiative_data_request():
     """Handles requests for the current combat initiative order."""
@@ -4057,24 +4112,34 @@ def handle_request_storage_data():
     """Handles a request from the client to view all player storage."""
     handle_storage_data_request_impl(emit, debug, error)
 
-# TABLETOP MODE: The host owns the optional listener lifecycle so normal
-# host play remains independent of player assets and shutdown can stop it.
-_player_dev_listener = None
-
-
+# TABLETOP MODE: The host owns both optional listener lifecycles; neither is started by route registration.
 def _stop_player_dev_listener():
     global _player_dev_listener
     listener = _player_dev_listener
     _player_dev_listener = None
-    if listener is None:
-        return
-    try:
-        listener.stop()
-    except Exception:
-        warning(
-            "Player development listener shutdown failed; host shutdown continues",
-            category="player",
-        )
+    if listener is not None:
+        try:
+            listener.stop()
+        except Exception:
+            warning(
+                "Player development listener shutdown failed; host shutdown continues",
+                category="player",
+            )
+    # TABLETOP MODE: Stop sharing only when its lazy service was already constructed.
+    sharing_service = _player_sharing_service
+    if sharing_service is not None:
+        try:
+            result = sharing_service.shutdown()
+            if not result.ok:
+                warning(
+                    "Player sharing shutdown cleanup incomplete; host shutdown continues",
+                    category="player",
+                )
+        except Exception:
+            warning(
+                "Player sharing shutdown failed; host shutdown continues",
+                category="player",
+            )
 
 
 @socketio.on('user_exit')
@@ -7335,6 +7400,9 @@ if __name__ == '__main__':
     print("Starting NeverEndingQuest Web Interface...")
     port = _configured_web_port
     print(f"Opening browser at http://localhost:{port}")
+
+    # TABLETOP MODE: Reconcile only positively owned sharing resources; never start sharing here.
+    _reconcile_player_sharing_at_startup()
 
     # TABLETOP MODE: Keep the player listener absent unless the approved exact
     # opt-in is present; failures never prevent ordinary host startup.

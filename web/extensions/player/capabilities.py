@@ -87,6 +87,14 @@ _HOST_ONLY_HTTP_ROUTES = (
     "/api/party/promotion/preview",
     "/api/party/remove_character",
     "/api/party/update_manual",
+    "/api/player-sharing/copy-invitation",
+    "/api/player-sharing/initialize-identity",
+    "/api/player-sharing/issue-access",
+    "/api/player-sharing/revoke",
+    "/api/player-sharing/rotate",
+    "/api/player-sharing/start",
+    "/api/player-sharing/status",
+    "/api/player-sharing/stop",
     "/api/portrait/create",
     "/api/settings/browser",
     "/api/toolkit/add-to-bestiary",
@@ -248,7 +256,7 @@ _HOST_ONLY_EMISSIONS = (
 # Compression payloads do not enter that bridge. Keep this exact source-site
 # classification; do not classify dynamic emissions by name or pattern.
 _DYNAMIC_EVENT_CALLSITES = {
-    "dynamic:emit:web/web_interface.py:emit_compression_event:655": HOST_ONLY,
+    "dynamic:emit:web/web_interface.py:emit_compression_event:660": HOST_ONLY,
     "dynamic:emit:web/extensions/live_chat_monitor.py:setup_live_chat_monitor._tabletop_mode_emit_wrapper:91": HOST_ONLY,
     "dynamic:emit:web/extensions/streaming_events.py:_emit:164": PLAYER_PROJECTION_OR_TYPED_COMMAND,
 }
