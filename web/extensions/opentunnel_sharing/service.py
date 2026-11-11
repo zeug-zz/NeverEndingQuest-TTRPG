@@ -17,6 +17,7 @@ import re
 import stat
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -54,6 +55,9 @@ from web.extensions.opentunnel_sharing.identity_bootstrap import (
     bootstrap_identity,
 )
 from web.extensions.opentunnel_sharing.origin_binding import PublicOriginBinder
+from web.extensions.opentunnel_sharing.production_monitor import (
+    ProductionRelayMonitor,
+)
 from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
     ProfileLayout,
@@ -70,6 +74,13 @@ from web.extensions.opentunnel_sharing.supervisor import (
     Identity,
     OwnedCompanion,
     probe_process_identity,
+)
+from web.extensions.opentunnel_sharing.relay_supervision import (
+    CancellableSleeper,
+    RecoveryPolicy,
+    RelayMonitor,
+    RelaySupervisor,
+    RelaySupervisionSnapshot,
 )
 from web.extensions.opentunnel_sharing.verifier_store import (
     IssuedCredential,
@@ -90,6 +101,9 @@ from web.extensions.player.listener import PlayerListener
 
 MAX_STATUS_COMMAND_SECONDS = 15.0
 LOOPBACK_PROBE_TIMEOUT_SECONDS = 1.0
+MAX_SUPERVISION_JOIN_SECONDS = (
+    MAX_STATUS_COMMAND_SECONDS + LOOPBACK_PROBE_TIMEOUT_SECONDS + 1.0
+)
 MAX_PROFILE_ROUTE_BYTES = 1024
 _PROFILE_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _ROUTE_LINE_PATTERN = re.compile(r"^\s*(\S+)\s+(?:\u2192|->)\s+(\S+)\s*$")
@@ -183,6 +197,7 @@ class SharingServiceStatus:
     credential_state: str
     credential_generation: int | None = None
     credential_issued_at: str | None = None
+    supervision: RelaySupervisionSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -226,6 +241,9 @@ class SharingServiceDependencies:
     issue_credential: Callable[[ProfileLayout], IssuedCredential]
     rotate_credential: Callable[[ProfileLayout], IssuedCredential]
     revoke_access: Callable[[ProfileLayout], VerifierLoad]
+    relay_monitor_factory: (
+        Callable[[SharingController, int], RelayMonitor] | None
+    ) = None
 
     def __repr__(self) -> str:
         return "SharingServiceDependencies(<injected>)"
@@ -244,18 +262,58 @@ class SharingServiceDependencies:
         ):
             if not callable(getattr(self, field_name)):
                 raise TypeError("sharing_service_dependency_invalid")
+        if self.relay_monitor_factory is not None and not callable(
+            self.relay_monitor_factory
+        ):
+            raise TypeError("sharing_service_dependency_invalid")
+
+
+@dataclass(slots=True)
+class _SupervisionRuntime:
+    """One daemon monitor owned by one controller generation/revision."""
+
+    generation: int
+    lifecycle_revision: int
+    stop_event: threading.Event
+    supervisor: RelaySupervisor
+    thread: threading.Thread | None = None
+    terminal_snapshot: RelaySupervisionSnapshot | None = None
 
 
 class PlayerSharingService:
     """Local-facilitator API over the generation-bound sharing controller."""
 
-    def __init__(self, dependencies: SharingServiceDependencies) -> None:
+    def __init__(
+        self,
+        dependencies: SharingServiceDependencies,
+        *,
+        recovery_policy: RecoveryPolicy | None = None,
+        supervision_clock: Callable[[], float] = time.monotonic,
+        supervision_sleeper: CancellableSleeper | None = None,
+        run_supervision_thread: bool = True,
+    ) -> None:
         if not isinstance(dependencies, SharingServiceDependencies):
             raise TypeError("sharing_service_dependencies_required")
+        selected_policy = recovery_policy or RecoveryPolicy()
+        if not isinstance(selected_policy, RecoveryPolicy):
+            raise TypeError("recovery_policy_required")
+        if not callable(supervision_clock) or (
+            supervision_sleeper is not None
+            and not callable(supervision_sleeper)
+        ):
+            raise TypeError("supervision_waiter_invalid")
+        if type(run_supervision_thread) is not bool:
+            raise TypeError("supervision_thread_option_invalid")
         self._deps = dependencies
         self._lock = threading.RLock()
         self._controller: SharingController | None = None
         self._controller_layout: ProfileLayout | None = None
+        self._recovery_policy = selected_policy
+        self._supervision_clock = supervision_clock
+        self._supervision_sleeper = supervision_sleeper
+        self._run_supervision_thread = run_supervision_thread
+        self._supervision: _SupervisionRuntime | None = None
+        self._last_supervision_snapshot: RelaySupervisionSnapshot | None = None
 
     def status(self) -> SharingServiceStatus:
         """Read bounded status without initializing the profile or starting work."""
@@ -265,6 +323,43 @@ class PlayerSharingService:
     def diagnostics(self) -> SharingServiceStatus:
         """Return the same safe projection as status; never include raw output."""
         return self.status()
+
+    def supervision_status(self) -> RelaySupervisionSnapshot | None:
+        """Return bounded supervisor counters without probing resources."""
+        with self._lock:
+            runtime = self._supervision
+            last_snapshot = self._last_supervision_snapshot
+        if runtime is None:
+            return last_snapshot
+        thread = runtime.thread
+        if thread is not None and not thread.is_alive():
+            try:
+                thread.join(timeout=0)
+            except RuntimeError:
+                pass
+        snapshot = runtime.terminal_snapshot
+        if snapshot is None:
+            try:
+                snapshot = runtime.supervisor.snapshot()
+            except Exception:
+                snapshot = last_snapshot
+        with self._lock:
+            if snapshot is not None and self._supervision is runtime:
+                self._last_supervision_snapshot = snapshot
+        return snapshot
+
+    def tick_supervision(self) -> RelaySupervisionSnapshot | None:
+        """Run one explicit tick for deterministic provider-free tests."""
+        with self._lock:
+            runtime = self._supervision
+        if runtime is None or runtime.stop_event.is_set():
+            return self.supervision_status()
+        try:
+            return runtime.supervisor.tick()
+        except Exception:
+            # RelaySupervisor is designed to bound probe/recovery failures; this
+            # final host boundary prevents an unexpected exception escaping.
+            return runtime.supervisor.snapshot()
 
     def initialize_identity(self, *, facilitator_confirmed: bool) -> SharingActionResult:
         """Explicitly initialize the dedicated identity profile exactly once."""
@@ -340,6 +435,9 @@ class PlayerSharingService:
             snapshot = controller.start()
         except Exception:
             return self._result("start", False, "operation_failed", profile)
+        if snapshot.state is SharingState.READY and snapshot.reason == "ready":
+            if not self._ensure_supervision(controller, snapshot.generation):
+                snapshot = controller.status()
         reason = _safe_controller_reason(snapshot.reason)
         return self._result(
             "start",
@@ -350,12 +448,22 @@ class PlayerSharingService:
 
     def stop(self) -> SharingActionResult:
         """Stop the current sharing generation and revoke listener sessions."""
-        controller = self._existing_controller()
+        with self._lock:
+            runtime = self._cancel_supervision_locked()
+            controller = self._controller
+            if controller is None:
+                snapshot = None
+            else:
+                try:
+                    # The service lock closes the gap between cancelling the
+                    # monitor and the controller accepting this serialized stop.
+                    snapshot = controller.stop()
+                except Exception:
+                    snapshot = None
+        self._join_supervision(runtime)
         if controller is None:
             return self._result("stop", True, "stopped", self._prepare_profile(create=False))
-        try:
-            snapshot = controller.stop()
-        except Exception:
+        if snapshot is None:
             return self._result("stop", False, "operation_failed", self._prepare_profile(create=False))
         reason = _safe_controller_reason(snapshot.reason)
         return self._result(
@@ -410,10 +518,15 @@ class PlayerSharingService:
                 issued = None
                 raise RuntimeError("credential_rotation_failed")
 
-        try:
-            snapshot = controller.rotate(rotate_transaction)
-        except Exception:
-            snapshot = controller.status()
+        with self._lock:
+            runtime = self._cancel_supervision_locked()
+            try:
+                snapshot = controller.rotate(rotate_transaction)
+            except Exception:
+                snapshot = controller.status()
+        self._join_supervision(runtime)
+        if snapshot.state is SharingState.READY and snapshot.reason == "ready":
+            self._ensure_supervision(controller, snapshot.generation)
         reason = _safe_controller_reason(snapshot.reason)
         return self._result(
             "rotate_access",
@@ -440,21 +553,25 @@ class PlayerSharingService:
                 revoked = None
                 raise RuntimeError("credential_revocation_failed")
 
+        runtime: _SupervisionRuntime | None = None
         if controller is not None:
-            try:
-                controller.rotate(revoke_transaction)
-            except Exception:
-                pass
-            try:
-                snapshot = controller.stop()
-            except Exception:
-                snapshot = controller.status()
+            with self._lock:
+                runtime = self._cancel_supervision_locked()
+                try:
+                    controller.rotate(revoke_transaction)
+                except Exception:
+                    pass
+                try:
+                    snapshot = controller.stop()
+                except Exception:
+                    snapshot = controller.status()
         else:
             try:
                 revoke_transaction()
             except Exception:
                 pass
             snapshot = _initial_snapshot(profile, self._identity_initialized(layout))
+        self._join_supervision(runtime)
 
         verified = revoked is not None and revoked.state == "absent"
         if revoked is None:
@@ -496,13 +613,19 @@ class PlayerSharingService:
 
     def shutdown(self) -> SharingActionResult:
         """Stop host-owned sharing during launcher shutdown without creating state."""
-        controller = self._existing_controller()
+        with self._lock:
+            runtime = self._cancel_supervision_locked()
+            controller = self._controller
+            if controller is None:
+                snapshot = None
+            else:
+                try:
+                    snapshot = controller.shutdown()
+                except Exception:
+                    snapshot = controller.status()
+        self._join_supervision(runtime)
         if controller is None:
             return self._result("shutdown", True, "shutting_down", self._prepare_profile(create=False))
-        try:
-            snapshot = controller.shutdown()
-        except Exception:
-            snapshot = controller.status()
         reason = _safe_controller_reason(snapshot.reason)
         return self._result(
             "shutdown",
@@ -597,6 +720,238 @@ class PlayerSharingService:
                 return None
             return self._controller
 
+    def _ensure_supervision(
+        self, controller: SharingController, generation: int
+    ) -> bool:
+        """Install exactly one monitor runtime for the current ready lifecycle."""
+        monitor_factory = self._deps.relay_monitor_factory
+        if monitor_factory is None:
+            return True
+        try:
+            lifecycle_revision = controller.lifecycle_revision
+        except Exception:
+            return False
+
+        while True:
+            stale_runtime: _SupervisionRuntime | None = None
+            failed = False
+            with self._lock:
+                try:
+                    current = controller.status()
+                    current_revision = controller.lifecycle_revision
+                except Exception:
+                    return False
+                if (
+                    current.state is not SharingState.READY
+                    or current.generation != generation
+                    or current_revision != lifecycle_revision
+                ):
+                    # A stop/rotation/new generation won the race with start.
+                    return True
+
+                existing = self._supervision
+                if existing is not None:
+                    if (
+                        existing.generation == generation
+                        and existing.lifecycle_revision == lifecycle_revision
+                        and not existing.stop_event.is_set()
+                    ):
+                        if existing.thread is None or existing.thread.is_alive():
+                            return True
+                        return self._fail_supervision(
+                            controller, generation, lifecycle_revision
+                        )
+                    stale_runtime = self._cancel_supervision_locked(existing)
+                    self._supervision = None
+                else:
+                    try:
+                        monitor = monitor_factory(controller, generation)
+                        supervisor = RelaySupervisor(
+                            controller,
+                            monitor,
+                            self._recovery_policy,
+                            self._supervision_clock,
+                            self._supervision_sleeper,
+                        )
+                    except Exception:
+                        failed = True
+                    else:
+                        runtime = _SupervisionRuntime(
+                            generation=generation,
+                            lifecycle_revision=lifecycle_revision,
+                            stop_event=threading.Event(),
+                            supervisor=supervisor,
+                        )
+                        if self._run_supervision_thread:
+                            runtime.thread = threading.Thread(
+                                target=self._run_supervision,
+                                args=(runtime, controller),
+                                name="player-sharing-supervision-%d" % generation,
+                                daemon=True,
+                            )
+                        self._supervision = runtime
+                        if runtime.thread is not None:
+                            try:
+                                runtime.thread.start()
+                            except RuntimeError:
+                                self._supervision = None
+                                self._last_supervision_snapshot = supervisor.snapshot()
+                                failed = True
+                        if not failed:
+                            return True
+
+            if stale_runtime is not None:
+                self._join_supervision(stale_runtime)
+                continue
+            if failed:
+                return self._fail_supervision(
+                    controller, generation, lifecycle_revision
+                )
+
+    def _run_supervision(
+        self, runtime: _SupervisionRuntime, controller: SharingController
+    ) -> None:
+        """Tick at the bounded policy cadence without holding the service lock."""
+        try:
+            while not runtime.stop_event.wait(
+                self._recovery_policy.health_check_interval
+            ):
+                if runtime.stop_event.is_set():
+                    break
+                try:
+                    snapshot = runtime.supervisor.tick()
+                except Exception:
+                    self._fail_controller_supervision(
+                        controller,
+                        runtime.generation,
+                        runtime.lifecycle_revision,
+                    )
+                    current = runtime.supervisor.snapshot()
+                    runtime.terminal_snapshot = RelaySupervisionSnapshot(
+                        state="failed",
+                        reason="monitor_failed",
+                        attempts_used=current.attempts_used,
+                        attempts_max=current.attempts_max,
+                        next_delay_bucket="none",
+                        generation=runtime.generation,
+                    )
+                    break
+                if snapshot.state in {"failed", "stopped"}:
+                    break
+        except Exception:
+            # A daemon worker is a host boundary: no monitor exception escapes.
+            self._fail_controller_supervision(
+                controller,
+                runtime.generation,
+                runtime.lifecycle_revision,
+            )
+            current = runtime.supervisor.snapshot()
+            runtime.terminal_snapshot = RelaySupervisionSnapshot(
+                state="failed",
+                reason="monitor_failed",
+                attempts_used=current.attempts_used,
+                attempts_max=current.attempts_max,
+                next_delay_bucket="none",
+                generation=runtime.generation,
+            )
+        finally:
+            runtime.stop_event.set()
+            snapshot = runtime.terminal_snapshot
+            if snapshot is None:
+                try:
+                    snapshot = runtime.supervisor.snapshot()
+                except Exception:
+                    snapshot = None
+            with self._lock:
+                if snapshot is not None and self._supervision is runtime:
+                    self._last_supervision_snapshot = snapshot
+
+    def _cancel_supervision_locked(
+        self, runtime: _SupervisionRuntime | None = None
+    ) -> _SupervisionRuntime | None:
+        """Signal worker cancellation while the service-state lock is held."""
+        selected = runtime if runtime is not None else self._supervision
+        if selected is None:
+            return None
+        selected.stop_event.set()
+        try:
+            current = selected.supervisor.snapshot()
+        except Exception:
+            current = None
+        if current is not None and current.state not in {"failed", "stopped"}:
+            try:
+                selected.supervisor.stop()
+            except Exception:
+                pass
+        try:
+            selected.terminal_snapshot = selected.supervisor.snapshot()
+        except Exception:
+            pass
+        if selected.terminal_snapshot is not None:
+            self._last_supervision_snapshot = selected.terminal_snapshot
+        return selected
+
+    @staticmethod
+    def _join_supervision(runtime: _SupervisionRuntime | None) -> None:
+        """Join a cancelled worker outside service/controller locks."""
+        if runtime is None or runtime.thread is None:
+            return
+        if runtime.thread is threading.current_thread():
+            return
+        try:
+            runtime.thread.join(timeout=MAX_SUPERVISION_JOIN_SECONDS)
+        except RuntimeError:
+            pass
+
+    def _fail_supervision(
+        self, controller: SharingController, generation: int, revision: int
+    ) -> bool:
+        """Fail closed if a ready lifecycle cannot acquire its monitor."""
+        self._fail_controller_supervision(controller, generation, revision)
+        with self._lock:
+            runtime = self._supervision
+            attempts_used = 0
+            if runtime is not None and runtime.generation == generation:
+                runtime.stop_event.set()
+                try:
+                    attempts_used = runtime.supervisor.snapshot().attempts_used
+                except Exception:
+                    attempts_used = 0
+            failed_snapshot = RelaySupervisionSnapshot(
+                state="failed",
+                reason="monitor_failed",
+                attempts_used=attempts_used,
+                attempts_max=self._recovery_policy.max_attempts,
+                next_delay_bucket="none",
+                generation=generation,
+            )
+            if runtime is not None and runtime.generation == generation:
+                runtime.terminal_snapshot = failed_snapshot
+            self._last_supervision_snapshot = failed_snapshot
+        return False
+
+    @staticmethod
+    def _fail_controller_supervision(
+        controller: SharingController, generation: int, revision: int
+    ) -> None:
+        try:
+            current = controller.status()
+            state = current.state
+            if (
+                current.generation != generation
+                or controller.lifecycle_revision != revision
+                or state not in {SharingState.READY, SharingState.DEGRADED}
+            ):
+                return
+            controller.mark_failed(
+                "monitor_failed",
+                expected_generation=generation,
+                expected_lifecycle_revision=revision,
+                expected_state=state,
+            )
+        except Exception:
+            pass
+
     def _status(
         self,
         profile: ProfileState,
@@ -655,6 +1010,7 @@ class PlayerSharingService:
             credential_state=credential.state,
             credential_generation=credential.generation,
             credential_issued_at=credential.issued_at,
+            supervision=self.supervision_status(),
         )
 
     def _result(
@@ -694,6 +1050,10 @@ def create_production_player_sharing_service(
     install_marker: str | None = None,
     profile: str = DEFAULT_PROFILE,
     player_build_root: str | os.PathLike[str] | None = None,
+    recovery_policy: RecoveryPolicy | None = None,
+    supervision_clock: Callable[[], float] = time.monotonic,
+    supervision_sleeper: CancellableSleeper | None = None,
+    run_supervision_thread: bool = True,
 ) -> PlayerSharingService:
     """Build production seams lazily; construction performs no filesystem or runtime work.
 
@@ -713,7 +1073,13 @@ def create_production_player_sharing_service(
         profile=profile,
         player_build_root=player_build_root,
     )
-    return PlayerSharingService(composition.dependencies())
+    return PlayerSharingService(
+        composition.dependencies(),
+        recovery_policy=recovery_policy,
+        supervision_clock=supervision_clock,
+        supervision_sleeper=supervision_sleeper,
+        run_supervision_thread=run_supervision_thread,
+    )
 
 
 class _ProductionComposition:
@@ -780,6 +1146,7 @@ class _ProductionComposition:
             issue_credential=issue_credential,
             rotate_credential=self._rotate_access,
             revoke_access=self._revoke_access,
+            relay_monitor_factory=self._relay_monitor_factory,
         )
 
     def _prepare_profile(self, create: bool) -> ProfileState:
@@ -877,15 +1244,15 @@ class _ProductionComposition:
 
             handle_holder: dict[str, OwnedCompanion] = {}
 
-        def readiness_probe() -> str:
-            handle = handle_holder.get("handle")
-            if handle is None:
-                return "pending"
-            return (
-                "ready"
-                if self._route_status(handle, generation, layout).healthy
-                else "pending"
-            )
+            def readiness_probe() -> str:
+                handle = handle_holder.get("handle")
+                if handle is None:
+                    return "pending"
+                return (
+                    "ready"
+                    if self._route_status(handle, generation, layout).healthy
+                    else "pending"
+                )
 
             try:
                 handle = OwnedCompanion(
@@ -921,6 +1288,29 @@ class _ProductionComposition:
             cleanup=cleanup,
         )
         return SharingController(dependencies)
+
+    def _relay_monitor_factory(
+        self, controller: SharingController, generation: int
+    ) -> RelayMonitor:
+        """Compose production probes without exposing route-origin values."""
+        def listener_probe(active_generation: int) -> bool:
+            if active_generation != generation:
+                return False
+            before = controller.status()
+            if (
+                before.generation != generation
+                or before.state not in {SharingState.READY, SharingState.DEGRADED}
+            ):
+                return False
+            healthy = self._listener_authenticated_probe()
+            after = controller.status()
+            return bool(
+                healthy is True
+                and after.generation == generation
+                and after.state in {SharingState.READY, SharingState.DEGRADED}
+            )
+
+        return ProductionRelayMonitor(controller, listener_probe)
 
     def _get_security(self, layout: ProfileLayout) -> PlayerSecurity:
         with self._lock:
