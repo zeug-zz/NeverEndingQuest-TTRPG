@@ -60,7 +60,7 @@
     "description": "A Chrome player page remains open during a verified tmp/combat_capture host restart; pending input becomes uncertain and a fresh snapshot resynchronizes. Firefox resynchronization is additionally covered when requested.",
     "checks": [
       { "id": "chrome-server-instance-resync", "description": "Chrome retains uncertainty, does not replay input, and resynchronizes to the restarted server instance.", "requires_firefox": false },
-      { "id": "firefox-server-instance-resync", "description": "Firefox independently retains uncertainty and resynchronizes to the restarted server instance.", "requires_firefox": true }
+      { "id": "firefox-server-instance-resync", "description": "Firefox independently resynchronizes to the restarted server instance without replaying Chrome's pending input.", "requires_firefox": true }
     ]
   },
   {

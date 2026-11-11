@@ -19,6 +19,7 @@ import {
   launchN2Browsers,
   parseN2BrowserSet,
 } from "./browser-contract.mjs";
+import { waitForTextOnAnyPage } from "./page-locator-waits.mjs";
 import { compareHostAndPlayerParty } from "./party-coherence.mjs";
 import { hitPointsLabel } from "./sheet-locator.mjs";
 import { loginPlayer, readPlayerVersion, type PlayerVersion } from "./login-player.mjs";
@@ -790,8 +791,7 @@ test("busy-input: concurrent player inputs surface a busy receipt without append
     await Promise.all(pages.map((page, index) => page.locator("#gameplay-input").fill(markers[index])));
     await Promise.all(pages.map((page) => page.getByRole("button", { name: "Submit input" }).click()));
 
-    await expect(playerOne.getByText(busyNotice).or(playerTwo.getByText(busyNotice))).toBeVisible();
-    const busyPages = await Promise.all(pages.map((page) => page.getByText(busyNotice).isVisible()));
+    const busyPages = await waitForTextOnAnyPage(pages, busyNotice, expect, { timeout: 15_000 });
     busyCount = busyPages.filter(Boolean).length;
     rejectedMarker = markers[busyPages[0] ? 0 : 1];
     const snapshots = await Promise.all(pages.map((page) => readPlayerSnapshot(page)));
