@@ -48,15 +48,75 @@ The installer SHALL write `runtime/opentunnel/v0.6.2/manifest.json` from the com
 
 ### Requirement: A clean install SHALL receive verified prebuilt player assets without Node
 
-The approved distribution SHALL identify a prebuilt player bundle by tagged source SHA, outer artifact digest, and the existing player manifest/build identity. Installation SHALL verify the outer pin and validate the complete bundle through the player asset contract before replacing `web/frontend/dist`; tester installation and runtime SHALL NOT require Node.
+A clean install MUST receive a verified prebuilt bundle from the approved release metadata; tester setup MUST NOT require Node.
 
 #### Scenario: A tester installs a valid prebuilt bundle
 - **WHEN** the installer obtains the bundle identified by the committed release metadata
-- **THEN** it verifies the artifact and player manifest, installs the complete bundle, and the player asset loader accepts it without invoking Node
+- **THEN** it downloads the versioned `neq-player-bundle-<version>.tar.gz` from a GitHub Release on `zeug-zz/NeverEndingQuest-TTRPG`, verifies its sidecar and tracked registry pin, installs the complete bundle, and the Python player asset loader accepts it without invoking Node
 
 #### Scenario: A bundle is stale, corrupt, or incomplete
 - **WHEN** its outer digest, player manifest, build identity, or listed asset bytes do not match
 - **THEN** the candidate bundle is rejected, the previous verified bundle is retained, and sharing readiness remains unavailable
+
+### Requirement: The player asset registry SHALL strictly pin release identity
+
+The tracked registry SHALL bind each release version to its exact player asset names and digests using a fixed fork release URL.
+
+#### Scenario: The initial registry and a release entry are read
+- **WHEN** the strict registry loader reads the initial or populated `packaging/player-assets.manifest.json`
+- **THEN** the initial document is exactly `{"versions": {}}`; each entry has exactly `{tag, source_commit, outer_sha256, size, player_manifest_sha256, client_build_id, release_asset_name, metadata_asset_name}`; tags match `^v[0-9]+\.[0-9]+\.[0-9]+$`, source commits have 40 hex digits, SHA-256 values have 64 lowercase hex digits, asset names match only the tarball and `.metadata.json` patterns for a numeric semantic version, and download URLs use only `https://github.com/zeug-zz/NeverEndingQuest-TTRPG/releases/download/<tag>/`
+
+#### Scenario: A registry or metadata document is malformed
+- **WHEN** either document has duplicate JSON keys, missing/extra fields, invalid digests or tags, or a disallowed asset name
+- **THEN** the loader rejects it before download or installation; the sidecar has exactly `{schema, version, git_tag, source_commit, outer_sha256, outer_size, player_manifest_sha256, client_build_id}` and no `built_at`
+
+### Requirement: The bundle builder SHALL produce a reproducible validated archive
+
+The builder SHALL consume an already-built player tree and shall not invoke npm.
+
+#### Scenario: A valid prebuilt player tree is packaged
+- **WHEN** the builder receives a complete `web/frontend/dist/` tree
+- **THEN** it validates the full `player-manifest.json`, `client_build_id`, and every listed asset using `web.extensions.player.assets.load_player_client_assets`; emits `neq-player-bundle-<version>.tar.gz` and its `.metadata.json` sidecar; binds the sidecar to the version, Git tag, full 40-hex source commit, outer SHA-256 and size, player-manifest SHA-256, and build ID; and omits `built_at`
+
+#### Scenario: The same player tree is packaged twice
+- **WHEN** the same validated tree and release identity are built twice
+- **THEN** the tarball SHA-256 is identical, with sorted archive paths and normalized mtime, uid, gid, modes, and ordering
+
+#### Scenario: A tag or source commit argument is invalid
+- **WHEN** a build argument does not match `^v[0-9]+\.[0-9]+\.[0-9]+$` or a full 40-hex commit
+- **THEN** the builder refuses to produce release artifacts
+
+### Requirement: Player bundle installation SHALL be explicit, bounded, and atomic
+
+Installation SHALL verify the full bundle before replacing the installed player tree.
+
+#### Scenario: A release bundle is installed explicitly
+- **WHEN** the installer is invoked with `--install --version X` for a version in the strict registry
+- **THEN** it reuses the OpenTunnel downloader guards; uses HTTPS, the GitHub host and existing CDN redirect allowlist, bounded time/size, no environment proxies, and mode-0700 `.part` staging; verifies the outer SHA-256 against the registry and sidecar; rejects traversal, links, devices, and over-cap files; validates every listed asset and the pinned `client_build_id`; and does not touch campaign data
+
+#### Scenario: A verified bundle is already installed
+- **WHEN** the installed bundle already matches the selected registry pin
+- **THEN** installation is idempotent and does not replace the matching bundle
+
+#### Scenario: An install fails during replacement
+- **WHEN** validation or any step after the atomic swap fails
+- **THEN** the installer atomically replaces `web/frontend/dist`, retains the previous bundle as `dist.previous` until the replacement is verified and loadable, restores it on failure, and refuses install roots under `.venv` or `venv`
+
+### Requirement: The player-bundle publisher SHALL enforce immutable release authority
+
+The publisher SHALL enforce the authorized immutable release boundary and shall never replace published assets.
+
+#### Scenario: An authorized release tag is published
+- **WHEN** the Overseer or repository owner publishes an immutable `v<semver>` tag pointing to a commit on `main`
+- **THEN** the workflow on `zeug-zz/NeverEndingQuest-TTRPG` builds/tests the web client, invokes the deterministic bundle builder, and uploads the tarball and metadata sidecar to that fork's matching GitHub Release using only the default `GITHUB_TOKEN` with `contents: write`; every Actions dependency is pinned by full commit SHA and no other secret is used
+
+#### Scenario: A tag or workflow trigger is unauthorized
+- **WHEN** the workflow is triggered by a pull request, fork, non-authorized actor, mutable/non-semver tag, or tag not resolving to a commit on `main`
+- **THEN** it does not publish assets; workers may build and test the workflow but do not create release tags
+
+#### Scenario: A release asset already exists
+- **WHEN** a publication attempts to use an existing release asset name
+- **THEN** the workflow fails without replacing the existing asset; a fix requires a new version and tag
 
 ### Requirement: Installer updates and rollback SHALL preserve local campaign state
 
