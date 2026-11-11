@@ -500,6 +500,143 @@ class PlayerAccessTests(unittest.TestCase):
         self.assertIsNone(security.session_id_for_cookie(expiring.cookie_value))
         self.assertIsNotNone(security.create_session())
 
+    def test_listener_shutdown_disconnects_connected_client_and_revokes_auth_state(self) -> None:
+        security = _make_security()
+        app = create_app(security=security)
+        grant = security.create_session()
+        challenge = security.issue_prelogin_challenge()
+        self.assertIsNotNone(grant)
+        self.assertIsNotNone(challenge)
+        assert grant is not None and challenge is not None
+
+        public_origin = "https://sharing-player.example"
+        self.assertTrue(security.bind_public_origin(1, public_origin))
+        assets = VerifiedPlayerClientAssets(
+            shell_document=b"",
+            shell_content_type=b"text/html; charset=utf-8",
+            client_build_id="0123456789abcdef0123456789abcdef",
+            protocol_version=1,
+            assets={},
+        )
+        app._client_assets = assets
+        connect = app.socket_server.handlers[PLAYER_NAMESPACE]["connect"]
+        connected = asyncio.run(
+            connect(
+                "connected-client",
+                {
+                    "asgi.scope": {
+                        "headers": [
+                            (b"host", b"sharing-player.example"),
+                            (b"origin", public_origin.encode("ascii")),
+                            (
+                                b"cookie",
+                                f"{PLAYER_SESSION_COOKIE}={grant.cookie_value}".encode("ascii"),
+                            ),
+                        ]
+                    }
+                },
+                {
+                    "client_build_id": assets.client_build_id,
+                    "protocol_version": assets.protocol_version,
+                },
+            )
+        )
+        self.assertTrue(connected)
+        self.assertTrue(security.authorize_socket_event("connected-client"))
+        self.assertTrue(security.csrf_is_valid(grant.cookie_value, grant.csrf_token))
+
+        with mock.patch.object(
+            app.socket_server,
+            "disconnect",
+            new_callable=mock.AsyncMock,
+        ) as disconnect:
+            asyncio.run(app._shutdown())
+
+        disconnect.assert_awaited_once_with(
+            "connected-client",
+            namespace=PLAYER_NAMESPACE,
+        )
+        self.assertEqual(security.active_session_count, 0)
+        self.assertEqual(security.active_socket_count, 0)
+        self.assertIsNone(security.session_id_for_cookie(grant.cookie_value))
+        self.assertFalse(security.csrf_is_valid(grant.cookie_value, grant.csrf_token))
+        self.assertFalse(
+            security.consume_prelogin_challenge(
+                challenge.cookie_value,
+                challenge.csrf_nonce,
+            )
+        )
+        self.assertFalse(security.authorize_socket_event("connected-client"))
+        self.assertEqual(security.public_origin_status, (False, None))
+        self.assertFalse(
+            security.request_identity_is_valid(
+                "sharing-player.example",
+                public_origin,
+                require_origin=True,
+            )
+        )
+        with mock.patch.object(app.sync, "submit_command") as submit_command:
+            asyncio.run(app._handle_player_input("connected-client", {}))
+            submit_command.assert_not_called()
+
+    def test_listener_restart_rejects_stale_cookie_challenge_and_password(self) -> None:
+        old_password = "old sharing credential"
+        new_password = "replacement sharing credential"
+        verifier = [make_verifier(old_password, salt=b"o" * 16)]
+        security = PlayerSecurity(lambda: verifier[0], clock=_FakeClock())
+        app = create_app(security=security)
+
+        login_status, login_headers, login_body = _login(app, old_password)
+        self.assertEqual(login_status, 200)
+        old_csrf_token = json.loads(login_body)["csrf_token"]
+        old_cookie = next(
+            value.split(b"=", 1)[1].split(b";", 1)[0].decode("ascii")
+            for value in _header_values(login_headers, b"set-cookie")
+            if value.startswith(PLAYER_SESSION_COOKIE.encode("ascii") + b"=")
+        )
+        _shell_status, challenge_headers, challenge_body = _dispatch_http(
+            app,
+            "GET",
+            "/",
+        )
+        nonce_match = re.search(
+            rb'name="csrf_token" value="([A-Za-z0-9_-]+)"',
+            challenge_body,
+        )
+        self.assertIsNotNone(nonce_match)
+        stale_nonce = nonce_match.group(1).decode("ascii") if nonce_match else ""
+        stale_prelogin_cookie = next(
+            value.split(b"=", 1)[1].split(b";", 1)[0].decode("ascii")
+            for value in _header_values(challenge_headers, b"set-cookie")
+            if value.startswith(PRELOGIN_CSRF_COOKIE.encode("ascii") + b"=")
+        )
+
+        asyncio.run(app._shutdown())
+        verifier[0] = make_verifier(new_password, salt=b"n" * 16)
+        security.start_listener()
+
+        stale_snapshot_status, _headers, _body = _dispatch_http(
+            app,
+            "GET",
+            "/api/player/snapshot",
+            headers=[
+                (b"cookie", f"{PLAYER_SESSION_COOKIE}={old_cookie}".encode("ascii"))
+            ],
+        )
+        self.assertEqual(stale_snapshot_status, 404)
+        self.assertFalse(security.csrf_is_valid(old_cookie, old_csrf_token))
+        stale_challenge_status, _headers, _body = _login(
+            app,
+            new_password,
+            csrf_nonce=stale_nonce,
+            prelogin_cookie=stale_prelogin_cookie,
+        )
+        self.assertEqual(stale_challenge_status, 403)
+        old_password_status, _headers, _body = _login(app, old_password)
+        self.assertEqual(old_password_status, 401)
+        new_password_status, _headers, _body = _login(app, new_password)
+        self.assertEqual(new_password_status, 200)
+
     def test_prelogin_csrf_is_origin_checked_and_one_use(self) -> None:
         app = create_app(security=_make_security())
         _status, headers, body = _dispatch_http(app, "GET", "/")

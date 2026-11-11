@@ -26,6 +26,7 @@ from web.extensions.opentunnel_sharing.controller import (
     SharingState,
 )
 from web.extensions.opentunnel_sharing.origin_binding import PublicOriginBinder
+from web.extensions.player.auth import PlayerSecurity, make_verifier
 
 PLAYER_ORIGIN = "https://sharing-route.example"
 SENTINEL_URL = "https://sentinel-invitation.example"
@@ -452,6 +453,120 @@ class PlayerSharingLifecycleTests(unittest.TestCase):
         self.assertFalse(fixture.binder.is_bound)
         self.assertEqual(fixture.events.count("listener_stop"), first_stop_count)
         self.assertEqual(fixture.events.count("companion_stop"), first_companion_stops)
+        self.assertIsNone(fixture.controller.invitation())
+
+    def test_stop_sharing_revokes_n1_sessions_challenges_sockets_and_origin(self) -> None:
+        verifier = make_verifier("stop-sharing-test-password", salt=b"s" * 16)
+        security = PlayerSecurity(lambda: verifier)
+        binder = PublicOriginBinder(security)
+        companion = FakeCompanion([])
+        stopped_socket_ids: list[str] = []
+        listener_running = False
+
+        def start_listener() -> bool:
+            nonlocal listener_running
+            security.start_listener()
+            listener_running = True
+            return True
+
+        def stop_listener() -> None:
+            nonlocal listener_running
+            stopped_socket_ids.extend(security.stop_listener())
+            listener_running = False
+
+        dependencies = SharingDependencies(
+            local_runtime_ok=lambda: True,
+            assets_ok=lambda: True,
+            start_player_listener=start_listener,
+            stop_player_listener=stop_listener,
+            listener_authenticated_probe=lambda: listener_running,
+            load_verifier=lambda: FakeVerifierLoad("present", object()),
+            resolve_companion=lambda: CompanionResolution(
+                state="resolved",
+                reason="resolved",
+                path=Path("fixture-opentunnel"),
+            ),
+            identity_initialized=lambda: True,
+            start_companion=lambda _generation: companion,
+            route_status=lambda _companion, generation: RouteStatus(
+                True, PLAYER_ORIGIN, generation
+            ),
+            origin_binder=binder,
+            route_wait_seconds=0.0,
+        )
+        controller = SharingController(dependencies)
+        self.assertEqual(controller.start().state, SharingState.READY)
+
+        grant = security.create_session()
+        challenge = security.issue_prelogin_challenge()
+        self.assertIsNotNone(grant)
+        self.assertIsNotNone(challenge)
+        assert grant is not None and challenge is not None
+        self.assertTrue(
+            security.register_socket(
+                "stop-sharing-client",
+                grant.cookie_value,
+                "sharing-route.example",
+                PLAYER_ORIGIN,
+            )
+        )
+        self.assertTrue(security.authorize_socket_event("stop-sharing-client"))
+
+        stopped = controller.stop()
+
+        self.assertEqual(stopped.state, SharingState.OFF)
+        self.assertEqual(stopped_socket_ids, ["stop-sharing-client"])
+        self.assertEqual(security.active_session_count, 0)
+        self.assertEqual(security.active_socket_count, 0)
+        self.assertIsNone(security.session_id_for_cookie(grant.cookie_value))
+        self.assertFalse(security.csrf_is_valid(grant.cookie_value, grant.csrf_token))
+        self.assertFalse(
+            security.consume_prelogin_challenge(
+                challenge.cookie_value,
+                challenge.csrf_nonce,
+            )
+        )
+        self.assertFalse(security.authorize_socket_event("stop-sharing-client"))
+        self.assertFalse(binder.is_bound)
+        self.assertEqual(security.public_origin_status, (False, None))
+
+    def test_rotation_rebinds_only_after_fresh_readiness_pass(self) -> None:
+        fixture = LifecycleFixture()
+        self.assertEqual(fixture.controller.start().state, SharingState.READY)
+        order: list[str] = []
+        replacement_origin = "https://replacement-sharing.example"
+
+        def route_status(_companion: FakeCompanion, generation: int) -> RouteStatus:
+            order.append("fresh_status")
+            return RouteStatus(True, replacement_origin, generation)
+
+        fixture.route_callback = route_status
+
+        def rotate_access() -> None:
+            self.assertFalse(fixture.binder.is_bound)
+            self.assertEqual(fixture.security.public_origin_status, (False, None))
+            order.append("credential_replaced")
+
+        rotated = fixture.controller.rotate(rotate_access)
+
+        self.assertEqual(order, ["credential_replaced", "fresh_status"])
+        self.assertEqual(rotated.state, SharingState.READY)
+        self.assertTrue(fixture.binder.is_bound)
+        self.assertEqual(fixture.controller.invitation(), replacement_origin)
+
+    def test_rotation_readiness_failure_keeps_origin_cleared(self) -> None:
+        fixture = LifecycleFixture()
+        self.assertEqual(fixture.controller.start().state, SharingState.READY)
+        fixture.route_callback = lambda _companion, generation: RouteStatus(
+            False, PLAYER_ORIGIN, generation
+        )
+
+        rotated = fixture.controller.rotate(lambda: None)
+
+        self.assertEqual(rotated.state, SharingState.DEGRADED)
+        self.assertEqual(rotated.reason, "route_unhealthy")
+        self.assertFalse(fixture.binder.is_bound)
+        self.assertEqual(fixture.security.public_origin_status, (False, None))
         self.assertIsNone(fixture.controller.invitation())
 
     def test_stop_never_raises_and_retains_failed_cleanup_for_retry(self) -> None:
