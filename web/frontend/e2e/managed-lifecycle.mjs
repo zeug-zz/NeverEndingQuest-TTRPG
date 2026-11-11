@@ -20,6 +20,7 @@ import {
 } from "./managed-host.mjs";
 import { FIREFOX_UNAVAILABLE_REASON, launchN2Browsers } from "./browser-contract.mjs";
 import { redactEvidenceText } from "./redaction.mjs";
+import { captureCredentialSafeScreenshot } from "./setup-evidence.mjs";
 import {
   makeBlockedScenarioResult,
   N2_MANAGED_LIFECYCLE_IDS,
@@ -351,9 +352,13 @@ async function assertPlayerListenerClosed(playerContexts) {
   };
 }
 
-async function captureScreenshot(page, evidenceDirectory, name) {
+async function captureScreenshot(page, evidenceDirectory, name, role) {
   const path = join(evidenceDirectory, "screenshots", `${name}.png`);
-  await page.screenshot({ path, fullPage: true, animations: "disabled" });
+  const expectedOrigin = role.startsWith("player-") ? PLAYER_URL : HOST_URL;
+  const result = await captureCredentialSafeScreenshot(page, role, path, expectedOrigin);
+  if (result.status !== "captured") {
+    throw new Error(`The ${role} screenshot could not be safely captured.`);
+  }
   return relative(evidenceDirectory, path).split(sep).join("/");
 }
 
@@ -446,15 +451,11 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
   ]);
   const uncertainNotice = playerPageOne.getByRole("alert").filter({ hasText: "The action may or may not have applied" });
   await uncertainNotice.waitFor({ state: "visible", timeout: 10_000 });
-  if (playerPageTwo) {
-    await playerPageTwo.getByRole("alert")
-      .filter({ hasText: "The action may or may not have applied" })
-      .waitFor({ state: "visible", timeout: 10_000 });
-  }
   const uncertainScreenshot = await captureScreenshot(
     playerPageOne,
     evidenceDirectory,
     "server-instance-change-uncertain-player",
+    "player-a-chrome",
   );
 
   await manager.start({ playerExpected: true, signal });
@@ -499,14 +500,21 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
     playerPageOne,
     evidenceDirectory,
     "server-instance-change-resynchronized-player",
+    "player-a-chrome",
   );
   const firefoxResynchronizedScreenshot = playerPageTwo
-    ? await captureScreenshot(playerPageTwo, evidenceDirectory, "server-instance-change-resynchronized-firefox-player")
+    ? await captureScreenshot(
+      playerPageTwo,
+      evidenceDirectory,
+      "server-instance-change-resynchronized-firefox-player",
+      "player-b-firefox",
+    )
     : null;
   const hostScreenshot = await captureScreenshot(
     hostPage,
     evidenceDirectory,
     "server-instance-change-host-ui",
+    "host-ui-chrome-context",
   );
   const checks = [{
     id: "chrome-server-instance-resync",
@@ -524,7 +532,8 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
       id: "firefox-server-instance-resync",
       verdict: "PASS",
       observed: {
-        uncertain_before_restart: true,
+        input_submitted_by_firefox: false,
+        uncertainty_expected: false,
         new_instance_id: resynchronizedTwo.instance_id,
         transcript_marker_count: markerCountTwo,
         authoritative_snapshot_resynchronized: true,
@@ -537,7 +546,10 @@ async function runServerInstanceScenario({ manager, playerContextOne, playerCont
       player_b_browser: playerPageTwo ? "Firefox" : null,
       old_instance_id: initialOne.instance_id,
       new_instance_id: resynchronizedOne.instance_id,
-      uncertainty_visible_before_reload: true,
+      uncertainty_visible_before_reload: {
+        player_a_chrome: true,
+        player_b_firefox: playerPageTwo ? false : null,
+      },
       request_id_submissions: matchingSubmissions,
       transcript_marker_count_after_resync: {
         player_a_chrome: markerCountOne,
@@ -588,7 +600,12 @@ async function runBundleScenario({
     await manager.start({ playerExpected: false, signal });
     const hostUi = await assertHostUi(hostPage);
     const playerClosed = await assertPlayerListenerClosed(playerContexts);
-    const hostScreenshot = await captureScreenshot(hostPage, evidenceDirectory, `${id}-host-ui`);
+    const hostScreenshot = await captureScreenshot(
+      hostPage,
+      evidenceDirectory,
+      `${id}-host-ui`,
+      "host-ui-chrome-context",
+    );
     observed = {
       bundle_state: corrupt ? "listed asset digest mismatch" : "dist directory absent",
       corrupted_asset: corruptedAsset,
