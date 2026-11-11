@@ -1,0 +1,40 @@
+{
+  "schema": "neq.llm_staging_study3b_generation_config.v1",
+  "study_id": "mise-en-scene-study3b-20261111",
+  "protocol_version": "neq.llm_staging_study3b_delta.v1",
+  "preparation_only": true,
+  "dispatch_authorized": false,
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "provider": "openrouter",
+  "model_id": "openai/gpt-6-luna",
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "frequency_penalty": 0.0,
+  "presence_penalty": 0.0,
+  "max_tokens": 16384,
+  "timeout_seconds": 720,
+  "response_format": {"type": "json_object"},
+  "stream": false,
+  "tools": [],
+  "tool_choice": "none",
+  "provider_options": {"allow_fallbacks": false},
+  "transport_constraints": {
+    "retries": 0,
+    "reruns": 0,
+    "fallback": false,
+    "availability_get": false,
+    "redirects": false,
+    "continuation": false
+  },
+  "attempt_cap": {
+    "identity": "mise-en-scene-study3b-20261111",
+    "total": 3,
+    "per_scene": 1,
+    "scene_order": [
+      "into_the_deepvault:scene:ha003-i02",
+      "into_the_deepvault:scene:sd005-i03",
+      "xhalruuns_masquerade:scene:tsu001-ao02"
+    ]
+  },
+  "cost_limit_usd": "0.05"
+}
