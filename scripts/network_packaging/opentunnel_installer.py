@@ -35,6 +35,12 @@ from web.extensions.opentunnel_sharing.companion import (
     resolve_companion,
     verify_companion_digest,
 )
+from web.extensions.opentunnel_sharing.runtime_manifest import (
+    RuntimeManifestSnapshot,
+    restore_runtime_manifest,
+    snapshot_runtime_manifest,
+    write_runtime_manifest,
+)
 
 MAX_DOWNLOAD_TIMEOUT_SECONDS = 30
 MAX_SHA256SUMS_BYTES = 1024 * 1024
@@ -165,6 +171,11 @@ def install_companion(
     except (OSError, RuntimeError, TypeError, ValueError):
         return InstallResult("install_failed", platform_key)
 
+    try:
+        previous_manifest = snapshot_runtime_manifest(root)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return InstallResult("install_failed", platform_key)
+
     target_dir = version_root / pin.asset_stem
     previous_dir = version_root / (pin.asset_stem + ".previous")
     resolver_manifest = _resolver_manifest(manifest)
@@ -185,6 +196,11 @@ def install_companion(
         and _is_mode_0755_regular(resolution.path)
         and verify_companion_digest(resolution.path, pin.sha256)
     ):
+        try:
+            write_runtime_manifest(root, manifest, platform_key)
+        except Exception:
+            restore_runtime_manifest(root, previous_manifest)
+            return InstallResult("install_failed", platform_key)
         return InstallResult("already_installed", platform_key)
 
     try:
@@ -304,6 +320,8 @@ def install_companion(
         ):
             raise _InstallFailure("install_failed")
 
+        write_runtime_manifest(root, manifest, platform_key)
+
         _cleanup_staging(stage_dir)
         stage_dir = None
         if retained_previous:
@@ -314,7 +332,7 @@ def install_companion(
         if transaction_started:
             result_reason = (
                 "rolled_back"
-                if _rollback_install(
+                if _rollback_install_and_manifest(
                     root,
                     version_root,
                     target_dir,
@@ -324,6 +342,7 @@ def install_companion(
                     selected_system,
                     selected_machine,
                     retained_previous,
+                    previous_manifest,
                 )
                 else "install_failed"
             )
@@ -331,7 +350,7 @@ def install_companion(
             result_reason = exc.reason
     except KeyboardInterrupt:
         if transaction_started:
-            _rollback_install(
+            _rollback_install_and_manifest(
                 root,
                 version_root,
                 target_dir,
@@ -341,13 +360,14 @@ def install_companion(
                 selected_system,
                 selected_machine,
                 retained_previous,
+                previous_manifest,
             )
         raise
     except Exception:
         if transaction_started:
             result_reason = (
                 "rolled_back"
-                if _rollback_install(
+                if _rollback_install_and_manifest(
                     root,
                     version_root,
                     target_dir,
@@ -357,6 +377,7 @@ def install_companion(
                     selected_system,
                     selected_machine,
                     retained_previous,
+                    previous_manifest,
                 )
                 else "install_failed"
             )
@@ -797,6 +818,33 @@ def _rollback_install(
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
+
+
+def _rollback_install_and_manifest(
+    root: Path,
+    version_root: Path,
+    target_dir: Path,
+    previous_dir: Path,
+    old_digest: str | None,
+    platform_key: str,
+    system: str,
+    machine: str,
+    retained_previous: bool,
+    previous_manifest: RuntimeManifestSnapshot | None,
+) -> bool:
+    asset_restored = _rollback_install(
+        root,
+        version_root,
+        target_dir,
+        previous_dir,
+        old_digest,
+        platform_key,
+        system,
+        machine,
+        retained_previous,
+    )
+    manifest_restored = restore_runtime_manifest(root, previous_manifest)
+    return asset_restored and manifest_restored
 
 
 def _remove_real_directory(path: Path, expected_parent: Path) -> None:
