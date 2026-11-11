@@ -1,9 +1,11 @@
 # V2 Spatial: A Shared World in the Theatre of the Players' Mind
 
-Status: Provisional master plan for owner review; not implementation authorization.
-Every phase below is **provisional on the mapping pilot gate**
-([V2 mapping pilot](v2-mapping-pilot.md) s10). Items marked *[pilot]* are decided
-by that gate.
+Status: Master plan; each phase still needs its own approved OpenSpec change.
+The mapping pilot gate closed on 2026-11-12 with the owner-decided outcome in
+[V2 narrative overview](v2-narrative-overview.md) s10.1: Builder-authored grids
+plus descriptions, Python and Firelight authority, and the Narrator constrained
+by them. Mise-en-scene remains the overall spatial goal. Items marked *[pilot]*
+are resolved by that outcome; their specifics are settled in the owning phases.
 Date: 2026-11-03.
 Track: F (Spatial). Program index: [V2 narrative overview](v2-narrative-overview.md).
 Supersedes as planning input: the drafts in `plans/version-2/mapping/` (s13).
