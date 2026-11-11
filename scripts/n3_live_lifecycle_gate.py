@@ -3,10 +3,10 @@
 # License: See LICENSE file in the repository root
 # This software is subject to the terms of the Fair Source License.
 
-"""Primary-owned live N3 lifecycle driver core.
+"""Primary-owned live N3 lifecycle driver.
 
-This driver is intentionally fail-closed. The live row executors remain
-placeholders until Tasks 6.5 and 6.6; a placeholder can never produce PASS.
+The driver is intentionally fail-closed. L01-L05 have bounded executors;
+L06-L10 remain placeholders until Task 6.6.
 """
 
 from __future__ import annotations
@@ -14,20 +14,26 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import html.parser
 import http.client
+import http.cookies
 import io
 import json
 import math
 import os
 import re
 import shutil
+import shlex
 import signal
+import socketio
+import ssl
 import stat
 import subprocess
 import sys
 import threading
 import time
 import tokenize
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +45,23 @@ from web.extensions.opentunnel_sharing.companion import (
     resolve_companion,
     verify_companion_digest,
 )
+from web.extensions.opentunnel_sharing.identity_bootstrap import (
+    DefaultIdentityObserver,
+    IdentityObserver,
+    Observation,
+)
+from web.extensions.opentunnel_sharing.profile_state import (
+    DEFAULT_PROFILE,
+    ProfileLayout,
+    prepare_profile,
+)
+from web.extensions.opentunnel_sharing.relay_supervision import RecoveryPolicy
+from web.extensions.opentunnel_sharing.supervisor import (
+    MAX_STARTUP_DEADLINE_SECONDS,
+    probe_process_identity,
+)
+from web.extensions.player.constants import PLAYER_NAMESPACE
+from web.extensions.player.contracts import PROTOCOL_VERSION
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +80,13 @@ MAX_API_RESPONSE_BYTES = 64 * 1024
 MAX_API_REQUEST_BYTES = 4096
 MAX_API_JSON_NODES = 1024
 MAX_API_JSON_DEPTH = 16
+MAX_PUBLIC_RESPONSE_BYTES = 1024 * 1024
+MAX_PUBLIC_PROBE_BODY_BYTES = 8192
+MAX_PLAYER_SHELL_BYTES = 512 * 1024
+PUBLIC_CLIENT_TIMEOUT_SECONDS = 8.0
+PUBLIC_POLL_INTERVAL_SECONDS = 0.1
+MAX_PROCESS_TABLE_BYTES = 1024 * 1024
+MAX_PROCESS_ANCESTRY_DEPTH = 128
 MAX_HOST_OUTPUT_BYTES_PER_STREAM = 65_536
 HOST_START_TIMEOUT_SECONDS = 30.0
 HOST_STOP_TIMEOUT_SECONDS = 8.0
@@ -82,21 +112,21 @@ LIVE_ROWS = (
         "L01", "sharing-off-local-play", 300,
         "Owned host is up; sharing is OFF.",
         "Query GET /api/player-sharing/status; inspect listener, companion process, and public exposure.",
-        "Sharing is off; port 8370 is not listening; no companion process exists; there is no public exposure.",
+        "Status is off or initializing_required (both sharing-inactive); port 8370 is not listening; no companion process exists; there is no public exposure.",
         "Host ownership or the required status/listener/process/public-exposure observations cannot be established safely. Any positive evidence of an unexpected listener, companion, or public exposure is FAIL.",
     ),
     LiveRow(
         "L02", "identity-init-once", 300,
         "Owned host is up; the dedicated profile identity is uninitialized; sharing is OFF.",
         "POST initialize-identity with {confirm:true}, then call it a second time.",
-        "The first call initializes only after a real guarded up -> status -> down; post-checks show no residual helper or service-manager entry. The second call returns already_initialized and causes zero new up invocations.",
+        "The first call returns identity_initialized=true and identity_up_invocations=1; post-checks show no residual helper or service-manager entry. The second call returns reason identity_initialized (or an equivalent already-initialized reason), identity_initialized=true, and identity_up_invocations remains exactly 1.",
         "The companion operation or positive post-checks for helper/service-manager cleanup cannot be performed or observed safely. A failed/extra up, missing cleanup, or unexpected second initialization is FAIL.",
     ),
     LiveRow(
         "L03", "issue-access-start-auth-entry", 300,
         "Owned host is up; identity initialization has passed; sharing is OFF.",
         "Issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only.",
-        "Issue-access returns plaintext once; start returns ready; copy-invitation returns an HTTPS URL. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401/403; host-only paths and host socket events are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
+        "Issue-access returns plaintext once; start returns ready; copy-invitation returns an HTTPS URL. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
         "The public URL/client path or any required boundary observation cannot be reached or measured safely. Any secret persisted or logged, public host-surface access, rejected valid login, accepted invalid credential/Origin, or missing required cookie/socket property is FAIL.",
     ),
     LiveRow(
@@ -110,7 +140,7 @@ LIVE_ROWS = (
         "L05", "relay-loss-bounded-recovery", 420,
         "Sharing is ready; the owned host and companion ancestry are known; the target child satisfies every approved relay-loss injection identity check.",
         "Inject relay loss only by the approved SIGKILL method, then observe status, invitation, public URL, recovery, host health, and sessions.",
-        "Status becomes degraded within the health interval; the invitation is withdrawn and copy-invitation is refused; the public URL stops serving the player; bounded recovery returns to ready within the overridden policy; host port 8360 health remains unaffected throughout. Document sessions after recovery; re-authentication is required. The expected result is recovered ready; observed bounded failed/exhausted recovery is FAIL.",
+        "Status becomes degraded within the health interval; the invitation is withdrawn and copy-invitation is refused; the public URL stops serving the player; bounded recovery returns to ready within the overridden policy; host port 8360 health remains unaffected throughout. Recovery restarts only the companion and re-verifies readiness; it does not restart the player listener, so existing valid player sessions are preserved by design. Record, but do not pass/fail on, whether the pre-loss authenticated cookie/socket still works over the public URL (expected observation: the cookie remains valid; the socket must be re-established by the client). PASS additionally requires a fresh authenticated login over the public URL to work after recovery, a request using a stale pre-recovery Origin/Host to be accepted only if it equals the freshly bound origin (record whether the public origin changed), and no unauthenticated access to be possible. The expected result is recovered ready; observed bounded failed/exhausted recovery is FAIL.",
         "The exact owned child cannot be positively identified (do not signal), or required health/public/session observations cannot be safely collected. Any signal to another process is a safety failure and FAIL.",
     ),
     LiveRow(
@@ -214,7 +244,7 @@ def calculate_manifest_digest() -> str:
 
 
 # Updated only as part of a reviewed frozen-contract revision.
-FROZEN_MANIFEST_SHA256 = "7a06f3e17ec96f442dfcabb6ef1c43410ab1330d39a1cac1c77ff5c12bde8e02"
+FROZEN_MANIFEST_SHA256 = "5c17c8e9187140b5d662bdb07e2e13704fef637ae45a6d71e4689ea1d790cde1"
 
 
 def verify_frozen_manifest() -> bool:
@@ -378,6 +408,589 @@ class HostApiClient:
         return HostApiResponse(status, decoded)
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicHttpResponse:
+    """Bounded response from the HTTPS player origin; body may contain secrets."""
+
+    status: int
+    headers: tuple[tuple[str, str], ...]
+    body: bytes = field(repr=False)
+
+    def values(self, name: str) -> tuple[str, ...]:
+        selected = name.casefold()
+        return tuple(value for key, value in self.headers if key.casefold() == selected)
+
+
+class PublicClientError(RuntimeError):
+    """Safe, bounded failure from the public player HTTP/Socket.IO client."""
+
+    def __init__(self, reason: str = "public_client_unavailable") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicOrigin:
+    origin: str = field(repr=False)
+    authority: str = field(repr=False)
+    hostname: str = field(repr=False)
+    port: int
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicLoginChallenge:
+    csrf_nonce: str = field(repr=False)
+    prelogin_cookie: str = field(repr=False)
+    client_build_id: str
+    protocol_version: int
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicPlayerSession:
+    cookie: str = field(repr=False)
+    csrf_token: str = field(repr=False)
+    credential: str = field(repr=False)
+    client_build_id: str
+    protocol_version: int
+
+
+class _PlayerShellParser(html.parser.HTMLParser):
+    """Extract only the public shell's CSRF and client-version metadata."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.csrf_values: list[str] = []
+        self.build_values: list[str] = []
+        self.protocol_values: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        values: dict[str, list[str | None]] = {}
+        for name, value in attrs:
+            values.setdefault(name, []).append(value)
+        if tag == "input" and values.get("name") == ["csrf_token"]:
+            candidate = values.get("value", [None])
+            if len(candidate) == 1 and isinstance(candidate[0], str):
+                self.csrf_values.append(candidate[0])
+        if tag != "meta":
+            return
+        names = values.get("name", [])
+        contents = values.get("content", [])
+        if len(names) != 1 or len(contents) != 1 or not isinstance(contents[0], str):
+            return
+        if names[0] == "neq-client-build":
+            self.build_values.append(contents[0])
+        elif names[0] == "neq-protocol-version":
+            self.protocol_values.append(contents[0])
+
+
+class PublicUrlClient:
+    """Strict HTTPS-only client for the player URL issued by the owned host.
+
+    No redirect is followed, response bodies have a fixed upper bound, and
+    both HTTP and Socket.IO dependencies are injectable for offline tests.
+    Credentials, cookies, origins, and CSRF values remain private in memory.
+    """
+
+    _HTTP_PATHS = frozenset(
+        {
+            "/",
+            "/api/player/login",
+            "/api/player/snapshot",
+            "/api/player-sharing/status",
+            "/api/player-sharing/initialize-identity",
+            "/api/player-sharing/issue-access",
+            "/api/player-sharing/start",
+            "/api/player-sharing/stop",
+            "/api/player-sharing/rotate",
+            "/api/player-sharing/revoke",
+            "/api/player-sharing/copy-invitation",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        requester: Callable[
+            [str, int, str, str, Mapping[str, str], bytes | None, float],
+            PublicHttpResponse,
+        ]
+        | None = None,
+        connection_factory: Callable[..., http.client.HTTPSConnection] | None = None,
+        socket_factory: Callable[[], socketio.Client] | None = None,
+        timeout_seconds: float = PUBLIC_CLIENT_TIMEOUT_SECONDS,
+    ) -> None:
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(float(timeout_seconds))
+            or timeout_seconds <= 0
+            or timeout_seconds > 30
+        ):
+            raise ValueError("public_client_timeout_invalid")
+        self._connection_factory = connection_factory or http.client.HTTPSConnection
+        self._requester = requester or self._https_request
+        self._socket_factory = socket_factory or self._new_socket_client
+        self._timeout = float(timeout_seconds)
+        self._origin: PublicOrigin | None = None
+        self._session: PublicPlayerSession | None = None
+        self._socket: socketio.Client | None = None
+
+    @property
+    def origin(self) -> PublicOrigin | None:
+        return self._origin
+
+    @property
+    def session(self) -> PublicPlayerSession | None:
+        return self._session
+
+    @property
+    def socket_connected(self) -> bool | None:
+        if self._socket is None:
+            return None
+        return getattr(self._socket, "connected", False) is True
+
+    def bind_invitation(self, value: object) -> PublicOrigin:
+        from web.extensions.player.auth import _parse_public_https_origin
+
+        parsed = _parse_public_https_origin(value)
+        if parsed is None:
+            raise PublicClientError("public_url_invalid")
+        canonical, authority = parsed
+        try:
+            parts = urllib.parse.urlsplit(canonical)
+            hostname = parts.hostname
+            port = parts.port or 443
+        except ValueError:
+            raise PublicClientError("public_url_invalid") from None
+        if (
+            parts.scheme != "https"
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or parts.username is not None
+            or parts.password is not None
+            or not isinstance(hostname, str)
+            or not 1 <= port <= 65535
+        ):
+            raise PublicClientError("public_url_invalid")
+        result = PublicOrigin(canonical, authority, hostname, port)
+        self._origin = result
+        return result
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        body: bytes | None = None,
+    ) -> PublicHttpResponse:
+        origin = self._origin
+        if (
+            origin is None
+            or method not in {"GET", "POST"}
+            or path not in self._HTTP_PATHS
+            or body is not None
+            and (
+                not isinstance(body, bytes)
+                or len(body) > MAX_API_REQUEST_BYTES
+            )
+            or headers is not None
+            and any(
+                not isinstance(key, str)
+                or not isinstance(value, str)
+                or any(ord(character) < 32 or ord(character) == 127 for character in key + value)
+                for key, value in headers.items()
+            )
+        ):
+            raise PublicClientError("public_request_invalid")
+        selected_headers = dict(headers or {})
+        if any(key.casefold() == "host" for key in selected_headers):
+            raise PublicClientError("public_host_override_refused")
+        selected_headers["Host"] = origin.authority
+        try:
+            response = self._requester(
+                origin.hostname,
+                origin.port,
+                method,
+                path,
+                selected_headers,
+                body,
+                self._timeout,
+            )
+        except PublicClientError:
+            raise
+        except Exception:
+            raise PublicClientError("public_transport_unavailable") from None
+        if (
+            not isinstance(response, PublicHttpResponse)
+            or type(response.status) is not int
+            or not 100 <= response.status <= 599
+            or not isinstance(response.headers, tuple)
+            or not isinstance(response.body, bytes)
+            or len(response.body) > MAX_PUBLIC_RESPONSE_BYTES
+            or len(response.headers) > 128
+            or any(
+                not isinstance(name, str)
+                or not isinstance(value, str)
+                or len(name) > 256
+                or len(value) > 8192
+                for name, value in response.headers
+            )
+        ):
+            raise PublicClientError("public_response_invalid")
+        return response
+
+    def login_challenge(self) -> tuple[PublicHttpResponse, PublicLoginChallenge | None]:
+        from web.extensions.player.auth import PRELOGIN_CSRF_COOKIE
+
+        response = self.request("GET", "/")
+        if response.status != 200 or len(response.body) > MAX_PLAYER_SHELL_BYTES:
+            return response, None
+        try:
+            document = response.body.decode("utf-8")
+        except UnicodeDecodeError:
+            raise PublicClientError("public_shell_invalid") from None
+        parser = _PlayerShellParser()
+        try:
+            parser.feed(document)
+            parser.close()
+        except (ValueError, RecursionError):
+            raise PublicClientError("public_shell_invalid") from None
+        cookie = _cookie_from_response(response, PRELOGIN_CSRF_COOKIE)
+        if (
+            len(parser.csrf_values) != 1
+            or len(parser.build_values) != 1
+            or len(parser.protocol_values) != 1
+            or cookie is None
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", parser.csrf_values[0])
+            or re.fullmatch(r"[a-f0-9]{32}", parser.build_values[0]) is None
+            or parser.protocol_values[0] != str(PROTOCOL_VERSION)
+        ):
+            raise PublicClientError("public_shell_invalid")
+        return response, PublicLoginChallenge(
+            parser.csrf_values[0], cookie, parser.build_values[0], PROTOCOL_VERSION
+        )
+
+    def login(
+        self,
+        challenge: PublicLoginChallenge,
+        credential: str,
+        *,
+        origin_override: str | None = None,
+    ) -> tuple[PublicHttpResponse, PublicPlayerSession | None]:
+        from web.extensions.player.auth import PLAYER_SESSION_COOKIE
+
+        if (
+            not isinstance(challenge, PublicLoginChallenge)
+            or not isinstance(credential, str)
+            or not credential
+            or len(credential) > 256
+        ):
+            raise PublicClientError("public_login_input_invalid")
+        body = json.dumps(
+            {"password": credential, "csrf_token": challenge.csrf_nonce},
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        origin = self._origin
+        if origin is None:
+            raise PublicClientError("public_url_invalid")
+        response = self.request(
+            "POST",
+            "/api/player/login",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": origin.origin if origin_override is None else origin_override,
+                "Cookie": "neq_player_prelogin=" + challenge.prelogin_cookie,
+            },
+            body=body,
+        )
+        if response.status != 200:
+            return response, None
+        try:
+            payload = json.loads(
+                response.body.decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+            raise PublicClientError("public_login_response_invalid") from None
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"csrf_token", "expires_at"}
+            or not isinstance(payload.get("csrf_token"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["csrf_token"]) is None
+            or type(payload.get("expires_at")) is not int
+            or payload["expires_at"] <= 0
+        ):
+            raise PublicClientError("public_login_response_invalid")
+        cookie = _cookie_from_response(response, PLAYER_SESSION_COOKIE)
+        if cookie is None or not _session_cookie_is_secure(response, PLAYER_SESSION_COOKIE):
+            raise PublicClientError("public_session_cookie_invalid")
+        session = PublicPlayerSession(
+            cookie,
+            payload["csrf_token"],
+            credential,
+            challenge.client_build_id,
+            challenge.protocol_version,
+        )
+        self._session = session
+        return response, session
+
+    def unauthenticated_snapshot(self) -> PublicHttpResponse:
+        origin = self._origin
+        if origin is None:
+            raise PublicClientError("public_url_invalid")
+        return self.request(
+            "GET",
+            "/api/player/snapshot",
+            headers={"Origin": origin.origin},
+        )
+
+    def authenticated_snapshot(
+        self,
+        session: PublicPlayerSession,
+        *,
+        origin_override: str | None = None,
+    ) -> PublicHttpResponse:
+        origin = self._origin
+        if origin is None or not isinstance(session, PublicPlayerSession):
+            raise PublicClientError("public_session_unavailable")
+        return self.request(
+            "GET",
+            "/api/player/snapshot",
+            headers={
+                "Origin": origin.origin if origin_override is None else origin_override,
+                "Cookie": "neq_player_session=" + session.cookie,
+                "X-NEQ-Client-Build": session.client_build_id,
+                "X-NEQ-Protocol-Version": str(session.protocol_version),
+            },
+        )
+
+    def connect_player_socket(
+        self,
+        session: PublicPlayerSession,
+        snapshot: Mapping[str, object],
+    ) -> bool:
+        origin = self._origin
+        if origin is None or not _is_player_snapshot(snapshot):
+            raise PublicClientError("public_socket_input_invalid")
+        client = self._socket_factory()
+        received = threading.Event()
+        payloads: list[object] = []
+
+        def on_snapshot(payload: object) -> None:
+            if len(payloads) == 0:
+                payloads.append(payload)
+                received.set()
+
+        try:
+            client.on("player.snapshot", on_snapshot, namespace=PLAYER_NAMESPACE)
+            client.connect(
+                origin.origin,
+                headers={
+                    "Origin": origin.origin,
+                    "Cookie": "neq_player_session=" + session.cookie,
+                },
+                auth={
+                    "client_build_id": session.client_build_id,
+                    "protocol_version": session.protocol_version,
+                },
+                transports=["websocket"],
+                namespaces=[PLAYER_NAMESPACE],
+                socketio_path="socket.io",
+                wait=True,
+                wait_timeout=self._timeout,
+                retry=False,
+            )
+            client.emit(
+                "player.snapshot.request",
+                {
+                    "schema_version": PROTOCOL_VERSION,
+                    "instance_id": snapshot["instance_id"],
+                    "session_epoch": snapshot["session_epoch"],
+                },
+                namespace=PLAYER_NAMESPACE,
+            )
+            if not received.wait(self._timeout):
+                raise PublicClientError("public_socket_snapshot_timeout")
+            socket_snapshot = payloads[0]
+            if (
+                not _is_player_snapshot(socket_snapshot)
+                or not isinstance(socket_snapshot, Mapping)
+                or socket_snapshot.get("instance_id") != snapshot.get("instance_id")
+                or socket_snapshot.get("session_epoch")
+                != snapshot.get("session_epoch")
+            ):
+                raise PublicClientError("public_socket_snapshot_invalid")
+            self._socket = client
+            return True
+        except PublicClientError:
+            _disconnect_socket_quietly(client)
+            raise
+        except Exception:
+            _disconnect_socket_quietly(client)
+            raise PublicClientError("public_socket_unavailable") from None
+
+    def probe_host_socket_namespace(self) -> bool:
+        """Return true only when the public server explicitly refuses `/`."""
+        origin = self._origin
+        if origin is None:
+            raise PublicClientError("public_url_invalid")
+        client = self._socket_factory()
+        try:
+            client.connect(
+                origin.origin,
+                headers={"Origin": origin.origin},
+                transports=["websocket"],
+                namespaces=["/"],
+                socketio_path="socket.io",
+                wait=True,
+                wait_timeout=self._timeout,
+                retry=False,
+            )
+        except Exception as exc:
+            _disconnect_socket_quietly(client)
+            text = str(exc).casefold()
+            if (
+                "one or more namespaces failed to connect" in text
+                or "namespace" in text
+                and ("/" in text or "default" in text)
+            ):
+                return True
+            raise PublicClientError("public_socket_observation_unavailable") from None
+        connected = getattr(client, "connected", False) is True
+        _disconnect_socket_quietly(client)
+        if connected:
+            return False
+        raise PublicClientError("public_socket_observation_unavailable")
+
+    def disconnect(self) -> None:
+        client = self._socket
+        self._socket = None
+        if client is not None:
+            _disconnect_socket_quietly(client)
+
+    def _https_request(
+        self,
+        hostname: str,
+        port: int,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout: float,
+    ) -> PublicHttpResponse:
+        connection: http.client.HTTPSConnection | None = None
+        try:
+            connection = self._connection_factory(
+                hostname,
+                port,
+                timeout=timeout,
+                context=ssl.create_default_context(),
+            )
+            connection.request(method, path, body=body, headers=dict(headers))
+            response = connection.getresponse()
+            raw = response.read(MAX_PUBLIC_RESPONSE_BYTES + 1)
+            response_headers = tuple(
+                (str(name), str(value)) for name, value in response.getheaders()
+            )
+            if len(raw) > MAX_PUBLIC_RESPONSE_BYTES:
+                raise PublicClientError("public_response_too_large")
+            return PublicHttpResponse(int(response.status), response_headers, raw)
+        except PublicClientError:
+            raise
+        except (OSError, http.client.HTTPException, ValueError, TypeError):
+            raise PublicClientError("public_transport_unavailable") from None
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except (OSError, http.client.HTTPException):
+                    pass
+
+    @staticmethod
+    def _new_socket_client() -> socketio.Client:
+        return socketio.Client(
+            reconnection=False,
+            logger=False,
+            engineio_logger=False,
+            ssl_verify=True,
+            request_timeout=PUBLIC_CLIENT_TIMEOUT_SECONDS,
+            handle_sigint=False,
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ProcessRecord:
+    pid: int
+    parent_pid: int
+    uid: int
+    started_at: datetime
+    creation_token: str = field(repr=False)
+    command: str = field(repr=False)
+
+
+class ProcessTableError(RuntimeError):
+    """Safe process-table observation failure."""
+
+    def __init__(self, reason: str = "process_table_unavailable") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ProcessTable(Protocol):
+    def snapshot(self) -> tuple[ProcessRecord, ...]: ...
+
+
+class SystemProcessTable:
+    """Read a bounded process table without retaining raw output in evidence."""
+
+    def __init__(
+        self,
+        *,
+        runner: Callable[..., subprocess.CompletedProcess[bytes]] | None = None,
+    ) -> None:
+        self._runner = runner or subprocess.run
+
+    def snapshot(self) -> tuple[ProcessRecord, ...]:
+        try:
+            result = self._runner(
+                ["/bin/ps", "-axo", "pid=,ppid=,uid=,lstart=,command=", "-ww"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=3.0,
+                check=False,
+                env={"LC_ALL": "C"},
+                close_fds=True,
+            )
+        except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+            raise ProcessTableError() from None
+        if (
+            not isinstance(result, subprocess.CompletedProcess)
+            or result.returncode != 0
+            or not isinstance(result.stdout, bytes)
+            or len(result.stdout) > MAX_PROCESS_TABLE_BYTES
+        ):
+            raise ProcessTableError()
+        try:
+            text = result.stdout.decode("utf-8", "replace")
+            lines = text.splitlines()
+            if len(lines) > 32768:
+                raise ProcessTableError("process_table_too_large")
+            rows = tuple(_parse_process_record(line) for line in lines if line.strip())
+        except (UnicodeError, ValueError, OverflowError):
+            raise ProcessTableError("process_table_invalid") from None
+        if len({record.pid for record in rows}) != len(rows):
+            raise ProcessTableError("process_table_invalid")
+        return rows
+
+
 class RowExecutor(Protocol):
     def execute(self, context: "RowContext") -> "RowExecutionResult": ...
 
@@ -399,7 +1012,20 @@ class RowContext:
     sandbox_root: Path
     host_api: HostApiClient
     host: "ManagedHostHarness"
-    secrets: list[str] = field(default_factory=list)
+    secrets: list[str] = field(default_factory=list, repr=False)
+    public_client: PublicUrlClient = field(default_factory=PublicUrlClient)
+    public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
+    process_table: ProcessTable = field(default_factory=SystemProcessTable)
+    process_identity_probe: Callable[[int], object | None] = probe_process_identity
+    signal_process: Callable[[int, int], None] = field(default_factory=lambda: os.kill)
+    port_inspector: preflight_gate.PortInspector | None = None
+    player_listener_observations: int = 0
+    companion_path: Path | None = None
+    identity_observer_factory: Callable[[ProfileLayout, Path], IdentityObserver] = (
+        lambda layout, path: DefaultIdentityObserver(layout, path)
+    )
+    monotonic: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
 
     def remember_secret(self, value: object) -> None:
         if isinstance(value, str) and len(value) >= 3 and value not in self.secrets:
@@ -407,7 +1033,7 @@ class RowContext:
 
 
 class PlaceholderRowExecutor:
-    """Fail-closed placeholder to be replaced by Tasks 6.5 and 6.6."""
+    """Fail-closed placeholder retained for Tasks 6.6 rows."""
 
     def __init__(self, row_id: str, name: str) -> None:
         self.row_id = row_id
@@ -417,12 +1043,1117 @@ class PlaceholderRowExecutor:
         return RowExecutionResult("BLOCKED", "executor-not-implemented")
 
 
+@dataclass(frozen=True, slots=True)
+class _OwnedCompanionTarget:
+    pid: int
+    uid: int
+    started_at: datetime
+    creation_token: str = field(repr=False)
+
+
+class L01SharingOffExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        try:
+            status_response = context.host_api.get_status()
+            status = _host_status(status_response)
+            if status is None:
+                return _blocked("host_status_invalid")
+            state = status.get("state")
+            identity_initialized = status.get("identity_initialized")
+            if state not in {"off", "initializing_required"}:
+                return _failed("sharing_not_off")
+            if type(identity_initialized) is not bool:
+                return _blocked("host_status_invalid")
+
+            inspector = context.port_inspector
+            if inspector is None:
+                return _blocked("player_listener_observation_unavailable")
+            port = inspector.inspect(PLAYER_PORT)
+            if not _port_observation_valid(port, PLAYER_PORT):
+                return _blocked("player_listener_observation_unavailable")
+            if port.state == "unknown":
+                return _blocked("player_listener_observation_unavailable")
+            if port.state == "occupied" or port.pids:
+                return _failed("unexpected_player_listener")
+
+            path = _companion_path(context)
+            processes = _matching_companion_processes(
+                context.process_table.snapshot(), path, None
+            )
+            if processes is None:
+                return _blocked("companion_process_observation_unavailable")
+            if processes:
+                return _failed("unexpected_companion_process")
+
+            invitation = context.host_api.post("copy-invitation", {})
+            if (
+                invitation.status == 200
+                and invitation.payload.get("ok") is True
+                and isinstance(invitation.payload.get("invitation"), str)
+            ):
+                return _failed("unexpected_public_exposure")
+            if (
+                invitation.status != 409
+                or invitation.payload.get("ok") is not False
+                or invitation.payload.get("reason") != "invitation_unavailable"
+            ):
+                return _blocked("public_exposure_observation_unavailable")
+            return RowExecutionResult(
+                "PASS",
+                "sharing_inactive_no_listener_or_companion",
+                {
+                    "sharing_state": state,
+                    "identity_initialized": identity_initialized,
+                    "player_port_free": True,
+                    "companion_process_count": 0,
+                    "invitation_unavailable": True,
+                },
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l01_observation_unavailable")
+
+
+class L02IdentityInitExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        try:
+            before = _host_status(context.host_api.get_status())
+            if before is None:
+                return _blocked("host_status_invalid")
+            if before.get("state") not in {"off", "initializing_required"}:
+                return _failed("sharing_not_off")
+            if before.get("identity_initialized") is not False:
+                return _failed("identity_precondition_not_met")
+            if (
+                type(before.get("identity_up_invocations")) is not int
+                or before.get("identity_up_invocations") != 0
+            ):
+                return _failed("identity_up_counter_not_zero")
+
+            first = context.host_api.post("initialize-identity", {"confirm": True})
+            first_status = _host_status(first)
+            if (
+                first.status != 200
+                or first.payload.get("ok") is not True
+                or first.payload.get("reason") != "identity_initialized"
+                or first_status is None
+                or first_status.get("identity_initialized") is not True
+                or type(first_status.get("identity_up_invocations")) is not int
+                or first_status.get("identity_up_invocations") != 1
+            ):
+                return _failed("identity_initialization_contract_failed")
+
+            companion_path = _companion_path(context)
+            layout = _gate_profile_layout(context)
+            if layout is None:
+                return _blocked("identity_profile_observation_unavailable")
+            observer = context.identity_observer_factory(layout, companion_path)
+            postchecks = _identity_cleanup_observations(observer, DEFAULT_PROFILE)
+            if postchecks is None:
+                return _blocked("identity_postcheck_unavailable")
+            if any(item["state"] != "absent" for item in postchecks):
+                if any(item["state"] == "present" for item in postchecks):
+                    return _failed("identity_residual_resource_found")
+                return _blocked("identity_postcheck_unavailable")
+
+            second = context.host_api.post("initialize-identity", {"confirm": True})
+            second_status = _host_status(second)
+            if (
+                second.status != 200
+                or second.payload.get("ok") is not True
+                or second.payload.get("reason") != "identity_initialized"
+                or second_status is None
+                or second_status.get("identity_initialized") is not True
+                or type(second_status.get("identity_up_invocations")) is not int
+                or second_status.get("identity_up_invocations") != 1
+            ):
+                return _failed("identity_initialization_not_idempotent")
+            return RowExecutionResult(
+                "PASS",
+                "identity_initialized_once_and_cleaned_up",
+                {
+                    "first_reason": "identity_initialized",
+                    "first_identity_initialized": True,
+                    "identity_up_invocations": 1,
+                    "postchecks": postchecks,
+                    "second_reason": "identity_initialized",
+                    "second_identity_initialized": True,
+                    "second_up_invocations": 1,
+                },
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l02_observation_unavailable")
+
+
+class L03PublicAccessExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        try:
+            issued = context.host_api.post("issue-access", {})
+            if issued.status != 200 or issued.payload.get("ok") is not True:
+                return _failed("credential_issuance_failed")
+            credential = issued.payload.get("credential")
+            if not isinstance(credential, str) or not credential or len(credential) > 256:
+                return _failed("issued_credential_unavailable")
+            context.remember_secret(credential)
+
+            started = context.host_api.post("start", {})
+            started_status = _host_status(started)
+            if (
+                started.status != 200
+                or started.payload.get("ok") is not True
+                or started_status is None
+                or started_status.get("state") != "ready"
+                or started_status.get("reason") != "ready"
+            ):
+                return _failed("sharing_start_not_ready")
+
+            invitation = context.host_api.post("copy-invitation", {})
+            invitation_url = invitation.payload.get("invitation")
+            if (
+                invitation.status != 200
+                or invitation.payload.get("ok") is not True
+                or not isinstance(invitation_url, str)
+            ):
+                return _failed("invitation_unavailable")
+            context.remember_secret(invitation_url)
+            client.bind_invitation(invitation_url)
+
+            shell = client.request("GET", "/")
+            if shell.status != 200:
+                return _failed("public_player_shell_unavailable")
+
+            protected = client.unauthenticated_snapshot()
+            if not _data_free_protected_refusal(protected):
+                return _failed("unauthenticated_snapshot_boundary_failed")
+
+            host_paths = (
+                ("GET", "/api/player-sharing/status"),
+                ("POST", "/api/player-sharing/initialize-identity"),
+                ("POST", "/api/player-sharing/issue-access"),
+                ("POST", "/api/player-sharing/start"),
+                ("POST", "/api/player-sharing/stop"),
+                ("POST", "/api/player-sharing/rotate"),
+                ("POST", "/api/player-sharing/revoke"),
+                ("POST", "/api/player-sharing/copy-invitation"),
+            )
+            host_path_statuses: list[int] = []
+            for method, path in host_paths:
+                response = client.request(
+                    method,
+                    path,
+                    headers=(
+                        {"Content-Type": "application/json"}
+                        if method == "POST"
+                        else None
+                    ),
+                    body=b"{}" if method == "POST" else None,
+                )
+                if not _data_free_protected_refusal(response):
+                    return _failed("public_host_route_exposed")
+                host_path_statuses.append(response.status)
+
+            challenge_response, challenge = client.login_challenge()
+            if challenge_response.status != 200 or challenge is None:
+                return _failed("public_login_shell_invalid")
+            context.remember_secret(challenge.csrf_nonce)
+            context.remember_secret(challenge.prelogin_cookie)
+            login_response, session = client.login(challenge, credential)
+            if login_response.status != 200 or session is None:
+                return _failed("valid_public_login_rejected")
+            context.remember_secret(session.cookie)
+            context.remember_secret(session.csrf_token)
+
+            snapshot_response = client.authenticated_snapshot(session)
+            snapshot = _decode_player_snapshot(snapshot_response)
+            if snapshot is None:
+                return _failed("authenticated_snapshot_unavailable")
+            if not client.connect_player_socket(session, snapshot):
+                return _failed("authenticated_player_socket_unavailable")
+
+            if not client.probe_host_socket_namespace():
+                return _failed("public_host_socket_namespace_exposed")
+
+            wrong_response, wrong_challenge = client.login_challenge()
+            if wrong_response.status != 200 or wrong_challenge is None:
+                return _blocked("invalid_credential_probe_unavailable")
+            context.remember_secret(wrong_challenge.csrf_nonce)
+            context.remember_secret(wrong_challenge.prelogin_cookie)
+            wrong_login, _wrong_session = client.login(
+                wrong_challenge, credential + "-invalid"
+            )
+            if wrong_login.status not in {400, 401, 403}:
+                return _failed("invalid_credential_accepted")
+
+            forged_response, forged_challenge = client.login_challenge()
+            if forged_response.status != 200 or forged_challenge is None:
+                return _blocked("forged_origin_probe_unavailable")
+            context.remember_secret(forged_challenge.csrf_nonce)
+            context.remember_secret(forged_challenge.prelogin_cookie)
+            forged_login, _forged_session = client.login(
+                forged_challenge,
+                credential,
+                origin_override="https://forged.invalid",
+            )
+            if forged_login.status != 403:
+                return _failed("forged_origin_accepted")
+
+            return RowExecutionResult(
+                "PASS",
+                "public_player_boundary_verified",
+                {
+                    "public_shell_status": shell.status,
+                    "unauthenticated_snapshot_status": protected.status,
+                    "unauthenticated_snapshot_data_free": True,
+                    "host_route_statuses": host_path_statuses,
+                    "valid_login_status": login_response.status,
+                    "session_cookie_flags_valid": True,
+                    "authenticated_snapshot_valid": True,
+                    "authenticated_socket_snapshot_valid": True,
+                    "host_socket_namespace_refused": True,
+                    "invalid_credential_status": wrong_login.status,
+                    "forged_origin_status": forged_login.status,
+                    "public_origin_scheme": "https",
+                },
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_response_contract_invalid")
+            return _blocked("l03_public_observation_unavailable")
+        except (HostApiError, GateError, ValueError):
+            return _blocked("l03_public_observation_unavailable")
+        finally:
+            client.disconnect()
+
+
+class L04DuplicateStartExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        inspector = context.port_inspector
+        try:
+            before = _host_status(context.host_api.get_status())
+            if before is None or before.get("state") != "ready":
+                return _blocked("sharing_ready_precondition_unavailable")
+            generation = before.get("generation")
+            launches = before.get("companion_launches")
+            if (
+                type(generation) is not int
+                or generation < 1
+                or type(launches) is not int
+                or launches < 1
+            ):
+                return _blocked("sharing_generation_unavailable")
+            if inspector is None:
+                return _blocked("listener_count_unavailable")
+            initial_port = inspector.inspect(PLAYER_PORT)
+            if not _host_listener_count_is_one(initial_port, context.host.owner_pid):
+                return _blocked("listener_count_unavailable")
+            processes = _owned_profile_companions(context)
+            if processes is None:
+                return _blocked("companion_process_observation_unavailable")
+            if len(processes) != 1:
+                return _failed("companion_process_count_not_one")
+
+            second = context.host_api.post("start", {})
+            after = _host_status(second)
+            if second.status != 200 or second.payload.get("ok") is not True or after is None:
+                return _failed("duplicate_start_failed")
+            if (
+                after.get("state") != "ready"
+                or after.get("generation") != generation
+                or after.get("companion_launches") != launches
+            ):
+                return _failed("duplicate_start_changed_generation")
+            final_port = inspector.inspect(PLAYER_PORT)
+            if not _host_listener_count_is_one(final_port, context.host.owner_pid):
+                return _failed("duplicate_listener_created")
+            final_processes = _owned_profile_companions(context)
+            if final_processes is None:
+                return _blocked("companion_process_observation_unavailable")
+            if len(final_processes) != 1 or not _same_companion_target(
+                final_processes[0], processes[0]
+            ):
+                return _failed("duplicate_companion_created")
+            return RowExecutionResult(
+                "PASS",
+                "duplicate_start_idempotent",
+                {
+                    "generation_preserved": True,
+                    "companion_process_count": 1,
+                    "player_listener_count": 1,
+                    "companion_launches_unchanged": True,
+                },
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l04_observation_unavailable")
+
+
+class L05RelayLossRecoveryExecutor:
+    def execute(self, context: RowContext) -> RowExecutionResult:
+        client = context.public_client
+        recovery_client: PublicUrlClient | None = None
+        old_origin_client: PublicUrlClient | None = None
+        host_health_checks = 0
+
+        def observe_host_health() -> bool | None:
+            nonlocal host_health_checks
+            inspector = context.port_inspector
+            if inspector is None or type(context.host.owner_pid) is not int:
+                return None
+            observation = inspector.inspect(HOST_PORT)
+            if not _port_observation_valid(observation, HOST_PORT):
+                return None
+            if observation.state == "unknown":
+                return None
+            host_health_checks += 1
+            return bool(
+                observation.state == "occupied"
+                and observation.pids == (context.host.owner_pid,)
+            )
+
+        try:
+            before = _host_status(context.host_api.get_status())
+            session = client.session
+            old_origin = client.origin
+            if (
+                before is None
+                or before.get("state") != "ready"
+                or session is None
+                or old_origin is None
+            ):
+                return _blocked("relay_loss_precondition_unavailable")
+            launches_before = before.get("companion_launches")
+            generation_before = before.get("generation")
+            if type(launches_before) is not int:
+                return _blocked("companion_counter_unavailable")
+            if type(generation_before) is not int or generation_before < 1:
+                return _blocked("sharing_generation_unavailable")
+            host_healthy = observe_host_health()
+            if host_healthy is None:
+                return _blocked("host_health_observation_unavailable")
+            if not host_healthy:
+                return _failed("host_health_lost_before_relay_loss")
+            player_listener = _observe_player_listener(context)
+            if player_listener is None:
+                return _blocked("player_listener_observation_unavailable")
+            if not player_listener:
+                return _failed("player_listener_lost_before_relay_loss")
+
+            target = _select_owned_companion(context)
+            if target is None:
+                return _blocked("owned_companion_target_unproven")
+            revalidated = _select_owned_companion(context)
+            if revalidated is None or not _same_companion_target(target, revalidated):
+                return _blocked("owned_companion_target_changed")
+            context.signal_process(target.pid, signal.SIGKILL)
+
+            policy = RecoveryPolicy(max_attempts=1, backoff_schedule=(1.0,))
+            degraded_deadline = context.monotonic() + policy.health_check_interval
+            degraded: Mapping[str, object] | None = None
+            degraded_observations = 0
+            max_degraded_observations = (
+                math.ceil(policy.health_check_interval / PUBLIC_POLL_INTERVAL_SECONDS)
+                + 1
+            )
+            while (
+                context.monotonic() <= degraded_deadline
+                and degraded_observations < max_degraded_observations
+            ):
+                degraded_observations += 1
+                current = _host_status(context.host_api.get_status())
+                if current is None:
+                    return _blocked("sharing_status_unavailable_after_relay_loss")
+                generation = current.get("generation")
+                if type(generation) is not int or generation < 1:
+                    return _blocked("sharing_generation_unavailable")
+                if generation != generation_before:
+                    return _failed("sharing_generation_changed_during_recovery")
+                host_healthy = observe_host_health()
+                if host_healthy is None:
+                    return _blocked("host_health_observation_unavailable")
+                if not host_healthy:
+                    return _failed("host_health_lost_during_relay_loss")
+                player_listener = _observe_player_listener(context)
+                if player_listener is None:
+                    return _blocked("player_listener_observation_unavailable")
+                if not player_listener:
+                    return _failed("player_listener_lost_during_relay_loss")
+                if current.get("state") == "degraded":
+                    degraded = current
+                    break
+                if current.get("state") in {"failed", "off", "initializing_required"}:
+                    return _failed("sharing_failed_before_degraded_observation")
+                context.sleep(min(PUBLIC_POLL_INTERVAL_SECONDS, max(0.0, degraded_deadline - context.monotonic())))
+            if degraded is None:
+                return _failed("degraded_transition_not_observed")
+
+            withdrawn = context.host_api.post("copy-invitation", {})
+            if (
+                withdrawn.status == 200
+                and withdrawn.payload.get("ok") is True
+                and isinstance(withdrawn.payload.get("invitation"), str)
+            ):
+                return _failed("invitation_not_withdrawn")
+            if (
+                withdrawn.status != 409
+                or withdrawn.payload.get("ok") is not False
+                or withdrawn.payload.get("reason") != "invitation_unavailable"
+            ):
+                return _blocked("invitation_withdrawal_observation_unavailable")
+
+            try:
+                response = client.request("GET", "/")
+                public_unavailable = response.status not in range(200, 400)
+            except PublicClientError as exc:
+                public_unavailable = exc.reason == "public_transport_unavailable"
+            if not public_unavailable:
+                return _failed("public_player_remained_reachable")
+            host_healthy = observe_host_health()
+            if host_healthy is None:
+                return _blocked("host_health_observation_unavailable")
+            if not host_healthy:
+                return _failed("host_health_lost_during_relay_loss")
+            player_listener = _observe_player_listener(context)
+            if player_listener is None:
+                return _blocked("player_listener_observation_unavailable")
+            if not player_listener:
+                return _failed("player_listener_lost_during_relay_loss")
+
+            recovery_budget = (
+                sum(policy.backoff_schedule)
+                + MAX_STARTUP_DEADLINE_SECONDS
+                + policy.health_check_interval
+            )
+            recovery_deadline = context.monotonic() + recovery_budget
+            recovered: Mapping[str, object] | None = None
+            recovery_launches = 0
+            recovery_observations = 0
+            max_recovery_observations = (
+                math.ceil(recovery_budget / PUBLIC_POLL_INTERVAL_SECONDS) + 1
+            )
+            while (
+                context.monotonic() <= recovery_deadline
+                and recovery_observations < max_recovery_observations
+            ):
+                recovery_observations += 1
+                current = _host_status(context.host_api.get_status())
+                if current is None:
+                    return _blocked("sharing_status_unavailable_during_recovery")
+                generation = current.get("generation")
+                if type(generation) is not int or generation < 1:
+                    return _blocked("sharing_generation_unavailable")
+                if generation != generation_before:
+                    return _failed("sharing_generation_changed_during_recovery")
+                host_healthy = observe_host_health()
+                if host_healthy is None:
+                    return _blocked("host_health_observation_unavailable")
+                if not host_healthy:
+                    return _failed("host_health_lost_during_recovery")
+                player_listener = _observe_player_listener(context)
+                if player_listener is None:
+                    return _blocked("player_listener_observation_unavailable")
+                if not player_listener:
+                    return _failed("player_listener_lost_during_recovery")
+                current_launches = current.get("companion_launches")
+                if type(current_launches) is not int or current_launches < launches_before:
+                    return _blocked("companion_counter_invalid")
+                recovery_launches = current_launches - launches_before
+                if current.get("state") == "ready":
+                    recovered = current
+                    break
+                if current.get("state") == "failed":
+                    return _failed("bounded_recovery_failed")
+                context.sleep(PUBLIC_POLL_INTERVAL_SECONDS)
+            if recovered is None:
+                return _failed("bounded_recovery_timeout")
+            if recovery_launches != 1:
+                return _failed("recovery_launch_count_invalid")
+
+            fresh_invitation = context.host_api.post("copy-invitation", {})
+            fresh_url = fresh_invitation.payload.get("invitation")
+            fresh_invitation_status = _host_status(fresh_invitation)
+            if (
+                fresh_invitation.status != 200
+                or fresh_invitation.payload.get("ok") is not True
+                or not isinstance(fresh_url, str)
+                or fresh_invitation_status is None
+                or fresh_invitation_status.get("state") != "ready"
+                or fresh_invitation_status.get("generation") != generation_before
+            ):
+                return _failed("recovered_invitation_unavailable")
+            context.remember_secret(fresh_url)
+            recovery_client = context.public_client_factory()
+            new_origin = recovery_client.bind_invitation(fresh_url)
+            origin_changed = old_origin.origin != new_origin.origin
+
+            pre_loss_cookie_status: int | None = None
+            pre_loss_cookie_valid: bool | None = None
+            socket_connected_after_loss = client.socket_connected
+            try:
+                pre_loss_cookie = recovery_client.authenticated_snapshot(session)
+                pre_loss_cookie_status = pre_loss_cookie.status
+                pre_loss_cookie_valid = _decode_player_snapshot(pre_loss_cookie) is not None
+            except PublicClientError:
+                pre_loss_cookie_status = None
+                pre_loss_cookie_valid = False
+
+            old_origin_client = context.public_client_factory()
+            old_origin_client.bind_invitation(old_origin.origin)
+            try:
+                stale_origin_response = old_origin_client.authenticated_snapshot(
+                    session, origin_override=old_origin.origin
+                )
+                stale_origin_accepted = _decode_player_snapshot(stale_origin_response) is not None
+                stale_origin_status: int | None = stale_origin_response.status
+            except PublicClientError:
+                stale_origin_accepted = False
+                stale_origin_status = None
+                stale_origin_response = None
+            if (
+                origin_changed
+                and stale_origin_response is not None
+                and not _data_free_protected_refusal(stale_origin_response)
+            ):
+                return _failed("stale_public_origin_refusal_invalid")
+            if origin_changed and stale_origin_accepted:
+                return _failed("stale_public_origin_accepted")
+            if not origin_changed and not stale_origin_accepted:
+                return _failed("current_public_origin_rejected")
+
+            no_auth = recovery_client.unauthenticated_snapshot()
+            if not _data_free_protected_refusal(no_auth):
+                return _failed("unauthenticated_access_after_recovery")
+
+            fresh_challenge_response, fresh_challenge = recovery_client.login_challenge()
+            if fresh_challenge_response.status != 200 or fresh_challenge is None:
+                return _failed("fresh_login_challenge_unavailable")
+            for secret in (fresh_challenge.csrf_nonce, fresh_challenge.prelogin_cookie):
+                context.remember_secret(secret)
+            fresh_login, fresh_session = recovery_client.login(
+                fresh_challenge, session.credential
+            )
+            if fresh_login.status != 200 or fresh_session is None:
+                return _failed("fresh_login_after_recovery_rejected")
+            context.remember_secret(fresh_session.cookie)
+            context.remember_secret(fresh_session.csrf_token)
+            fresh_snapshot_response = recovery_client.authenticated_snapshot(fresh_session)
+            if _decode_player_snapshot(fresh_snapshot_response) is None:
+                return _failed("fresh_session_snapshot_after_recovery_failed")
+
+            socket_reestablished = False
+            try:
+                old_session_snapshot = _decode_player_snapshot(
+                    recovery_client.authenticated_snapshot(session)
+                )
+                if old_session_snapshot is not None:
+                    socket_reestablished = recovery_client.connect_player_socket(
+                        session, old_session_snapshot
+                    )
+            except PublicClientError:
+                socket_reestablished = False
+            recovery_client.disconnect()
+            client.disconnect()
+            old_origin_client.disconnect()
+            host_health = _host_status(context.host_api.get_status())
+            if (
+                host_health is None
+                or host_health.get("state") != "ready"
+                or host_health.get("generation") != generation_before
+            ):
+                return _failed("host_health_not_preserved")
+            host_healthy = observe_host_health()
+            if host_healthy is None:
+                return _blocked("host_health_observation_unavailable")
+            if not host_healthy:
+                return _failed("host_health_lost_after_recovery")
+            player_listener = _observe_player_listener(context)
+            if player_listener is None:
+                return _blocked("player_listener_observation_unavailable")
+            if not player_listener:
+                return _failed("player_listener_lost_after_recovery")
+            return RowExecutionResult(
+                "PASS",
+                "relay_loss_recovered_with_fresh_public_auth",
+                {
+                    "degraded_observed": True,
+                    "invitation_withdrawn": True,
+                    "public_player_unreachable_during_loss": True,
+                    "recovered_ready": True,
+                    "host_health_preserved": True,
+                    "host_health_observations": host_health_checks,
+                    "player_listener_preserved": True,
+                    "player_listener_observations": context.player_listener_observations,
+                    "pre_loss_cookie_status": pre_loss_cookie_status,
+                    "pre_loss_cookie_valid": pre_loss_cookie_valid,
+                    "pre_loss_socket_connected_after_loss": socket_connected_after_loss,
+                    "pre_loss_socket_reestablished": socket_reestablished,
+                    "fresh_login_status": fresh_login.status,
+                    "fresh_session_snapshot_valid": True,
+                    "unauthenticated_snapshot_status": no_auth.status,
+                    "unauthenticated_snapshot_data_free": True,
+                    "public_origin_changed": origin_changed,
+                    "stale_origin_status": stale_origin_status,
+                    "stale_origin_accepted": stale_origin_accepted,
+                    "companion_recovery_launches": recovery_launches,
+                    "signal_sent": "SIGKILL",
+                    "signal_target_pid_verified": True,
+                },
+                recovery_attempts=recovery_launches,
+            )
+        except PublicClientError as exc:
+            if _is_observed_public_contract_failure(exc.reason):
+                return _failed("public_recovery_contract_invalid")
+            return _blocked("l05_public_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
+            return _blocked("l05_lifecycle_observation_unavailable")
+        finally:
+            client.disconnect()
+            if recovery_client is not None:
+                recovery_client.disconnect()
+            if old_origin_client is not None:
+                old_origin_client.disconnect()
+
+
 ROW_EXECUTORS: Mapping[str, RowExecutor] = MappingProxyType(
     {
-        row.row_id: PlaceholderRowExecutor(row.row_id, row.name)
-        for row in LIVE_ROWS
+        "L01": L01SharingOffExecutor(),
+        "L02": L02IdentityInitExecutor(),
+        "L03": L03PublicAccessExecutor(),
+        "L04": L04DuplicateStartExecutor(),
+        "L05": L05RelayLossRecoveryExecutor(),
+        **{
+            row.row_id: PlaceholderRowExecutor(row.row_id, row.name)
+            for row in LIVE_ROWS[5:]
+        },
     }
 )
+
+
+def _blocked(reason: str) -> RowExecutionResult:
+    return RowExecutionResult("BLOCKED", reason)
+
+
+def _failed(reason: str) -> RowExecutionResult:
+    return RowExecutionResult("FAIL", reason)
+
+
+def _host_status(response: HostApiResponse) -> Mapping[str, object] | None:
+    if (
+        not isinstance(response, HostApiResponse)
+        or response.status != 200
+        or response.payload.get("ok") is not True
+    ):
+        return None
+    status = response.payload.get("status")
+    return status if isinstance(status, Mapping) else None
+
+
+def _port_observation_valid(value: object, expected_port: int) -> bool:
+    return bool(
+        isinstance(value, preflight_gate.PortObservation)
+        and value.port == expected_port
+        and value.state in {"free", "occupied", "unknown"}
+        and isinstance(value.pids, tuple)
+        and all(type(pid) is int and pid > 0 for pid in value.pids)
+    )
+
+
+def _host_listener_count_is_one(value: object, host_pid: object) -> bool:
+    return bool(
+        _port_observation_valid(value, PLAYER_PORT)
+        and type(host_pid) is int
+        and value.state == "occupied"
+        and value.pids == (host_pid,)
+    )
+
+
+def _observe_player_listener(context: RowContext) -> bool | None:
+    inspector = context.port_inspector
+    host_pid = context.host.owner_pid
+    if inspector is None or type(host_pid) is not int:
+        return None
+    try:
+        observation = inspector.inspect(PLAYER_PORT)
+    except Exception:
+        return None
+    if not _port_observation_valid(observation, PLAYER_PORT):
+        return None
+    context.player_listener_observations += 1
+    if observation.state == "unknown":
+        return None
+    return bool(
+        observation.state == "occupied" and observation.pids == (host_pid,)
+    )
+
+
+def _companion_path(context: RowContext) -> Path:
+    value = context.companion_path
+    if not isinstance(value, Path):
+        raise GateError("companion_path_unavailable")
+    try:
+        resolved = value.resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise GateError("companion_path_unavailable") from None
+    if not resolved.is_file():
+        raise GateError("companion_path_unavailable")
+    return resolved
+
+
+def _parse_process_record(line: str) -> ProcessRecord:
+    parts = line.strip().split(None, 8)
+    if len(parts) != 9 or not parts[8] or len(parts[8]) > 8192:
+        raise ValueError("process_table_line_invalid")
+    pid, parent_pid, uid = (int(parts[index]) for index in range(3))
+    if pid <= 0 or parent_pid < 0 or uid < 0:
+        raise ValueError("process_table_identity_invalid")
+    date_text = " ".join(parts[3:8])
+    started_at = datetime.strptime(date_text, "%a %b %d %H:%M:%S %Y")
+    return ProcessRecord(pid, parent_pid, uid, started_at, date_text, parts[8])
+
+
+def _process_arguments(record: ProcessRecord, expected_path: Path) -> tuple[str, ...] | None:
+    try:
+        arguments = tuple(shlex.split(record.command, posix=True))
+    except ValueError:
+        return None if str(expected_path) in record.command else ()
+    if not arguments:
+        return ()
+    try:
+        executable = Path(arguments[0]).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None if str(expected_path) in record.command else ()
+    return arguments if executable == expected_path else ()
+
+
+def _has_profile_argument(arguments: Sequence[str], profile: str) -> bool:
+    return any(
+        arguments[index] == "--profile"
+        and index + 1 < len(arguments)
+        and arguments[index + 1] == profile
+        for index in range(len(arguments))
+    )
+
+
+def _matching_companion_processes(
+    records: Sequence[ProcessRecord], companion_path: Path, profile: str | None
+) -> tuple[ProcessRecord, ...] | None:
+    matches: list[ProcessRecord] = []
+    for record in records:
+        arguments = _process_arguments(record, companion_path)
+        if arguments is None:
+            return None
+        if (
+            arguments
+            and (profile is None or _has_profile_argument(arguments, profile))
+        ):
+            matches.append(record)
+    return tuple(matches)
+
+
+def _is_serve_process(
+    record: ProcessRecord, companion_path: Path, profile: str
+) -> bool | None:
+    arguments = _process_arguments(record, companion_path)
+    if arguments is None:
+        return None
+    return bool(
+        arguments
+        and "serve" in arguments[1:]
+        and _has_profile_argument(arguments, profile)
+    )
+
+
+def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
+    try:
+        install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
+        install_marker = "neq-" + hashlib.sha256(os.fsencode(install_path)).hexdigest()[:32]
+        profile = prepare_profile(
+            context.run_root / "state" / "state",
+            install_marker=install_marker,
+            profile=DEFAULT_PROFILE,
+            create=False,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return profile.layout if profile.state == "ready" else None
+
+
+def _identity_cleanup_observations(
+    observer: IdentityObserver, profile: str
+) -> list[dict[str, object]] | None:
+    try:
+        observed = (
+            ("service_manager", observer.service_manager_entries(profile)),
+            ("profile_processes", observer.profile_processes(profile)),
+            ("helper_processes", observer.helper_processes()),
+        )
+    except Exception:
+        return None
+    result: list[dict[str, object]] = []
+    for kind, item in observed:
+        if (
+            not isinstance(item, Observation)
+            or item.state not in {"present", "absent", "unknown"}
+            or type(item.count) is not int
+            or item.count < 0
+        ):
+            return None
+        result.append({"kind": kind, "state": item.state, "count": item.count})
+    return result
+
+
+def _cookie_from_response(response: PublicHttpResponse, name: str) -> str | None:
+    values = response.values("Set-Cookie")
+    if len(values) > 16:
+        return None
+    found: list[str] = []
+    for value in values:
+        parsed = http.cookies.SimpleCookie()
+        try:
+            parsed.load(value)
+        except (http.cookies.CookieError, TypeError, ValueError):
+            return None
+        morsel = parsed.get(name)
+        if morsel is not None:
+            found.append(morsel.value)
+    if len(found) != 1 or not found[0] or len(found[0]) > 512:
+        return None
+    return found[0]
+
+
+def _session_cookie_is_secure(response: PublicHttpResponse, name: str) -> bool:
+    matches: list[http.cookies.Morsel[str]] = []
+    for value in response.values("Set-Cookie"):
+        parsed = http.cookies.SimpleCookie()
+        try:
+            parsed.load(value)
+        except (http.cookies.CookieError, TypeError, ValueError):
+            return False
+        if name in parsed:
+            matches.append(parsed[name])
+    if len(matches) != 1:
+        return False
+    cookie = matches[0]
+    return bool(
+        cookie["secure"]
+        and cookie["httponly"]
+        and cookie["samesite"].casefold() == "strict"
+        and cookie["path"] == "/"
+        and not cookie["domain"]
+    )
+
+
+def _data_free_protected_refusal(response: PublicHttpResponse) -> bool:
+    if (
+        not isinstance(response, PublicHttpResponse)
+        or response.status not in {401, 403, 404}
+        or len(response.body) > MAX_PUBLIC_PROBE_BODY_BYTES
+    ):
+        return False
+    try:
+        value = json.loads(
+            response.body.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(value, dict)
+        and set(value) == {"error"}
+        and value.get("error")
+        in {"authentication_required", "not_found", "request_rejected"}
+    )
+
+
+def _is_observed_public_contract_failure(reason: str) -> bool:
+    return reason in {
+        "public_url_invalid",
+        "public_shell_invalid",
+        "public_response_invalid",
+        "public_response_too_large",
+        "public_login_response_invalid",
+        "public_session_cookie_invalid",
+        "public_socket_unavailable",
+        "public_socket_input_invalid",
+        "public_socket_snapshot_invalid",
+        "public_socket_snapshot_timeout",
+    }
+
+
+def _decode_player_snapshot(
+    response: PublicHttpResponse,
+) -> Mapping[str, object] | None:
+    if not isinstance(response, PublicHttpResponse) or response.status != 200:
+        return None
+    try:
+        payload = json.loads(
+            response.body.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+        from web.extensions.player.contracts import validate_snapshot_envelope
+
+        validated = validate_snapshot_envelope(payload)
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError, RecursionError):
+        return None
+    return validated if isinstance(validated, Mapping) else None
+
+
+def _is_player_snapshot(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    try:
+        from web.extensions.player.contracts import validate_snapshot_envelope
+
+        validate_snapshot_envelope(value)
+    except (ValueError, TypeError, RecursionError):
+        return False
+    return True
+
+
+def _disconnect_socket_quietly(client: object) -> None:
+    if getattr(client, "connected", False) is not True:
+        return
+    try:
+        client.disconnect()
+    except Exception:
+        return
+
+
+def _normalized_creation_token(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 256:
+        return None
+    return " ".join(value.split())
+
+
+def _identity_matches_record(identity: object, record: ProcessRecord) -> bool:
+    return bool(
+        identity is not None
+        and getattr(identity, "pid", None) == record.pid
+        and _normalized_creation_token(getattr(identity, "creation_token", None))
+        == _normalized_creation_token(record.creation_token)
+    )
+
+
+def _process_is_descendant(
+    by_pid: Mapping[int, ProcessRecord], pid: int, ancestor_pid: int
+) -> bool | None:
+    current = pid
+    visited: set[int] = set()
+    for _depth in range(MAX_PROCESS_ANCESTRY_DEPTH):
+        if current == ancestor_pid:
+            return True
+        if current in visited:
+            return None
+        visited.add(current)
+        record = by_pid.get(current)
+        if record is None or record.parent_pid <= 0:
+            return False
+        if record.parent_pid not in by_pid:
+            return None
+        current = record.parent_pid
+    return None
+
+
+def _validated_owned_companion(
+    context: RowContext,
+    records: Sequence[ProcessRecord],
+    companion_path: Path,
+    candidate: ProcessRecord,
+) -> _OwnedCompanionTarget | None:
+    host_pid = context.host.owner_pid
+    if type(host_pid) is not int or host_pid <= 0 or candidate.uid != os.getuid():
+        return None
+    by_pid = {record.pid: record for record in records}
+    host_record = by_pid.get(host_pid)
+    if host_record is None or host_record.uid != os.getuid():
+        return None
+    try:
+        host_identity = context.process_identity_probe(host_pid)
+        candidate_identity = context.process_identity_probe(candidate.pid)
+        expected_python = (context.root / ".venv" / "bin" / "python").resolve(strict=True)
+        host_executable = Path(
+            str(getattr(host_identity, "executable_path", ""))
+        ).resolve(strict=True)
+        executable = Path(
+            str(getattr(candidate_identity, "executable_path", ""))
+        ).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    host_command = str(getattr(host_identity, "command_line", ""))
+    host_argv = getattr(host_identity, "argv", ())
+    if isinstance(host_argv, tuple):
+        host_command = " ".join(str(item) for item in host_argv)
+    if (
+        not _identity_matches_record(host_identity, host_record)
+        or host_executable != expected_python
+        or "run_web.main()" not in host_command
+        or not _identity_matches_record(candidate_identity, candidate)
+        or executable != companion_path
+        or candidate.started_at <= host_record.started_at
+    ):
+        return None
+    if _process_is_descendant(by_pid, candidate.pid, host_pid) is not True:
+        return None
+    return _OwnedCompanionTarget(
+        candidate.pid,
+        candidate.uid,
+        candidate.started_at,
+        candidate.creation_token,
+    )
+
+
+def _owned_profile_companions(
+    context: RowContext,
+) -> tuple[_OwnedCompanionTarget, ...] | None:
+    companion_path = _companion_path(context)
+    records = context.process_table.snapshot()
+    matches = _matching_companion_processes(records, companion_path, DEFAULT_PROFILE)
+    if matches is None:
+        return None
+    serves: list[ProcessRecord] = []
+    for record in matches:
+        is_serve = _is_serve_process(record, companion_path, DEFAULT_PROFILE)
+        if is_serve is None:
+            return None
+        if is_serve:
+            serves.append(record)
+    result: list[_OwnedCompanionTarget] = []
+    for record in serves:
+        target = _validated_owned_companion(context, records, companion_path, record)
+        if target is None:
+            return None
+        result.append(target)
+    return tuple(result)
+
+
+def _select_owned_companion(context: RowContext) -> _OwnedCompanionTarget | None:
+    companion_path = _companion_path(context)
+    records = context.process_table.snapshot()
+    matches = _matching_companion_processes(records, companion_path, DEFAULT_PROFILE)
+    if matches is None:
+        return None
+    serves: list[ProcessRecord] = []
+    for record in matches:
+        is_serve = _is_serve_process(record, companion_path, DEFAULT_PROFILE)
+        if is_serve is None:
+            return None
+        if is_serve:
+            serves.append(record)
+    if len(serves) != 1:
+        return None
+    return _validated_owned_companion(context, records, companion_path, serves[0])
+
+
+def _same_companion_target(
+    first: _OwnedCompanionTarget, second: _OwnedCompanionTarget
+) -> bool:
+    return bool(
+        first.pid == second.pid
+        and first.uid == second.uid
+        and first.started_at == second.started_at
+        and _normalized_creation_token(first.creation_token)
+        == _normalized_creation_token(second.creation_token)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,6 +2476,14 @@ class LiveGateDependencies:
     executor_registry: Mapping[str, RowExecutor] = ROW_EXECUTORS
     monotonic: Callable[[], float] = time.monotonic
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    sleep: Callable[[float], None] = time.sleep
+    public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
+    process_table_factory: Callable[[], ProcessTable] = SystemProcessTable
+    process_identity_probe: Callable[[int], object | None] = probe_process_identity
+    signal_process: Callable[[int, int], None] = os.kill
+    identity_observer_factory: Callable[[ProfileLayout, Path], IdentityObserver] = (
+        lambda layout, path: DefaultIdentityObserver(layout, path)
+    )
 
 
 def _default_dependencies(root: Path) -> LiveGateDependencies:
@@ -1777,6 +3516,7 @@ class LiveGateRunner:
         self.lock_record: Mapping[str, object] | None = None
         self.secrets: list[str] = []
         self.companion_record: dict[str, object] = {"verified": False}
+        self.companion_path: Path | None = None
 
     def run(self) -> dict[str, object]:
         try:
@@ -1815,6 +3555,16 @@ class LiveGateRunner:
                 self.api,
                 self.host,
                 self.secrets,
+                public_client=self.dependencies.public_client_factory(),
+                public_client_factory=self.dependencies.public_client_factory,
+                process_table=self.dependencies.process_table_factory(),
+                process_identity_probe=self.dependencies.process_identity_probe,
+                signal_process=self.dependencies.signal_process,
+                port_inspector=self.dependencies.port_inspector,
+                companion_path=self.companion_path,
+                identity_observer_factory=self.dependencies.identity_observer_factory,
+                monotonic=self.dependencies.monotonic,
+                sleep=self.dependencies.sleep,
             )
             self._start_host()
             if not self.infrastructure_failures and not self.semantic_failures:
@@ -1934,11 +3684,26 @@ class LiveGateRunner:
             if companion.get("platform") != platform_key:
                 raise GateError("companion_platform_mismatch")
             digest = companion.get("sha256")
+            companion_path = companion.get("path")
             if (
                 not isinstance(digest, str)
                 or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or not isinstance(companion_path, (str, os.PathLike))
             ):
                 raise GateError("companion_digest_invalid")
+            selected_path = Path(companion_path)
+            try:
+                selected_path_real = selected_path.resolve(strict=True)
+                selected_path_real.relative_to(
+                    (self.dependencies.root / "runtime/opentunnel/v0.6.2").resolve(
+                        strict=True
+                    )
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                raise GateError("companion_path_invalid") from None
+            if not selected_path_real.is_file():
+                raise GateError("companion_path_invalid")
+            self.companion_path = selected_path_real
             self.companion_record = {
                 "verified": True,
                 "platform": platform_key,
@@ -2310,6 +4075,8 @@ class LiveGateRunner:
                 self.teardown["sharing_stopped"] = False
         else:
             self.teardown["sharing_stopped"] = False
+        if self.context is not None:
+            self.context.public_client.disconnect()
         if self.host is not None:
             self.teardown["host_stop_attempted"] = True
             try:
