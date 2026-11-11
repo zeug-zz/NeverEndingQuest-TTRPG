@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import http.client
 import io
 import json
 import math
 import os
 import signal
+import shutil
 import socket
 import shlex
 import subprocess
@@ -27,7 +29,13 @@ from unittest.mock import patch
 
 import scripts.n3_lifecycle_gate as preflight_gate
 import scripts.n3_live_lifecycle_gate as gate
+import web.extensions.opentunnel_sharing.profile_state as profile_state_module
+from web.extensions.opentunnel_sharing.cleanup import (
+    OwnedProcessRecord,
+    write_owner_record,
+)
 from web.extensions.opentunnel_sharing.identity_bootstrap import Observation
+from web.extensions.opentunnel_sharing.profile_state import prepare_profile
 from web.extensions.player.contracts import make_snapshot_envelope
 
 
@@ -57,6 +65,9 @@ class FakeHost:
     def __init__(self, root: Path, sandbox: Path, state_root: Path, run_id: str, ports: FakePortInspector) -> None:
         self.owner_pid = 444
         self.owned_pids: list[int] = []
+        self.state_root = state_root
+        self._state_root_identity: tuple[int, int] | None = None
+        self._state_parent_identity: tuple[int, int] | None = None
         self.environment = gate.build_host_environment(sandbox, state_root, run_id)
         self.output = gate.ManagedHostOutputCounters()
         self.ports = ports
@@ -66,6 +77,14 @@ class FakeHost:
         self.sandbox = sandbox
 
     def start(self) -> bool:
+        if self._state_root_identity is None:
+            gate._create_private_state_tree(self.state_root)
+            self._state_root_identity = gate._private_state_tree_identity(
+                self.state_root
+            )
+            self._state_parent_identity = gate._private_state_parent_identity(
+                self.state_root.parent
+            )
         self.started = True
         self.ports.host_pid = self.owner_pid
         self.owned_pids.append(self.owner_pid)
@@ -226,12 +245,53 @@ class FakeIdentityObserver:
         return Observation(self.state, "fake", 0)
 
 
+class FakeIdentityCommandRunner:
+    def __init__(
+        self,
+        *,
+        absent_after_delete: bool = True,
+        delete_returncode: int | None = 0,
+        status_output: str | None = None,
+    ) -> None:
+        self.absent_after_delete = absent_after_delete
+        self.delete_returncode = delete_returncode
+        self.status_output = status_output
+        self.deleted = False
+        self.calls: list[tuple[tuple[str, ...], dict[str, str], float]] = []
+
+    def __call__(
+        self,
+        argv: tuple[str, ...],
+        environment: Mapping[str, str],
+        timeout: float,
+    ) -> gate.RunResult:
+        self.calls.append((tuple(argv), dict(environment), timeout))
+        if argv[-1] == "status":
+            if self.status_output is not None:
+                output = self.status_output
+            elif self.deleted and self.absent_after_delete:
+                output = "No tunnel exists for this profile\nService: Stopped\n"
+            else:
+                output = (
+                    "Hostname: identity-fixture.opentunnel.xyz\n"
+                    "Tunnel ID: fixture-tunnel-id\n"
+                    "Service: Stopped\n"
+                )
+            return gate.RunResult(0, output)
+        if "delete" in argv:
+            if self.delete_returncode == 0 and self.absent_after_delete:
+                self.deleted = True
+            return gate.RunResult(self.delete_returncode, "")
+        return gate.RunResult(2, "")
+
+
 class FakePublicSocket:
     def __init__(self, server: "FakePublicService") -> None:
         self.server = server
         self.connected = False
         self.handlers: dict[tuple[str, str], object] = {}
         self.eio = SimpleNamespace(state="disconnected")
+        self.events_received = 0
 
     def on(self, event: str, handler, *, namespace: str) -> None:
         self.handlers[(namespace, event)] = handler
@@ -271,7 +331,14 @@ class FakePublicSocket:
             and callable(handler)
             and not self.server.suppress_socket_snapshot
         ):
+            self.events_received += 1
             handler(self.server.snapshot)
+
+    def push(self, event: str, payload: object) -> None:
+        handler = self.handlers.get(("/player", event))
+        if self.connected and callable(handler):
+            self.events_received += 1
+            handler(payload)
 
     def disconnect(self) -> None:
         self.connected = False
@@ -286,8 +353,9 @@ class FakePublicService:
         credential: str = "credential-secret-sentinel",
     ) -> None:
         self.accepted_origin = origin
-        self.credential = credential
+        self.credential: str | None = credential
         self.available = True
+        self.route_reachable = True
         self.challenge_index = 0
         self.session_index = 0
         self.challenges: dict[str, tuple[str, str]] = {}
@@ -328,6 +396,32 @@ class FakePublicService:
             for client in self.sockets:
                 client.disconnect()
 
+    def start_sharing(self) -> None:
+        self.available = True
+        self.route_reachable = True
+
+    def stop_sharing(self) -> None:
+        self.route_reachable = False
+        self.sessions.clear()
+        self.challenges.clear()
+        for client in self.sockets:
+            client.disconnect()
+
+    def rotate_credential(self, credential: str) -> None:
+        self.credential = credential
+        self.sessions.clear()
+        self.challenges.clear()
+        for client in self.sockets:
+            client.disconnect()
+
+    def revoke_access(self) -> None:
+        self.credential = None
+        self.stop_sharing()
+
+    def emit_player_event(self, event: str = "player.update") -> None:
+        for client in self.sockets:
+            client.push(event, {"event": "bounded-test-event"})
+
     def request(
         self,
         hostname: str,
@@ -341,6 +435,8 @@ class FakePublicService:
         self.calls.append((method, path, hostname))
         if not self.available:
             raise gate.PublicClientError("public_transport_unavailable")
+        if not self.route_reachable:
+            return self._json(404, {"error": "not_found"})
         authority = hostname if port == 443 else "%s:%d" % (hostname, port)
         origin = "https://" + authority
         if headers.get("Host") != authority:
@@ -482,7 +578,21 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.tripwires.__enter__()
         self.temp = tempfile.TemporaryDirectory(dir=SCRATCH_ROOT)
         self.root = Path(self.temp.name)
+        self.state_base = self._make_short_state_base()
+        self.addCleanup(self._cleanup_state_base)
+        protected_root = self.root / "profile-state-protected"
+        self.profile_root_patch = patch.object(
+            profile_state_module, "_REPOSITORY_ROOT", protected_root
+        )
+        self.install_root_patch = patch.object(
+            profile_state_module, "_INSTALL_ROOT", protected_root
+        )
+        self.profile_root_patch.start()
+        self.install_root_patch.start()
+        self.addCleanup(self.install_root_patch.stop)
+        self.addCleanup(self.profile_root_patch.stop)
         self.run_id = TEST_RUN_ID
+        self._owned_context_counter = 0
         self.report_argument = (
             gate.EVIDENCE_BASE / self.run_id / "preflight" / "preflight.json"
         ).as_posix()
@@ -526,6 +636,21 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.temp.cleanup()
         self.tripwires.__exit__(None, None, None)
 
+    def _make_short_state_base(self) -> Path:
+        scratch = gate.REPO_ROOT / "tmp"
+        for suffix in "0123456789abcdef":
+            candidate = scratch / ("s" + suffix)
+            try:
+                candidate.mkdir(mode=0o700)
+            except FileExistsError:
+                continue
+            return candidate
+        raise AssertionError("could not allocate an isolated short state base")
+
+    def _cleanup_state_base(self) -> None:
+        if self.state_base.exists() and not self.state_base.is_symlink():
+            shutil.rmtree(self.state_base)
+
     def _prepare_python(self) -> None:
         python = self.root / ".venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
@@ -553,6 +678,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
     def make_row_context(
         self,
         *,
+        run_id: str | None = None,
         api: object | None = None,
         public_service: FakePublicService | None = None,
         ports: MappedPortInspector | None = None,
@@ -573,7 +699,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         def unexpected_signal(*_args: object) -> None:
             raise AssertionError("executor attempted an uninjected process signal")
 
-        run_root = self.root / gate.EVIDENCE_BASE / self.run_id
+        selected_run_id = self.run_id if run_id is None else run_id
+        run_root = self.root / gate.EVIDENCE_BASE / selected_run_id
+        run_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         capture_dir = run_root / "executor-capture"
         capture_dir.mkdir(exist_ok=True)
         port_inspector = ports or MappedPortInspector(
@@ -588,13 +716,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         selected_api = api or LifecycleFakeApi()
         return gate.RowContext(
-            self.run_id,
+            selected_run_id,
             self.root,
             run_root,
             capture_dir,
             self.root / gate.CAPTURE_RELATIVE,
             selected_api,
-            SimpleNamespace(owner_pid=444),
+            SimpleNamespace(
+                owner_pid=444,
+                state_root=self.state_root_for(selected_run_id),
+            ),
             public_client=factory(),
             public_client_factory=factory,
             process_table=process_table or FakeProcessTable(()),
@@ -612,6 +743,362 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             monotonic=monotonic or (lambda: 1000.0),
             sleep=sleep or (lambda _seconds: None),
         )
+
+    def prepare_public_client(
+        self,
+        context: gate.RowContext,
+        service: FakePublicService,
+        *,
+        credential: str | None = None,
+        connect_socket: bool = False,
+    ) -> gate.PublicPlayerSession:
+        client = context.public_client
+        client.bind_invitation(service.accepted_origin)
+        challenge_response, challenge = client.login_challenge()
+        if challenge_response.status != 200 or challenge is None:
+            raise AssertionError("fake public challenge setup failed")
+        selected_credential = service.credential if credential is None else credential
+        if not isinstance(selected_credential, str):
+            raise AssertionError("fake public credential setup failed")
+        login_response, session = client.login(challenge, selected_credential)
+        if login_response.status != 200 or session is None:
+            raise AssertionError("fake public session setup failed")
+        snapshot = gate._decode_player_snapshot(client.authenticated_snapshot(session))
+        if snapshot is None:
+            raise AssertionError("fake public snapshot setup failed")
+        if connect_socket and not client.connect_player_socket(session, snapshot):
+            raise AssertionError("fake public socket setup failed")
+        for secret in (
+            selected_credential,
+            challenge.csrf_nonce,
+            challenge.prelogin_cookie,
+            session.cookie,
+            session.csrf_token,
+            service.accepted_origin,
+        ):
+            context.remember_secret(secret)
+        return session
+
+    def make_owned_lifecycle_context(
+        self,
+        service: FakePublicService,
+        *,
+        initial_status: Mapping[str, object] | None = None,
+        companion_runner=None,
+    ) -> tuple[gate.RowContext, LifecycleFakeApi, object, object]:
+        self._owned_context_counter += 1
+        context_run_id = "%s-%d" % (self.run_id, self._owned_context_counter)
+        context = self.make_row_context(
+            run_id=context_run_id, public_service=service
+        )
+        companion = context.companion_path
+        assert companion is not None
+        context.companion_sha256 = hashlib.sha256(companion.read_bytes()).hexdigest()
+        state_root = self.state_root_for(context.run_id)
+        gate._create_private_state_tree(state_root)
+        install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
+        install_marker = "neq-" + hashlib.sha256(
+            os.fsencode(install_path)
+        ).hexdigest()[:32]
+        profile_state = prepare_profile(
+            state_root,
+            install_marker=install_marker,
+            profile=gate.DEFAULT_PROFILE,
+            create=True,
+        )
+        if profile_state.layout is None:
+            raise AssertionError("fake OpenTunnel profile setup failed")
+        layout = profile_state.layout
+        context.host = None
+
+        class MutablePorts:
+            def __init__(self) -> None:
+                self.host_pid: int | None = 444
+                self.player_pid: int | None = None
+                self.unknown: set[int] = set()
+
+            def inspect(self, port: int) -> preflight_gate.PortObservation:
+                if port in self.unknown:
+                    return preflight_gate.PortObservation(port, "unknown")
+                pid = self.host_pid if port == gate.HOST_PORT else self.player_pid
+                if pid is None:
+                    return preflight_gate.PortObservation(port, "free")
+                return preflight_gate.PortObservation(port, "occupied", (pid,))
+
+        class MutableTable:
+            def __init__(self) -> None:
+                self.records: tuple[gate.ProcessRecord, ...] = ()
+
+            def snapshot(self) -> tuple[gate.ProcessRecord, ...]:
+                return self.records
+
+        class OwnedProcess:
+            def __init__(self, pid: int) -> None:
+                self.pid = pid
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+        ports = MutablePorts()
+        table = MutableTable()
+        identity_map: dict[int, object] = {}
+        host_started = datetime(2026, 11, 11, 11, 0, 0)
+
+        def host_record(pid: int, token: str, started_at: datetime) -> gate.ProcessRecord:
+            python = str(self.root / ".venv" / "bin" / "python")
+            argv = (python, "-c", "import run_web; run_web.main()")
+            command = shlex.join(argv)
+            record = gate.ProcessRecord(
+                pid, 1, os.getuid(), started_at, token, command
+            )
+            identity_map[pid] = SimpleNamespace(
+                pid=pid,
+                creation_token=token,
+                executable_path=python,
+                argv=argv,
+                command_line=command,
+            )
+            return record
+
+        def companion_record(pid: int, parent_pid: int) -> gate.ProcessRecord:
+            token = "child-token-%d" % pid
+            started = datetime(2026, 11, 11, 11, 1, 0)
+            record = gate.ProcessRecord(
+                pid,
+                parent_pid,
+                os.getuid(),
+                started,
+                token,
+                shlex.join(
+                    [str(companion), "serve", "--profile", gate.DEFAULT_PROFILE]
+                ),
+            )
+            identity_map[pid] = SimpleNamespace(
+                pid=pid,
+                creation_token=token,
+                executable_path=str(companion),
+                argv=(str(companion), "serve", "--profile", gate.DEFAULT_PROFILE),
+                command_line=record.command,
+            )
+            return record
+
+        class OwnedHost:
+            def __init__(self) -> None:
+                self.state_root = state_root
+                self._state_root_identity = gate._private_state_tree_identity(
+                    state_root
+                )
+                self._state_parent_identity = gate._private_state_parent_identity(
+                    state_root.parent
+                )
+                self.environment = gate.build_host_environment(
+                    context.sandbox_root, state_root, context.run_id
+                )
+                self.process_generation = 1
+                self.owned_pids = [444]
+                self.process: OwnedProcess | None = OwnedProcess(444)
+                self._next_pid = 445
+                self.on_stop = None
+                self.on_restart = None
+                self._refresh_processes(False)
+
+            @property
+            def owner_pid(self) -> int | None:
+                return None if self.process is None else self.process.pid
+
+            def _refresh_processes(self, with_companion: bool) -> None:
+                process = self.process
+                if process is None:
+                    table.records = ()
+                    return
+                start = host_record(
+                    process.pid,
+                    "host-token-%d" % process.pid,
+                    host_started + timedelta(seconds=self.process_generation),
+                )
+                if with_companion:
+                    table.records = (start, companion_record(555, process.pid))
+                    record = OwnedProcessRecord(
+                        profile=gate.DEFAULT_PROFILE,
+                        uid=os.getuid(),
+                        pid=555,
+                        creation_token="child-token-555",
+                        exe_path=str(companion.resolve()),
+                        started_at="2026-11-11T11:01:00Z",
+                        generation=self.process_generation,
+                        route_id="gate-route",
+                    )
+                    if not write_owner_record(layout, record):
+                        raise AssertionError("fake companion owner record setup failed")
+                else:
+                    table.records = (start,)
+
+            def stop(self) -> bool:
+                if self.process is not None:
+                    self.process.returncode = 0
+                self.process = None
+                ports.host_pid = None
+                ports.player_pid = None
+                self._refresh_processes(False)
+                service.stop_sharing()
+                owner_record = layout.state_home / "owned_process.json"
+                if owner_record.exists():
+                    owner_record.unlink()
+                if callable(self.on_stop):
+                    self.on_stop()
+                return True
+
+            def start(self) -> bool:
+                process = OwnedProcess(self._next_pid)
+                self._next_pid += 1
+                self.process = process
+                self.process_generation += 1
+                self.owned_pids.append(process.pid)
+                ports.host_pid = process.pid
+                ports.player_pid = None
+                self._refresh_processes(False)
+                if callable(self.on_restart):
+                    self.on_restart()
+                return True
+
+        host = OwnedHost()
+        context.host = host
+        context.port_inspector = ports
+        context.process_table = table
+        context.process_identity_probe = lambda pid: identity_map.get(pid)
+        context.host_api = None
+
+        api: LifecycleFakeApi
+
+        def copy_invitation(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            current = dict(api.status)
+            if current.get("state") != "ready":
+                return gate.HostApiResponse(
+                    409, {"ok": False, "reason": "invitation_unavailable"}
+                )
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "invitation": service.accepted_origin,
+                    "status": current,
+                },
+            )
+
+        def start_sharing(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            service.start_sharing()
+            host_pid = host.owner_pid
+            assert host_pid is not None
+            ports.player_pid = host_pid
+            host._refresh_processes(True)
+            api.status = {
+                "state": "ready",
+                "reason": "ready",
+                "identity_initialized": True,
+                "identity_up_invocations": 1,
+                "companion_launches": 1,
+                "generation": 1,
+            }
+            return gate.HostApiResponse(
+                200, {"ok": True, "reason": "ready", "status": api.status}
+            )
+
+        def stop_sharing(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            service.stop_sharing()
+            ports.player_pid = None
+            host._refresh_processes(False)
+            owner_record = layout.state_home / "owned_process.json"
+            if owner_record.exists():
+                owner_record.unlink()
+            api.status = {
+                **dict(api.status),
+                "state": "off",
+                "reason": "stopped",
+            }
+            return gate.HostApiResponse(
+                200, {"ok": True, "reason": "stopped", "status": api.status}
+            )
+
+        def rotate(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            new_credential = "credential-secret-rotated-sentinel"
+            service.rotate_credential(new_credential)
+            api.status = {
+                **dict(api.status),
+                "state": "ready",
+                "reason": "ready",
+            }
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "reason": "credential_rotated",
+                    "credential": new_credential,
+                    "status": api.status,
+                },
+            )
+
+        def revoke(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            service.revoke_access()
+            ports.player_pid = None
+            host._refresh_processes(False)
+            owner_record = layout.state_home / "owned_process.json"
+            if owner_record.exists():
+                owner_record.unlink()
+            api.status = {
+                **dict(api.status),
+                "state": "off",
+                "reason": "stopped",
+            }
+            return gate.HostApiResponse(
+                200,
+                {"ok": True, "reason": "access_revoked", "status": api.status},
+            )
+
+        api = LifecycleFakeApi(
+            status=initial_status
+            or {
+                "state": "off",
+                "reason": "off",
+                "identity_initialized": True,
+                "identity_up_invocations": 1,
+                "companion_launches": 0,
+            },
+            post_handlers={
+                "start": start_sharing,
+                "stop": stop_sharing,
+                "copy-invitation": copy_invitation,
+                "rotate": rotate,
+                "revoke": revoke,
+            },
+        )
+        host.on_stop = lambda: setattr(
+            api,
+            "status",
+            {
+                **dict(api.status),
+                "state": "off",
+                "reason": "shutting_down",
+                "companion_launches": 0,
+            },
+        )
+        host.on_restart = lambda: setattr(
+            api,
+            "status",
+            {
+                **dict(api.status),
+                "state": "off",
+                "reason": "off",
+                "identity_initialized": True,
+                "identity_up_invocations": 1,
+                "companion_launches": 0,
+                "generation": 0,
+            },
+        )
+        context.host_api = api
+        if companion_runner is not None:
+            context.companion_runner = companion_runner
+        return context, api, ports, table
 
     def companion_process_fixture(
         self, *, mismatch_child_token: bool = False
@@ -804,6 +1291,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             parents=True
         )
 
+    def state_root_for(self, run_id: str) -> Path:
+        return self.state_base / "neq-n3g" / gate._state_root_id8(run_id)
+
     def write_preflight(self, document: Mapping[str, object] | None = None) -> Path:
         path = self.root / self.report_argument
         payload = {
@@ -927,14 +1417,17 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         api: FakeApi | None = None,
         companion_error: str | None = None,
         sandbox_error: str | None = None,
+        state_base_provider=None,
     ) -> gate.LiveGateDependencies:
         selected_ports = ports or self.ports
         selected_api = api or self.fake_api
 
-        def make_host(root: Path, sandbox: Path, run_id: str) -> FakeHost:
+        def make_host(
+            root: Path, sandbox: Path, state_root: Path, run_id: str
+        ) -> FakeHost:
             self.host_factory_calls += 1
             self.fake_host = FakeHost(
-                root, sandbox, self.root / gate.EVIDENCE_BASE / run_id / "state", run_id, selected_ports
+                root, sandbox, state_root, run_id, selected_ports
             )
             return self.fake_host
 
@@ -962,6 +1455,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             sandbox_validator=check_sandbox,
             host_factory=make_host,
             api_factory=lambda: selected_api,
+            state_base_provider=state_base_provider or (lambda: self.state_base),
             executor_registry=(
                 self.pass_registry if executors is None else executors
             ),
@@ -1126,7 +1620,8 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         with patch.object(gate, "prepare_profile", side_effect=fake_prepare_profile):
             self.assertIsNotNone(gate._gate_profile_layout(context_for_profile))
         self.assertEqual(
-            profile_calls[0][0], context_for_profile.run_root / "state" / "state"
+            profile_calls[0][0],
+            context_for_profile.host.state_root,
         )
 
         def execute(observer: FakeIdentityObserver) -> gate.RowExecutionResult:
@@ -1753,6 +2248,311 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(context.host_api.status_calls, expected_max)
         self.assertEqual(signal_calls, [(555, signal.SIGKILL)])
 
+    def test_l06_rotation_revokes_cookie_credential_and_connected_socket(self) -> None:
+        service = FakePublicService()
+        context, api, _ports, _table = self.make_owned_lifecycle_context(service)
+        self.assertEqual(api.post("start", {}).payload["status"]["state"], "ready")
+        session = self.prepare_public_client(
+            context, service, connect_socket=True
+        )
+        old_socket = service.sockets[-1]
+        events_before_rotation = old_socket.events_received
+
+        result = gate.L06CredentialRotationExecutor().execute(context)
+        service.emit_player_event()
+
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(result.observed["old_session_status"], 404)
+        self.assertEqual(result.observed["old_credential_status"], 401)
+        self.assertEqual(result.observed["new_login_status"], 200)
+        self.assertFalse(old_socket.connected)
+        self.assertEqual(old_socket.events_received, events_before_rotation)
+        self.assertEqual(context.public_client.session.credential, service.credential)
+        recorded = json.dumps(result.observed, sort_keys=True)
+        for secret in context.secrets:
+            self.assertNotIn(secret, recorded)
+        self.assertNotIn(session.cookie, recorded)
+
+        blocked_context, _blocked_api, _ports, _table = (
+            self.make_owned_lifecycle_context(FakePublicService())
+        )
+        blocked = gate.L06CredentialRotationExecutor().execute(blocked_context)
+        self.assertEqual(blocked.verdict, "BLOCKED")
+
+        failed_service = FakePublicService()
+        failed_context, failed_api, _ports, _table = (
+            self.make_owned_lifecycle_context(failed_service)
+        )
+        failed_api.post("start", {})
+        self.prepare_public_client(failed_context, failed_service, connect_socket=True)
+
+        def rotate_without_session_revocation(
+            _payload: Mapping[str, object],
+        ) -> gate.HostApiResponse:
+            replacement = "credential-secret-rotated-sentinel"
+            failed_service.credential = replacement
+            for connected in failed_service.sockets:
+                connected.disconnect()
+            failed_api.status = {**failed_api.status, "state": "ready"}
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "reason": "credential_rotated",
+                    "credential": replacement,
+                    "status": failed_api.status,
+                },
+            )
+
+        failed_api.post_handlers["rotate"] = rotate_without_session_revocation
+        failed = gate.L06CredentialRotationExecutor().execute(failed_context)
+        self.assertEqual(failed.verdict, "FAIL")
+        self.assertEqual(failed.reason, "old_session_accepted_after_rotation")
+
+    def test_l07_stop_checks_public_listener_session_and_host(self) -> None:
+        service = FakePublicService()
+        context, api, _ports, _table = self.make_owned_lifecycle_context(service)
+        api.post("start", {})
+        self.prepare_public_client(context, service)
+        stopped = gate.L07StopSharingExecutor().execute(context)
+        self.assertEqual(stopped.verdict, "PASS")
+        self.assertTrue(stopped.observed["host_healthy"])
+
+        failed_service = FakePublicService()
+        failed_context, failed_api, _ports, _table = (
+            self.make_owned_lifecycle_context(failed_service)
+        )
+        failed_api.post("start", {})
+        self.prepare_public_client(failed_context, failed_service)
+
+        def stop_without_withdrawing_route(
+            _payload: Mapping[str, object],
+        ) -> gate.HostApiResponse:
+            failed_api.status = {**failed_api.status, "state": "off"}
+            return gate.HostApiResponse(
+                200,
+                {"ok": True, "reason": "stopped", "status": failed_api.status},
+            )
+
+        failed_api.post_handlers["stop"] = stop_without_withdrawing_route
+        failed = gate.L07StopSharingExecutor().execute(failed_context)
+        self.assertEqual(failed.verdict, "FAIL")
+        self.assertEqual(failed.reason, "public_player_reachable_after_stop")
+
+        blocked_service = FakePublicService()
+        blocked_context, blocked_api, blocked_ports, _table = (
+            self.make_owned_lifecycle_context(blocked_service)
+        )
+        blocked_api.post("start", {})
+        self.prepare_public_client(blocked_context, blocked_service)
+        stop_handler = blocked_api.post_handlers["stop"]
+
+        def stop_with_unknown_player_port(
+            payload: Mapping[str, object],
+        ) -> gate.HostApiResponse:
+            response = stop_handler(payload)
+            blocked_ports.unknown.add(gate.PLAYER_PORT)
+            return response
+
+        blocked_api.post_handlers["stop"] = stop_with_unknown_player_port
+        blocked = gate.L07StopSharingExecutor().execute(blocked_context)
+        self.assertEqual(blocked.verdict, "BLOCKED")
+        self.assertEqual(blocked.reason, "player_listener_observation_unavailable")
+
+    def test_l08_host_exit_restart_reconciles_without_autostart(self) -> None:
+        service = FakePublicService()
+        context, api, _ports, _table = self.make_owned_lifecycle_context(service)
+        api.post("start", {})
+        self.prepare_public_client(context, service)
+        result = gate.L08HostExitRestartExecutor().execute(context)
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(result.observed["sharing_state_after_restart"], "off")
+        self.assertEqual(context.host.process_generation, 2)
+
+        failed_service = FakePublicService()
+        failed_context, failed_api, failed_ports, failed_table = (
+            self.make_owned_lifecycle_context(failed_service)
+        )
+        failed_api.post("start", {})
+        self.prepare_public_client(failed_context, failed_service)
+        original_stop = failed_context.host.stop
+
+        def stop_with_orphaned_owner_record() -> bool:
+            process = failed_context.host.process
+            if process is not None:
+                process.returncode = 0
+            failed_context.host.process = None
+            failed_ports.host_pid = None
+            failed_ports.player_pid = None
+            failed_service.stop_sharing()
+            failed_table.records = ()
+            return True
+
+        failed_context.host.stop = stop_with_orphaned_owner_record
+        failed = gate.L08HostExitRestartExecutor().execute(failed_context)
+        self.assertEqual(failed.verdict, "FAIL")
+        self.assertEqual(failed.reason, "owner_record_remains_after_host_exit")
+        self.assertIsNotNone(original_stop)
+
+        blocked_service = FakePublicService()
+        blocked_context, blocked_api, _ports, _table = (
+            self.make_owned_lifecycle_context(blocked_service)
+        )
+        blocked_api.post("start", {})
+        self.prepare_public_client(blocked_context, blocked_service)
+        blocked_context.host.process = None
+        blocked = gate.L08HostExitRestartExecutor().execute(blocked_context)
+        self.assertEqual(blocked.verdict, "BLOCKED")
+        self.assertEqual(blocked.reason, "host_process_ownership_unavailable")
+
+    def test_l09_revoke_rejects_login_without_identity_rebootstrap(self) -> None:
+        service = FakePublicService()
+        context, _api, _ports, _table = self.make_owned_lifecycle_context(service)
+        self.prepare_public_client(context, service)
+        result = gate.L09RevokeAccessExecutor().execute(context)
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(result.observed["identity_up_invocations_before"], 1)
+        self.assertEqual(result.observed["identity_up_invocations_after_revoke"], 1)
+
+        failed_service = FakePublicService()
+        failed_context, failed_api, _ports, _table = (
+            self.make_owned_lifecycle_context(failed_service)
+        )
+        self.prepare_public_client(failed_context, failed_service)
+        revoke_handler = failed_api.post_handlers["revoke"]
+
+        def revoke_without_invalidating(
+            payload: Mapping[str, object],
+        ) -> gate.HostApiResponse:
+            failed_api.status = {**failed_api.status, "state": "off"}
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "reason": "access_revoked",
+                    "status": failed_api.status,
+                },
+            )
+
+        failed_api.post_handlers["revoke"] = revoke_without_invalidating
+        failed = gate.L09RevokeAccessExecutor().execute(failed_context)
+        self.assertEqual(failed.verdict, "FAIL")
+        self.assertEqual(failed.reason, "session_accepted_after_revoke")
+        self.assertIsNotNone(revoke_handler)
+
+        blocked_context, _api, _ports, _table = self.make_owned_lifecycle_context(
+            FakePublicService(),
+            initial_status={
+                "state": "off",
+                "identity_initialized": True,
+                "companion_launches": 0,
+            },
+        )
+        blocked = gate.L09RevokeAccessExecutor().execute(blocked_context)
+        self.assertEqual(blocked.verdict, "BLOCKED")
+        self.assertEqual(blocked.reason, "identity_up_counter_unavailable")
+
+    def test_l10_teardown_deletes_only_verified_gate_identity(self) -> None:
+        service = FakePublicService()
+        runner = FakeIdentityCommandRunner()
+        context, _api, _ports, _table = self.make_owned_lifecycle_context(
+            service, companion_runner=runner
+        )
+        context.public_client.bind_invitation(service.accepted_origin)
+        result = gate.L10CleanTeardownExecutor().execute(context)
+        self.assertEqual(result.verdict, "PASS")
+        self.assertTrue(result.observed["gate_state_root_removed"])
+        self.assertTrue(result.observed["gate_state_parent_removed_if_empty"])
+        self.assertEqual(
+            result.observed["gate_state_root_id8"],
+            gate._state_root_id8(context.run_id),
+        )
+        self.assertEqual(
+            result.observed["gate_state_path_sha256"],
+            gate._state_path_sha256(context.host.state_root),
+        )
+        self.assertTrue(runner.deleted)
+        self.assertFalse(context.host.state_root.exists())
+        self.assertFalse(context.host.state_root.parent.exists())
+        self.assertTrue(context.companion_path.is_file())
+        self.assertEqual(len(runner.calls), 3)
+        delete_argv, environment, timeout = runner.calls[1]
+        self.assertEqual(delete_argv[1:3], ("--profile", gate.DEFAULT_PROFILE))
+        self.assertEqual(delete_argv[-2:], ("delete", "--yes"))
+        self.assertEqual(set(environment), {
+            "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"
+        })
+        self.assertEqual(timeout, 30.0)
+
+        sibling_service = FakePublicService()
+        sibling_runner = FakeIdentityCommandRunner()
+        sibling_context, _api, _ports, _table = self.make_owned_lifecycle_context(
+            sibling_service, companion_runner=sibling_runner
+        )
+        sibling_parent = sibling_context.host.state_root.parent
+        sibling_cache = sibling_parent / "unrelated-cache-entry"
+        sibling_cache.mkdir(mode=0o700)
+        sibling_marker = sibling_cache / "keep.txt"
+        sibling_marker.write_text("unrelated-cache-sentinel", encoding="ascii")
+        sibling_context.public_client.bind_invitation(
+            sibling_service.accepted_origin
+        )
+        sibling_result = gate.L10CleanTeardownExecutor().execute(sibling_context)
+        self.assertEqual(sibling_result.verdict, "PASS")
+        self.assertFalse(
+            sibling_result.observed["gate_state_parent_removed_if_empty"]
+        )
+        self.assertTrue(sibling_marker.is_file())
+        self.assertEqual(sibling_marker.read_text(encoding="ascii"), "unrelated-cache-sentinel")
+
+        failed_runner = FakeIdentityCommandRunner(absent_after_delete=False)
+        failed_service = FakePublicService()
+        failed_context, _api, _ports, _table = self.make_owned_lifecycle_context(
+            failed_service, companion_runner=failed_runner
+        )
+        failed_context.public_client.bind_invitation(failed_service.accepted_origin)
+        failed = gate.L10CleanTeardownExecutor().execute(failed_context)
+        self.assertEqual(failed.verdict, "FAIL")
+        self.assertEqual(failed.reason, "gate_remote_identity_remains")
+        self.assertTrue(failed_context.host.state_root.exists())
+
+        blocked_runner = FakeIdentityCommandRunner(
+            status_output="Hostname: identity-fixture.opentunnel.xyz\n"
+        )
+        blocked_service = FakePublicService()
+        blocked_context, _api, _ports, _table = self.make_owned_lifecycle_context(
+            blocked_service, companion_runner=blocked_runner
+        )
+        blocked_context.public_client.bind_invitation(blocked_service.accepted_origin)
+        blocked = gate.L10CleanTeardownExecutor().execute(blocked_context)
+        self.assertEqual(blocked.verdict, "BLOCKED")
+        self.assertEqual(blocked.reason, "identity_status_before_delete_invalid")
+
+    def test_lifecycle_rows_l06_through_l10_complete_in_one_offline_simulation(self) -> None:
+        service = FakePublicService()
+        runner = FakeIdentityCommandRunner()
+        context, api, ports, _table = self.make_owned_lifecycle_context(
+            service, companion_runner=runner
+        )
+        started = api.post("start", {})
+        self.assertEqual(started.payload["status"]["state"], "ready")
+        self.prepare_public_client(context, service, connect_socket=True)
+
+        results = [
+            gate.L06CredentialRotationExecutor().execute(context),
+            gate.L07StopSharingExecutor().execute(context),
+            gate.L08HostExitRestartExecutor().execute(context),
+            gate.L09RevokeAccessExecutor().execute(context),
+            gate.L10CleanTeardownExecutor().execute(context),
+        ]
+
+        self.assertEqual([item.verdict for item in results], ["PASS"] * 5)
+        self.assertTrue(all(gate._bounded_json(dict(item.observed)) for item in results))
+        self.assertEqual(ports.inspect(gate.HOST_PORT).state, "free")
+        self.assertEqual(ports.inspect(gate.PLAYER_PORT).state, "free")
+        self.assertTrue(runner.deleted)
+        self.assertTrue(context.companion_path.is_file())
+
     def test_process_table_is_bounded_and_parses_fixed_system_output(self) -> None:
         output = (
             b"123 1 501 Wed Nov 11 11:00:00 2026 "
@@ -1861,7 +2661,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
     def test_partial_private_state_tree_creation_is_cleaned_up(self) -> None:
         original_mkdir = Path.mkdir
-        state_root = self.root / "tmp" / "partial-state"
+        state_root = self.state_root_for(self.run_id)
 
         def refuse_config(path: Path, *args: object, **kwargs: object) -> None:
             if path == state_root / "config":
@@ -2174,6 +2974,154 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertIn("companion_digest_invalid", result["infrastructure_failures"])
         self.assertEqual(self.host_factory_calls, 0)
 
+    def test_gate_state_cache_path_policy_and_pre_side_effect_refusals(self) -> None:
+        home = Path("/Users/facilitator")
+        self.assertEqual(
+            gate._default_state_cache_base(
+                platform="darwin",
+                environ={"XDG_CACHE_HOME": "/ignored/cache"},
+                home=home,
+            ),
+            home / "Library" / "Caches",
+        )
+        self.assertEqual(
+            gate._default_state_cache_base(
+                platform="linux", environ={"XDG_CACHE_HOME": "/cache/xdg"}, home=home
+            ),
+            Path("/cache/xdg"),
+        )
+        self.assertEqual(
+            gate._default_state_cache_base(platform="linux", environ={}, home=home),
+            home / ".cache",
+        )
+        with self.assertRaisesRegex(gate.GateError, "gate_state_root_invalid"):
+            gate._default_state_cache_base(
+                platform="linux", environ={"XDG_CACHE_HOME": "relative-cache"}, home=home
+            )
+
+        state_root = self.state_root_for(self.run_id)
+        socket_path = (
+            state_root
+            / "neq"
+            / "opentunnel"
+            / gate.DEFAULT_PROFILE
+            / "run"
+            / (gate.DEFAULT_PROFILE + ".sock")
+        )
+        self.assertLess(len(os.fsencode(socket_path)), gate.MAX_UNIX_SOCKET_PATH)
+        self.assertEqual(state_root.name, gate._state_root_id8(self.run_id))
+        self.assertEqual(
+            gate._validate_run_paths(self.root, self.arguments, self.state_base)[2],
+            state_root,
+        )
+
+        too_long_base = self.state_base / ("long" * 20)
+        result = gate.run_live_gate(
+            self.make_dependencies(state_base_provider=lambda: too_long_base),
+            self.arguments,
+        )
+        self.assertIn("state_root_too_long", result["infrastructure_failures"])
+        self.assertFalse(
+            (self.root / gate.EVIDENCE_BASE / self.run_id / "capture").exists()
+        )
+        self.assertEqual(self.host_factory_calls, 0)
+
+        namespace = self.state_base / "neq-n3g"
+        namespace.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(gate.GateError, "gate_state_root_invalid"):
+            gate._validate_run_paths(self.root, self.arguments, self.state_base)
+        namespace.unlink()
+
+        namespace.mkdir(mode=0o700)
+        state_root.mkdir(mode=0o700)
+        with self.assertRaisesRegex(gate.GateError, "gate_state_root_exists"):
+            gate._validate_run_paths(self.root, self.arguments, self.state_base)
+        shutil.rmtree(state_root)
+        namespace.rmdir()
+
+        with patch.object(gate.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(gate.GateError, "gate_state_root_invalid"):
+                gate._validate_run_paths(self.root, self.arguments, self.state_base)
+
+    def test_l06_failure_stops_later_rows_and_still_tears_down(self) -> None:
+        class FailRotation:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                return gate.RowExecutionResult("FAIL", "old_access_still_valid")
+
+        registry = {
+            row.row_id: PassingExecutor() for row in gate.LIVE_ROWS
+        }
+        registry["L06"] = FailRotation()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+        self.assertEqual(result["gate_verdict"], "FAIL")
+        self.assertEqual([row["verdict"] for row in result["rows"][:5]], ["PASS"] * 5)
+        self.assertEqual(result["rows"][5]["verdict"], "FAIL")
+        self.assertEqual(
+            [row["reason"] for row in result["rows"][6:]], ["fail-fast"] * 4
+        )
+        self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
+        self.assertIn(("POST", ("stop", {})), self.fake_api.calls)
+
+    def test_full_simulated_run_passes_rows_but_stays_pending_and_redacts(self) -> None:
+        secrets = [
+            "credential-secret-%s-sentinel" % row.row_id
+            for row in gate.LIVE_ROWS
+        ]
+
+        class PassingExecutor:
+            def __init__(self, secret: str, row_id: str) -> None:
+                self.secret = secret
+                self.row_id = row_id
+
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.remember_secret(self.secret)
+                return gate.RowExecutionResult(
+                    "PASS",
+                    "offline-simulated-pass",
+                    {
+                        "credential": self.secret,
+                        "invitation": "https://%s.invalid/private-path" % self.row_id,
+                        "row_observed": self.row_id,
+                    },
+                )
+
+        registry = {
+            row.row_id: PassingExecutor(secret, row.row_id)
+            for row, secret in zip(gate.LIVE_ROWS, secrets)
+        }
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+
+        self.assertEqual(result["gate_verdict"], "PENDING")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(
+            result["platform_verdicts"]["macos-arm64"]["verdict"], "PASS"
+        )
+        self.assertEqual(
+            result["platform_verdicts"]["linux-arm64"]["reason"],
+            "owner-run-required",
+        )
+        self.assertEqual(
+            [row["row_id"] for row in result["rows"]],
+            [row.row_id for row in gate.LIVE_ROWS],
+        )
+        self.assertEqual([row["verdict"] for row in result["rows"]], ["PASS"] * 10)
+        evidence = self.root / result["evidence_path"]
+        for artifact in evidence.iterdir():
+            if not artifact.is_file():
+                continue
+            content = artifact.read_text(encoding="utf-8")
+            for secret in secrets:
+                self.assertNotIn(secret, content)
+            for row in gate.LIVE_ROWS:
+                self.assertNotIn(
+                    "https://%s.invalid" % row.row_id, content
+                )
+        self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
+
     def test_prepared_sandbox_config_is_parsed_without_execution(self) -> None:
         config = self.root / gate.CAPTURE_RELATIVE / "config.py"
         config.write_text("WEB_PORT = 8360\nprint('config-executed-sentinel')\n", encoding="ascii")
@@ -2353,18 +3301,24 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertFalse(gate._bounded_json({"number": float("inf")}))
 
-    def test_placeholder_executors_block_and_driver_summary_is_not_pass(self) -> None:
-        placeholders = {
-            row.row_id: gate.PlaceholderRowExecutor(row.row_id, row.name)
-            for row in gate.LIVE_ROWS
-        }
-        dependencies = self.make_dependencies(executors=placeholders)
+    def test_all_rows_have_concrete_executors_and_driver_summary_is_not_pass(self) -> None:
+        self.assertEqual(set(gate.ROW_EXECUTORS), {row.row_id for row in gate.LIVE_ROWS})
+        for row_id, executor in gate.ROW_EXECUTORS.items():
+            with self.subTest(row_id=row_id):
+                self.assertNotEqual(type(executor).__name__, "PlaceholderRowExecutor")
+
+        class BlockedExecutor:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                return gate.RowExecutionResult("BLOCKED", "injected-observation-gap")
+
+        registry = {row.row_id: BlockedExecutor() for row in gate.LIVE_ROWS}
+        dependencies = self.make_dependencies(executors=registry)
         result = gate.run_live_gate(dependencies, self.arguments)
         self.assertEqual(result["gate_verdict"], "BLOCKED")
         self.assertFalse(result["is_gate_pass"])
         self.assertEqual(result["rows"][0]["row_id"], "L01")
         self.assertEqual(result["rows"][0]["verdict"], "BLOCKED")
-        self.assertEqual(result["rows"][0]["reason"], "executor-not-implemented")
+        self.assertEqual(result["rows"][0]["reason"], "injected-observation-gap")
         self.assertTrue(all(row["verdict"] == "BLOCKED" for row in result["rows"][1:]))
         self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
         self.assertIn(("POST", ("stop", {})), self.fake_api.calls)
@@ -2376,6 +3330,19 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertTrue((capture / "managed-host-output.json").is_file())
         self.assertTrue((capture / "provider-attempt-ledger.jsonl").is_file())
         self.assertTrue((capture / "SHA256SUMS").is_file())
+        run_record = json.loads((capture / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            run_record["gate_state_root_id8"], gate._state_root_id8(self.run_id)
+        )
+        self.assertEqual(
+            run_record["gate_state_path_sha256"],
+            gate._state_path_sha256(self.state_root_for(self.run_id)),
+        )
+        for artifact in capture.iterdir():
+            if artifact.is_file():
+                self.assertNotIn(
+                    str(self.state_base), artifact.read_text(encoding="utf-8")
+                )
 
     def test_evidence_checksum_failure_forces_persisted_platform_block(self) -> None:
         class PassingExecutor:
@@ -2707,7 +3674,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
     def test_host_harness_start_readiness_stop_escalation_and_port_discipline(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
-        state = self.root / "tmp" / "gate-state"
+        state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess()
         factory_calls: list[tuple[list[str], dict[str, object]]] = []
@@ -2772,7 +3739,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
     def test_host_harness_term_success_avoids_sigkill(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
-        state = self.root / "tmp" / "gate-state-term"
+        state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess(term_exits=True)
 
@@ -2804,7 +3771,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
     def test_host_harness_restarts_owned_process_with_same_private_state_tree(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
-        state = self.root / "tmp" / "gate-state-restart"
+        state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         processes = [
             FakeProcess(pid=201, term_exits=True),
@@ -2851,7 +3818,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
     def test_host_harness_refuses_replaced_private_state_tree_on_restart(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
-        state = self.root / "tmp" / "gate-state-replaced"
+        state = self.state_root_for(self.run_id)
         ports = FakePortInspector()
         process = FakeProcess(pid=301, term_exits=True)
 
@@ -2893,7 +3860,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         host = gate.ManagedHostHarness(
             self.root,
             self.root / gate.CAPTURE_RELATIVE,
-            self.root / "tmp" / "state-busy",
+            self.state_root_for(self.run_id),
             self.run_id,
             process_factory=lambda *_args, **_kwargs: self.fail("must not spawn"),
             port_inspector=ports,

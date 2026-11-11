@@ -2,9 +2,9 @@
 
 ## Authority and freeze
 
-This report is the authoritative frozen contract for the primary-owned N3 live lifecycle gate (Tasks 6.2-6.6). Its live manifest id is `n3-live-lifecycle-v1`. The driver manifest and its digest MUST identify exactly the row definitions and frozen limits below. A change to a row, cap, platform verdict rule, or safety boundary requires a reviewed contract revision and a new manifest identity/digest; a builder MUST NOT silently reinterpret this report.
+This report is the authoritative frozen contract for the primary-owned N3 live lifecycle gate (Tasks 6.2-6.6). Its live manifest id is `n3-live-lifecycle-v2`. The driver manifest and its digest MUST identify exactly the row definitions, frozen limits, state-root policy, and safety boundaries below. A change to a row, cap, platform verdict rule, or safety boundary requires a reviewed contract revision and a new manifest identity/digest; a builder MUST NOT silently reinterpret this report.
 
-The authorized L01/L02 and L03/L05 observation clarifications below retain manifest id `n3-live-lifecycle-v1`. The manifest SHA-256 changed from `7a06f3e17ec96f442dfcabb6ef1c43410ab1330d39a1cac1c77ff5c12bde8e02` to `5c17c8e9187140b5d662bdb07e2e13704fef637ae45a6d71e4689ea1d790cde1`; the live driver and this report MUST pin the latter after implementation reconciliation.
+The authorized L01/L02 and L03/L05 observation clarifications were frozen as `n3-live-lifecycle-v1` with manifest SHA-256 `5c17c8e9187140b5d662bdb07e2e13704fef637ae45a6d71e4689ea1d790cde1`. This reviewed contract revision moves gate state outside the repository/evidence tree to satisfy the profile socket-path limit and to prevent teardown from owning the broader evidence directory; L10 now requires removal of only the unique run root and removal of the shared namespace only when empty. The manifest identity is therefore advanced to `n3-live-lifecycle-v2`, whose exact manifest SHA-256 is `a9bb1f3f23df1cd216f627dd1974f7a4702da6d533e7f39a4603ca0d30ca3693`.
 
 ## Platform and run environment
 
@@ -13,7 +13,7 @@ The authorized L01/L02 and L03/L05 observation clarifications below retain manif
 - Use an isolated Capture_Arena copy at `tmp/combat_capture`, prepared with `scripts/seed_combat_capture.py --prepare --party 1` and validated as the N2 managed host does: the copy is non-symlink and `WEB_PORT == 8360`.
 - The host binds `127.0.0.1:8360`; the player listener binds `127.0.0.1:8370`; set `NEQ_OPEN_BROWSER=0`.
 - Never run port 8357 or the installed campaign. The facilitator's real profile MUST NOT be touched.
-- Place the gate-owned XDG state root under the run evidence directory. Use the installed pinned companion from the packaging change: `runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel`. Verify its runtime manifest and digest before use.
+- Place the gate-owned XDG state root outside the repository, Python environment, campaign data, and run evidence. On macOS use `~/Library/Caches/neq-n3g/<id8>`; on an approved non-macOS owner-run use `$XDG_CACHE_HOME/neq-n3g/<id8>`, falling back to `~/.cache/neq-n3g/<id8>`. `<id8>` is the first eight lowercase hexadecimal characters of `sha256(run_id)`. The driver rejects symlinks, wrong ownership, an existing run root, unsafe containment, and a Unix socket path of 104 bytes or more before side effects. Evidence records only `<id8>` and `sha256(os.fsencode(state_root))`, never the raw state path. L10 removes only the unique run root and removes `neq-n3g` only if empty. Use the installed pinned companion from the packaging change: `runtime/opentunnel/v0.6.2/opentunnel-darwin-arm64/opentunnel`. Verify its runtime manifest and digest before use.
 
 The live run requires a separate approved authorization/booking and a clean OD-6 preflight with zero infrastructure failures at the exact SHA to be run. The booking, preflight report, and SHA are bound by the live-window lock record below. The driver MUST refuse to proceed before side effects if those prerequisites or the lock checks fail.
 
@@ -141,8 +141,8 @@ For every row, an observed unmet PASS criterion with complete and reliable evide
 ### L10 — `clean-teardown`
 
 - **Precondition:** The run's gate-owned profile and any gate remote tunnel identity are positively identified; the installed companion path is verified.
-- **Action:** Stop sharing; stop the host; delete the gate remote tunnel identity using the installed companion's `delete --yes` with the gate profile environment only; verify deletion via status; verify ports are free and no run processes remain; remove the gate state root; verify the public URL is unreachable afterwards.
-- **Expected observations (PASS):** The gate remote identity is deleted and confirmed absent; ports are free; no run processes remain; the gate state root is removed; the public URL is unreachable; the installed companion remains in place.
+- **Action:** Stop sharing; stop the host; delete the gate remote tunnel identity using the installed companion's `delete --yes` with the gate profile environment only; verify deletion via status; verify ports are free and no run processes remain; remove only the gate state root; remove its `neq-n3g` parent only if empty; verify the public URL is unreachable afterwards.
+- **Expected observations (PASS):** The gate remote identity is deleted and confirmed absent; ports are free; no run processes remain; only the unique gate state root is removed and its `neq-n3g` parent is removed only if empty; the public URL is unreachable; the installed companion remains in place.
 - **BLOCKED conditions:** Ownership of the profile/identity/process or the status/port/public-reachability evidence cannot be established safely. Any deletion outside the gate profile, remaining process/state/port/public reachability, or removal of the installed companion is FAIL.
 
 ## Evidence layout, redaction, and verdicts
@@ -155,6 +155,15 @@ Write evidence under `<run>/capture` with these artifacts:
 - A provider ledger copy
 - Managed-host output counters only; never raw managed-host output
 - `SHA256SUMS`
+
+The state tree is not stored under the evidence directory. `run.json` records
+`gate_state_root_id8` and `gate_state_path_sha256`; the raw cache path is not
+written to any evidence artifact. On macOS, the default path is
+`~/Library/Caches/neq-n3g/<id8>`; Linux remains owner-run-only and uses
+`$XDG_CACHE_HOME/neq-n3g/<id8>` or `~/.cache/neq-n3g/<id8>`. Symlinked or
+wrong-owner roots, a pre-existing `<id8>` root, repository/venv containment,
+or a profile socket path at least 104 bytes long are refused before side
+effects. Teardown deletes only `<id8>` and removes `neq-n3g` only when empty.
 
 Redact invitation host/URL, tunnel IDs, credentials, cookies, and CSRF tokens. Evidence MUST NOT contain raw managed-host output or secret values. PASS is allowed only when all required rows PASS on that platform; a BLOCKED row prevents platform PASS. A process exit code never establishes PASS. Since Linux arm64 remains `owner-run-required` BLOCKED until a separate owner-run leg, N3 remains pending/not PASS until every required platform is complete.
 
