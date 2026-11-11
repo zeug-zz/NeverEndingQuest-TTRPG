@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import builtins
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -69,6 +70,36 @@ def _synthetic_ruling_source() -> tuple[bytes, bytes]:
         + b"\n"
     )
     return section + b"<!-- /ruling -->\n", section
+
+
+def _synthetic_continuation_ruling_source() -> tuple[bytes, bytes]:
+    section = (
+        b"## Ruling: "
+        + preflight.CONTINUATION_RULING_ID.encode("ascii")
+        + b"\nSynthetic Study 3b continuation authorization fixture.\n"
+    )
+    return section + b"<!-- /ruling -->\n", section
+
+
+def _verified_readiness_fixture() -> preflight.ReadinessVerification:
+    return preflight.ReadinessVerification(
+        status="READY",
+        reason_codes=(),
+        study_id=protocol.STUDY_ID,
+        expected_head_sha=GOOD_SHA,
+        current_head_sha=GOOD_SHA,
+        ci_check_count=len(preflight.REQUIRED_CI_CHECK_NAMES),
+        preflight_gate_count=len(preflight.REQUIRED_PREFLIGHT_COMMANDS),
+        external_provenance_verified=True,
+        live_dispatch_permitted=True,
+        ruling_id=preflight.DISPATCH_RULING_ID,
+        ruling_section_sha256=preflight.PINNED_RULING_SECTION_SHA256,
+        ci_evidence_path=PREP_ROOT_RELATIVE + "/synthetic-ci.json",
+        ci_evidence_sha256=GOOD_CI_SHA256,
+        evidence_relative_path=PREP_ROOT_RELATIVE + "/readiness/synthetic.json",
+        evidence_sha256="c" * 64,
+        _proof=preflight._CONTINUATION_READY_PROOF,
+    )
 
 
 def _pinned_ruling_summary() -> dict[str, object]:
@@ -437,6 +468,143 @@ class Study3bPreflightTests(unittest.TestCase):
         )
         self.assertEqual(summary["hard_ceiling_usd"], "0.05")
 
+    def test_continuation_ruling_is_uniquely_hash_pinned(self) -> None:
+        raw, section = _synthetic_continuation_ruling_source()
+        fixture_sha256 = hashlib.sha256(section).hexdigest()
+        self.assertEqual(
+            preflight.CONTINUATION_RULING_ID,
+            "neq-s-study3b-adjudication-20261111",
+        )
+        self.assertEqual(
+            preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256,
+            "b9e2a414e7b5234bd3453bd42b689515a3215ab2e6690580c6abe91c7746fce8",
+        )
+        with patch.object(preflight, "_read_ruling_source", return_value=raw), patch.object(
+            preflight,
+            "PINNED_CONTINUATION_RULING_SECTION_SHA256",
+            fixture_sha256,
+        ):
+            summary = preflight._verify_study3b_continuation_ruling()
+        self.assertEqual(
+            summary,
+            {
+                "ruling_id": preflight.CONTINUATION_RULING_ID,
+                "section_sha256": fixture_sha256,
+            },
+        )
+
+        altered = raw.replace(b"authorization fixture", b"altered fixture")
+        with patch.object(preflight, "_read_ruling_source", return_value=altered):
+            with self.assertRaises(preflight.ReadinessBlocked) as blocked:
+                preflight._verify_study3b_continuation_ruling()
+        self.assertEqual(
+            blocked.exception.code,
+            "STUDY3B_CONTINUATION_RULING_HASH_MISMATCH",
+        )
+
+    def test_continuation_readiness_requires_verified_object_and_rechecks_gates(self) -> None:
+        with self.assertRaises(preflight.ReadinessBlocked) as blocked:
+            preflight.assert_study3b_continuation_readiness_current(True)
+        self.assertEqual(
+            blocked.exception.code,
+            "LIVE_CONTINUATION_READINESS_PROOF_REQUIRED",
+        )
+
+        readiness = _verified_readiness_fixture()
+        self.assertTrue(preflight.is_verified_continuation_readiness(readiness))
+        prior_readiness = replace(readiness, _proof=preflight._READY_PROOF)
+        with self.assertRaises(preflight.ReadinessBlocked) as blocked:
+            preflight.assert_study3b_continuation_readiness_current(prior_readiness)
+        self.assertEqual(
+            blocked.exception.code,
+            "LIVE_CONTINUATION_READINESS_PROOF_REQUIRED",
+        )
+        ruling = {
+            "ruling_id": preflight.CONTINUATION_RULING_ID,
+            "section_sha256": preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256,
+        }
+        with patch.object(
+            preflight, "_assert_dispatch_readiness_current"
+        ) as current, patch.object(
+            preflight,
+            "_verify_study3b_continuation_ruling",
+            return_value=ruling,
+        ):
+            self.assertEqual(
+                preflight.assert_study3b_continuation_readiness_current(readiness),
+                ruling,
+            )
+        current.assert_called_once_with(
+            readiness,
+            require_fresh_run_root=False,
+        )
+
+    def test_continuation_readiness_rechecks_exact_head_ci_and_persisted_proof(self) -> None:
+        raw = _canonical_json(_valid_check_runs())
+        readiness = replace(
+            _verified_readiness_fixture(),
+            ci_evidence_sha256=hashlib.sha256(raw).hexdigest(),
+        )
+        ci_summary = preflight._validate_check_runs(raw, GOOD_SHA)
+        baseline_pin = preflight._BaselinePin(
+            evidence_sha256="d" * 64,
+            inventory_sha256="e" * 64,
+            file_count=1,
+            opaque_bytes_count=0,
+            files=(),
+        )
+        persisted_evidence = {
+            "ci_evidence": {
+                "required_checks": ci_summary["required_checks"],
+                "app_identities": ci_summary["app_identities"],
+            }
+        }
+        continuation_ruling = {
+            "ruling_id": preflight.CONTINUATION_RULING_ID,
+            "section_sha256": preflight.PINNED_CONTINUATION_RULING_SECTION_SHA256,
+        }
+        with patch.object(
+            preflight,
+            "_read_local_git_state",
+            side_effect=[(GOOD_SHA, b""), (GOOD_SHA, b"")],
+        ) as local_state, patch.object(
+            preflight, "_validate_fixed_study_and_cost"
+        ), patch.object(
+            preflight,
+            "_verify_adjudication_ruling",
+            return_value=_pinned_ruling_summary(),
+        ), patch.object(
+            preflight, "_assert_fresh_run_root"
+        ) as fresh_root, patch.object(
+            preflight, "_read_ci_evidence", return_value=(raw, None)
+        ) as read_ci, patch.object(
+            preflight,
+            "_verify_pull_request_head",
+            return_value={"number": 127, "is_draft": True, "head_sha": GOOD_SHA},
+        ) as verify_pr, patch.object(
+            preflight, "_load_baseline_pin", return_value=baseline_pin
+        ), patch.object(
+            preflight, "_assert_baseline_unchanged"
+        ), patch.object(
+            preflight,
+            "_verify_persisted_readiness_evidence",
+            return_value=persisted_evidence,
+        ) as verify_evidence, patch.object(
+            preflight,
+            "_verify_study3b_continuation_ruling",
+            return_value=continuation_ruling,
+        ):
+            result = preflight.assert_study3b_continuation_readiness_current(
+                readiness
+            )
+
+        self.assertEqual(result, continuation_ruling)
+        self.assertEqual(local_state.call_count, 2)
+        read_ci.assert_called_once_with(readiness.ci_evidence_path)
+        verify_pr.assert_called_once_with(GOOD_SHA)
+        verify_evidence.assert_called_once()
+        fresh_root.assert_not_called()
+
     def test_ruling_reader_uses_exact_campaign_root_and_relative_no_follow_walk(self) -> None:
         expected_root = Path(
             "/Users/zeug/Projects/NeverEndingQuest/.git/overseer-relay/campaigns/neq-current-build"
@@ -564,6 +732,37 @@ class Study3bPreflightTests(unittest.TestCase):
             summary.infrastructure_failures,
         )
         self.assertIn("PREFLIGHT_GATE_SET_INCOMPLETE", summary.infrastructure_failures)
+
+    def test_continuation_preflight_gates_keep_exact_head_without_fresh_root_gate(
+        self,
+    ) -> None:
+        pin = preflight._BaselinePin(
+            evidence_sha256="a" * 64,
+            inventory_sha256="b" * 64,
+            file_count=1,
+            opaque_bytes_count=0,
+            files=(),
+        )
+        with patch.object(preflight, "_assert_git_state") as git_state, patch.object(
+            preflight, "_assert_fresh_run_root"
+        ) as fresh_root, patch.object(
+            preflight, "_assert_baseline_unchanged"
+        ), patch.object(
+            preflight,
+            "_run_process",
+            return_value=preflight._CommandResult(0, b"ok", b""),
+        ) as run:
+            summary = preflight._run_provider_free_preflight(
+                GOOD_SHA,
+                pin,
+                require_fresh_run_root=False,
+            )
+        self.assertEqual(len(summary.checks), len(preflight.REQUIRED_PREFLIGHT_COMMANDS))
+        self.assertEqual(summary.gate_failures, ())
+        self.assertEqual(summary.infrastructure_failures, ())
+        self.assertEqual(run.call_count, len(preflight.REQUIRED_PREFLIGHT_COMMANDS))
+        self.assertEqual(git_state.call_count, 2 * len(preflight.REQUIRED_PREFLIGHT_COMMANDS))
+        fresh_root.assert_not_called()
 
     def test_preflight_gate_uses_lexical_repo_venv_python(self) -> None:
         command = dict(preflight.REQUIRED_PREFLIGHT_COMMANDS)[
@@ -771,13 +970,13 @@ class Study3bPreflightTests(unittest.TestCase):
         )
         with patch.object(preflight, "_read_local_git_state", return_value=(GOOD_SHA, b"")), patch.object(
             preflight, "_validate_fixed_study_and_cost", return_value={}
-        ), patch.object(preflight, "_assert_fresh_run_root"), patch.object(
+        ), patch.object(preflight, "_assert_fresh_run_root") as fresh_root, patch.object(
             preflight, "_verify_adjudication_ruling", return_value=ruling
         ), patch.object(
             preflight, "_verify_pull_request_head", return_value={"number": 127, "is_draft": True, "head_sha": GOOD_SHA}
         ), patch.object(preflight, "_load_baseline_pin", return_value=baseline), patch.object(
             preflight, "_assert_baseline_unchanged"
-        ), patch.object(preflight, "_run_provider_free_preflight", return_value=gates), patch.object(
+        ), patch.object(preflight, "_run_provider_free_preflight", return_value=gates) as run_gates, patch.object(
             preflight, "_write_immutable_evidence", return_value=(PREP_ROOT_RELATIVE + "/readiness/test.json", "1" * 64)
         ), patch.object(
             preflight, "_verify_persisted_readiness_evidence", return_value={}
@@ -788,7 +987,26 @@ class Study3bPreflightTests(unittest.TestCase):
                 ci_evidence_sha256=ci_sha,
                 dispatch_ruling_id=preflight.DISPATCH_RULING_ID,
             )
+            continuation_result = preflight.verify_live_readiness(
+                expected_head_sha=GOOD_SHA,
+                ci_evidence_path=relative_path,
+                ci_evidence_sha256=ci_sha,
+                dispatch_ruling_id=preflight.DISPATCH_RULING_ID,
+                _allow_existing_run_root=True,
+            )
         self.assertTrue(preflight.is_verified_readiness(result))
+        self.assertFalse(preflight.is_verified_continuation_readiness(result))
+        self.assertTrue(
+            preflight.is_verified_continuation_readiness(continuation_result)
+        )
+        self.assertEqual(run_gates.call_count, 2)
+        self.assertIs(
+            run_gates.call_args_list[0].kwargs["require_fresh_run_root"], True
+        )
+        self.assertIs(
+            run_gates.call_args_list[1].kwargs["require_fresh_run_root"], False
+        )
+        self.assertEqual(fresh_root.call_count, 2)
         self.assertTrue(result.live_dispatch_permitted)
         self.assertEqual(result.ci_check_count, 11)
         self.assertEqual(

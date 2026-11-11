@@ -36,11 +36,12 @@ from ..llm_staging.transport import (
     _canonical_bytes as _transport_canonical_bytes,
     _create_reserved_dispatch_context,
 )
-from . import hydration, newrequest, preflight, protocol
+from . import contract as study3b_contract
+from . import hydration, isolation, newrequest, preflight, protocol
 from . import ledger as study3b_ledger
-from . import isolation
 from .isolation import PriorStudyMutationDenied, assert_study3b_write_target
 from .ledger import Study3bLedger, Study3bLedgerError, Study3bReservation
+from .validator_metadata import validator_metadata_outcome
 
 
 SYNTHETIC_CREDENTIAL = "SYNTHETIC_STUDY3B_CREDENTIAL_NOT_SECRET"
@@ -67,6 +68,8 @@ class Study3bAttemptResult:
     outcome: str
     stop_study: bool
     reason_code: str | None
+    validator_code: str | None
+    validator_rule_id: str | None
     http_status: int | None
     request_sha256: str
     transport_request_sha256: str
@@ -332,6 +335,58 @@ class Study3bRunner:
             synthetic_only=False,
         )
 
+    def continue_run(
+        self,
+        *,
+        expected_head_sha: str | None = None,
+        ci_evidence_path: str | None = None,
+        ci_evidence_sha256: str | None = None,
+        dispatch_ruling_id: str | None = None,
+    ) -> Study3bRunResult:
+        """Continue the pinned existing ledger after fresh exact-head gates."""
+
+        if (
+            expected_head_sha is None
+            or ci_evidence_path is None
+            or ci_evidence_sha256 is None
+            or dispatch_ruling_id is None
+        ):
+            raise Study3bRunnerBlocked("STUDY3B_EXPLICIT_EXACT_HEAD_OPT_IN_REQUIRED")
+        try:
+            readiness = preflight.verify_live_readiness(
+                expected_head_sha=expected_head_sha,
+                ci_evidence_path=ci_evidence_path,
+                ci_evidence_sha256=ci_evidence_sha256,
+                dispatch_ruling_id=dispatch_ruling_id,
+                _allow_existing_run_root=True,
+            )
+            if not preflight.is_verified_continuation_readiness(readiness):
+                code = (
+                    readiness.reason_codes[0]
+                    if type(readiness) is preflight.ReadinessVerification
+                    and readiness.reason_codes
+                    else "LIVE_CONTINUATION_PREFLIGHT_NOT_READY"
+                )
+                raise Study3bRunnerBlocked(code)
+        except preflight.ReadinessBlocked as error:
+            raise Study3bRunnerBlocked(error.code) from None
+
+        actual_ledger = Study3bLedger()
+        try:
+            actual_ledger.continue_from_stopped(readiness=readiness)
+        except Study3bLedgerError as error:
+            raise Study3bRunnerBlocked(error.code) from None
+        adapter = _Study3bPolicyAdapter(
+            http=_UrllibHTTP(),
+            config_loader=None,
+        )
+        return _execute_reserved_scenes(
+            actual_ledger,
+            adapter,
+            synthetic_only=False,
+            scene_ids=protocol.SCENE_ORDER[1:],
+        )
+
     def run_synthetic(
         self,
         ledger: Study3bLedger,
@@ -359,11 +414,18 @@ def _execute_reserved_scenes(
     adapter: _Study3bPolicyAdapter,
     *,
     synthetic_only: bool,
+    scene_ids: tuple[str, ...] = protocol.SCENE_ORDER,
 ) -> Study3bRunResult:
+    if type(scene_ids) is not tuple or scene_ids not in {
+        protocol.SCENE_ORDER,
+        protocol.SCENE_ORDER[1:],
+    }:
+        raise Study3bRunnerBlocked("STUDY3B_EXECUTION_ORDER_INVALID")
     owner_token = object()
     attempts: list[Study3bAttemptResult] = []
-    remaining = list(protocol.SCENE_ORDER)
-    for scene_id in protocol.SCENE_ORDER:
+    remaining = list(scene_ids)
+    staging_line_blocked = False
+    for scene_id in scene_ids:
         try:
             request = newrequest.build_request(scene_id)
             newrequest.audit_request_parity(scene_id, request)
@@ -388,29 +450,30 @@ def _execute_reserved_scenes(
         except Exception:
             raise Study3bRunnerBlocked("STUDY3B_PRE_DISPATCH_CHECK_FAILED") from None
 
-        attempts.append(
-            _run_reserved_attempt(
-                ledger,
-                adapter,
-                owner_token,
-                reservation,
-                request,
-                request_sha256,
-                transport_request_sha256,
-            )
+        attempt = _run_reserved_attempt(
+            ledger,
+            adapter,
+            owner_token,
+            reservation,
+            request,
+            request_sha256,
+            transport_request_sha256,
         )
+        attempts.append(attempt)
+        if attempt.outcome == "HARNESS_FAILURE":
+            staging_line_blocked = True
         remaining.pop(0)
-        if attempts[-1].stop_study:
+        if attempt.stop_study:
             return Study3bRunResult(
                 study_id=protocol.STUDY_ID,
-                status="STOPPED",
+                status="BLOCKED" if staging_line_blocked else "STOPPED",
                 attempts=tuple(attempts),
                 remaining_scenes=tuple(remaining),
                 synthetic_only=synthetic_only,
             )
     return Study3bRunResult(
         study_id=protocol.STUDY_ID,
-        status="COMPLETE",
+        status="BLOCKED" if staging_line_blocked else "COMPLETE",
         attempts=tuple(attempts),
         remaining_scenes=(),
         synthetic_only=synthetic_only,
@@ -475,6 +538,7 @@ def _run_reserved_attempt(
     receipt: object = None
     safe_metadata: dict[str, Any] | None = None
     reason_code: str | None = None
+    validator_metadata: dict[str, str] | None = None
     forced_stop = False
 
     try:
@@ -539,10 +603,21 @@ def _run_reserved_attempt(
             try:
                 document = _parse_provider_json(result.body)
                 delta_bytes = _extract_delta_bytes(document)
-                hydration.hydrate_delta_output(delta_bytes, scene_id=reservation.scene_id)
+                hydration.hydrate_delta_output(
+                    delta_bytes, scene_id=reservation.scene_id
+                )
+            except study3b_contract.ContractError as error:
+                classified_metadata = _validator_metadata_from_error(error)
+                if classified_metadata is None:
+                    outcome = "HARNESS_FAILURE"
+                    reason_code = "STUDY3B_HARNESS_FAILURE"
+                else:
+                    outcome, validator_metadata = classified_metadata
+                    if outcome == "HARNESS_FAILURE":
+                        reason_code = "STUDY3B_HARNESS_FAILURE"
             except Exception:
-                outcome = "CONTRACT_FAILURE"
-                reason_code = "STUDY3B_OUTPUT_PROTOCOL_DEFECT"
+                outcome = "HARNESS_FAILURE"
+                reason_code = "STUDY3B_HARNESS_FAILURE"
             else:
                 outcome = "ACCEPTED"
 
@@ -551,11 +626,12 @@ def _run_reserved_attempt(
             reservation,
             outcome=outcome,
             cost_receipt=receipt,
+            validator_metadata=validator_metadata,
         )
     except Study3bLedgerError as error:
         raise Study3bRunnerBlocked(error.code) from None
 
-    if completion.actual_cost_status != "RECONCILED":
+    if completion.actual_cost_status == "UNRESOLVED":
         reason_code = reason_code or "ACTUAL_COST_UNRESOLVED"
     elif completion.stop_study and outcome != "STOPPED":
         reason_code = reason_code or "REMAINING_BUDGET_UNSAFE"
@@ -570,6 +646,12 @@ def _run_reserved_attempt(
         outcome=outcome,
         stop_study=completion.stop_study or forced_stop,
         reason_code=reason_code,
+        validator_code=(
+            validator_metadata["code"] if validator_metadata is not None else None
+        ),
+        validator_rule_id=(
+            validator_metadata["rule_id"] if validator_metadata is not None else None
+        ),
         http_status=http_status,
         request_sha256=request_sha256,
         transport_request_sha256=transport_request_sha256,
@@ -706,6 +788,21 @@ def _receipt_failure_code(
     if safe_metadata is None:
         return "PROVIDER_RESPONSE_INVALID"
     return "COST_RECEIPT_MISSING_OR_INCONSISTENT"
+
+
+def _validator_metadata_from_error(
+    error: BaseException,
+) -> tuple[str, dict[str, str]] | None:
+    """Expose only an exact frozen-validator pair, never its path or message."""
+
+    if type(error) is not study3b_contract.ContractError:
+        return None
+    code = error.code
+    rule_id = error.rule_id
+    outcome = validator_metadata_outcome(code, rule_id)
+    if outcome is None:
+        return None
+    return outcome, {"code": code, "rule_id": rule_id}
 
 
 def _provider_cost_string(value: object) -> str | None:
