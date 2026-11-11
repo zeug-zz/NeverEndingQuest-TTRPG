@@ -1,0 +1,45 @@
+{
+  "schema": "neq.llm_staging_study3b_manifest.v1",
+  "study_id": "mise-en-scene-study3b-20261111",
+  "protocol_version": "neq.llm_staging_study3b_delta.v1",
+  "status": "CONTRACT_PREPARATION_ONLY",
+  "software_preparation_readiness": "PENDING",
+  "dispatch_authorized": false,
+  "scene_order": [
+    "into_the_deepvault:scene:ha003-i02",
+    "into_the_deepvault:scene:sd005-i03",
+    "xhalruuns_masquerade:scene:tsu001-ao02"
+  ],
+  "attempt_cap": {
+    "identity": "mise-en-scene-study3b-20261111",
+    "total": 3,
+    "per_scene": 1,
+    "scene_order": [
+      "into_the_deepvault:scene:ha003-i02",
+      "into_the_deepvault:scene:sd005-i03",
+      "xhalruuns_masquerade:scene:tsu001-ao02"
+    ]
+  },
+  "source_provenance": {
+    "study_id": "mise-en-scene-study3-20261110",
+    "manifest": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/staging-manifest.json",
+      "sha256": "15f2d9b6752c0f29adb48e6b597d0739600f107cb5574121bfdb4b6023581858"
+    },
+    "protocol": {
+      "path": "openspec/changes/v2-mise-en-scene-study3-contract-parity/protocol/protocol.md",
+      "sha256": "61bf6d5011eb72822d0d42beb815a512b36896022b93d38687120ec4c827886e"
+    }
+  },
+  "artifacts": {
+    "protocol": {
+      "path": "openspec/changes/v2-mise-en-scene-study3b-hydration-parity/protocol/protocol.md",
+      "sha256": "0fe80b51a652d7d44127a966b0794bada2912de86178243e3397d9949367fcf6"
+    },
+    "generation_config": {
+      "path": "openspec/changes/v2-mise-en-scene-study3b-hydration-parity/protocol/generation-config.json",
+      "sha256": "071c0a40ab2450e8d9bf0222ad5e604e17dda2743774c8b9a717938901027c78"
+    }
+  },
+  "hash_canonicalization": "Protocol and configuration hashes cover exact stored UTF-8 bytes; manifest SHA-256 is pinned by the Study 3b protocol module."
+}
