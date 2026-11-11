@@ -65,6 +65,10 @@ Only after focused tests and a clean exact-SHA preflight may the primary orchest
 
 This lifecycle gate does not establish installer/update readiness, N4 external gameplay, browser compatibility, or overall Phase 3 completion; those remain outside this change.
 
+### Live gate contract
+
+The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v1`, its rows, caps, lock protocol, platform verdicts, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
+
 ## Risks / Trade-offs
 
 - [A stale or reused PID could target an unrelated process] -> Require positive executable/profile/ownership evidence; fail closed and leave uncertain resources untouched.
