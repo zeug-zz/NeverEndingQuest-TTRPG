@@ -20,6 +20,7 @@ import os
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -43,6 +44,8 @@ GUARD_DIRECTORY_ENV = "NEQ_PREFLIGHT_GUARD_DIRECTORY"
 PROJECT_ROOT_ENV = "NEQ_PREFLIGHT_PROJECT_ROOT"
 EXPECTED_PYTHON_ENV = "NEQ_PREFLIGHT_EXPECTED_PYTHON"
 EXPECTED_PREFIX_ENV = "NEQ_PREFLIGHT_EXPECTED_PREFIX"
+GUARD_EVENTS_PATH_ENV = "NEQ_PREFLIGHT_GUARD_EVENTS_PATH"
+RUN_ID_ENV = "NEQ_PREFLIGHT_RUN_ID"
 CANARY_SIGNAL_FD = 198
 CANARY_REPORT_FD = 199
 CANARY_SIGNAL = b"NEQ_PREFLIGHT_SITE_STARTUP_CANARY_V1\n"
@@ -72,6 +75,12 @@ _KNOWN_PROVIDER_KEYS = (
     "COHERE_API_KEY",
 )
 _RUNTIME_INJECTED_ENV_NAMES = ("LC_CTYPE", "__CF_USER_TEXT_ENCODING")
+GUARD_EVENT_ROOT = Path(
+    "tmp/router-rollout/live-gate-preflight/profile-characterization"
+)
+GUARD_EVENT_MAX_COUNT = 4096
+GUARD_EVENT_MAX_BYTES = 512_000
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 class NetworkGuardError(PermissionError):
     """Raised before a non-loopback network or DNS operation is attempted."""
@@ -88,9 +97,479 @@ _ORIGINAL_DNS_FUNCTIONS: dict[str, Any] = {}
 _ORIGINAL_POPEN: Any = None
 _GUARDED_SOCKET_METHODS: dict[str, Any] = {}
 _GUARDED_DNS_FUNCTIONS: dict[str, Any] = {}
+_GUARD_EVENTS: list[dict[str, Any]] = []
+_GUARD_EVENT_SEQUENCE = 0
+_GUARD_EVENT_OVERFLOW = False
+_GUARD_EVENT_SINK: Path | None = None
 _SUBPROCESS_AUTHORIZATION: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar("neq_preflight_subprocess_authorization", default=None)
 )
+
+
+def _guard_event_target(address: Any) -> dict[str, Any]:
+    host: Any = None
+    port: Any = None
+    if isinstance(address, (tuple, list)) and address:
+        host = address[0]
+        if len(address) > 1:
+            port = address[1]
+    target_host: str | None = None
+    target_host_sha256: str | None = None
+    if isinstance(host, str) and host:
+        raw_host = host.split("%", 1)[0]
+        try:
+            target_host = str(ipaddress.ip_address(raw_host))
+        except ValueError:
+            target_host_sha256 = hashlib.sha256(host.encode("utf-8")).hexdigest()
+    else:
+        target_host_sha256 = hashlib.sha256(b"<missing-host>").hexdigest()
+    target_port = port if type(port) is int and 0 <= port <= 65535 else None
+    return {
+        "target_host": target_host,
+        "target_port": target_port,
+        "target_host_sha256": target_host_sha256,
+    }
+
+
+def _validate_guard_event_path(path: str | Path, run_id: str) -> Path:
+    if not isinstance(run_id, str) or _SAFE_RUN_ID.fullmatch(run_id) is None:
+        raise SafetyConfigurationError("preflight guard-event run identity is invalid")
+    root = PROJECT_ROOT.resolve(strict=True)
+    expected = root / GUARD_EVENT_ROOT / run_id / "guard-events.jsonl"
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    if candidate != expected:
+        raise SafetyConfigurationError("preflight guard-event path identity is invalid")
+    cursor = root
+    for part in expected.relative_to(root).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise SafetyConfigurationError(
+                "preflight guard-event path traverses a symlink"
+            )
+    if not expected.parent.is_dir():
+        raise SafetyConfigurationError("preflight guard-event directory is unavailable")
+    return expected
+
+
+def _write_guard_event(path: Path, event: Mapping[str, Any], *, create: bool) -> None:
+    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        metadata = os.fstat(descriptor)
+        get_uid = getattr(os, "getuid", None)
+        current_uid = get_uid() if callable(get_uid) else None
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or (current_uid is not None and metadata.st_uid != current_uid)
+        ):
+            raise SafetyConfigurationError("preflight guard-event file is invalid")
+        payload = json.dumps(
+            dict(event), ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii") + b"\n"
+        if metadata.st_size + len(payload) > GUARD_EVENT_MAX_BYTES:
+            raise SafetyConfigurationError("preflight guard-event capacity exceeded")
+        if os.write(descriptor, payload) != len(payload):
+            raise SafetyConfigurationError("preflight guard-event write was incomplete")
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise SafetyConfigurationError("preflight guard-event write failed") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _record_guard_event(
+    event_type: str,
+    *,
+    operation: str | None = None,
+    decision: str | None = None,
+    address: Any = None,
+    command_sha256: str | None = None,
+    startup_command_sha256: str | None = None,
+    interpreter: Mapping[str, str] | None = None,
+    working_directory: str | None = None,
+    child_pid: int | None = None,
+    child_is_python: bool | None = None,
+) -> dict[str, Any]:
+    global _GUARD_EVENT_SEQUENCE, _GUARD_EVENT_OVERFLOW
+    if len(_GUARD_EVENTS) >= GUARD_EVENT_MAX_COUNT:
+        _GUARD_EVENT_OVERFLOW = True
+        raise NetworkGuardError("preflight guard-event capacity exceeded")
+    _GUARD_EVENT_SEQUENCE += 1
+    target = (
+        _guard_event_target(address)
+        if event_type == "network_attempt"
+        else {
+            "target_host": None,
+            "target_port": None,
+            "target_host_sha256": None,
+        }
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "sequence": _GUARD_EVENT_SEQUENCE,
+        "event_type": event_type,
+        "pid": os.getpid(),
+        "process_group_id": os.getpgrp(),
+        "process_role": os.environ.get(PROCESS_ROLE_ENV, ""),
+        "run_id": os.environ.get(RUN_ID_ENV, ""),
+        "observed_at_ns": time.time_ns(),
+        "operation": operation,
+        "decision": decision,
+        **target,
+        "command_sha256": command_sha256 or startup_command_sha256,
+        "child_pid": child_pid,
+        "child_is_python": child_is_python,
+        "guard_active": True if event_type == "guard_startup" else None,
+        "interpreter": dict(interpreter) if interpreter is not None else None,
+        "working_directory": working_directory,
+    }
+    _GUARD_EVENTS.append(event)
+    if _GUARD_EVENT_SINK is not None:
+        try:
+            _write_guard_event(_GUARD_EVENT_SINK, event, create=False)
+        except SafetyConfigurationError as exc:
+            _GUARD_EVENT_OVERFLOW = True
+            raise NetworkGuardError("preflight guard-event persistence failed") from exc
+    return event
+
+
+def record_startup_guard_event() -> dict[str, Any]:
+    """Record the guard's first per-process event before application entry."""
+    command = current_invocation_command()
+    command_sha256 = hashlib.sha256(
+        json.dumps(command, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    return _record_guard_event(
+        "guard_startup",
+        startup_command_sha256=command_sha256,
+        interpreter={
+            "executable": sys.executable,
+            "prefix": sys.prefix,
+            "base_prefix": sys.base_prefix,
+        },
+        working_directory=str(Path.cwd()),
+    )
+
+
+def guard_event_snapshot(*, run_id: str | None = None) -> dict[str, Any]:
+    """Return a detached, run-bound snapshot of this process's guard events."""
+    events = []
+    for item in _GUARD_EVENTS:
+        event = dict(item)
+        if run_id is not None:
+            event["run_id"] = run_id
+        events.append(event)
+    return {"events": events, "complete": not _GUARD_EVENT_OVERFLOW}
+
+
+def configure_guard_event_sink(path: str | Path, *, run_id: str) -> Path:
+    """Bind this process and future workers to one private per-run event journal."""
+    global _GUARD_EVENT_SINK
+    selected = _validate_guard_event_path(path, run_id)
+    if _GUARD_EVENT_SINK is not None:
+        if _GUARD_EVENT_SINK != selected:
+            raise SafetyConfigurationError("preflight guard-event sink was already bound")
+        return selected
+    os.environ[RUN_ID_ENV] = run_id
+    os.environ[GUARD_EVENTS_PATH_ENV] = str(selected)
+    try:
+        descriptor = os.open(
+            selected,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError as exc:
+        raise SafetyConfigurationError(
+            "preflight guard-event journal is unavailable"
+        ) from exc
+    else:
+        os.close(descriptor)
+    _GUARD_EVENT_SINK = selected
+    for original in _GUARD_EVENTS:
+        event = dict(original)
+        event["run_id"] = run_id
+        try:
+            _write_guard_event(selected, event, create=False)
+        except SafetyConfigurationError as exc:
+            raise SafetyConfigurationError(
+                "preflight guard-event journal is incomplete"
+            ) from exc
+    return selected
+
+
+def _bind_guard_event_sink_from_environment() -> None:
+    """Attach a launched process to its already-created per-run journal."""
+    global _GUARD_EVENT_SINK
+    run_id = os.environ.get(RUN_ID_ENV)
+    path = os.environ.get(GUARD_EVENTS_PATH_ENV)
+    if run_id is None and path is None:
+        return
+    if run_id is None or path is None:
+        raise SafetyConfigurationError("preflight guard-event identity is incomplete")
+    selected = _validate_guard_event_path(path, run_id)
+    if _GUARD_EVENT_SINK is not None and _GUARD_EVENT_SINK != selected:
+        raise SafetyConfigurationError("preflight guard-event sink identity changed")
+    try:
+        descriptor = os.open(
+            selected, os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        )
+        metadata = os.fstat(descriptor)
+        get_uid = getattr(os, "getuid", None)
+        current_uid = get_uid() if callable(get_uid) else None
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or (current_uid is not None and metadata.st_uid != current_uid)
+        ):
+            raise SafetyConfigurationError("preflight guard-event journal is invalid")
+    except OSError as exc:
+        raise SafetyConfigurationError("preflight guard-event journal is unavailable") from exc
+    finally:
+        if "descriptor" in locals():
+            os.close(descriptor)
+    _GUARD_EVENT_SINK = selected
+
+
+def _guard_event_unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate guard-event key")
+        result[key] = value
+    return result
+
+
+def read_guard_event_journal(
+    path: str | Path, *, run_id: str
+) -> tuple[list[dict[str, Any]], bytes]:
+    """Read and validate a complete per-run guard journal without following links."""
+    selected = _validate_guard_event_path(path, run_id)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(selected, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > GUARD_EVENT_MAX_BYTES:
+            raise SafetyConfigurationError("preflight guard-event journal is invalid")
+        chunks: list[bytes] = []
+        remaining = GUARD_EVENT_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64_000, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > GUARD_EVENT_MAX_BYTES or (raw and not raw.endswith(b"\n")):
+            raise SafetyConfigurationError("preflight guard-event journal is incomplete")
+        events: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            value = json.loads(
+                line.decode("ascii"), object_pairs_hook=_guard_event_unique_object
+            )
+            if not isinstance(value, Mapping):
+                raise SafetyConfigurationError("preflight guard-event entry is invalid")
+            events.append(dict(value))
+        if not validate_guard_event_records(events, expected_run_id=run_id):
+            raise SafetyConfigurationError(
+                "preflight guard-event journal failed validation"
+            )
+        return events, raw
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SafetyConfigurationError(
+            "preflight guard-event journal cannot be read"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def validate_guard_event_records(
+    events: Any,
+    *,
+    expected_run_id: str | None = None,
+    expected_pid: int | None = None,
+    require_startup_canaries: bool = False,
+) -> bool:
+    """Validate event schema, per-process order, and required startup canaries."""
+    fields = {
+        "schema_version",
+        "sequence",
+        "event_type",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "run_id",
+        "observed_at_ns",
+        "operation",
+        "decision",
+        "target_host",
+        "target_port",
+        "target_host_sha256",
+        "command_sha256",
+        "child_pid",
+        "child_is_python",
+        "guard_active",
+        "interpreter",
+        "working_directory",
+    }
+    if not isinstance(events, list) or not events or len(events) > GUARD_EVENT_MAX_COUNT:
+        return False
+    by_pid: dict[int, list[Mapping[str, Any]]] = {}
+    for event in events:
+        if not isinstance(event, Mapping) or set(event) != fields:
+            return False
+        pid = event.get("pid")
+        run_id = event.get("run_id")
+        role = event.get("process_role")
+        if (
+            type(event.get("schema_version")) is not int
+            or event.get("schema_version") != 1
+            or type(event.get("sequence")) is not int
+            or event.get("sequence") < 1
+            or type(pid) is not int
+            or pid <= 0
+            or type(event.get("process_group_id")) is not int
+            or event.get("process_group_id") <= 0
+            or (expected_pid is not None and pid != expected_pid)
+            or role not in PROCESS_ROLES
+            or not isinstance(run_id, str)
+            or (expected_run_id is not None and run_id != expected_run_id)
+            or type(event.get("observed_at_ns")) is not int
+            or event.get("observed_at_ns") <= 0
+        ):
+            return False
+        event_type = event.get("event_type")
+        if event_type == "guard_startup":
+            interpreter = event.get("interpreter")
+            if (
+                event.get("guard_active") is not True
+                or not isinstance(interpreter, Mapping)
+                or set(interpreter) != {"executable", "prefix", "base_prefix"}
+                or not all(isinstance(interpreter.get(key), str) for key in interpreter)
+                or not isinstance(event.get("working_directory"), str)
+                or not isinstance(event.get("command_sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", event["command_sha256"]) is None
+                or event.get("operation") is not None
+                or event.get("decision") is not None
+                or event.get("target_host") is not None
+                or event.get("target_port") is not None
+                or event.get("target_host_sha256") is not None
+                or event.get("child_pid") is not None
+                or event.get("child_is_python") is not None
+            ):
+                return False
+        elif event_type == "network_attempt":
+            target_host = event.get("target_host")
+            target_hash = event.get("target_host_sha256")
+            if (
+                event.get("operation") not in (
+                    "connect",
+                    "connect_ex",
+                    "bind",
+                    "sendto",
+                    "getaddrinfo",
+                    "gethostbyname",
+                    "gethostbyname_ex",
+                    "gethostbyaddr",
+                    "getnameinfo",
+                )
+                or event.get("decision") not in ("allowed", "denied")
+                or (target_host is None) == (target_hash is None)
+                or (target_host is not None and not isinstance(target_host, str))
+                or (
+                    target_hash is not None
+                    and (
+                        not isinstance(target_hash, str)
+                        or re.fullmatch(r"[0-9a-f]{64}", target_hash) is None
+                    )
+                )
+                or (
+                    event.get("target_port") is not None
+                    and (
+                        type(event.get("target_port")) is not int
+                        or not 0 <= event["target_port"] <= 65535
+                    )
+                )
+                or event.get("command_sha256") is not None
+                or event.get("guard_active") is not None
+                or event.get("interpreter") is not None
+                or event.get("working_directory") is not None
+                or event.get("child_pid") is not None
+                or event.get("child_is_python") is not None
+            ):
+                return False
+        elif event_type == "subprocess_attempt":
+            if (
+                event.get("operation") != "Popen"
+                or event.get("decision") not in ("allowed", "denied")
+                or not isinstance(event.get("command_sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", event["command_sha256"]) is None
+                or event.get("target_host") is not None
+                or event.get("target_port") is not None
+                or event.get("target_host_sha256") is not None
+                or event.get("guard_active") is not None
+                or event.get("interpreter") is not None
+                or event.get("working_directory") is not None
+                or event.get("child_pid") is not None
+                or event.get("child_is_python") is not None
+            ):
+                return False
+        elif event_type == "subprocess_started":
+            if (
+                event.get("operation") != "Popen"
+                or event.get("decision") != "started"
+                or not isinstance(event.get("command_sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", event["command_sha256"]) is None
+                or type(event.get("child_pid")) is not int
+                or event.get("child_pid") <= 0
+                or type(event.get("child_is_python")) is not bool
+                or event.get("target_host") is not None
+                or event.get("target_port") is not None
+                or event.get("target_host_sha256") is not None
+                or event.get("guard_active") is not None
+                or event.get("interpreter") is not None
+                or event.get("working_directory") is not None
+            ):
+                return False
+        else:
+            return False
+        by_pid.setdefault(pid, []).append(event)
+
+    for process_events in by_pid.values():
+        process_events.sort(key=lambda event: int(event["sequence"]))
+        if [event["sequence"] for event in process_events] != list(
+            range(1, len(process_events) + 1)
+        ):
+            return False
+        startup_events = [
+            event for event in process_events if event.get("event_type") == "guard_startup"
+        ]
+        if len(startup_events) != 1 or startup_events[0].get("sequence") != 1:
+            return False
+        if require_startup_canaries:
+            denied_connect = any(
+                event.get("event_type") == "network_attempt"
+                and event.get("operation") == "connect"
+                and event.get("decision") == "denied"
+                and event.get("target_host") == "192.0.2.1"
+                and event.get("target_port") == 8360
+                for event in process_events
+            )
+            denied_subprocess = any(
+                event.get("event_type") == "subprocess_attempt"
+                and event.get("decision") == "denied"
+                for event in process_events
+            )
+            if not denied_connect or not denied_subprocess:
+                return False
+    return True
 
 
 class _GuardedPopen(subprocess.Popen):
@@ -99,10 +578,11 @@ class _GuardedPopen(subprocess.Popen):
     def __init__(self, args: Any, *positional: Any, **kwargs: Any) -> None:
         require_guard_active()
         authorization = _SUBPROCESS_AUTHORIZATION.get()
-        if (
+        command_tuple = _command_tuple(args)
+        authorized = not (
             authorization is None
             or authorization.get("used") is True
-            or _command_tuple(args) != authorization.get("command")
+            or command_tuple != authorization.get("command")
             or _path_text(kwargs.get("cwd")) != authorization.get("cwd")
             or kwargs.get("env") != authorization.get("env")
             or tuple(kwargs.get("pass_fds", ())) != authorization.get("pass_fds")
@@ -110,10 +590,45 @@ class _GuardedPopen(subprocess.Popen):
             or kwargs.get("shell", False) is not False
             or kwargs.get("executable") is not None
             or kwargs.get("preexec_fn") is not None
-        ):
+        )
+        command_digest = hashlib.sha256(
+            json.dumps(
+                list(command_tuple) if command_tuple is not None else ["<invalid>"],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+        ).hexdigest()
+        _record_guard_event(
+            "subprocess_attempt",
+            operation="Popen",
+            decision="allowed" if authorized else "denied",
+            command_sha256=command_digest,
+        )
+        if not authorized:
             raise NetworkGuardError("unguarded or mismatched subprocess launch is denied")
+        assert authorization is not None
         authorization["used"] = True
         super().__init__(args, *positional, **kwargs)
+        expected_python = os.environ.get(EXPECTED_PYTHON_ENV)
+        child_is_python = bool(
+            command_tuple and expected_python and command_tuple[0] == expected_python
+        )
+        try:
+            _record_guard_event(
+                "subprocess_started",
+                operation="Popen",
+                decision="started",
+                command_sha256=command_digest,
+                child_pid=self.pid,
+                child_is_python=child_is_python,
+            )
+        except BaseException:
+            try:
+                self.kill()
+                self.wait(timeout=2.0)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            raise
 
 
 def build_guarded_environment(
@@ -122,6 +637,8 @@ def build_guarded_environment(
     project_root: str | Path = PROJECT_ROOT,
     process_role: str = "parent",
     interpreter_root: str | Path | None = None,
+    run_id: str | None = None,
+    guard_events_path: str | Path | None = None,
 ) -> dict[str, str]:
     """Build a minimal environment without copying secrets or proxy values.
 
@@ -156,6 +673,12 @@ def build_guarded_environment(
     result[EXPECTED_PYTHON_ENV] = str(runtime_root / ".venv" / "bin" / "python")
     result[EXPECTED_PREFIX_ENV] = str(runtime_root / ".venv")
     result[PROCESS_ROLE_ENV] = process_role
+    if (run_id is None) != (guard_events_path is None):
+        raise SafetyConfigurationError("preflight guard-event identity is incomplete")
+    if run_id is not None and guard_events_path is not None:
+        event_path = _validate_guard_event_path(guard_events_path, run_id)
+        result[RUN_ID_ENV] = run_id
+        result[GUARD_EVENTS_PATH_ENV] = str(event_path)
 
     for name in source:
         if _SECRET_ENV_NAME.search(name) or name in _KNOWN_PROVIDER_KEYS:
@@ -204,6 +727,7 @@ def activate_preflight_safety() -> None:
     sanitize_current_environment()
     install_network_deny_guard()
     install_subprocess_deny_guard()
+    _bind_guard_event_sink_from_environment()
 
 
 def validate_sandbox_config_location(
@@ -283,6 +807,8 @@ def build_guarded_sandbox_environment(
     source_environment: Mapping[str, str] | None = None,
     process_role: str = "host",
     interpreter_root: str | Path | None = None,
+    run_id: str | None = None,
+    guard_events_path: str | Path | None = None,
 ) -> dict[str, str]:
     """Build a guarded environment without touching any sandbox files."""
     validate_guarded_sandbox_path(sandbox_root, project_root=project_root)
@@ -291,6 +817,8 @@ def build_guarded_sandbox_environment(
         project_root=project_root,
         process_role=process_role,
         interpreter_root=interpreter_root,
+        run_id=run_id,
+        guard_events_path=guard_events_path,
     )
 
 
@@ -439,6 +967,17 @@ def run_startup_canaries(
     if not connect_denied or not subprocess_denied:
         raise NetworkGuardError("preflight startup canary did not fail closed")
 
+    guard_events = guard_event_snapshot()
+    if (
+        guard_events["complete"] is not True
+        or not validate_guard_event_records(
+            guard_events["events"],
+            expected_pid=os.getpid(),
+            require_startup_canaries=True,
+        )
+    ):
+        raise NetworkGuardError("preflight startup guard events are incomplete")
+
     interpreter = {
         "executable": sys.executable,
         "prefix": sys.prefix,
@@ -466,6 +1005,8 @@ def run_startup_canaries(
         "non_loopback_connect_denied": connect_denied,
         "subprocess_launch_denied": subprocess_denied,
         "interpreter": interpreter,
+        "guard_events_complete": True,
+        "guard_events": guard_events["events"],
     }
 
 
@@ -603,6 +1144,15 @@ def _validate_canary_launch(
     project_root = env.get(PROJECT_ROOT_ENV)
     guard_directory = env.get(GUARD_DIRECTORY_ENV)
     pythonpath = env.get("PYTHONPATH", "")
+    run_id = env.get(RUN_ID_ENV)
+    guard_events_path = env.get(GUARD_EVENTS_PATH_ENV)
+    if (run_id is None) != (guard_events_path is None):
+        raise NetworkGuardError("startup canary guard-event identity is incomplete")
+    if run_id is not None and guard_events_path is not None:
+        try:
+            _validate_guard_event_path(guard_events_path, run_id)
+        except SafetyConfigurationError as exc:
+            raise NetworkGuardError("startup canary guard-event identity is invalid") from exc
     try:
         resolved_root = Path(project_root or "").resolve(strict=True)
         resolved_cwd = Path(cwd).resolve(strict=True)
@@ -658,6 +1208,7 @@ def _validate_canary_report(
         json.dumps(list(command), ensure_ascii=True, separators=(",", ":")).encode("ascii")
     ).hexdigest()
     interpreter = report.get("interpreter") if isinstance(report, Mapping) else None
+    guard_events = report.get("guard_events") if isinstance(report, Mapping) else None
     if (
         not isinstance(report, Mapping)
         or report.get("process_role") != process_role
@@ -677,6 +1228,13 @@ def _validate_canary_report(
         or interpreter.get("prefix") != env.get(EXPECTED_PREFIX_ENV)
         or not isinstance(interpreter.get("base_prefix"), str)
         or interpreter.get("base_prefix") == interpreter.get("prefix")
+        or report.get("guard_events_complete") is not True
+        or not validate_guard_event_records(
+            guard_events,
+            expected_run_id=env.get(RUN_ID_ENV) if env.get(RUN_ID_ENV) else None,
+            expected_pid=process_id,
+            require_startup_canaries=True,
+        )
     ):
         raise NetworkGuardError("sitecustomize startup canary evidence is incomplete")
 
@@ -952,21 +1510,78 @@ def install_network_deny_guard() -> None:
     original_getaddrinfo = _ORIGINAL_DNS_FUNCTIONS["getaddrinfo"]
 
     def guarded_connect(sock: socket.socket, address: Any) -> Any:
-        _require_loopback_socket_address(sock.family, address)
+        try:
+            _require_loopback_socket_address(sock.family, address)
+        except NetworkGuardError:
+            _record_guard_event(
+                "network_attempt",
+                operation="connect",
+                decision="denied",
+                address=address,
+            )
+            raise
+        _record_guard_event(
+            "network_attempt", operation="connect", decision="allowed", address=address
+        )
         return original_connect(sock, address)
 
     def guarded_connect_ex(sock: socket.socket, address: Any) -> int:
-        _require_loopback_socket_address(sock.family, address)
+        try:
+            _require_loopback_socket_address(sock.family, address)
+        except NetworkGuardError:
+            _record_guard_event(
+                "network_attempt",
+                operation="connect_ex",
+                decision="denied",
+                address=address,
+            )
+            raise
+        _record_guard_event(
+            "network_attempt",
+            operation="connect_ex",
+            decision="allowed",
+            address=address,
+        )
         return original_connect_ex(sock, address)
 
     def guarded_bind(sock: socket.socket, address: Any) -> Any:
-        _require_loopback_socket_address(sock.family, address)
+        try:
+            _require_loopback_socket_address(sock.family, address)
+        except NetworkGuardError:
+            _record_guard_event(
+                "network_attempt", operation="bind", decision="denied", address=address
+            )
+            raise
+        _record_guard_event(
+            "network_attempt", operation="bind", decision="allowed", address=address
+        )
         return original_bind(sock, address)
 
     def guarded_sendto(sock: socket.socket, *args: Any) -> int:
         if not args:
+            _record_guard_event(
+                "network_attempt",
+                operation="sendto",
+                decision="denied",
+                address=None,
+            )
             raise NetworkGuardError("socket sendto address is missing")
-        _require_loopback_socket_address(sock.family, args[-1])
+        try:
+            _require_loopback_socket_address(sock.family, args[-1])
+        except NetworkGuardError:
+            _record_guard_event(
+                "network_attempt",
+                operation="sendto",
+                decision="denied",
+                address=args[-1],
+            )
+            raise
+        _record_guard_event(
+            "network_attempt",
+            operation="sendto",
+            decision="allowed",
+            address=args[-1],
+        )
         return original_sendto(sock, *args)
 
     def guarded_getaddrinfo(
@@ -978,23 +1593,71 @@ def install_network_deny_guard() -> None:
         flags: int = 0,
     ) -> list[tuple[Any, ...]]:
         if isinstance(host, str) and host.casefold() == "localhost":
+            _record_guard_event(
+                "network_attempt",
+                operation="getaddrinfo",
+                decision="allowed",
+                address=(host, port),
+            )
             return _localhost_addrinfo(port, family, socktype, proto, flags)
         if not _is_ip_loopback(host):
+            _record_guard_event(
+                "network_attempt",
+                operation="getaddrinfo",
+                decision="denied",
+                address=(host, port),
+            )
             raise NetworkGuardError("non-loopback DNS and network access are denied")
         results = original_getaddrinfo(host, port, family, socktype, proto, flags)
         if any(not _is_ip_loopback(item[4][0]) for item in results):
+            _record_guard_event(
+                "network_attempt",
+                operation="getaddrinfo",
+                decision="denied",
+                address=(host, port),
+            )
             raise NetworkGuardError("resolver returned a non-loopback address")
+        _record_guard_event(
+            "network_attempt",
+            operation="getaddrinfo",
+            decision="allowed",
+            address=(host, port),
+        )
         return results
 
     def guarded_gethostbyname(host: str) -> str:
         if isinstance(host, str) and host.casefold() == "localhost":
+            _record_guard_event(
+                "network_attempt",
+                operation="gethostbyname",
+                decision="allowed",
+                address=(host, None),
+            )
             return "127.0.0.1"
         try:
             address = ipaddress.IPv4Address(host)
         except (ipaddress.AddressValueError, TypeError):
+            _record_guard_event(
+                "network_attempt",
+                operation="gethostbyname",
+                decision="denied",
+                address=(host, None),
+            )
             raise NetworkGuardError("non-loopback DNS is denied") from None
         if not address.is_loopback:
+            _record_guard_event(
+                "network_attempt",
+                operation="gethostbyname",
+                decision="denied",
+                address=(host, None),
+            )
             raise NetworkGuardError("non-loopback DNS is denied")
+        _record_guard_event(
+            "network_attempt",
+            operation="gethostbyname",
+            decision="allowed",
+            address=(host, None),
+        )
         return str(address)
 
     def guarded_gethostbyname_ex(host: str) -> tuple[str, list[str], list[str]]:
@@ -1003,15 +1666,45 @@ def install_network_deny_guard() -> None:
 
     def guarded_gethostbyaddr(address: str) -> tuple[str, list[str], list[str]]:
         if not _is_ip_loopback(address):
+            _record_guard_event(
+                "network_attempt",
+                operation="gethostbyaddr",
+                decision="denied",
+                address=(address, None),
+            )
             raise NetworkGuardError("non-loopback reverse DNS is denied")
+        _record_guard_event(
+            "network_attempt",
+            operation="gethostbyaddr",
+            decision="allowed",
+            address=(address, None),
+        )
         return "localhost", [], [str(address)]
 
     def guarded_getnameinfo(address: Any, flags: int) -> tuple[str, str]:
         if not isinstance(address, tuple) or not address or not _is_ip_loopback(address[0]):
+            _record_guard_event(
+                "network_attempt",
+                operation="getnameinfo",
+                decision="denied",
+                address=address,
+            )
             raise NetworkGuardError("non-loopback reverse DNS is denied")
         if not flags & getattr(socket, "NI_NUMERICHOST", 0):
+            _record_guard_event(
+                "network_attempt",
+                operation="getnameinfo",
+                decision="denied",
+                address=address,
+            )
             raise NetworkGuardError("reverse DNS lookups are denied")
         numeric_flags = flags | getattr(socket, "NI_NUMERICSERV", 0)
+        _record_guard_event(
+            "network_attempt",
+            operation="getnameinfo",
+            decision="allowed",
+            address=address,
+        )
         return _ORIGINAL_DNS_FUNCTIONS["getnameinfo"](address, numeric_flags)
 
     socket.socket.connect = guarded_connect  # type: ignore[method-assign]

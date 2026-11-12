@@ -18,6 +18,7 @@ import argparse
 import base64
 import errno
 import hashlib
+import ipaddress
 import importlib.abc
 import importlib.machinery
 import json
@@ -45,11 +46,14 @@ AUTHORIZATION_RULING_ID = "neq-w1-fr11-profiles-characterization-20261112"
 HOST_PORT = 8360
 PLAYER_PORT = 8370
 REQUIRED_PORTS = (HOST_PORT, PLAYER_PORT)
+NETSTAT_EXECUTABLE = "/usr/sbin/netstat"
 LSOF_EXECUTABLE = "/usr/sbin/lsof"
 STARTUP_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 12.0
 OBSERVER_TIMEOUT_SECONDS = 3.0
 MAX_OBSERVER_OUTPUT_BYTES = 32768
+MAX_NETSTAT_OUTPUT_BYTES = 8_000_000
+MAX_NETSTAT_ROWS = 100_000
 MAX_CHARACTERIZATION_ATTEMPTS = 16
 LIVE_WINDOW_HOURS = 1
 MAX_LIVE_WINDOW_HOURS = 8
@@ -74,6 +78,12 @@ _FIXTURE_IDS = (
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA1_OR_SHA256 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_NETSTAT_OWNER_PATTERN = re.compile(
+    rb":(?P<pid>[0-9]+)\s+(?P<field1>[0-9a-f]{5})\s+"
+    rb"(?P<field2>[0-9a-f]{8})\s+(?P<field3>[0-9a-f]{16})\s*$",
+    re.IGNORECASE,
+)
+_NETSTAT_OWNER_PID_CANDIDATE_PATTERN = re.compile(rb":(?P<pid>[0-9]+)(?=\s|$)")
 _BOOKING_ID = re.compile(
     r"^live-gate-preflight-[NS]-[0-9]{8}T[0-9]{6}Z$"
 )
@@ -1113,8 +1123,8 @@ def _port_is_free(port: int) -> bool:
     if type(port) is not int or port not in REQUIRED_PORTS:
         return False
     listener, socket_observed = _port_state(port)
-    pids, process_observed = _listener_pids(port)
-    return socket_observed and process_observed and not listener and not pids
+    _listener_processes, process_observed = _listener_pids(port)
+    return socket_observed and process_observed and not listener and not _listener_processes
 
 
 def _required_port_status() -> dict[int, bool]:
@@ -1179,7 +1189,10 @@ def _observer_bytes(value: Any) -> bytes:
 
 
 def _run_observer_command(
-    command: Sequence[str], *, empty_result_is_success: bool = False
+    command: Sequence[str],
+    *,
+    empty_result_is_success: bool = False,
+    max_output_bytes: int = MAX_OBSERVER_OUTPUT_BYTES,
 ) -> tuple[dict[str, Any], bytes, bool]:
     """Run one bounded local observer and retain a bounded raw output prefix."""
     from scripts.live_gate_preflight_safety import run_guarded_subprocess
@@ -1206,9 +1219,9 @@ def _run_observer_command(
     except OSError as exc:
         failure = type(exc).__name__
 
-    stdout_truncated = len(stdout) > MAX_OBSERVER_OUTPUT_BYTES
+    stdout_truncated = len(stdout) > max_output_bytes
     stderr_truncated = len(stderr) > MAX_OBSERVER_OUTPUT_BYTES
-    stdout_prefix = stdout[:MAX_OBSERVER_OUTPUT_BYTES]
+    stdout_prefix = stdout[:min(max_output_bytes, MAX_OBSERVER_OUTPUT_BYTES)]
     stderr_prefix = stderr[:MAX_OBSERVER_OUTPUT_BYTES]
     empty_success = (
         empty_result_is_success
@@ -1240,121 +1253,216 @@ def _run_observer_command(
     return evidence, stdout, command_observed
 
 
-def _parse_lsof_socket_owners(
-    raw: bytes,
-    *,
-    expected_process_group: int,
-    expected_pid: int | None = None,
-) -> tuple[set[int], int, bool, bool]:
-    """Parse process-scoped internet sockets without retaining endpoint names."""
-    if not raw:
-        return set(), 0, True, True
+def _parse_lsof_listener_pids(raw: bytes, *, port: int) -> tuple[set[int], bool]:
+    """Parse only numeric lsof TCP LISTEN rows for the requested lock port."""
+    if not isinstance(raw, bytes):
+        return set(), False
+    pids: set[int] = set()
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        header = line.split()
+        if len(header) >= 2 and header[0:2] == [b"COMMAND", b"PID"]:
+            continue
+        fields = line.split(None, 8)
+        if len(fields) != 9:
+            return set(), False
+        try:
+            pid = int(fields[1].decode("ascii"))
+            name = fields[8].decode("ascii")
+        except (UnicodeError, ValueError):
+            return set(), False
+        if (
+            pid <= 0
+            or fields[4] not in (b"IPv4", b"IPv6")
+            or fields[7] != b"TCP"
+        ):
+            return set(), False
+        name_fields = name.split()
+        if (
+            len(name_fields) != 2
+            or name_fields[1] != "(LISTEN)"
+            or ":" not in name_fields[0]
+        ):
+            return set(), False
+        _host, port_text = name_fields[0].rsplit(":", 1)
+        if not _host or not port_text.isdecimal() or int(port_text) != port:
+            return set(), False
+        pids.add(pid)
+    return pids, True
+
+
+def _listener_pids(port: int) -> tuple[set[int], bool]:
+    """Observe listeners on a reserved port across all local interfaces."""
+    if type(port) is not int or port not in REQUIRED_PORTS:
+        return set(), False
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    _command_evidence, raw_output, command_observed = _run_observer_command(
+        command, empty_result_is_success=True
+    )
+    if not command_observed:
+        return set(), False
+    pids, parseable = _parse_lsof_listener_pids(raw_output, port=port)
+    return pids, parseable
+
+
+def _parse_netstat_endpoint(value: bytes) -> dict[str, Any] | None:
+    """Parse one numeric macOS netstat endpoint; the final dot separates port."""
     try:
-        fields = raw.split(b"\0")
-        current_pid: int | None = None
-        current_process_group: int | None = None
-        file_fields: list[bytes] = []
-        file_type_seen = False
-        file_name: str | None = None
-        owners: set[int] = set()
-        socket_count = 0
-        process_has_file = False
-        scope_violation = False
+        text = value.decode("ascii")
+    except UnicodeError:
+        return None
+    if text == "*.*":
+        return {"host": "*", "port": None}
+    if text.startswith("*."):
+        host = "*"
+        raw_port = text[2:]
+    elif "." in text:
+        host, raw_port = text.rsplit(".", 1)
+    else:
+        return None
+    if raw_port == "*" and host == "*":
+        return {"host": "*", "port": None}
+    if not raw_port.isdecimal():
+        return None
+    port = int(raw_port)
+    if not 0 <= port <= 65535:
+        return None
+    if host != "*":
+        address_host = host.split("%", 1)[0]
+        try:
+            address = ipaddress.ip_address(address_host)
+        except ValueError:
+            return None
+        host = str(address)
+    return {"host": host, "port": port}
 
-        def finish_file() -> bool:
-            nonlocal file_fields, file_type_seen, file_name, scope_violation
-            nonlocal process_has_file, socket_count
-            if not file_fields:
-                return True
-            if (
-                current_pid is None
-                or current_process_group is None
-                or not file_type_seen
-                or file_name is None
-            ):
-                return False
-            if current_process_group != expected_process_group or (
-                expected_pid is not None and current_pid != expected_pid
-            ):
-                scope_violation = True
-            else:
-                owners.add(current_pid)
-                socket_count += 1
-            process_has_file = True
-            file_fields = []
-            file_type_seen = False
-            file_name = None
-            return True
 
-        for field in fields:
-            field = field.strip(b"\r\n")
-            if not field:
+def _parse_netstat_census(
+    raw: bytes, *, run_pids: set[int]
+) -> tuple[list[dict[str, Any]], dict[str, int], bool]:
+    """Filter process ownership before parsing or retaining any endpoint."""
+    if not isinstance(raw, bytes) or len(raw) > MAX_NETSTAT_OUTPUT_BYTES:
+        return [], {}, False
+    rows: list[dict[str, Any]] = []
+    counts = {
+        "internet_rows": 0,
+        "unattributed_rows": 0,
+        "pid_zero_rows": 0,
+        "foreign_process_rows": 0,
+        "run_pid_rows": 0,
+        "malformed_run_pid_rows": 0,
+    }
+    lines = raw.splitlines()
+    if len(lines) > MAX_NETSTAT_ROWS:
+        return [], counts, False
+    for line in lines:
+        tokens = line.split()
+        if not tokens:
+            continue
+        protocol = tokens[0].lower()
+        if protocol not in (b"tcp", b"tcp4", b"tcp6", b"udp", b"udp4", b"udp6"):
+            continue
+        counts["internet_rows"] += 1
+
+        # netstat's process name may contain spaces. Match its PID marker and
+        # fixed-width trailing fields directly in bytes before touching tokens 3/4.
+        owner_match = _NETSTAT_OWNER_PATTERN.search(line)
+        owner_suffix_start = 6 if protocol.startswith(b"tcp") else 5
+        owner_suffix = b" ".join(tokens[owner_suffix_start:])
+        candidate_matches = list(_NETSTAT_OWNER_PID_CANDIDATE_PATTERN.finditer(owner_suffix))
+        if not candidate_matches and protocol.startswith(b"tcp") and len(tokens) > 5:
+            # A missing TCP state token is malformed, but its process suffix
+            # still identifies an owned row that must fail closed.
+            candidate_matches = list(
+                _NETSTAT_OWNER_PID_CANDIDATE_PATTERN.finditer(b" ".join(tokens[5:]))
+            )
+        if owner_match is None:
+            if not candidate_matches:
+                counts["unattributed_rows"] += 1
                 continue
-            identifier = chr(field[0])
-            value = field[1:].decode("ascii")
-            if identifier == "p":
-                if not finish_file():
-                    return set(), 0, False, scope_violation
-                if current_pid is not None and not process_has_file:
-                    return set(), 0, False, scope_violation
-                current_pid = int(value)
-                if current_pid <= 0:
-                    return set(), 0, False, scope_violation
-                current_process_group = None
-                process_has_file = False
-            elif identifier == "g":
-                if (
-                    current_pid is None
-                    or current_process_group is not None
-                    or file_fields
-                    or int(value) <= 0
-                ):
-                    return set(), 0, False, scope_violation
-                current_process_group = int(value)
-            elif identifier == "f":
-                if (
-                    current_pid is None
-                    or current_process_group is None
-                    or not finish_file()
-                    or not value
-                ):
-                    return set(), 0, False, scope_violation
-                file_fields = [field]
-                file_type_seen = False
-                file_name = None
-            elif identifier == "t":
-                if not file_fields or file_type_seen or not value:
-                    return set(), 0, False, scope_violation
-                if value not in ("IPv4", "IPv6"):
-                    return set(), 0, False, scope_violation
-                file_type_seen = True
-                file_fields.append(field)
-            elif identifier == "n":
-                if not file_fields or not file_type_seen or file_name is not None or not value:
-                    return set(), 0, False, scope_violation
-                file_fields.append(field)
-                file_name = value
-            else:
-                return set(), 0, False, scope_violation
-        if not finish_file():
-            return set(), 0, False, scope_violation
-        if current_pid is not None and not process_has_file:
-            return set(), 0, False, scope_violation
-        if scope_violation:
-            return set(), 0, True, False
-        return owners, socket_count, True, True
-    except (UnicodeError, ValueError):
-        return set(), 0, False, False
+            pid = int(candidate_matches[-1].group("pid"))
+        else:
+            pid = int(owner_match.group("pid"))
+        if pid == 0:
+            counts["pid_zero_rows"] += 1
+            continue
+        if pid not in run_pids:
+            counts["foreign_process_rows"] += 1
+            continue
+
+        counts["run_pid_rows"] += 1
+        if owner_match is None:
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        is_tcp = protocol.startswith(b"tcp")
+        if len(tokens) < (6 if is_tcp else 5):
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        local_endpoint = _parse_netstat_endpoint(tokens[3])
+        foreign_endpoint = _parse_netstat_endpoint(tokens[4])
+        if local_endpoint is None or foreign_endpoint is None:
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        state: str | None = None
+        if is_tcp:
+            try:
+                state = tokens[5].decode("ascii")
+            except UnicodeError:
+                counts["malformed_run_pid_rows"] += 1
+                return [], counts, False
+            if not state or not state.isascii() or not state.replace("_", "").isalpha():
+                counts["malformed_run_pid_rows"] += 1
+                return [], counts, False
+        rows.append(
+            {
+                "pid": pid,
+                "protocol": protocol.decode("ascii"),
+                "local": local_endpoint,
+                "foreign": foreign_endpoint,
+                "state": state,
+            }
+        )
+    return rows, counts, True
+
+
+def _non_loopback_endpoint(endpoint: Mapping[str, Any]) -> bool:
+    host = endpoint.get("host")
+    if not isinstance(host, str) or host == "*":
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not address.is_loopback
+
+
+def _foreign_endpoint_recorded(
+    pid: int,
+    endpoint: Mapping[str, Any],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> bool:
+    host = endpoint.get("host")
+    port = endpoint.get("port")
+    if not isinstance(host, str) or type(port) is not int:
+        return False
+    return any(
+        event.get("event_type") == "network_attempt"
+        and event.get("pid") == pid
+        and event.get("target_host") == host
+        and event.get("target_port") == port
+        for event in guard_events
+    )
 
 
 def _discard_observer_output(evidence: dict[str, Any]) -> None:
-    """Keep observer status but never persist raw socket or error output."""
-    empty_sha256 = hashlib.sha256(b"").hexdigest()
-    evidence["stdout_byte_count"] = 0
-    evidence["stdout_sha256"] = empty_sha256
+    """Keep aggregate hashes but never persist raw socket or error output."""
     evidence["stdout_prefix_base64"] = ""
-    evidence["stderr_byte_count"] = 0
-    evidence["stderr_sha256"] = empty_sha256
     evidence["stderr_prefix_base64"] = ""
 
 
@@ -1467,120 +1575,134 @@ def _write_socket_sample_evidence(
     _write_json(evidence_path, evidence)
 
 
-def _listener_pids(port: int) -> tuple[set[int], bool]:
-    """Return PIDs listening on a port reserved by the shared lock."""
-    if type(port) is not int or port not in REQUIRED_PORTS:
-        return set(), False
-
-    _lsof_evidence, lsof_output, lsof_observed = _run_observer_command(
-        [LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:%d" % port, "-sTCP:LISTEN"],
-        empty_result_is_success=True,
-    )
-    if not lsof_observed:
-        return set(), False
-    try:
-        output = lsof_output.decode("ascii").strip()
-        pids = {int(line) for line in output.splitlines()} if output else set()
-    except (UnicodeError, ValueError):
-        return set(), False
-    if any(pid <= 0 for pid in pids):
-        return set(), False
-    return pids, True
-
-
 def _socket_pid_sample(
     phase: str,
     *,
     run_directory: Path,
     process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]] | None = None,
+    guard_events_complete: bool = True,
 ) -> dict[str, Any]:
-    """Observe only internet sockets owned by independently bound run scopes."""
+    """Census netstat rows after PID filtering, retaining only run-owned rows."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
     if phase not in ("before_host", "host_ready", "after_teardown"):
         raise CharacterizationError("socket_sample_phase_invalid")
+    run_id = run_directory.name
     evidence: dict[str, Any] = {
-        "schema_version": 2,
-        "run_id": run_directory.name,
+        "schema_version": 3,
+        "run_id": run_id,
         "phase": phase,
-        "required_listener_port": HOST_PORT,
-        "observer": "lsof process/PID scope intersected with internet sockets",
+        "observer": "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing",
         "process_scopes": [],
-        "owner_mappings": [],
+        "run_process_pids": [],
+        "guard_startup_pids": [],
+        "protocol_samples": [],
+        "aggregate_counts": {
+            "internet_rows": 0,
+            "unattributed_rows": 0,
+            "pid_zero_rows": 0,
+            "foreign_process_rows": 0,
+            "run_pid_rows": 0,
+            "malformed_run_pid_rows": 0,
+        },
+        "run_owned_rows": [],
         "pids": [],
         "observed": False,
         "failure_code": None,
     }
     scopes = list(process_scopes)
+    events = list(guard_events or [])
     if not scopes:
         evidence["failure_code"] = "process_scope_identity_missing"
     elif any(not _valid_process_scope(scope) for scope in scopes):
         evidence["failure_code"] = "process_scope_identity_invalid"
     else:
         evidence["process_scopes"] = [dict(scope) for scope in scopes]
+    if (
+        not events
+        or not guard_events_complete
+        or not validate_guard_event_records(events, expected_run_id=run_id)
+    ):
+        evidence["failure_code"] = "guard_event_evidence_incomplete"
 
-    owners: set[int] = set()
+    launch_pids = {
+        int(scope["pid"])
+        for scope in scopes
+        if _valid_process_scope(scope)
+    }
+    event_pids = {
+        int(event["pid"])
+        for event in events
+        if type(event.get("pid")) is int and event.get("pid") > 0
+    }
+    child_process_pids = {
+        int(event["child_pid"])
+        for event in events
+        if event.get("event_type") == "subprocess_started"
+        and type(event.get("child_pid")) is int
+        and event.get("child_pid") > 0
+    }
+    run_pids = launch_pids | event_pids | child_process_pids
+    startup_pids = {
+        int(event["pid"])
+        for event in events
+        if event.get("event_type") == "guard_startup"
+        and type(event.get("pid")) is int
+    }
+    evidence["run_process_pids"] = sorted(run_pids)
+    evidence["guard_startup_pids"] = sorted(startup_pids)
+
+    rows: list[dict[str, Any]] = []
     observed = bool(scopes) and evidence["failure_code"] is None
+    commands = (
+        ("tcp", [NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "tcp"]),
+        ("udp", [NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "udp"]),
+    )
     if observed:
-        selectors_seen: set[tuple[str, int, int]] = set()
-        for scope in scopes:
-            selector_key = (
-                str(scope["selector"]),
-                int(scope["pid"]),
-                int(scope["process_group_id"]),
-            )
-            if selector_key in selectors_seen:
-                observed = False
-                evidence["failure_code"] = "process_scope_identity_duplicated"
-                break
-            selectors_seen.add(selector_key)
-            command = [LSOF_EXECUTABLE, "-w", "-nP"]
-            if scope["selector"] == "pid":
-                command.extend(("-p", str(scope["pid"])))
-            else:
-                command.extend(("-g", str(scope["process_group_id"])))
-            command.extend(("-i", "-a"))
-            command.append("-F0pfgtn")
+        for protocol, command in commands:
             command_evidence, raw_output, command_observed = _run_observer_command(
-                command,
-                empty_result_is_success=True,
+                command, max_output_bytes=MAX_NETSTAT_OUTPUT_BYTES
             )
             _discard_observer_output(command_evidence)
-            mapping: dict[str, Any] = {
-                "process_scope": dict(scope),
-                "command_evidence": command_evidence,
-                "pids": [],
-                "socket_count": 0,
-                "ownership_parseable": False,
-                "scope_valid": False,
-            }
-            evidence["owner_mappings"].append(mapping)
+            parsed_rows, counts, parseable = _parse_netstat_census(
+                raw_output, run_pids=run_pids
+            )
+            evidence["protocol_samples"].append(
+                {
+                    "protocol": protocol,
+                    "command_evidence": command_evidence,
+                    "counts": counts,
+                    "parseable": parseable,
+                }
+            )
+            for key, count in counts.items():
+                evidence["aggregate_counts"][key] += count
             if not command_observed:
                 observed = False
-                evidence["failure_code"] = "socket_owner_observation_incomplete"
+                evidence["failure_code"] = "netstat_observation_incomplete"
                 break
-            scope_owners, socket_count, owners_parseable, scope_valid = (
-                _parse_lsof_socket_owners(
-                    raw_output,
-                    expected_process_group=int(scope["process_group_id"]),
-                    expected_pid=(
-                        int(scope["pid"]) if scope["selector"] == "pid" else None
-                    ),
-                )
-            )
-            mapping["ownership_parseable"] = owners_parseable
-            mapping["scope_valid"] = scope_valid
-            if not owners_parseable:
+            if not parseable:
                 observed = False
-                evidence["failure_code"] = "socket_owner_mapping_incomplete"
+                evidence["failure_code"] = "netstat_run_pid_row_malformed"
                 break
-            if not scope_valid:
-                observed = False
-                evidence["failure_code"] = "socket_observer_scope_violation"
-                break
-            mapping["pids"] = sorted(scope_owners)
-            mapping["socket_count"] = socket_count
-            owners.update(scope_owners)
+            rows.extend(parsed_rows)
 
-    evidence["pids"] = sorted(owners) if observed else []
+    owners = {int(row["pid"]) for row in rows}
+    evidence["run_owned_rows"] = rows
+    evidence["pids"] = sorted(owners)
+    missing_startup_pids = owners - startup_pids
+    if missing_startup_pids:
+        observed = False
+        evidence["failure_code"] = "socket_owner_missing_guard_startup_event"
+    for row in rows:
+        foreign = row["foreign"]
+        if _non_loopback_endpoint(foreign) and not _foreign_endpoint_recorded(
+            int(row["pid"]), foreign, events
+        ):
+            observed = False
+            evidence["failure_code"] = "unguarded_non_loopback_socket"
+            break
     evidence["observed"] = observed
     if observed:
         evidence["failure_code"] = None
@@ -1588,14 +1710,14 @@ def _socket_pid_sample(
         _write_socket_sample_evidence(run_directory, phase, evidence)
     except (CharacterizationError, OSError):
         observed = False
-        evidence["pids"] = []
         evidence["observed"] = False
         evidence["failure_code"] = "socket_sample_evidence_write_failed"
     return {
         "phase": phase,
         "port": HOST_PORT,
         "observed": observed,
-        "pids": sorted(owners) if observed else [],
+        "pids": sorted(owners),
+        "failure_code": evidence["failure_code"],
     }
 
 
@@ -1606,7 +1728,11 @@ def _make_process_census(
     driver_exchange: Mapping[str, Any] | None,
     socket_pid_samples: Sequence[Mapping[str, Any]],
     process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
 ) -> dict[str, Any]:
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
     reports = {
         report.get("canary_stage"): report
         for report in process_canaries
@@ -1668,10 +1794,25 @@ def _make_process_census(
         for pid in (controller_pid, host_prelaunch_pid, host_worker_pid)
         if type(pid) is int and pid > 0
     }
-    guarded_pids = {
+    canary_pids = {
         report.get("pid")
         for report in process_canaries
         if type(report.get("pid")) is int and report.get("pid") > 0
+    }
+    guarded_pids = {
+        int(event["pid"])
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+        and type(event.get("pid")) is int
+        and event.get("pid") > 0
+    }
+    child_python_pids = {
+        int(event["child_pid"])
+        for event in guard_events
+        if event.get("event_type") == "subprocess_started"
+        and event.get("child_is_python") is True
+        and type(event.get("child_pid")) is int
+        and event.get("child_pid") > 0
     }
     socket_owner_pids = {
         pid
@@ -1679,8 +1820,11 @@ def _make_process_census(
         for pid in sample.get("pids", [])
         if type(pid) is int and pid > 0
     }
-    python_pids = launched_pids | socket_owner_pids
+    python_pids = launched_pids | child_python_pids | socket_owner_pids | guarded_pids
     uncovered_pids = python_pids - guarded_pids
+    guard_events_valid = validate_guard_event_records(
+        list(guard_events), expected_run_id=expected_run_id
+    )
     expected_phases = ("before_host", "host_ready", "after_teardown")
     samples_complete = (
         len(socket_pid_samples) == len(expected_phases)
@@ -1719,17 +1863,21 @@ def _make_process_census(
         "host_worker_pid": host_worker_pid,
         "launched_pids": sorted(launched_pids),
         "socket_owner_pids": sorted(socket_owner_pids),
+        "python_child_pids": sorted(child_python_pids),
         "python_pids": sorted(python_pids),
         "guarded_pids": sorted(guarded_pids),
+        "canary_pids": sorted(canary_pids),
         "uncovered_pids": sorted(uncovered_pids),
+        "guard_events_valid": guard_events_valid,
         "socket_pid_samples": [dict(sample) for sample in socket_pid_samples],
         "complete": bool(
             startup_records_complete
             and launch_scopes_complete
             and samples_complete
             and socket_ownership_complete
+            and guard_events_valid
+            and canary_pids.issubset(guarded_pids)
             and not uncovered_pids
-            and launched_pids == guarded_pids
         ),
     }
 
@@ -1743,8 +1891,7 @@ def _wait_until_ready(process: subprocess.Popen[bytes], timeout: float) -> bool:
         if not observed:
             return False
         if listener:
-            pids, pids_observed = _listener_pids(HOST_PORT)
-            return pids_observed and pids == {process.pid}
+            return True
         time.sleep(0.1)
     return False
 
@@ -1963,6 +2110,23 @@ def _ensure_run_directory(run_id: str) -> Path:
     return directory
 
 
+def _read_guard_events_for_run(
+    run_directory: Path, run_id: str
+) -> tuple[list[dict[str, Any]], bytes, bool]:
+    from scripts.live_gate_preflight_safety import (
+        SafetyConfigurationError,
+        read_guard_event_journal,
+    )
+
+    try:
+        events, raw = read_guard_event_journal(
+            run_directory / "guard-events.jsonl", run_id=run_id
+        )
+    except SafetyConfigurationError:
+        return [], b"", False
+    return events, raw, True
+
+
 def _claim_characterization_attempt(
     evidence_root: Path,
     run_directory: Path,
@@ -2036,6 +2200,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     process_scopes: list[dict[str, Any]] = []
     controller_startup: dict[str, Any] = {}
     guarded_environment: dict[str, str] = {}
+    run_directory: Path | None = None
     runner_command: list[str] = []
     command: list[str] = []
     try:
@@ -2054,6 +2219,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             lifecycle=args.lifecycle,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
         )
+        run_directory = _ensure_run_directory(args.run_id)
+        guard_events_path = run_directory / "guard-events.jsonl"
+        from scripts.live_gate_preflight_safety import configure_guard_event_sink
+
+        configure_guard_event_sink(guard_events_path, run_id=args.run_id)
         lifecycle_id = args.run_id + ("_s" if args.lifecycle == "startup" else "_r")
         command = _host_command(
             fixture_id=args.fixture_id,
@@ -2088,6 +2258,8 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             project_root=root,
             source_environment=os.environ,
             process_role="host",
+            run_id=args.run_id,
+            guard_events_path=guard_events_path,
         )
         host_environment_sha256 = _startup_canary_environment_digest(
             guarded_environment
@@ -2173,7 +2345,6 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         sys.path[:] = previous_sys_path
         raise
 
-    run_directory: Path | None = None
     process: subprocess.Popen[bytes] | None = None
     server_stopped = True
     port_free = False
@@ -2184,15 +2355,24 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     result: dict[str, Any] | None = None
     failure_code: str | None = None
     evidence: dict[str, Any] | None = None
+    guard_events: list[dict[str, Any]] = []
+    guard_events_raw = b""
+    guard_events_complete = False
     host_startup: dict[str, Any] | None = None
     socket_pid_samples: list[dict[str, Any]] = []
     process_census: dict[str, Any] | None = None
     try:
-        run_directory = _ensure_run_directory(args.run_id)
+        if run_directory is None:
+            raise CharacterizationError("profile_evidence_directory_unavailable")
+        guard_events, _journal_bytes, journal_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
         pre_host_sample = _socket_pid_sample(
             "before_host",
             run_directory=run_directory,
             process_scopes=process_scopes,
+            guard_events=guard_events,
+            guard_events_complete=journal_complete,
         )
         socket_pid_samples.append(pre_host_sample)
         port_status = _required_port_status()
@@ -2253,10 +2433,15 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             )
         )
         ready = _wait_until_ready(process, STARTUP_TIMEOUT_SECONDS)
+        guard_events, _journal_bytes, guard_events_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
         ready_sample = _socket_pid_sample(
             "host_ready",
             run_directory=run_directory,
             process_scopes=process_scopes,
+            guard_events=guard_events,
+            guard_events_complete=guard_events_complete,
         )
         socket_pid_samples.append(ready_sample)
         if not ready_sample["observed"] or (
@@ -2378,11 +2563,16 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         if run_directory is None:
             failure_code = failure_code or "socket_sample_evidence_directory_unavailable"
         else:
+            guard_events, _journal_bytes, journal_complete = _read_guard_events_for_run(
+                run_directory, args.run_id
+            )
             socket_pid_samples.append(
                 _socket_pid_sample(
                     "after_teardown",
                     run_directory=run_directory,
                     process_scopes=process_scopes,
+                    guard_events=guard_events,
+                    guard_events_complete=journal_complete,
                 )
             )
         after_teardown_sample = (
@@ -2427,12 +2617,21 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         _remove_import_guard(config_guard)
         sys.path[:] = previous_sys_path
 
+    if run_directory is not None:
+        guard_events, guard_events_raw, guard_events_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
+    if not guard_events_complete:
+        failure_code = failure_code or "guard_event_journal_incomplete"
+
     process_census = _make_process_census(
         process_canaries=process_canaries,
         process=process,
         driver_exchange=driver_exchange,
         socket_pid_samples=socket_pid_samples,
         process_scopes=process_scopes,
+        guard_events=guard_events,
+        expected_run_id=args.run_id,
     )
     if not process_census["complete"]:
         failure_code = failure_code or "process_census_incomplete"
@@ -2464,6 +2663,12 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 process_canaries,
                 key=lambda report: report.get("canary_stage", ""),
             ),
+            "guard_event_journal": {
+                "path": (run_directory / "guard-events.jsonl").relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(guard_events_raw).hexdigest(),
+                "event_count": len(guard_events),
+                "complete": guard_events_complete,
+            },
             "process_census": process_census,
             "controller_interpreter": _interpreter_identity(),
             "worker_interpreter": (

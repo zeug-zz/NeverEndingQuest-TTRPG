@@ -60,6 +60,7 @@ from scripts.live_gate_preflight_safety import (
     current_invocation_command,
     expected_guarded_pythonpath,
     require_startup_guard_active,
+    validate_guard_event_records,
     validate_sandbox_config_location,
     _startup_canary_environment_digest,
     _startup_environment_digest,
@@ -77,6 +78,109 @@ from scripts.live_gate_preflight_profile_runner import (
 )
 from scripts import live_gate_preflight_profile_runner as profile_runner
 from scripts import live_gate_preflight_sandbox as sandbox_preparation
+
+
+def _guard_startup_event(
+    pid: int, run_id: str, *, role: str = "host", sequence: int = 1
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "sequence": sequence,
+        "event_type": "guard_startup",
+        "pid": pid,
+        "process_group_id": pid,
+        "process_role": role,
+        "run_id": run_id,
+        "observed_at_ns": 1_000_000 + sequence,
+        "operation": None,
+        "decision": None,
+        "target_host": None,
+        "target_port": None,
+        "target_host_sha256": None,
+        "command_sha256": "a" * 64,
+        "child_pid": None,
+        "child_is_python": None,
+        "guard_active": True,
+        "interpreter": {
+            "executable": str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+            "prefix": str(PROJECT_ROOT / ".venv"),
+            "base_prefix": "/usr/local",
+        },
+        "working_directory": "tmp/combat_capture",
+    }
+
+
+def _guard_network_event(
+    pid: int,
+    run_id: str,
+    host: str,
+    port: int,
+    *,
+    sequence: int = 2,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "sequence": sequence,
+        "event_type": "network_attempt",
+        "pid": pid,
+        "process_group_id": pid,
+        "process_role": "host",
+        "run_id": run_id,
+        "observed_at_ns": 1_000_000 + sequence,
+        "operation": "connect",
+        "decision": "allowed",
+        "target_host": host,
+        "target_port": port,
+        "target_host_sha256": None,
+        "command_sha256": None,
+        "child_pid": None,
+        "child_is_python": None,
+        "guard_active": None,
+        "interpreter": None,
+        "working_directory": None,
+    }
+
+
+def _guard_child_started_event(
+    pid: int, child_pid: int, run_id: str, *, sequence: int = 2
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "sequence": sequence,
+        "event_type": "subprocess_started",
+        "pid": pid,
+        "process_group_id": pid,
+        "process_role": "parent",
+        "run_id": run_id,
+        "observed_at_ns": 1_000_000 + sequence,
+        "operation": "Popen",
+        "decision": "started",
+        "target_host": None,
+        "target_port": None,
+        "target_host_sha256": None,
+        "command_sha256": "b" * 64,
+        "child_pid": child_pid,
+        "child_is_python": True,
+        "guard_active": None,
+        "interpreter": None,
+        "working_directory": None,
+    }
+
+
+def _netstat_row(
+    protocol: str,
+    pid: int,
+    local: str,
+    foreign: str,
+    *,
+    state: str | None = None,
+    process_name: str = "python worker",
+) -> bytes:
+    fields = [protocol, "0", "0", local, foreign]
+    if protocol.startswith("tcp"):
+        fields.append(state or "ESTABLISHED")
+    suffix = "%s:%d 00000 00000000 0000000000000000" % (process_name, pid)
+    return (" ".join(fields) + " " + suffix + "\n").encode("ascii")
 
 
 class TestLiveGatePreflightProfiles(unittest.TestCase):
@@ -1097,56 +1201,280 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             working_directory="tmp/combat_capture",
         )
 
-    def test_socket_sample_fails_closed_when_lsof_is_missing(self) -> None:
+    def test_netstat_census_filters_pids_before_endpoint_parsing(self) -> None:
+        run_pid = 24568
+        foreign_pid = 98765
+        run_id = "netstat-filter-test"
+        foreign = _netstat_row(
+            "tcp4", foreign_pid, "127.0.0.1.8357", "127.0.0.1.50000"
+        )
+        with mock.patch.object(
+            profile_runner,
+            "_parse_netstat_endpoint",
+            wraps=profile_runner._parse_netstat_endpoint,
+        ) as endpoint_parser:
+            rows, counts, parseable = profile_runner._parse_netstat_census(
+                foreign, run_pids={run_pid}
+            )
+
+        self.assertTrue(parseable)
+        self.assertEqual(rows, [])
+        self.assertEqual(counts["foreign_process_rows"], 1)
+        endpoint_parser.assert_not_called()
+
+        tcp_fixture = b"".join(
+            (
+                b"Active Internet connections\n",
+                _netstat_row(
+                    "tcp4", run_pid, "*.8360", "*.*", state="LISTEN", process_name="python host"
+                ),
+                _netstat_row(
+                    "tcp6", run_pid, "::1.8360", "::1.51123", process_name="python host worker"
+                ),
+                _netstat_row(
+                    "tcp4", foreign_pid, "127.0.0.1.8357", "127.0.0.1.50000"
+                ),
+                b"tcp4 0 0 127.0.0.1.8360 127.0.0.1.51124 ESTABLISHED\n",
+                _netstat_row("tcp4", 0, "127.0.0.1.8357", "127.0.0.1.50001"),
+            )
+        )
+        udp_fixture = _netstat_row(
+            "udp4", run_pid, "127.0.0.1.8370", "*.*", process_name="python host"
+        )
         with tempfile.TemporaryDirectory(
-            prefix="profile-lsof-missing-", dir=PROJECT_ROOT / "tmp"
+            prefix="profile-netstat-filter-", dir=PROJECT_ROOT / "tmp"
         ) as temp_root:
+            run_directory = Path(temp_root)
+            run_id = run_directory.name
+            events = [_guard_startup_event(run_pid, run_id)]
             commands: list[list[str]] = []
 
-            def missing_observer(command: list[str], **_kwargs: object) -> object:
+            def observer(command: list[str], **_kwargs: object) -> object:
                 commands.append(command)
-                raise FileNotFoundError("lsof unavailable")
+                output = tcp_fixture if command[-1] == "tcp" else udp_fixture
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
 
             with mock.patch(
                 "scripts.live_gate_preflight_safety.run_guarded_subprocess",
-                side_effect=missing_observer,
+                side_effect=observer,
             ):
                 sample = profile_runner._socket_pid_sample(
                     "host_ready",
-                    run_directory=Path(temp_root),
-                    process_scopes=[self._process_scope()],
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=run_pid)],
+                    guard_events=events,
                 )
 
-            self.assertFalse(sample["observed"])
-            self.assertEqual(sample["pids"], [])
+            sidecar_path = run_directory / "socket-sample-host_ready.json"
+            sidecar = sidecar_path.read_bytes()
+            evidence = json.loads(sidecar.decode("utf-8"))
+
+        self.assertTrue(sample["observed"])
+        self.assertEqual(sample["pids"], [run_pid])
+        self.assertEqual(
+            commands,
+            [
+                [profile_runner.NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "tcp"],
+                [profile_runner.NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "udp"],
+            ],
+        )
+        self.assertEqual(evidence["aggregate_counts"]["foreign_process_rows"], 1)
+        self.assertEqual(evidence["aggregate_counts"]["pid_zero_rows"], 1)
+        self.assertEqual(evidence["aggregate_counts"]["unattributed_rows"], 1)
+        self.assertEqual({row["pid"] for row in evidence["run_owned_rows"]}, {run_pid})
+        self.assertEqual(
+            {row["protocol"] for row in evidence["run_owned_rows"]},
+            {"tcp4", "tcp6", "udp4"},
+        )
+        self.assertEqual(
+            next(row for row in evidence["run_owned_rows"] if row["protocol"] == "tcp6")["foreign"],
+            {"host": "::1", "port": 51123},
+        )
+        self.assertNotIn(str(foreign_pid).encode("ascii"), sidecar)
+        self.assertNotIn(b"8357", sidecar)
+        self.assertNotIn(b"python host", sidecar)
+        self.assertTrue(all(not item["command_evidence"]["stdout_prefix_base64"] for item in evidence["protocol_samples"]))
+
+    def test_netstat_fails_closed_on_unrecorded_non_loopback_foreign_endpoint(self) -> None:
+        run_pid = 24569
+        fixture = _netstat_row(
+            "tcp4", run_pid, "192.0.2.10.51111", "203.0.113.19.443"
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="profile-netstat-unrecorded-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            events = [_guard_startup_event(run_pid, run_directory.name)]
+
+            def observer(command: list[str], **_kwargs: object) -> object:
+                output = fixture if command[-1] == "tcp" else b""
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+            with mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=observer,
+            ):
+                sample = profile_runner._socket_pid_sample(
+                    "host_ready",
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=run_pid)],
+                    guard_events=events,
+                )
             evidence = json.loads(
-                (Path(temp_root) / "socket-sample-host_ready.json").read_text(
+                (run_directory / "socket-sample-host_ready.json").read_text(
                     encoding="utf-8"
                 )
             )
-            self.assertEqual(evidence["failure_code"], "socket_owner_observation_incomplete")
-            self.assertEqual(len(commands), 1)
-            self.assertEqual(
-                commands[0],
-                [
-                    profile_runner.LSOF_EXECUTABLE,
-                    "-w",
-                    "-nP",
-                    "-g",
-                    "24568",
-                    "-i",
-                    "-a",
-                    "-F0pfgtn",
-                ],
+
+        self.assertFalse(sample["observed"])
+        self.assertEqual(evidence["failure_code"], "unguarded_non_loopback_socket")
+        self.assertEqual(evidence["run_owned_rows"][0]["foreign"], {
+            "host": "203.0.113.19",
+            "port": 443,
+        })
+
+    def test_netstat_fails_closed_when_run_socket_pid_has_no_startup_event(self) -> None:
+        parent_pid = 24570
+        child_pid = 24571
+        fixture = _netstat_row(
+            "tcp4", child_pid, "127.0.0.1.8360", "127.0.0.1.51112"
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="profile-netstat-no-startup-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            events = [
+                _guard_startup_event(parent_pid, run_directory.name, role="parent"),
+                _guard_child_started_event(parent_pid, child_pid, run_directory.name),
+            ]
+
+            def observer(command: list[str], **_kwargs: object) -> object:
+                output = fixture if command[-1] == "tcp" else b""
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+            with mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=observer,
+            ):
+                sample = profile_runner._socket_pid_sample(
+                    "host_ready",
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=child_pid)],
+                    guard_events=events,
+                )
+            evidence = json.loads(
+                (run_directory / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
             )
-            self.assertEqual(evidence["pids"], [])
+
+        self.assertFalse(sample["observed"])
+        self.assertEqual(
+            evidence["failure_code"], "socket_owner_missing_guard_startup_event"
+        )
+        self.assertEqual(evidence["pids"], [child_pid])
+
+    def test_netstat_fails_closed_on_malformed_run_pid_row(self) -> None:
+        run_pid = 24572
+        malformed = b"tcp4 0 0 not-an-endpoint 127.0.0.1.51112 ESTABLISHED python worker:%d 00000 00000000 0000000000000000\n" % run_pid
+        with tempfile.TemporaryDirectory(
+            prefix="profile-netstat-malformed-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            events = [_guard_startup_event(run_pid, run_directory.name)]
+
+            def observer(command: list[str], **_kwargs: object) -> object:
+                output = malformed if command[-1] == "tcp" else b""
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+            with mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=observer,
+            ):
+                sample = profile_runner._socket_pid_sample(
+                    "host_ready",
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=run_pid)],
+                    guard_events=events,
+                )
+            evidence = json.loads(
+                (run_directory / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertFalse(sample["observed"])
+        self.assertEqual(evidence["failure_code"], "netstat_run_pid_row_malformed")
+        self.assertEqual(evidence["aggregate_counts"]["malformed_run_pid_rows"], 1)
+
+    def test_netstat_fails_closed_on_malformed_run_pid_owner_suffix(self) -> None:
+        run_pid = 24573
+        malformed = (
+            b"tcp4 0 0 not-an-endpoint 127.0.0.1.51112 ESTABLISHED "
+            b"python worker:%d 00000 00000000\n" % run_pid
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="profile-netstat-malformed-owner-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            events = [_guard_startup_event(run_pid, run_directory.name)]
+
+            def observer(command: list[str], **_kwargs: object) -> object:
+                output = malformed if command[-1] == "tcp" else b""
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+            with mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=observer,
+            ):
+                sample = profile_runner._socket_pid_sample(
+                    "host_ready",
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=run_pid)],
+                    guard_events=events,
+                )
+            evidence = json.loads(
+                (run_directory / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertFalse(sample["observed"])
+        self.assertEqual(evidence["failure_code"], "netstat_run_pid_row_malformed")
+        self.assertEqual(evidence["aggregate_counts"]["run_pid_rows"], 1)
+        self.assertEqual(evidence["aggregate_counts"]["malformed_run_pid_rows"], 1)
+
+    def test_malformed_foreign_netstat_owner_is_filtered_before_endpoints(self) -> None:
+        foreign_pid = 98766
+        fixture = (
+            b"tcp4 0 0 invalid-local invalid-foreign ESTABLISHED "
+            b"foreign worker:%d 00000\n" % foreign_pid
+        )
+        with mock.patch.object(
+            profile_runner,
+            "_parse_netstat_endpoint",
+            wraps=profile_runner._parse_netstat_endpoint,
+        ) as endpoint_parser:
+            rows, counts, parseable = profile_runner._parse_netstat_census(
+                fixture, run_pids={24573}
+            )
+
+        self.assertTrue(parseable)
+        self.assertEqual(rows, [])
+        self.assertEqual(counts["foreign_process_rows"], 1)
+        endpoint_parser.assert_not_called()
 
     def test_listener_pid_probe_is_port_scoped_for_both_lock_ports(self) -> None:
         commands: list[list[str]] = []
 
         def observer(command: list[str], **_kwargs: object) -> object:
             commands.append(command)
-            return types.SimpleNamespace(returncode=0, stdout=b"24568\n", stderr=b"")
+            port = int(command[2].split(":", 1)[1])
+            output = (
+                b"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+                + b"python 24568 user 3u IPv4 0x123 0t0 TCP *:%d (LISTEN)\n" % port
+            )
+            return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
 
         with mock.patch(
             "scripts.live_gate_preflight_safety.run_guarded_subprocess",
@@ -1166,18 +1494,22 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8360", "-sTCP:LISTEN"],
-                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8370", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8360", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
             ],
         )
 
-    def test_required_port_checks_fail_closed_for_busy_or_unobservable_port(self) -> None:
+    def test_required_port_checks_fail_closed_for_busy_port(self) -> None:
         commands: list[list[str]] = []
 
         def observer(command: list[str], **_kwargs: object) -> object:
             commands.append(command)
             if "-iTCP:8370" in command:
-                return types.SimpleNamespace(returncode=0, stdout=b"45678\n", stderr=b"")
+                output = (
+                    b"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+                    b"python 45678 user 3u IPv6 0x456 0t0 TCP [::]:8370 (LISTEN)\n"
+                )
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
             return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
 
         with mock.patch.object(
@@ -1192,8 +1524,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8360", "-sTCP:LISTEN"],
-                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8370", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8360", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
             ],
         )
         self.assertEqual(
@@ -1201,27 +1533,44 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             "port_8370_not_free_before_start",
         )
 
-        commands.clear()
+    def test_required_port_checks_fail_closed_when_lsof_is_missing_or_times_out(self) -> None:
+        for failure in ("missing", "timeout"):
+            with self.subTest(failure=failure):
+                commands: list[list[str]] = []
+                observer_kwargs: list[dict[str, object]] = []
 
-        def unavailable_observer(command: list[str], **_kwargs: object) -> object:
-            commands.append(command)
-            if "-iTCP:8370" in command:
-                raise FileNotFoundError("trusted lsof unavailable")
-            return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+                def unavailable_observer(
+                    command: list[str], **kwargs: object
+                ) -> object:
+                    commands.append(command)
+                    observer_kwargs.append(dict(kwargs))
+                    if "-iTCP:8370" in command:
+                        if failure == "missing":
+                            raise FileNotFoundError("trusted lsof unavailable")
+                        raise subprocess.TimeoutExpired(command, kwargs.get("timeout", 0))
+                    return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
 
-        with mock.patch.object(
-            profile_runner, "_port_state", return_value=(False, True)
-        ), mock.patch(
-            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
-            side_effect=unavailable_observer,
-        ):
-            unavailable_status = profile_runner._required_port_status()
+                with mock.patch.object(
+                    profile_runner, "_port_state", return_value=(False, True)
+                ), mock.patch(
+                    "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                    side_effect=unavailable_observer,
+                ):
+                    unavailable_status = profile_runner._required_port_status()
 
-        self.assertEqual(unavailable_status, {8360: True, 8370: False})
-        self.assertEqual(len(commands), 2)
-        self.assertEqual(commands[1][0], profile_runner.LSOF_EXECUTABLE)
+                self.assertEqual(unavailable_status, {8360: True, 8370: False})
+                self.assertEqual(len(commands), 2)
+                self.assertEqual(commands[1][0], profile_runner.LSOF_EXECUTABLE)
+                self.assertEqual(
+                    commands[1],
+                    [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
+                )
+                self.assertEqual(
+                    observer_kwargs[1]["timeout"],
+                    profile_runner.OBSERVER_TIMEOUT_SECONDS,
+                )
 
-    def test_sanitized_environment_lsof_observer_sees_only_own_loopback_socket(self) -> None:
+    def _obsolete_lsof_test_sanitized_environment_observer_sees_only_own_loopback_socket(self) -> None:
         self.assertTrue(Path(profile_runner.LSOF_EXECUTABLE).is_file())
         with tempfile.TemporaryDirectory(
             prefix="profile-actual-lsof-", dir=PROJECT_ROOT / "tmp"
@@ -1266,7 +1615,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertIn("-a", command)
             self.assertNotIn("shell", command)
 
-    def test_socket_sample_maps_non_8360_socket_with_exact_process_group_scope(self) -> None:
+    def _obsolete_lsof_test_socket_sample_maps_non_8360_socket_with_exact_process_group_scope(self) -> None:
         owner_pid = 24568
         lsof_output = (
             b"p24568\0g24568\0f12u\0tIPv4\0"
@@ -1320,7 +1669,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(command_evidence["stdout_prefix_base64"], "")
         self.assertNotIn(b"8361", sidecar_bytes)
 
-    def test_socket_sample_checks_pid_and_process_group_identity(self) -> None:
+    def _obsolete_lsof_test_socket_sample_checks_pid_and_process_group_identity(self) -> None:
         controller_pid = 31001
         controller_pgid = 30000
         command = [
@@ -1369,7 +1718,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertTrue(sample["observed"])
         self.assertEqual(sample["pids"], [controller_pid])
 
-    def test_socket_sample_fails_closed_when_lsof_owner_record_is_incomplete(self) -> None:
+    def _obsolete_lsof_test_socket_sample_fails_closed_when_owner_record_is_incomplete(self) -> None:
         def observer(command: list[str], **_kwargs: object) -> object:
             return types.SimpleNamespace(
                 returncode=0,
@@ -1399,7 +1748,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertFalse(evidence["owner_mappings"][0]["ownership_parseable"])
         self.assertEqual(evidence["failure_code"], "socket_owner_mapping_incomplete")
 
-    def test_socket_sample_bounds_retained_raw_output_and_fails_closed_on_truncation(self) -> None:
+    def _obsolete_lsof_test_socket_sample_bounds_retained_raw_output_and_fails_closed_on_truncation(self) -> None:
         def observer(command: list[str], **_kwargs: object) -> object:
             output = (
                 b"p24570\0g24570\0f12u\0tIPv4\0n*:"
@@ -1433,7 +1782,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(command_evidence["stdout_prefix_base64"], "")
         self.assertEqual(evidence["pids"], [])
 
-    def test_socket_sample_with_unguarded_owner_fails_process_census(self) -> None:
+    def _obsolete_lsof_test_socket_sample_with_unguarded_owner_fails_process_census(self) -> None:
         controller_pid = 10001
         host_prelaunch_pid = 10002
         host_worker_pid = 10003
@@ -1495,7 +1844,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(census["uncovered_pids"], [unguarded_pid])
         self.assertFalse(census["complete"])
 
-    def test_socket_sample_requests_only_owned_group_and_persists_no_socket_names(self) -> None:
+    def _obsolete_lsof_test_socket_sample_requests_only_owned_group_and_persists_no_socket_names(self) -> None:
         target_pid = 10200
         lsof_output = (
             b"p10200\0g10200\0f12u\0tIPv6\0"
@@ -1551,7 +1900,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertNotIn(b"n[::1]", sidecar_bytes)
         self.assertNotIn(b"51123", sidecar_bytes)
 
-    def test_socket_sample_rejects_and_scrubs_out_of_scope_8357_record(self) -> None:
+    def _obsolete_lsof_test_socket_sample_rejects_and_scrubs_out_of_scope_8357_record(self) -> None:
         output = (
             b"p10201\0g10201\0f13u\0tIPv4\0"
             b"n127.0.0.1:8357->127.0.0.1:51124\0\n"
@@ -1590,7 +1939,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertNotIn(b"8357", sidecar_bytes)
         self.assertNotIn(b"10201", sidecar_bytes)
 
-    def test_socket_sample_rejects_unknown_scope_before_observing(self) -> None:
+    def _obsolete_lsof_test_socket_sample_rejects_unknown_scope_before_observing(self) -> None:
         scope = self._process_scope()
         scope["process_group_id"] = 99999
         observer = mock.Mock(side_effect=AssertionError("unknown groups cannot be queried"))
@@ -1614,7 +1963,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertFalse(sample["observed"])
         self.assertEqual(evidence["failure_code"], "process_scope_identity_invalid")
 
-    def test_socket_sample_timeout_fails_closed_without_retaining_partial_output(self) -> None:
+    def _obsolete_lsof_test_socket_sample_timeout_fails_closed_without_retaining_partial_output(self) -> None:
         def timeout(command: list[str], **_kwargs: object) -> object:
             raise subprocess.TimeoutExpired(command, 3, output=b"p10200\0g10200")
 
@@ -1720,6 +2069,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         host_prelaunch_pid = 10002
         host_worker_pid = 10003
         unguarded_child_pid = 10004
+        run_id = "census-child-test"
         process_canaries = [
             {"canary_stage": "controller-startup", "pid": controller_pid},
             {"canary_stage": "host-prelaunch", "pid": host_prelaunch_pid},
@@ -1749,12 +2099,20 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             ),
             self._process_scope(pid=host_worker_pid),
         ]
+        guard_events = [
+            _guard_startup_event(controller_pid, run_id, role="parent"),
+            _guard_child_started_event(controller_pid, unguarded_child_pid, run_id),
+            _guard_startup_event(host_prelaunch_pid, run_id),
+            _guard_startup_event(host_worker_pid, run_id),
+        ]
         census = profile_runner._make_process_census(
             process_canaries=process_canaries,
             process=types.SimpleNamespace(pid=host_worker_pid),
             driver_exchange={"process_pid": controller_pid},
             socket_pid_samples=socket_pid_samples,
             process_scopes=process_scopes,
+            guard_events=guard_events,
+            expected_run_id=run_id,
         )
         self.assertEqual(census["uncovered_pids"], [unguarded_child_pid])
         self.assertFalse(census["complete"])
@@ -2096,6 +2454,11 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             ) -> tuple[dict, list[str], list[int]]:
                 run_directory = evidence_root / run_id
                 run_directory.mkdir()
+                run_guard_events = [
+                    _guard_startup_event(os.getpid(), run_id, role="parent"),
+                    _guard_startup_event(24680, run_id),
+                    _guard_startup_event(12345, run_id),
+                ]
                 checked_ports: list[int] = []
                 call_result = {
                     "run_id": run_id,
@@ -2198,6 +2561,14 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         ),
                         mock.patch.object(
                             profile_runner, "_ensure_run_directory", return_value=run_directory
+                        ),
+                        mock.patch(
+                            "scripts.live_gate_preflight_safety.configure_guard_event_sink"
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_read_guard_events_for_run",
+                            return_value=(run_guard_events, b"synthetic guard events\n", True),
                         ),
                         mock.patch.object(
                             profile_runner,
@@ -3473,59 +3844,6 @@ def _run_probe_from_sitecustomize() -> None:
         if len(sys.argv) != 5:
             raise SystemExit("profile worker probe arguments are incomplete")
         _run_profile_worker_probe(sys.argv[2], sys.argv[3], sys.argv[4])
-    if mode == "--lsof-process-scope-probe":
-        if len(sys.argv) != 3:
-            raise SystemExit("lsof process-scope probe arguments are incomplete")
-        from scripts.live_gate_preflight_safety import (
-            activate_preflight_safety,
-            current_invocation_command,
-            require_startup_guard_active,
-        )
-
-        activate_preflight_safety()
-        require_startup_guard_active()
-        if os.environ.get("PATH") != "/usr/bin:/bin":
-            raise SystemExit("sanitized observer PATH differs")
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen(1)
-            scope = profile_runner._make_process_scope(
-                selector="pid",
-                pid=os.getpid(),
-                process_group_id=os.getpgrp(),
-                process_role="parent",
-                launch_source="controller-startup-canary",
-                command=current_invocation_command(),
-                environment_sha256="a" * 64,
-                working_directory=Path.cwd(),
-            )
-            sample = profile_runner._socket_pid_sample(
-                "host_ready",
-                run_directory=Path(sys.argv[2]),
-                process_scopes=[scope],
-            )
-            evidence = json.loads(
-                (Path(sys.argv[2]) / "socket-sample-host_ready.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            print(
-                json.dumps(
-                    {
-                        "path": os.environ["PATH"],
-                        "pid": os.getpid(),
-                        "sample": sample,
-                        "evidence": evidence,
-                    },
-                    sort_keys=True,
-                )
-            )
-            if not sample["observed"] or sample["pids"] != [os.getpid()]:
-                raise SystemExit("process-scoped lsof observation failed")
-        finally:
-            listener.close()
-        raise SystemExit(0)
     if mode == "--stub-probe":
         from scripts.live_gate_preflight_safety import activate_preflight_safety
 

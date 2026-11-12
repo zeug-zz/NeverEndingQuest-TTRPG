@@ -123,6 +123,7 @@ def activate_preflight_guard() -> None:
             STARTUP_GUARD_ENV,
             SUBPROCESS_CANARY_ENV,
             activate_preflight_safety,
+            record_startup_guard_event,
             run_startup_canaries,
             sanitized_environment_snapshot,
         )
@@ -134,6 +135,7 @@ def activate_preflight_guard() -> None:
         ):
             raise RuntimeError("preflight startup guard switch is missing")
         activate_preflight_safety()
+        record_startup_guard_event()
         _STARTUP_ENVIRONMENT = sanitized_environment_snapshot()
         report = run_startup_canaries()
         os.environ[CONNECT_CANARY_ENV] = "1"
