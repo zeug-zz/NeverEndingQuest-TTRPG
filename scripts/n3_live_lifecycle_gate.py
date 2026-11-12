@@ -98,6 +98,18 @@ MAX_HOST_OUTPUT_BYTES_PER_STREAM = 65_536
 HOST_START_TIMEOUT_SECONDS = 30.0
 HOST_STOP_TIMEOUT_SECONDS = 8.0
 HOST_POLL_INTERVAL_SECONDS = 0.2
+HOST_API_TIMEOUT_SECONDS = 5.0
+COMPANION_START_POST_TIMEOUT_SECONDS = 180.0
+COMPANION_STARTING_POST_ACTIONS = frozenset(
+    {"initialize-identity", "start"}
+)
+COMPANION_LONG_POST_ACTIONS = frozenset({"rotate", "revoke", "stop"})
+COMPANION_POST_STATUS_ATTEMPTS = 3
+COMPANION_POST_STATUS_RETRY_SECONDS = 0.25
+TEARDOWN_BOOTSTRAP_SETTLE_SECONDS = 180.0
+TEARDOWN_BOOTSTRAP_POLL_SECONDS = 0.5
+TEARDOWN_BOOTSTRAP_MAX_POLLS = 361
+TEARDOWN_STOP_FALLBACK_TIMEOUT_SECONDS = 60.0
 PROVIDER_BUDGET = 1
 PROVIDER_LEDGER_NAME = "provider-attempt-ledger.jsonl"
 _PROVIDER_LEDGER_RELATIVE = Path("tmp/n2")
@@ -367,7 +379,7 @@ class HostApiClient:
         self,
         *,
         connection_factory: Callable[..., http.client.HTTPConnection] | None = None,
-        timeout_seconds: float = 5.0,
+        timeout_seconds: float = HOST_API_TIMEOUT_SECONDS,
     ) -> None:
         self._connection_factory = connection_factory or http.client.HTTPConnection
         self._timeout = timeout_seconds
@@ -378,25 +390,50 @@ class HostApiClient:
             raise HostApiError("host_api_ownership_guard_invalid")
         self._ownership_validator = validator
 
-    def get_status(self) -> HostApiResponse:
-        return self._request("GET", "/api/player-sharing/status", None)
+    def get_status(
+        self, *, timeout_seconds: float | None = None
+    ) -> HostApiResponse:
+        selected_timeout = self._validated_timeout(timeout_seconds)
+        return self._request(
+            "GET", "/api/player-sharing/status", None, timeout_seconds=selected_timeout
+        )
 
     def post(
-        self, action: str, payload: Mapping[str, object] | None = None
+        self,
+        action: str,
+        payload: Mapping[str, object] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> HostApiResponse:
         if action not in self._POST_ACTIONS:
             raise HostApiError("host_api_action_invalid")
         body_value: Mapping[str, object] = {} if payload is None else payload
         if not isinstance(body_value, Mapping):
             raise HostApiError("host_api_payload_invalid")
+        selected_timeout = self._validated_timeout(timeout_seconds)
         path = "/api/player-sharing/" + action
-        return self._request("POST", path, body_value)
+        return self._request("POST", path, body_value, timeout_seconds=selected_timeout)
+
+    def _validated_timeout(self, value: object | None) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HostApiError("host_api_timeout_invalid")
+        try:
+            selected = float(value)
+        except (OverflowError, TypeError, ValueError):
+            raise HostApiError("host_api_timeout_invalid") from None
+        if not math.isfinite(selected) or selected <= 0 or selected > 300.0:
+            raise HostApiError("host_api_timeout_invalid")
+        return selected
 
     def _request(
         self,
         method: str,
         path: str,
         payload: Mapping[str, object] | None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> HostApiResponse:
         if self._ownership_validator is not None:
             try:
@@ -426,14 +463,18 @@ class HostApiClient:
         connection: http.client.HTTPConnection | None = None
         try:
             connection = self._connection_factory(
-                "127.0.0.1", HOST_PORT, timeout=self._timeout
+                "127.0.0.1",
+                HOST_PORT,
+                timeout=self._timeout if timeout_seconds is None else timeout_seconds,
             )
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             raw = response.read(MAX_API_RESPONSE_BYTES + 1)
             status = int(response.status)
+        except TimeoutError:
+            raise HostApiError("host_api_timeout") from None
         except (OSError, http.client.HTTPException, ValueError, TypeError):
-            raise HostApiError() from None
+            raise HostApiError("host_api_transport_error") from None
         finally:
             if connection is not None:
                 try:
@@ -1133,6 +1174,13 @@ class RowContext:
     companion_sha256: str | None = None
     monotonic: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
+    row_deadline_at: float | None = None
+    companion_start_post_attempted: bool = False
+    companion_start_post_unconfirmed: bool = False
+    companion_start_post_action: str | None = None
+    companion_post_recovery_observation: dict[str, object] | None = field(
+        default=None, repr=False
+    )
 
     def remember_secret(self, value: object) -> None:
         if isinstance(value, str) and len(value) >= 3 and value not in self.secrets:
@@ -1229,7 +1277,12 @@ class L02IdentityInitExecutor:
             ):
                 return _failed("identity_up_counter_not_zero", observed=before_observed)
 
-            first = context.host_api.post("initialize-identity", {"confirm": True})
+            first, _recovery, failure = _post_companion_starting_action(
+                context, "initialize-identity", {"confirm": True}
+            )
+            if failure is not None:
+                return failure
+            assert first is not None
             first_status = _host_status(first)
             if (
                 first.status != 200
@@ -1258,7 +1311,12 @@ class L02IdentityInitExecutor:
                     return _failed("identity_residual_resource_found")
                 return _blocked("identity_postcheck_unavailable")
 
-            second = context.host_api.post("initialize-identity", {"confirm": True})
+            second, _recovery, failure = _post_companion_starting_action(
+                context, "initialize-identity", {"confirm": True}
+            )
+            if failure is not None:
+                return failure
+            assert second is not None
             second_status = _host_status(second)
             if (
                 second.status != 200
@@ -1273,7 +1331,7 @@ class L02IdentityInitExecutor:
                     "identity_initialization_not_idempotent",
                     observed=_host_api_observation(second),
                 )
-            return RowExecutionResult(
+            return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
                 "identity_initialized_once_and_cleaned_up",
                 {
@@ -1285,7 +1343,7 @@ class L02IdentityInitExecutor:
                     "second_identity_initialized": True,
                     "second_up_invocations": 1,
                 },
-            )
+            ))
         except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
             return _blocked("l02_observation_unavailable")
 
@@ -1308,7 +1366,12 @@ class L03PublicAccessExecutor:
                 )
             context.remember_secret(credential)
 
-            started = context.host_api.post("start", {})
+            started, _recovery, failure = _post_companion_starting_action(
+                context, "start", {}
+            )
+            if failure is not None:
+                return failure
+            assert started is not None
             started_status = _host_status(started)
             if (
                 started.status != 200
@@ -1415,7 +1478,7 @@ class L03PublicAccessExecutor:
             if forged_login.status != 403:
                 return _failed("forged_origin_accepted")
 
-            return RowExecutionResult(
+            return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
                 "public_player_boundary_verified",
                 {
@@ -1432,7 +1495,7 @@ class L03PublicAccessExecutor:
                     "forged_origin_status": forged_login.status,
                     "public_origin_scheme": "https",
                 },
-            )
+            ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
                 return _failed("public_response_contract_invalid")
@@ -1477,7 +1540,12 @@ class L04DuplicateStartExecutor:
             if len(processes) != 1:
                 return _failed("companion_process_count_not_one")
 
-            second = context.host_api.post("start", {})
+            second, _recovery, failure = _post_companion_starting_action(
+                context, "start", {}
+            )
+            if failure is not None:
+                return failure
+            assert second is not None
             after = _host_status(second)
             if second.status != 200 or second.payload.get("ok") is not True or after is None:
                 return _failed(
@@ -1502,7 +1570,7 @@ class L04DuplicateStartExecutor:
                 final_processes[0], processes[0]
             ):
                 return _failed("duplicate_companion_created")
-            return RowExecutionResult(
+            return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
                 "duplicate_start_idempotent",
                 {
@@ -1511,7 +1579,7 @@ class L04DuplicateStartExecutor:
                     "player_listener_count": 1,
                     "companion_launches_unchanged": True,
                 },
-            )
+            ))
         except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
             return _blocked("l04_observation_unavailable")
 
@@ -1939,7 +2007,7 @@ class L06CredentialRotationExecutor:
             if client.socket_connected is not True:
                 return _blocked("old_socket_precondition_unavailable")
 
-            rotated = context.host_api.post("rotate", {})
+            rotated = _post_long_timeout(context, "rotate", {})
             rotated_status = _host_status(rotated)
             new_credential = rotated.payload.get("credential")
             if (
@@ -2076,7 +2144,7 @@ class L07StopSharingExecutor:
             if not host_health_before:
                 return _failed("host_unhealthy_before_stop")
 
-            stopped = context.host_api.post("stop", {})
+            stopped = _post_long_timeout(context, "stop", {})
             stopped_status = _host_status(stopped)
             if (
                 stopped.status != 200
@@ -2160,7 +2228,12 @@ class L08HostExitRestartExecutor:
                         "sharing_state_invalid_before_host_exit",
                         observed=_host_api_observation(status_response),
                     )
-                started = context.host_api.post("start", {})
+                started, _recovery, failure = _post_companion_starting_action(
+                    context, "start", {}
+                )
+                if failure is not None:
+                    return failure
+                assert started is not None
                 status_response = started
                 status = _host_status(started)
                 if (
@@ -2308,7 +2381,7 @@ class L08HostExitRestartExecutor:
             if not _owner_record_absent(layout):
                 return _failed("owner_record_reappeared_after_restart")
 
-            return RowExecutionResult(
+            return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
                 "owned_host_exit_cleanup_and_restart_off",
                 {
@@ -2322,7 +2395,7 @@ class L08HostExitRestartExecutor:
                     "sharing_auto_started": False,
                     "reconciliation_clean": True,
                 },
-            )
+            ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
                 return _failed("public_host_exit_contract_invalid")
@@ -2354,7 +2427,12 @@ class L09RevokeAccessExecutor:
                     observed=_host_api_observation(before_response),
                 )
 
-            started = context.host_api.post("start", {})
+            started, _recovery, failure = _post_companion_starting_action(
+                context, "start", {}
+            )
+            if failure is not None:
+                return failure
+            assert started is not None
             ready = _host_status(started)
             if (
                 started.status != 200
@@ -2395,7 +2473,7 @@ class L09RevokeAccessExecutor:
             if _decode_player_snapshot(client.authenticated_snapshot(session)) is None:
                 return _failed("active_session_not_valid_before_revoke")
 
-            revoked = context.host_api.post("revoke", {})
+            revoked = _post_long_timeout(context, "revoke", {})
             revoked_status = _host_status(revoked)
             if (
                 revoked.status != 200
@@ -2455,7 +2533,7 @@ class L09RevokeAccessExecutor:
                     "invitation_available_after_revoke",
                     observed=_host_api_observation(unavailable_invitation),
                 )
-            return RowExecutionResult(
+            return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
                 "access_revoked_without_identity_rebootstrap",
                 {
@@ -2468,7 +2546,7 @@ class L09RevokeAccessExecutor:
                     "unauthenticated_data_free": True,
                     "invitation_unavailable": True,
                 },
-            )
+            ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
                 return _failed("public_revoke_contract_invalid")
@@ -2517,7 +2595,7 @@ class L10CleanTeardownExecutor:
                     observed=_host_api_observation(current_response),
                 )
 
-            stopped = context.host_api.post("stop", {})
+            stopped = _post_long_timeout(context, "stop", {})
             stopped_status = _host_status(stopped)
             if (
                 stopped.status != 200
@@ -3156,6 +3234,209 @@ def _host_status(response: HostApiResponse) -> Mapping[str, object] | None:
         return None
     status = response.payload.get("status")
     return status if isinstance(status, Mapping) else None
+
+
+def _row_remaining_seconds(context: RowContext) -> float | None:
+    deadline = context.row_deadline_at
+    if deadline is None:
+        return None
+    try:
+        remaining = float(deadline) - float(context.monotonic())
+    except (OverflowError, TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(remaining):
+        return 0.0
+    return max(0.0, remaining)
+
+
+def _post_long_timeout(
+    context: RowContext,
+    action: str,
+    payload: Mapping[str, object],
+) -> HostApiResponse:
+    if action not in COMPANION_LONG_POST_ACTIONS:
+        raise GateError("companion_long_post_action_invalid")
+    remaining = _row_remaining_seconds(context)
+    if remaining is not None and remaining <= 0:
+        raise HostApiError("host_api_timeout_invalid")
+    timeout_seconds = COMPANION_START_POST_TIMEOUT_SECONDS
+    if remaining is not None:
+        timeout_seconds = min(timeout_seconds, remaining)
+    return context.host_api.post(
+        action, payload, timeout_seconds=timeout_seconds
+    )
+
+
+def _companion_start_contract_state(
+    action: str, response: object
+) -> bool | None:
+    status = _host_status(response) if isinstance(response, HostApiResponse) else None
+    if status is None:
+        return None
+    if action == "initialize-identity":
+        initialized = status.get("identity_initialized")
+        up_invocations = status.get("identity_up_invocations")
+        if type(initialized) is not bool or type(up_invocations) is not int:
+            return None
+        return initialized is True and up_invocations == 1
+    if action == "start":
+        state = status.get("state")
+        return state == "ready" if isinstance(state, str) else None
+    return None
+
+
+def _companion_post_error_reason(action: str, outcome: str) -> str:
+    prefix = "identity" if action == "initialize-identity" else "start"
+    suffix = "request_timeout" if outcome == "request_timeout" else "transport_error"
+    return prefix + "_" + suffix
+
+
+def _companion_post_status_observation(
+    response: HostApiResponse | None,
+    *,
+    request_outcome: str,
+) -> dict[str, object]:
+    observed = _host_api_observation(response)
+    observed["request_outcome"] = request_outcome
+    observed["status_read"] = response is not None
+    counters: dict[str, int] | None = None
+    if response is not None:
+        try:
+            counters = _status_counters(response)
+        except GateError:
+            counters = None
+    observed["companion_counters"] = counters
+    return observed
+
+
+def _post_companion_starting_action(
+    context: RowContext,
+    action: str,
+    payload: Mapping[str, object],
+) -> tuple[
+    HostApiResponse | None,
+    dict[str, object] | None,
+    RowExecutionResult | None,
+]:
+    if action not in COMPANION_STARTING_POST_ACTIONS:
+        raise GateError("companion_start_action_invalid")
+    remaining = _row_remaining_seconds(context)
+    if remaining is not None and remaining <= 0:
+        raise HostApiError("host_api_timeout_invalid")
+    timeout_seconds = COMPANION_START_POST_TIMEOUT_SECONDS
+    if remaining is not None:
+        timeout_seconds = min(timeout_seconds, remaining)
+
+    context.companion_start_post_attempted = True
+    context.companion_start_post_unconfirmed = True
+    context.companion_start_post_action = action
+    try:
+        response = context.host_api.post(
+            action, payload, timeout_seconds=timeout_seconds
+        )
+    except HostApiError as exc:
+        if exc.reason in {
+            "host_api_action_invalid",
+            "host_api_payload_invalid",
+            "host_api_payload_too_large",
+            "host_api_timeout_invalid",
+            "managed_host_ownership_failed",
+        }:
+            raise
+        request_outcome = (
+            "request_timeout"
+            if exc.reason == "host_api_timeout"
+            else "transport_error"
+        )
+        latest_status: HostApiResponse | None = None
+        contract_state: bool | None = None
+        for attempt in range(COMPANION_POST_STATUS_ATTEMPTS):
+            remaining = _row_remaining_seconds(context)
+            if remaining is not None and remaining <= 0:
+                break
+            get_timeout = HOST_API_TIMEOUT_SECONDS
+            if remaining is not None:
+                get_timeout = min(get_timeout, remaining)
+            try:
+                candidate_status = context.host_api.get_status(
+                    timeout_seconds=get_timeout
+                )
+                if isinstance(candidate_status, HostApiResponse):
+                    latest_status = candidate_status
+                    _remember_payload_secrets(
+                        candidate_status.payload, context.secrets
+                    )
+                    contract_state = _companion_start_contract_state(
+                        action, candidate_status
+                    )
+                if contract_state is True:
+                    context.companion_start_post_unconfirmed = False
+                    synthetic_status = _host_status(latest_status)
+                    assert synthetic_status is not None
+                    response_reason = (
+                        "identity_initialized" if action == "initialize-identity" else "ready"
+                    )
+                    recovered = HostApiResponse(
+                        200,
+                        {
+                            "ok": True,
+                            "reason": response_reason,
+                            "status": synthetic_status,
+                        },
+                    )
+                    observed = _companion_post_status_observation(
+                        latest_status, request_outcome=request_outcome
+                    )
+                    context.companion_post_recovery_observation = observed
+                    return recovered, observed, None
+            except (HostApiError, GateError, OSError, ValueError, TypeError):
+                pass
+            if attempt + 1 >= COMPANION_POST_STATUS_ATTEMPTS:
+                break
+            remaining = _row_remaining_seconds(context)
+            if remaining is not None and remaining <= 0:
+                break
+            pause = COMPANION_POST_STATUS_RETRY_SECONDS
+            if remaining is not None:
+                pause = min(pause, remaining)
+            try:
+                context.sleep(pause)
+            except TimeoutError:
+                break
+
+        observed = _companion_post_status_observation(
+            latest_status, request_outcome=request_outcome
+        )
+        context.companion_post_recovery_observation = observed
+        failure_reason = _companion_post_error_reason(action, request_outcome)
+        if contract_state is False:
+            failure = _failed(failure_reason, observed=observed)
+        else:
+            failure = _blocked(
+                action.replace("-", "_") + "_request_outcome_unconfirmed",
+                observed=observed,
+            )
+        return None, observed, failure
+
+    if _companion_start_contract_state(action, response) is True:
+        context.companion_start_post_unconfirmed = False
+    return response, None, None
+
+
+def _include_companion_post_observation(
+    context: RowContext, result: RowExecutionResult
+) -> RowExecutionResult:
+    recovery = context.companion_post_recovery_observation
+    if recovery is None:
+        return result
+    observed = dict(recovery)
+    observed.update(dict(result.observed))
+    return RowExecutionResult(
+        result.verdict,
+        result.reason,
+        observed,
+        result.recovery_attempts,
+    )
 
 
 def _port_observation_valid(value: object, expected_port: int) -> bool:
@@ -5308,6 +5589,12 @@ class LiveGateRunner:
         self.teardown: dict[str, object] = {
             "sharing_stop_attempted": False,
             "sharing_stopped": False,
+            "bootstrap_wait_seconds": 0.0,
+            "bootstrap_settled": None,
+            "identity_down_attempted": False,
+            "identity_down_result": "not_attempted",
+            "identity_cleanup_result": "not_needed",
+            "identity_cleanup_observations": [],
             "host_stop_attempted": False,
             "host_stopped": False,
             "ports_free": False,
@@ -5332,6 +5619,7 @@ class LiveGateRunner:
         self.companion_record: dict[str, object] = {"verified": False}
         self.companion_path: Path | None = None
         self.companion_install_root: Path | None = None
+        self._unconfirmed_identity_cleanup_safe = True
 
     def run(self) -> dict[str, object]:
         try:
@@ -5682,6 +5970,8 @@ class LiveGateRunner:
                 self._add_infrastructure("driver_time_cap_exceeded")
                 self._append_blocked_rows(index, "driver_time_cap_exceeded")
                 return
+            self.context.row_deadline_at = row_started + timeout_seconds
+            self.context.companion_post_recovery_observation = None
             try:
                 with _RowDeadline(timeout_seconds):
                     result = registry[row.row_id].execute(self.context)
@@ -5696,14 +5986,21 @@ class LiveGateRunner:
             except Exception:
                 result = RowExecutionResult("BLOCKED", "executor_exception")
                 self._add_infrastructure("executor_exception:" + row.row_id)
+            finally:
+                self.context.row_deadline_at = None
+            result = _include_companion_post_observation(self.context, result)
             elapsed = max(0.0, self.dependencies.monotonic() - row_started)
             if elapsed > row.timeout_seconds:
-                result = RowExecutionResult("BLOCKED", "row_time_cap_exceeded")
+                result = RowExecutionResult(
+                    "BLOCKED", "row_time_cap_exceeded", dict(result.observed)
+                )
                 self._add_infrastructure("row_time_cap_exceeded:" + row.row_id)
             try:
                 self._check_driver_time()
             except GateError as exc:
-                result = RowExecutionResult("BLOCKED", exc.reason)
+                result = RowExecutionResult(
+                    "BLOCKED", exc.reason, dict(result.observed)
+                )
                 self._add_infrastructure(exc.reason)
             self._observe_result_secrets(result)
             if row.row_id == "L10" and self.host is not None and self.host.owner_pid is None:
@@ -5721,14 +6018,38 @@ class LiveGateRunner:
                     self._observe_counter_sample(after_status)
                 except (HostApiError, GateError):
                     after_status = before_status
-                    result = RowExecutionResult("BLOCKED", "host_counters_unavailable")
                     self._add_infrastructure("host_counters_unavailable")
+                    has_request_observation = (
+                        result.observed.get("request_outcome")
+                        in {"request_timeout", "transport_error"}
+                        and result.observed.get("status_read") is True
+                    )
+                    if has_request_observation:
+                        recovery_counters = result.observed.get(
+                            "companion_counters"
+                        )
+                        if isinstance(recovery_counters, Mapping):
+                            try:
+                                self._observe_counter_sample(recovery_counters)
+                                after_status = dict(recovery_counters)
+                            except GateError as exc:
+                                self._add_infrastructure(exc.reason)
+                    else:
+                        result = RowExecutionResult(
+                            "BLOCKED",
+                            "host_counters_unavailable",
+                            dict(result.observed),
+                        )
             if (
                 result.recovery_attempts < 0
                 or result.recovery_attempts > 1
                 or (row.row_id != "L05" and result.recovery_attempts != 0)
             ):
-                result = RowExecutionResult("FAIL", "recovery_override_cap_breached")
+                result = RowExecutionResult(
+                    "FAIL",
+                    "recovery_override_cap_breached",
+                    dict(result.observed),
+                )
                 self._add_infrastructure("recovery_override_cap_breached")
             self.recovery_attempts += result.recovery_attempts
             self.counter_snapshot = after_status
@@ -5736,7 +6057,9 @@ class LiveGateRunner:
                 self.cumulative_counters, self.recovery_attempts
             )
             if counter_error is not None:
-                result = RowExecutionResult("FAIL", counter_error)
+                result = RowExecutionResult(
+                    "FAIL", counter_error, dict(result.observed)
+                )
                 self._add_infrastructure(counter_error)
             record = {
                 "row_id": row.row_id,
@@ -5898,6 +6221,192 @@ class LiveGateRunner:
         elapsed = self.dependencies.monotonic() - self.started
         return float(FROZEN_CAPS["driver_wall_clock_seconds"]) - elapsed
 
+    def _wait_for_unconfirmed_companion_post(self) -> bool:
+        context = self.context
+        action = (
+            context.companion_start_post_action
+            if context is not None
+            else None
+        )
+        started = self.dependencies.monotonic()
+        deadline = started + TEARDOWN_BOOTSTRAP_SETTLE_SECONDS
+        settled = False
+        if (
+            context is None
+            or self.api is None
+            or action not in COMPANION_STARTING_POST_ACTIONS
+        ):
+            self.teardown["bootstrap_wait_seconds"] = 0.0
+            self.teardown["bootstrap_settled"] = False
+            return False
+
+        for attempt in range(TEARDOWN_BOOTSTRAP_MAX_POLLS):
+            remaining = deadline - self.dependencies.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                response = self.api.get_status(
+                    timeout_seconds=min(HOST_API_TIMEOUT_SECONDS, remaining)
+                )
+                if isinstance(response, HostApiResponse):
+                    _remember_payload_secrets(response.payload, self.secrets)
+                status = _host_status(response)
+            except (HostApiError, GateError, OSError, TypeError, ValueError):
+                status = None
+
+            if status is not None:
+                if action == "initialize-identity":
+                    up_invocations = status.get("identity_up_invocations")
+                    settled = (
+                        status.get("identity_initialized") is True
+                        or (type(up_invocations) is int and up_invocations > 0)
+                    )
+                else:
+                    state = status.get("state")
+                    settled = state in {
+                        "ready",
+                        "degraded",
+                        "failed",
+                        "unsupported_platform",
+                    }
+                if settled:
+                    break
+
+            if attempt + 1 >= TEARDOWN_BOOTSTRAP_MAX_POLLS:
+                break
+            remaining = deadline - self.dependencies.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                context.sleep(min(TEARDOWN_BOOTSTRAP_POLL_SECONDS, remaining))
+            except TimeoutError:
+                break
+
+        elapsed = max(0.0, self.dependencies.monotonic() - started)
+        self.teardown["bootstrap_wait_seconds"] = round(
+            min(TEARDOWN_BOOTSTRAP_SETTLE_SECONDS, elapsed), 3
+        )
+        self.teardown["bootstrap_settled"] = settled
+        return settled
+
+    def _clean_unconfirmed_companion_identity(self, host_port_owned: bool) -> bool:
+        context = self.context
+        if not host_port_owned or context is None:
+            self.teardown["identity_cleanup_result"] = "ownership_unavailable"
+            return False
+        try:
+            companion = _companion_path(context)
+            layout = _gate_profile_layout(context)
+            if (
+                not _installed_companion_matches(context, companion)
+                or layout is None
+                or layout.profile != DEFAULT_PROFILE
+                or not _identity_owner_record_matches(context, layout)
+            ):
+                self.teardown["identity_cleanup_result"] = "ownership_unavailable"
+                return False
+            environment = companion_environment(layout)
+            if set(environment) != {
+                "HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_STATE_HOME",
+                "XDG_RUNTIME_DIR",
+            }:
+                self.teardown["identity_cleanup_result"] = "environment_invalid"
+                return False
+
+            before = _run_companion_status(context, companion, layout, environment)
+            if before is None:
+                self.teardown["identity_cleanup_result"] = "status_unavailable"
+                return False
+            evidence = _identity_status_evidence(before.bounded_output)
+            if evidence is None:
+                self.teardown["identity_cleanup_result"] = "status_unproven"
+                return False
+            if evidence[1]:
+                self.teardown["identity_down_attempted"] = True
+                down = _run_companion_command(
+                    context,
+                    (str(companion), "--profile", layout.profile, "down"),
+                    environment,
+                )
+                if down is None:
+                    self.teardown["identity_down_result"] = "unavailable"
+                elif (
+                    down.returncode == 0
+                    and not down.timed_out
+                    and not down.output_truncated
+                ):
+                    self.teardown["identity_down_result"] = "succeeded"
+                else:
+                    self.teardown["identity_down_result"] = "failed"
+                after_down = _run_companion_status(
+                    context, companion, layout, environment
+                )
+                if after_down is None:
+                    self.teardown["identity_cleanup_result"] = "status_after_down_unavailable"
+                    return False
+                evidence = _identity_status_evidence(after_down.bounded_output)
+                if evidence is None or evidence[1] or not evidence[2]:
+                    self.teardown["identity_cleanup_result"] = "down_unproven"
+                    return False
+                before = after_down
+            else:
+                self.teardown["identity_down_result"] = "not_needed"
+
+            absent = _identity_absent_status(before.bounded_output)
+            if absent is None:
+                self.teardown["identity_cleanup_result"] = "identity_state_unproven"
+                return False
+            if not absent:
+                evidence = _identity_status_evidence(before.bounded_output)
+                if evidence is None or not evidence[0] or evidence[1] or not evidence[2]:
+                    self.teardown["identity_cleanup_result"] = "delete_precondition_unproven"
+                    return False
+                delete = _run_companion_command(
+                    context,
+                    (
+                        str(companion),
+                        "--profile",
+                        layout.profile,
+                        "delete",
+                        "--yes",
+                    ),
+                    environment,
+                )
+                if (
+                    delete is None
+                    or delete.returncode != 0
+                    or delete.timed_out
+                    or delete.output_truncated
+                ):
+                    self.teardown["identity_cleanup_result"] = "delete_failed"
+                    return False
+                after_delete = _run_companion_status(
+                    context, companion, layout, environment
+                )
+                if after_delete is None or _identity_absent_status(
+                    after_delete.bounded_output
+                ) is not True:
+                    self.teardown["identity_cleanup_result"] = "identity_absence_unproven"
+                    return False
+
+            observer = context.identity_observer_factory(layout, companion)
+            postchecks = _identity_cleanup_observations(observer, DEFAULT_PROFILE)
+            if postchecks is None:
+                self.teardown["identity_cleanup_result"] = "postcheck_unavailable"
+                return False
+            self.teardown["identity_cleanup_observations"] = postchecks
+            if any(item["state"] != "absent" for item in postchecks):
+                self.teardown["identity_cleanup_result"] = "residual_resource_found"
+                return False
+            self.teardown["identity_cleanup_result"] = "verified_absent"
+            return True
+        except (GateError, OSError, RuntimeError, TypeError, ValueError):
+            self.teardown["identity_cleanup_result"] = "cleanup_error"
+            return False
+
     def _add_infrastructure(self, reason: str) -> None:
         if reason not in self.infrastructure_failures:
             self.infrastructure_failures.append(reason)
@@ -5909,12 +6418,35 @@ class LiveGateRunner:
                 self.dependencies.port_inspector, self.host.owner_pid
             )
         )
+        unconfirmed_post = bool(
+            self.context is not None
+            and self.context.companion_start_post_unconfirmed
+        )
+        if unconfirmed_post:
+            self._unconfirmed_identity_cleanup_safe = False
+            self._wait_for_unconfirmed_companion_post()
         if self.host is None or (not self.host_started and not host_port_owned):
             self.teardown["sharing_stopped"] = True
         elif self.api is not None and host_port_owned:
             self.teardown["sharing_stop_attempted"] = True
             try:
-                response = self.api.post("stop", {})
+                remaining_driver_seconds = self._remaining_driver_seconds()
+                if (
+                    math.isfinite(remaining_driver_seconds)
+                    and remaining_driver_seconds > 0
+                ):
+                    stop_timeout_seconds = min(
+                        COMPANION_START_POST_TIMEOUT_SECONDS,
+                        remaining_driver_seconds,
+                    )
+                else:
+                    stop_timeout_seconds = min(
+                        COMPANION_START_POST_TIMEOUT_SECONDS,
+                        TEARDOWN_STOP_FALLBACK_TIMEOUT_SECONDS,
+                    )
+                response = self.api.post(
+                    "stop", {}, timeout_seconds=stop_timeout_seconds
+                )
                 _remember_payload_secrets(response.payload, self.secrets)
                 self.teardown["sharing_stopped"] = bool(
                     response.status == 200 and response.payload.get("ok") is True
@@ -5923,6 +6455,12 @@ class LiveGateRunner:
                 self.teardown["sharing_stopped"] = False
         else:
             self.teardown["sharing_stopped"] = False
+        if unconfirmed_post:
+            self._unconfirmed_identity_cleanup_safe = (
+                self._clean_unconfirmed_companion_identity(host_port_owned)
+            )
+            if not self._unconfirmed_identity_cleanup_safe:
+                self._add_infrastructure("unconfirmed_identity_cleanup_failed")
         if self.context is not None:
             try:
                 self.context.public_client.disconnect()
@@ -5947,6 +6485,9 @@ class LiveGateRunner:
             except (AttributeError, OSError, TypeError, ValueError):
                 host_state_root = None
             if host_state_root != self.state_root:
+                self.teardown["gate_state_root_removed"] = False
+                self._add_infrastructure("gate_state_cleanup_failed")
+            elif unconfirmed_post and not self._unconfirmed_identity_cleanup_safe:
                 self.teardown["gate_state_root_removed"] = False
                 self._add_infrastructure("gate_state_cleanup_failed")
             elif not self.teardown["host_stopped"] or not self.teardown["ports_free"]:

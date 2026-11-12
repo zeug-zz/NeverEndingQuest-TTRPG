@@ -135,13 +135,19 @@ class FakeApi:
             "status": {"companion_launches": 0, "identity_up_invocations": 0},
         }
 
-    def get_status(self) -> gate.HostApiResponse:
+    def get_status(self, *, timeout_seconds: float | None = None) -> gate.HostApiResponse:
         self.calls.append(("GET", "/api/player-sharing/status"))
         if self.status_values:
             self.last_status = self.status_values.pop(0)
         return gate.HostApiResponse(200, self.last_status)
 
-    def post(self, action: str, payload: Mapping[str, object] | None = None) -> gate.HostApiResponse:
+    def post(
+        self,
+        action: str,
+        payload: Mapping[str, object] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> gate.HostApiResponse:
         self.calls.append(("POST", (action, dict(payload or {}))))
         return gate.HostApiResponse(200, {"ok": True, "reason": "stopped"})
 
@@ -185,8 +191,9 @@ class LifecycleFakeApi:
         self.post_handlers = dict(post_handlers or {})
         self.status_calls = 0
         self.calls: list[tuple[str, object]] = []
+        self.post_timeouts: list[tuple[str, float | None]] = []
 
-    def get_status(self) -> gate.HostApiResponse:
+    def get_status(self, *, timeout_seconds: float | None = None) -> gate.HostApiResponse:
         self.calls.append(("GET", "/api/player-sharing/status"))
         if self.status_sequence:
             selected = self.status_sequence.pop(0)
@@ -198,10 +205,15 @@ class LifecycleFakeApi:
         return gate.HostApiResponse(200, {"ok": True, "status": dict(selected)})
 
     def post(
-        self, action: str, payload: Mapping[str, object] | None = None
+        self,
+        action: str,
+        payload: Mapping[str, object] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> gate.HostApiResponse:
         clean_payload = dict(payload or {})
         self.calls.append(("POST", (action, clean_payload)))
+        self.post_timeouts.append((action, timeout_seconds))
         handler = self.post_handlers.get(action)
         if callable(handler):
             return handler(clean_payload)
@@ -2851,6 +2863,14 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
         self.assertEqual([item.verdict for item in results], ["PASS"] * 5)
         self.assertTrue(all(gate._bounded_json(dict(item.observed)) for item in results))
+        timeouts_by_action = {
+            action: [timeout for selected, timeout in api.post_timeouts if selected == action]
+            for action in ("rotate", "revoke", "stop", "copy-invitation")
+        }
+        self.assertEqual(timeouts_by_action["rotate"], [180.0])
+        self.assertEqual(timeouts_by_action["revoke"], [180.0])
+        self.assertEqual(timeouts_by_action["stop"], [180.0, 180.0])
+        self.assertTrue(all(timeout is None for timeout in timeouts_by_action["copy-invitation"]))
         self.assertEqual(ports.inspect(gate.HOST_PORT).state, "free")
         self.assertEqual(ports.inspect(gate.PLAYER_PORT).state, "free")
         self.assertTrue(runner.deleted)
@@ -3736,6 +3756,282 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertNotIn("credential-sentinel", repr(post))
         self.assertNotIn("relay.invalid", repr(post))
 
+    def test_companion_start_posts_use_long_row_scoped_timeout_without_waiting(self) -> None:
+        virtual_clock = [0.0]
+        timeouts: list[float] = []
+        requests: list[tuple[str, str]] = []
+
+        class Response:
+            status = 200
+
+            def __init__(self, payload: Mapping[str, object]) -> None:
+                self.payload = payload
+
+            def read(self, _limit: int) -> bytes:
+                return json.dumps(self.payload).encode("ascii")
+
+        class Connection:
+            def __init__(self, _host: str, _port: int, *, timeout: float) -> None:
+                self.timeout = timeout
+                timeouts.append(timeout)
+                self.response = Response({"ok": True})
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                *,
+                body: bytes | None,
+                headers: Mapping[str, str],
+            ) -> None:
+                del body, headers
+                requests.append((method, path))
+                action = path.rsplit("/", 1)[-1]
+                long_actions = (
+                    gate.COMPANION_STARTING_POST_ACTIONS
+                    | gate.COMPANION_LONG_POST_ACTIONS
+                )
+                if method == "POST" and action in long_actions:
+                    if self.timeout <= gate.HOST_API_TIMEOUT_SECONDS:
+                        raise TimeoutError("fake slow host")
+                    virtual_clock[0] += 5.5
+                    if action == "initialize-identity":
+                        status = {
+                            "state": "off",
+                            "reason": "off",
+                            "identity_initialized": True,
+                            "identity_up_invocations": 1,
+                            "companion_launches": 0,
+                        }
+                        payload = {
+                            "ok": True,
+                            "reason": "identity_initialized",
+                            "status": status,
+                        }
+                    elif action == "start":
+                        payload = {
+                            "ok": True,
+                            "status": {
+                                "state": "ready",
+                                "reason": "ready",
+                                "identity_initialized": True,
+                                "identity_up_invocations": 1,
+                                "companion_launches": 1,
+                            },
+                        }
+                    else:
+                        payload = {
+                            "ok": True,
+                            "reason": "stopped" if action == "stop" else action,
+                            "status": {"state": "off"},
+                        }
+                    self.response = Response(payload)
+                elif method == "GET":
+                    self.response = Response(
+                        {
+                            "ok": True,
+                            "status": {
+                                "state": "off",
+                                "identity_initialized": False,
+                                "identity_up_invocations": 0,
+                                "companion_launches": 0,
+                            },
+                        }
+                    )
+
+            def getresponse(self) -> Response:
+                return self.response
+
+            def close(self) -> None:
+                return
+
+        client = gate.HostApiClient(connection_factory=Connection)
+        context = self.make_row_context(api=client, monotonic=lambda: virtual_clock[0])
+
+        client.get_status()
+        client.post("issue-access", {})
+        client.post("copy-invitation", {})
+        for action in ("initialize-identity", "start"):
+            response, recovery, failure = gate._post_companion_starting_action(
+                context,
+                action,
+                {"confirm": True} if action == "initialize-identity" else {},
+            )
+            self.assertIsNotNone(response)
+            self.assertIsNone(recovery)
+            self.assertIsNone(failure)
+
+        for action in ("rotate", "revoke", "stop"):
+            response = gate._post_long_timeout(context, action, {})
+            self.assertEqual(response.status, 200)
+            self.assertIs(response.payload["ok"], True)
+
+        self.assertEqual(gate.COMPANION_STARTING_POST_ACTIONS, {"initialize-identity", "start"})
+        self.assertEqual(
+            gate.COMPANION_LONG_POST_ACTIONS, {"rotate", "revoke", "stop"}
+        )
+        self.assertEqual(timeouts, [5.0, 5.0, 5.0, 180.0, 180.0, 180.0, 180.0, 180.0])
+        self.assertEqual(virtual_clock[0], 27.5)
+        self.assertEqual(
+            requests,
+            [
+                ("GET", "/api/player-sharing/status"),
+                ("POST", "/api/player-sharing/issue-access"),
+                ("POST", "/api/player-sharing/copy-invitation"),
+                ("POST", "/api/player-sharing/initialize-identity"),
+                ("POST", "/api/player-sharing/start"),
+                ("POST", "/api/player-sharing/rotate"),
+                ("POST", "/api/player-sharing/revoke"),
+                ("POST", "/api/player-sharing/stop"),
+            ],
+        )
+
+        capped_client = gate.HostApiClient(connection_factory=Connection)
+        capped_context = self.make_row_context(
+            api=capped_client, monotonic=lambda: virtual_clock[0]
+        )
+        capped_context.row_deadline_at = virtual_clock[0] + 37.0
+        capped_context.companion_start_post_unconfirmed = True
+        capped_context.companion_start_post_action = "start"
+        response = gate._post_long_timeout(capped_context, "stop", {})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(timeouts[-1], 37.0)
+        self.assertTrue(capped_context.companion_start_post_unconfirmed)
+        self.assertEqual(capped_context.companion_start_post_action, "start")
+
+        for invalid in (0, -1, 301, float("inf"), float("nan"), True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(gate.HostApiError, "host_api_timeout_invalid"):
+                    client.post("start", {}, timeout_seconds=invalid)
+
+    def test_l02_timeout_records_status_and_never_retries_the_post(self) -> None:
+        initial = {
+            "state": "off",
+            "reason": "off",
+            "identity_initialized": False,
+            "identity_up_invocations": 0,
+            "companion_launches": 0,
+        }
+        secret = "timeout-response-secret-sentinel"
+
+        class TimeoutApi:
+            def __init__(self, *, unreadable: bool = False) -> None:
+                self.unreadable = unreadable
+                self.status_calls = 0
+                self.post_calls = 0
+
+            def get_status(self, *, timeout_seconds: float | None = None) -> gate.HostApiResponse:
+                del timeout_seconds
+                self.status_calls += 1
+                if self.status_calls == 1:
+                    status = initial
+                elif self.unreadable:
+                    raise gate.HostApiError("host_api_transport_error")
+                else:
+                    status = {**initial, "credential": secret, "private_value": secret}
+                return gate.HostApiResponse(200, {"ok": True, "status": status})
+
+            def post(
+                self,
+                _action: str,
+                _payload: Mapping[str, object] | None = None,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> gate.HostApiResponse:
+                self.post_calls += 1
+                self.assert_long_timeout = timeout_seconds
+                raise gate.HostApiError("host_api_timeout")
+
+        api = TimeoutApi()
+        sleeps: list[float] = []
+        context = self.make_row_context(
+            api=api,
+            sleep=lambda seconds: sleeps.append(seconds),
+        )
+        result = gate.L02IdentityInitExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "identity_request_timeout")
+        self.assertEqual(api.post_calls, 1)
+        self.assertEqual(api.assert_long_timeout, 180.0)
+        self.assertEqual(result.observed["request_outcome"], "request_timeout")
+        self.assertIs(result.observed["status_read"], True)
+        self.assertEqual(result.observed["http_status"], 200)
+        self.assertIs(result.observed["ok"], True)
+        self.assertEqual(result.observed["status_state"], "off")
+        self.assertIs(result.observed["identity_initialized"], False)
+        self.assertEqual(result.observed["identity_up_invocations"], 0)
+        self.assertEqual(
+            result.observed["companion_counters"],
+            {"companion_launches": 0, "identity_up_invocations": 0},
+        )
+        self.assertEqual(len(sleeps), 2)
+        self.assertNotIn(secret, repr(result.observed))
+
+        unreadable_api = TimeoutApi(unreadable=True)
+        unreadable = gate.L02IdentityInitExecutor().execute(
+            self.make_row_context(api=unreadable_api)
+        )
+        self.assertEqual(unreadable.verdict, "BLOCKED")
+        self.assertEqual(unreadable.observed["request_outcome"], "request_timeout")
+        self.assertIs(unreadable.observed["status_read"], False)
+        self.assertEqual(unreadable_api.post_calls, 1)
+        self.assertNotEqual(unreadable.observed, {})
+
+    def test_l02_timeout_with_confirmed_status_continues_idempotency_check(self) -> None:
+        initial = {
+            "state": "initializing_required",
+            "reason": "initializing_required",
+            "identity_initialized": False,
+            "identity_up_invocations": 0,
+            "companion_launches": 0,
+        }
+        initialized = {
+            "state": "off",
+            "reason": "off",
+            "identity_initialized": True,
+            "identity_up_invocations": 1,
+            "companion_launches": 0,
+        }
+        post_calls = 0
+
+        def initialize(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            nonlocal post_calls
+            post_calls += 1
+            if post_calls == 1:
+                raise gate.HostApiError("host_api_timeout")
+            return gate.HostApiResponse(
+                200,
+                {
+                    "ok": True,
+                    "reason": "identity_initialized",
+                    "status": initialized,
+                },
+            )
+
+        context = self.make_row_context(
+            api=LifecycleFakeApi(
+                status_sequence=[initial, initialized],
+                post_handlers={"initialize-identity": initialize},
+            ),
+            identity_observer_factory=lambda _layout, _path: FakeIdentityObserver(),
+        )
+        with patch.object(
+            gate,
+            "prepare_profile",
+            return_value=SimpleNamespace(state="ready", layout=object()),
+        ):
+            result = gate.L02IdentityInitExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "PASS")
+        self.assertEqual(post_calls, 2)
+        self.assertEqual(result.observed["request_outcome"], "request_timeout")
+        self.assertIs(result.observed["status_read"], True)
+        self.assertEqual(
+            result.observed["companion_counters"],
+            {"companion_launches": 0, "identity_up_invocations": 1},
+        )
+
     def test_host_api_bounds_response_and_rejects_unknown_action(self) -> None:
         class LargeResponse:
             status = 200
@@ -3990,6 +4286,260 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertFalse(runner.teardown["sharing_stop_attempted"])
         self.assertFalse(any(call[0] == "POST" for call in self.fake_api.calls))
         self.assertIn("sharing_teardown_failed", runner.infrastructure_failures)
+
+    def test_unconfirmed_post_teardown_settles_downs_then_removes_state(self) -> None:
+        events: list[str] = []
+        secret = "teardown-status-secret-sentinel"
+
+        class TeardownApi:
+            def __init__(self) -> None:
+                self.statuses = [
+                    {
+                        "state": "starting",
+                        "reason": "startup_in_progress",
+                        "identity_initialized": True,
+                        "identity_up_invocations": 1,
+                        "companion_launches": 1,
+                        "credential": secret,
+                    },
+                    {
+                        "state": "ready",
+                        "reason": "ready",
+                        "identity_initialized": True,
+                        "identity_up_invocations": 1,
+                        "companion_launches": 1,
+                        "credential": secret,
+                    },
+                ]
+
+            def get_status(self, *, timeout_seconds: float | None = None) -> gate.HostApiResponse:
+                del timeout_seconds
+                events.append("settle-poll")
+                selected = self.statuses.pop(0) if self.statuses else {
+                    "state": "ready",
+                    "identity_initialized": True,
+                    "identity_up_invocations": 1,
+                    "companion_launches": 1,
+                }
+                return gate.HostApiResponse(200, {"ok": True, "status": selected})
+
+            def post(
+                self,
+                action: str,
+                _payload: Mapping[str, object] | None = None,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> gate.HostApiResponse:
+                self.assert_action = action
+                self.stop_timeout_seconds = timeout_seconds
+                events.append("sharing-stop")
+                return gate.HostApiResponse(200, {"ok": True, "reason": "stopped"})
+
+        api = TeardownApi()
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = api
+        runner.host_started = True
+        runner.state_root = host.state_root
+        self.ports.host_pid = host.owner_pid
+        context = self.make_row_context(api=api)
+        context.host = host
+        context.companion_start_post_attempted = True
+        context.companion_start_post_unconfirmed = True
+        context.companion_start_post_action = "start"
+        runner.context = context
+
+        status_outputs = iter(("running", "stopped", "absent"))
+
+        def companion_status(*_args: object) -> gate.RunResult:
+            events.append("identity-status")
+            return gate.RunResult(0, next(status_outputs))
+
+        def companion_command(
+            _context: gate.RowContext,
+            argv: tuple[str, ...],
+            _environment: Mapping[str, str],
+        ) -> gate.RunResult:
+            action = argv[-1]
+            events.append("identity-down" if action == "down" else "identity-delete")
+            return gate.RunResult(0, "")
+
+        def identity_evidence(output: str) -> tuple[bool, bool, bool] | None:
+            return {
+                "running": (True, True, False),
+                "stopped": (True, False, True),
+                "absent": (False, False, True),
+            }.get(output)
+
+        def identity_absent(output: str) -> bool | None:
+            return {"running": False, "stopped": False, "absent": True}.get(output)
+
+        def identity_postchecks(*_args: object) -> list[dict[str, object]]:
+            events.append("identity-postcheck")
+            return [
+                {"kind": kind, "state": "absent", "count": 0}
+                for kind in ("service_manager", "profile_processes", "helper_processes")
+            ]
+
+        def stop_host() -> bool:
+            events.append("host-stop")
+            self.ports.host_pid = None
+            host.stopped = True
+            return True
+
+        host.stop = stop_host
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_layout",
+                return_value=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(
+                gate,
+                "companion_environment",
+                return_value={
+                    "HOME": "gate-home",
+                    "XDG_CONFIG_HOME": "gate-config",
+                    "XDG_DATA_HOME": "gate-data",
+                    "XDG_STATE_HOME": "gate-state",
+                    "XDG_RUNTIME_DIR": "gate-runtime",
+                },
+            ),
+            patch.object(gate, "_run_companion_status", side_effect=companion_status),
+            patch.object(gate, "_run_companion_command", side_effect=companion_command),
+            patch.object(gate, "_identity_status_evidence", side_effect=identity_evidence),
+            patch.object(gate, "_identity_absent_status", side_effect=identity_absent),
+            patch.object(
+                gate,
+                "_identity_cleanup_observations",
+                side_effect=identity_postchecks,
+            ),
+        ):
+            with patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                side_effect=lambda *_args, **_kwargs: (
+                    events.append("state-root-remove") or (True, True)
+                ),
+            ):
+                runner._teardown()
+
+        self.assertEqual(
+            events,
+            [
+                "settle-poll",
+                "settle-poll",
+                "sharing-stop",
+                "identity-status",
+                "identity-down",
+                "identity-status",
+                "identity-delete",
+                "identity-status",
+                "identity-postcheck",
+                "host-stop",
+                "state-root-remove",
+            ],
+        )
+        self.assertTrue(runner.teardown["bootstrap_settled"])
+        self.assertTrue(runner.teardown["identity_down_attempted"])
+        self.assertEqual(runner.teardown["identity_down_result"], "succeeded")
+        self.assertEqual(
+            api.stop_timeout_seconds,
+            gate.COMPANION_START_POST_TIMEOUT_SECONDS,
+        )
+        self.assertTrue(runner.teardown["gate_state_root_removed"])
+        self.assertNotIn(secret, repr(runner.teardown))
+
+    def test_unsettled_unconfirmed_post_preserves_state_root_evidence(self) -> None:
+        events: list[str] = []
+
+        class NeverSettledApi:
+            def get_status(self, *, timeout_seconds: float | None = None) -> gate.HostApiResponse:
+                del timeout_seconds
+                events.append("settle-poll")
+                return gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "status": {
+                            "state": "starting",
+                            "reason": "startup_in_progress",
+                            "identity_initialized": False,
+                            "identity_up_invocations": 0,
+                            "companion_launches": 0,
+                        },
+                    },
+                )
+
+            def post(
+                self,
+                _action: str,
+                _payload: Mapping[str, object] | None = None,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> gate.HostApiResponse:
+                del timeout_seconds
+                events.append("sharing-stop")
+                return gate.HostApiResponse(200, {"ok": True})
+
+        api = NeverSettledApi()
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = api
+        runner.host_started = True
+        runner.state_root = host.state_root
+        self.ports.host_pid = host.owner_pid
+        context = self.make_row_context(api=api)
+        context.host = host
+        context.companion_start_post_attempted = True
+        context.companion_start_post_unconfirmed = True
+        context.companion_start_post_action = "start"
+        runner.context = context
+
+        def clean_identity(_owned: bool) -> bool:
+            events.append("identity-cleanup")
+            runner.teardown["identity_down_attempted"] = True
+            runner.teardown["identity_down_result"] = "unavailable"
+            runner.teardown["identity_cleanup_result"] = "status_unproven"
+            return False
+
+        def stop_host() -> bool:
+            events.append("host-stop")
+            self.ports.host_pid = None
+            host.stopped = True
+            return True
+
+        host.stop = stop_host
+        with patch.object(runner, "_clean_unconfirmed_companion_identity", side_effect=clean_identity):
+            with patch.object(gate, "_cleanup_driver_state_root") as remove_state:
+                runner._teardown()
+
+        self.assertEqual(events[0], "settle-poll")
+        self.assertLess(events.index("settle-poll"), events.index("sharing-stop"))
+        self.assertLess(events.index("sharing-stop"), events.index("host-stop"))
+        self.assertFalse(runner.teardown["bootstrap_settled"])
+        self.assertFalse(runner.teardown["gate_state_root_removed"])
+        self.assertLess(events.index("sharing-stop"), events.index("identity-cleanup"))
+        self.assertLess(events.index("identity-cleanup"), events.index("host-stop"))
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "status_unproven")
+        self.assertIn("unconfirmed_identity_cleanup_failed", runner.infrastructure_failures)
+        remove_state.assert_not_called()
 
     def test_teardown_stops_sharing_when_failed_start_left_owned_listener(self) -> None:
         runner = gate.LiveGateRunner(self.dependencies, self.arguments)
