@@ -29,6 +29,10 @@ from web.extensions.opentunnel_sharing.controller import (
 )
 from web.extensions.opentunnel_sharing.identity_bootstrap import (
     BootstrapResult,
+    DefaultCommandRunner,
+    DefaultIdentityObserver,
+    MAX_COMMAND_OUTPUT_CHARS,
+    MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES,
     RunResult,
 )
 from web.extensions.opentunnel_sharing.profile_state import ProfileLayout, ProfileState
@@ -607,6 +611,113 @@ class PlayerSharingServiceTests(unittest.TestCase):
             self.assertNotIn("127.0.0.1:8370", calls[0][0])
             self.assertNotIn("127.0.0.1:8370", calls[0][1].values())
             self.assertNotIn("PATH", calls[0][1])
+
+    def test_identity_observer_uses_darwin_limit_without_widening_companion_runner(self) -> None:
+        with tempfile.TemporaryDirectory(dir="tmp") as scratch:
+            root = Path(scratch)
+            layout = _layout(root)
+            composition = _ProductionComposition(
+                object(),  # type: ignore[arg-type]
+                lambda: True,
+                companion_manifest=None,
+                install_root=root,
+                state_root=root / "state",
+                state_root_provider=None,
+                install_marker=None,
+                profile="neq-share",
+                player_build_root=None,
+            )
+            shared_runner = composition._command_runner()
+            resolution = CompanionResolution(
+                "resolved", "resolved", root / "opentunnel", "a" * 64
+            )
+            captured: dict[str, object] = {}
+
+            def capture_bootstrap(
+                _layout: ProfileLayout,
+                _resolution: CompanionResolution,
+                **kwargs: object,
+            ) -> BootstrapResult:
+                captured.update(kwargs)
+                return BootstrapResult("initialized", "identity_initialized")
+
+            with (
+                mock.patch(
+                    "web.extensions.opentunnel_sharing.service.verify_companion_digest",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "web.extensions.opentunnel_sharing.service.bootstrap_identity",
+                    side_effect=capture_bootstrap,
+                ),
+                mock.patch(
+                    "web.extensions.opentunnel_sharing.identity_bootstrap.platform.system",
+                    return_value="Darwin",
+                ),
+            ):
+                result = composition._initialize_identity(layout, resolution, True)
+
+            self.assertEqual(result.state, "initialized")
+            self.assertIs(captured["runner"], shared_runner)
+            self.assertIsInstance(shared_runner, DefaultCommandRunner)
+            self.assertEqual(shared_runner._max_output_bytes, MAX_COMMAND_OUTPUT_CHARS)
+            observer = captured["observer"]
+            self.assertIsInstance(observer, DefaultIdentityObserver)
+            self.assertIsNot(observer._runner, shared_runner)
+            self.assertEqual(
+                observer._output_limit, MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES
+            )
+            self.assertEqual(
+                observer._runner._max_output_bytes,
+                MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES,
+            )
+
+    def test_identity_observer_honors_preassigned_fake_runner(self) -> None:
+        with tempfile.TemporaryDirectory(dir="tmp") as scratch:
+            root = Path(scratch)
+            layout = _layout(root)
+            composition = _ProductionComposition(
+                object(),  # type: ignore[arg-type]
+                lambda: True,
+                companion_manifest=None,
+                install_root=root,
+                state_root=root / "state",
+                state_root_provider=None,
+                install_marker=None,
+                profile="neq-share",
+                player_build_root=None,
+            )
+            fake_runner = lambda _argv, _env, _timeout: RunResult(0, "")
+            composition._runner = fake_runner  # type: ignore[assignment]
+            resolution = CompanionResolution(
+                "resolved", "resolved", root / "opentunnel", "a" * 64
+            )
+            captured: dict[str, object] = {}
+
+            def capture_bootstrap(
+                _layout: ProfileLayout,
+                _resolution: CompanionResolution,
+                **kwargs: object,
+            ) -> BootstrapResult:
+                captured.update(kwargs)
+                return BootstrapResult("initialized", "identity_initialized")
+
+            with (
+                mock.patch(
+                    "web.extensions.opentunnel_sharing.service.verify_companion_digest",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "web.extensions.opentunnel_sharing.service.bootstrap_identity",
+                    side_effect=capture_bootstrap,
+                ),
+            ):
+                composition._initialize_identity(layout, resolution, True)
+
+            self.assertIs(captured["runner"], fake_runner)
+            observer = captured["observer"]
+            self.assertIsInstance(observer, DefaultIdentityObserver)
+            self.assertIs(observer._runner, fake_runner)
 
     def test_player_listener_accepts_injected_n1_security_without_binding(self) -> None:
         security = PlayerSecurity(lambda: None)

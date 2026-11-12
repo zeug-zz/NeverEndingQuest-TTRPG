@@ -1153,6 +1153,7 @@ class _ProductionComposition:
         self._player_build_root = player_build_root
         self._lock = threading.RLock()
         self._runner: DefaultCommandRunner | None = None
+        self._default_runner: DefaultCommandRunner | None = None
         self._security: PlayerSecurity | None = None
         self._listener: PlayerListener | None = None
 
@@ -1216,10 +1217,15 @@ class _ProductionComposition:
         ):
             return BootstrapResult("refused", "companion_digest_mismatch")
         runner = self._command_runner()
+        with self._lock:
+            observer_runner = (
+                self._runner if self._runner is not self._default_runner else None
+            )
+        # TABLETOP MODE: Keep launchctl census on the observer's platform-sized runner.
         observer = DefaultIdentityObserver(
             layout,
             resolution.path,
-            command_runner=runner,
+            **({"command_runner": observer_runner} if observer_runner is not None else {}),
         )
         return bootstrap_identity(
             layout,
@@ -1360,7 +1366,8 @@ class _ProductionComposition:
     def _command_runner(self) -> DefaultCommandRunner:
         with self._lock:
             if self._runner is None:
-                self._runner = DefaultCommandRunner()
+                self._default_runner = DefaultCommandRunner()
+                self._runner = self._default_runner
             return self._runner
 
     def _assets_ok(self) -> bool:
