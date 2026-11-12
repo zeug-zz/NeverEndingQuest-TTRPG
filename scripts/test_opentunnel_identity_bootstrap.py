@@ -306,6 +306,53 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
         self.assertTrue(payload["completed_at"].endswith("Z"))
         self.assertFalse(any(marker.parent.glob(".identity_bootstrap.*.tmp")))
 
+    def test_native_process_census_absence_initializes_through_fake_harness(self) -> None:
+        native_absent = Observation("absent", "native_process_info_complete")
+        observer = FakeObserver(
+            pre=(SERVICE_ABSENT, native_absent, native_absent),
+            post=(SERVICE_ABSENT, native_absent, native_absent),
+        )
+        result, runner, _observer = self._run(observer=observer)
+
+        self.assertEqual(result.state, "initialized")
+        self.assertEqual(result.reason, "identity_initialized")
+        self.assertEqual([call[0][-1] for call in runner.calls], ["up", "status", "down"])
+
+    def test_native_process_census_absence_requires_complete_empty_evidence(self) -> None:
+        native_absent = Observation("absent", "native_process_info_complete")
+        self.assertEqual(
+            _assess_observations(
+                (
+                    ("service", SERVICE_ABSENT),
+                    ("process", native_absent),
+                    ("helper", native_absent),
+                )
+            ),
+            "absent",
+        )
+
+        cases = (
+            Observation("absent", "native_process_info_complete", 1),
+            Observation(
+                "absent",
+                "native_process_info_complete",
+                0,
+                (ProcessEvidence(True, True, True),),
+            ),
+            Observation("absent", "unknown_native_basis"),
+            Observation(
+                "present",
+                "native_process_info_complete",
+                1,
+                (ProcessEvidence(False, True, True),),
+            ),
+        )
+        for observation in cases:
+            with self.subTest(observation=observation):
+                self.assertEqual(
+                    _assess_observations((("process", observation),)), "unknown"
+                )
+
     def test_valid_marker_is_once_per_profile_and_skips_all_observers_and_commands(self) -> None:
         first, _runner, _observer = self._run()
         self.assertEqual(first.state, "initialized")
