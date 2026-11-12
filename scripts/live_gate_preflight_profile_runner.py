@@ -819,7 +819,7 @@ class _ProfileCharacterizationLock:
                 or (current_uid is not None and coordination_metadata.st_uid != current_uid)
                 or (
                     os.name == "posix"
-                    and stat.S_IMODE(coordination_metadata.st_mode) & 0o077
+                    and stat.S_IMODE(coordination_metadata.st_mode) & 0o022
                 )
             ):
                 return False

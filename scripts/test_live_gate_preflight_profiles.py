@@ -2356,6 +2356,59 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertEqual(holder_path.read_bytes(), holder_bytes)
             self.assertEqual(log_path.read_bytes(), log_bytes)
 
+    def test_live_window_lock_accepts_shared_readable_directory_only(self) -> None:
+        record = {
+            "booking_id": "profile-mode-test",
+            "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
+            "gate": "live-gate-preflight",
+            "port": 8360,
+        }
+        real_lstat = Path.lstat
+        for mode, expected in ((0o755, True), (0o775, False), (0o757, False)):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory(
+                prefix="profile-lock-mode-", dir=PROJECT_ROOT / "tmp"
+            ) as temp_directory:
+                common_directory = Path(temp_directory)
+                coordination = common_directory / "neq-coordination"
+                coordination.mkdir()
+                lock = _ProfileCharacterizationLock(common_directory, record)
+
+                def fake_lstat(path: Path) -> os.stat_result:
+                    if path == coordination:
+                        metadata = real_lstat(path)
+                        return types.SimpleNamespace(
+                            st_mode=(metadata.st_mode & ~0o777) | mode,
+                            st_uid=metadata.st_uid,
+                        )
+                    return real_lstat(path)
+
+                with mock.patch.object(Path, "lstat", fake_lstat):
+                    acquired = lock.acquire()
+                    self.assertEqual(acquired, expected)
+                    if acquired:
+                        self.assertTrue(lock.release({**record, "event": "released"}))
+                self.assertFalse((coordination / "live-window.lock").exists())
+
+    def test_live_window_lock_refuses_symlinked_coordination_directory(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-lock-symlink-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_directory:
+            common_directory = Path(temp_directory)
+            target = common_directory / "target"
+            target.mkdir()
+            (common_directory / "neq-coordination").symlink_to(target, target_is_directory=True)
+            lock = _ProfileCharacterizationLock(
+                common_directory,
+                {
+                    "booking_id": "profile-symlink-test",
+                    "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
+                    "gate": "live-gate-preflight",
+                    "port": 8360,
+                },
+            )
+            self.assertFalse(lock.acquire())
+            self.assertFalse((target / "live-window.lock").exists())
+
     def test_live_window_lock_records_and_releases_only_its_own_holder(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-lock-", dir=PROJECT_ROOT / "tmp"
