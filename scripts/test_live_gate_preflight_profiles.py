@@ -77,6 +77,28 @@ from scripts import live_gate_preflight_sandbox as sandbox_preparation
 
 
 class TestLiveGatePreflightProfiles(unittest.TestCase):
+    def test_prepared_sandbox_validation_uses_repository_anchored_path(self) -> None:
+        from scripts.mapping_pilot import launcher
+
+        with tempfile.TemporaryDirectory(
+            prefix="profile-controller-", dir=PROJECT_ROOT / "tmp"
+        ) as controller_cwd:
+            with mock.patch.object(profile_runner, "PROJECT_ROOT", PROJECT_ROOT), mock.patch(
+                "scripts.mapping_pilot.launcher.validate_sandbox",
+                wraps=launcher.validate_sandbox,
+            ) as validate:
+                with mock.patch("os.getcwd", return_value=controller_cwd):
+                    result = profile_runner._validate_prepared_sandbox(
+                        fixture_id="interior_tavern",
+                        party_size=1,
+                        lifecycle="startup",
+                        resume_checkpoint_sha256=None,
+                    )
+
+        self.assertEqual(result[0], PROJECT_ROOT / "tmp" / "combat_capture")
+        self.assertEqual(validate.call_args.args[0], result[0])
+        self.assertEqual(validate.call_args.kwargs["project_root"], PROJECT_ROOT)
+
     def test_schema_and_versioned_profile_declaration_are_supported(self) -> None:
         document = copy_profile_document()
         schema_path = PROFILE_PATH.with_name("live_gate_preflight_profiles.schema.json")

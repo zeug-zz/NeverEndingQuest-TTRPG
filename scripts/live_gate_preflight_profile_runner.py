@@ -704,12 +704,13 @@ def _validate_prepared_sandbox(
     resume = lifecycle == "resume"
     try:
         launcher.validate_sandbox(
-            SANDBOX_RELATIVE,
+            sandbox,
             arm=str(metadata.get("arm")),
             fixture_id=fixture_id,
             party_size=party_size,
             resume=resume,
             resume_checkpoint_sha256=resume_checkpoint_sha256,
+            project_root=PROJECT_ROOT,
         )
     except Exception as exc:
         raise CharacterizationError("prepared_sandbox_validation_failed") from exc
