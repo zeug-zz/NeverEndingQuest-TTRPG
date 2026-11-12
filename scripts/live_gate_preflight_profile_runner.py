@@ -31,7 +31,7 @@ import sys
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -43,11 +43,28 @@ PROFILE_EVIDENCE_ROOT = Path(
 SANDBOX_RELATIVE = Path("tmp/combat_capture")
 AUTHORIZATION_RULING_ID = "neq-w1-fr11-profiles-characterization-20261112"
 HOST_PORT = 8360
+PLAYER_PORT = 8370
+REQUIRED_PORTS = (HOST_PORT, PLAYER_PORT)
+LSOF_EXECUTABLE = "/usr/sbin/lsof"
 STARTUP_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 12.0
 OBSERVER_TIMEOUT_SECONDS = 3.0
 MAX_OBSERVER_OUTPUT_BYTES = 32768
 MAX_CHARACTERIZATION_ATTEMPTS = 16
+LIVE_WINDOW_HOURS = 1
+MAX_LIVE_WINDOW_HOURS = 8
+LIVE_WINDOW_HOLDER = "N agent-run"
+LIVE_WINDOW_BOOKING_ROLE = "N"
+PROFILE_CHARACTERIZATION_FROZEN_CAPS = {
+    "max_characterization_attempts": MAX_CHARACTERIZATION_ATTEMPTS,
+    "max_attempts_per_profile_lifecycle": 1,
+    "provider_requests": 0,
+    "live_attempt_allowance": 0,
+    "startup_timeout_seconds": STARTUP_TIMEOUT_SECONDS,
+    "stop_timeout_seconds": STOP_TIMEOUT_SECONDS,
+    "observer_timeout_seconds": OBSERVER_TIMEOUT_SECONDS,
+    "window_hours": LIVE_WINDOW_HOURS,
+}
 _FIXTURE_IDS = (
     "interior_tavern",
     "landscape_village",
@@ -57,6 +74,9 @@ _FIXTURE_IDS = (
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA1_OR_SHA256 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_BOOKING_ID = re.compile(
+    r"^live-gate-preflight-[NS]-[0-9]{8}T[0-9]{6}Z$"
+)
 _KNOWN_PROVIDER_KEYS = (
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
@@ -89,6 +109,139 @@ class CharacterizationError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise CharacterizationError("live_window_timestamp_invalid")
+    return value.astimezone(timezone.utc).replace(microsecond=0).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+        return None
+    return parsed
+
+
+def _build_live_window_lock_record(
+    *,
+    run_id: str,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    planned_row_id: str,
+    source_sha: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise CharacterizationError("live_window_timestamp_invalid")
+    start = instant.astimezone(timezone.utc).replace(microsecond=0)
+    end = start + timedelta(hours=LIVE_WINDOW_HOURS)
+    booking_timestamp = start.strftime("%Y%m%dT%H%M%SZ")
+    return {
+        "schema_version": 1,
+        "holder": LIVE_WINDOW_HOLDER,
+        "gate": "live-gate-preflight",
+        "run_id": run_id,
+        "booking_id": "live-gate-preflight-%s-%s"
+        % (LIVE_WINDOW_BOOKING_ROLE, booking_timestamp),
+        "authorizing_ruling": AUTHORIZATION_RULING_ID,
+        "window_start": _format_utc_timestamp(start),
+        "window_end": _format_utc_timestamp(end),
+        "frozen_caps": dict(PROFILE_CHARACTERIZATION_FROZEN_CAPS),
+        "ports": list(REQUIRED_PORTS),
+        "fixture_id": fixture_id,
+        "party_size": party_size,
+        "lifecycle": lifecycle,
+        "planned_row_id": planned_row_id,
+        "source_sha": source_sha,
+    }
+
+
+def _matches_frozen_caps(value: Any) -> bool:
+    expected = PROFILE_CHARACTERIZATION_FROZEN_CAPS
+    if not isinstance(value, Mapping) or set(value) != set(expected):
+        return False
+    return all(
+        type(value[key]) is type(expected_value)
+        and value[key] == expected_value
+        for key, expected_value in expected.items()
+    )
+
+
+def _valid_live_window_lock_record(value: Any, *, now: datetime | None = None) -> bool:
+    required_fields = {
+        "schema_version",
+        "holder",
+        "gate",
+        "run_id",
+        "booking_id",
+        "authorizing_ruling",
+        "window_start",
+        "window_end",
+        "frozen_caps",
+        "ports",
+        "fixture_id",
+        "party_size",
+        "lifecycle",
+        "planned_row_id",
+        "source_sha",
+    }
+    if not isinstance(value, Mapping) or set(value) != required_fields:
+        return False
+    start = _parse_utc_timestamp(value.get("window_start"))
+    end = _parse_utc_timestamp(value.get("window_end"))
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        return False
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("holder") != LIVE_WINDOW_HOLDER
+        or value.get("gate") != "live-gate-preflight"
+        or not isinstance(value.get("run_id"), str)
+        or _SAFE_RUN_ID.fullmatch(str(value.get("run_id"))) is None
+        or not isinstance(value.get("booking_id"), str)
+        or _BOOKING_ID.fullmatch(str(value.get("booking_id"))) is None
+        or not isinstance(value.get("authorizing_ruling"), str)
+        or value.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
+        or not _matches_frozen_caps(value.get("frozen_caps"))
+        or value.get("ports") != list(REQUIRED_PORTS)
+        or value.get("fixture_id") not in _FIXTURE_IDS
+        or type(value.get("party_size")) is not int
+        or value.get("party_size") not in (1, 4)
+        or value.get("lifecycle") not in ("startup", "resume")
+        or not isinstance(value.get("planned_row_id"), str)
+        or _SAFE_RUN_ID.fullmatch(str(value.get("planned_row_id"))) is None
+        or not isinstance(value.get("source_sha"), str)
+        or _SHA1_OR_SHA256.fullmatch(str(value.get("source_sha"))) is None
+        or start is None
+        or end is None
+    ):
+        return False
+    expected_booking_id = "live-gate-preflight-%s-%s" % (
+        LIVE_WINDOW_BOOKING_ROLE,
+        start.strftime("%Y%m%dT%H%M%SZ"),
+    )
+    duration = (end - start).total_seconds()
+    current_utc = current.astimezone(timezone.utc)
+    return bool(
+        value.get("booking_id") == expected_booking_id
+        and 0 < duration <= MAX_LIVE_WINDOW_HOURS * 60 * 60
+        and duration <= LIVE_WINDOW_HOURS * 60 * 60
+        and start <= current_utc < end
+    )
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -795,18 +948,15 @@ class _ProfileCharacterizationLock:
         self.coordination_directory = common_directory / "neq-coordination"
         self.lock_directory = self.coordination_directory / "live-window.lock"
         self.holder_record = dict(holder_record)
-        self.booking_id = str(holder_record["booking_id"])
+        booking_id = holder_record.get("booking_id")
+        self.booking_id = booking_id if isinstance(booking_id, str) else ""
         self.acquired = False
         self.recorded = False
         self.lock_identity: tuple[int, int] | None = None
         self.holder_identity: tuple[int, int] | None = None
 
     def acquire(self) -> bool:
-        if (
-            self.holder_record.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
-            or self.holder_record.get("gate") != "live-gate-preflight"
-            or self.holder_record.get("port") != HOST_PORT
-        ):
+        if not _valid_live_window_lock_record(self.holder_record):
             return False
         if self.coordination_directory.is_symlink():
             return False
@@ -877,10 +1027,18 @@ class _ProfileCharacterizationLock:
             ):
                 return False
             holder = _read_json(holder_path, "live_window_holder")
+            release_identity = (
+                {key: release_record.get(key) for key in self.holder_record}
+                if isinstance(release_record, Mapping)
+                else None
+            )
             if (
                 not isinstance(holder, Mapping)
+                or dict(holder) != self.holder_record
                 or holder.get("booking_id") != self.booking_id
-                or holder.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
+                or not _valid_live_window_lock_record(holder)
+                or release_identity != self.holder_record
+                or not _valid_lock_release_record(release_record, self.booking_id)
             ):
                 return False
             _append_lock_log(self.coordination_directory / "bookings.log", release_record)
@@ -952,9 +1110,64 @@ def _port_state(port: int) -> tuple[bool, bool]:
 
 
 def _port_is_free(port: int) -> bool:
+    if type(port) is not int or port not in REQUIRED_PORTS:
+        return False
     listener, socket_observed = _port_state(port)
     pids, process_observed = _listener_pids(port)
     return socket_observed and process_observed and not listener and not pids
+
+
+def _required_port_status() -> dict[int, bool]:
+    """Verify both ports reserved by the shared live-window lock."""
+    return {port: _port_is_free(port) for port in REQUIRED_PORTS}
+
+
+def _ports_are_free(status: Mapping[int, bool]) -> bool:
+    return set(status) == set(REQUIRED_PORTS) and all(
+        status.get(port) is True for port in REQUIRED_PORTS
+    )
+
+
+def _port_failure_code(status: Mapping[int, bool], phase: str) -> str | None:
+    for port in REQUIRED_PORTS:
+        if status.get(port) is not True:
+            return "port_%d_not_free_%s" % (port, phase)
+    return None
+
+
+def _valid_evidence_path(value: Any) -> bool:
+    if not isinstance(value, str) or "\\" in value:
+        return False
+    path = PurePosixPath(value)
+    return bool(
+        not path.is_absolute()
+        and ".." not in path.parts
+        and len(path.parts) >= 2
+        and path.parts[0] == "tmp"
+    )
+
+
+def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    release_time = _parse_utc_timestamp(value.get("released_at_utc"))
+    start = _parse_utc_timestamp(value.get("window_start"))
+    end = _parse_utc_timestamp(value.get("window_end"))
+    ports_free = value.get("ports_free")
+    return bool(
+        value.get("event") == "released"
+        and value.get("booking_id") == booking_id
+        and release_time is not None
+        and start is not None
+        and end is not None
+        and start <= release_time <= end
+        and value.get("server_stopped") is True
+        and value.get("after_teardown_socket_sample_observed") is True
+        and value.get("after_teardown_socket_pids") == []
+        and isinstance(ports_free, Mapping)
+        and dict(ports_free) == {str(port): True for port in REQUIRED_PORTS}
+        and _valid_evidence_path(value.get("evidence_path"))
+    )
 
 
 def _observer_bytes(value: Any) -> bytes:
@@ -1255,12 +1468,12 @@ def _write_socket_sample_evidence(
 
 
 def _listener_pids(port: int) -> tuple[set[int], bool]:
-    """Return PIDs listening on the only inspected port, 8360."""
-    if type(port) is not int or port != HOST_PORT:
+    """Return PIDs listening on a port reserved by the shared lock."""
+    if type(port) is not int or port not in REQUIRED_PORTS:
         return set(), False
 
     _lsof_evidence, lsof_output, lsof_observed = _run_observer_command(
-        ["lsof", "-nP", "-t", "-iTCP:%d" % port, "-sTCP:LISTEN"],
+        [LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:%d" % port, "-sTCP:LISTEN"],
         empty_result_is_success=True,
     )
     if not lsof_observed:
@@ -1319,10 +1532,12 @@ def _socket_pid_sample(
                 evidence["failure_code"] = "process_scope_identity_duplicated"
                 break
             selectors_seen.add(selector_key)
-            command = ["lsof", "-nP"]
+            command = [LSOF_EXECUTABLE, "-w", "-nP"]
             if scope["selector"] == "pid":
                 command.extend(("-p", str(scope["pid"])))
-            command.extend(("-g", str(scope["process_group_id"]), "-i", "-a"))
+            else:
+                command.extend(("-g", str(scope["process_group_id"])))
+            command.extend(("-i", "-a"))
             command.append("-F0pfgtn")
             command_evidence, raw_output, command_observed = _run_observer_command(
                 command,
@@ -1942,22 +2157,14 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         ]
 
         common_directory = _git_common_directory()
-        booking_id = "preflight-profile-" + args.run_id
-        lock_record = {
-            "schema_version": 1,
-            "holder": "live-gate-preflight-profile-characterization",
-            "gate": "live-gate-preflight",
-            "run_id": args.run_id,
-            "booking_id": booking_id,
-            "authorizing_ruling": AUTHORIZATION_RULING_ID,
-            "fixture_id": args.fixture_id,
-            "party_size": args.party_size,
-            "lifecycle": args.lifecycle,
-            "planned_row_id": planned_row_id,
-            "source_sha": args.source_sha,
-            "port": HOST_PORT,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        }
+        lock_record = _build_live_window_lock_record(
+            run_id=args.run_id,
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            planned_row_id=planned_row_id,
+            source_sha=args.source_sha,
+        )
         lock = _ProfileCharacterizationLock(common_directory, lock_record)
         if not lock.acquire():
             raise CharacterizationError("shared_live_window_lock_unavailable")
@@ -1970,6 +2177,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     process: subprocess.Popen[bytes] | None = None
     server_stopped = True
     port_free = False
+    port_status = {port: False for port in REQUIRED_PORTS}
     lock_released = False
     ready = False
     driver_exchange: dict[str, Any] | None = None
@@ -1987,8 +2195,10 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             process_scopes=process_scopes,
         )
         socket_pid_samples.append(pre_host_sample)
-        if not _port_is_free(HOST_PORT):
-            raise CharacterizationError("port_8360_not_free_before_start")
+        port_status = _required_port_status()
+        before_start_failure = _port_failure_code(port_status, "before_start")
+        if before_start_failure is not None:
+            raise CharacterizationError(before_start_failure)
         if not pre_host_sample["observed"] or pre_host_sample["pids"]:
             raise CharacterizationError("process_census_before_host_invalid")
         from scripts.live_gate_preflight_safety import (
@@ -2072,9 +2282,12 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "host_server_stop_failed"
         else:
             server_stopped = process.poll() is not None
-        port_free = _port_is_free(HOST_PORT)
+        port_status = _required_port_status()
+        port_free = _ports_are_free(port_status)
         if not port_free:
-            failure_code = failure_code or "port_8360_not_free_after_stop"
+            failure_code = failure_code or _port_failure_code(
+                port_status, "after_stop"
+            )
         result = _read_worker_result(_worker_result_path(args.run_id))
         if result is None:
             failure_code = failure_code or "host_worker_result_missing"
@@ -2156,7 +2369,12 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 failure_code = failure_code or "host_server_stop_failed"
             else:
                 server_stopped = process.poll() is not None
-        port_free = _port_is_free(HOST_PORT)
+        port_status = _required_port_status()
+        port_free = _ports_are_free(port_status)
+        if not port_free:
+            failure_code = failure_code or _port_failure_code(
+                port_status, "after_teardown"
+            )
         if run_directory is None:
             failure_code = failure_code or "socket_sample_evidence_directory_unavailable"
         else:
@@ -2167,16 +2385,41 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                     process_scopes=process_scopes,
                 )
             )
+        after_teardown_sample = (
+            socket_pid_samples[-1]
+            if socket_pid_samples
+            and socket_pid_samples[-1].get("phase") == "after_teardown"
+            else None
+        )
+        after_teardown_sample_complete = bool(
+            isinstance(after_teardown_sample, Mapping)
+            and after_teardown_sample.get("observed") is True
+            and after_teardown_sample.get("pids") == []
+        )
         if not server_stopped or not port_free:
             failure_code = failure_code or "host_teardown_unverified"
-        if server_stopped and port_free:
+        if not after_teardown_sample_complete:
+            failure_code = failure_code or "process_census_after_teardown_invalid"
+        if server_stopped and port_free and after_teardown_sample_complete:
+            evidence_path = (
+                (run_directory / "profile-evidence.json").relative_to(root).as_posix()
+                if run_directory is not None
+                else ""
+            )
             lock_released = lock.release(
                 {
                     **lock_record,
                     "event": "released",
-                    "released_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "released_at_utc": _format_utc_timestamp(
+                        datetime.now(timezone.utc)
+                    ),
                     "server_stopped": True,
-                    "port_8360_free": True,
+                    "ports_free": {
+                        str(port): port_status[port] for port in REQUIRED_PORTS
+                    },
+                    "after_teardown_socket_sample_observed": True,
+                    "after_teardown_socket_pids": [],
+                    "evidence_path": evidence_path,
                 }
             )
         if not lock_released:
@@ -2271,7 +2514,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             "failure_code": failure_code,
             "teardown": {
                 "server_stopped": server_stopped,
-                "port_8360_free": port_free,
+                "port_8360_free": port_status.get(HOST_PORT) is True,
                 "lock_released": lock_released,
             },
         }
@@ -2296,16 +2539,15 @@ def _lock_holder_for_worker(args: argparse.Namespace) -> Mapping[str, Any]:
     holder = _read_json(holder_path, "live_window_holder")
     if (
         not isinstance(holder, Mapping)
+        or not _valid_live_window_lock_record(holder)
         or holder.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
         or holder.get("gate") != "live-gate-preflight"
-        or holder.get("booking_id") != "preflight-profile-" + args.run_id
         or holder.get("run_id") != args.run_id
         or holder.get("source_sha") != args.source_sha
         or holder.get("fixture_id") != args.fixture_id
         or holder.get("party_size") != args.party_size
         or holder.get("lifecycle") != args.lifecycle
         or holder.get("planned_row_id") != args.planned_row_id
-        or holder.get("port") != HOST_PORT
     ):
         raise CharacterizationError("shared_live_window_lock_identity_mismatch")
     return holder

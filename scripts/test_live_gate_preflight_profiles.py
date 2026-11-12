@@ -14,6 +14,7 @@ import importlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ import types
 import uuid
 import unittest
 from contextlib import ExitStack, nullcontext, redirect_stderr
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1044,6 +1046,36 @@ class TestPreflightStubAndSafety(unittest.TestCase):
 
 class TestProfileCharacterizationRunner(unittest.TestCase):
     @staticmethod
+    def _lock_record(**overrides: object) -> dict:
+        record = profile_runner._build_live_window_lock_record(
+            run_id="profile-lock-test",
+            fixture_id="interior_tavern",
+            party_size=1,
+            lifecycle="startup",
+            planned_row_id="E01",
+            source_sha="a" * 40,
+        )
+        record.update(overrides)
+        return record
+
+    @staticmethod
+    def _release_record(record: dict, **overrides: object) -> dict:
+        release = {
+            **record,
+            "event": "released",
+            "released_at_utc": profile_runner._format_utc_timestamp(
+                datetime.now(timezone.utc)
+            ),
+            "server_stopped": True,
+            "ports_free": {"8360": True, "8370": True},
+            "after_teardown_socket_sample_observed": True,
+            "after_teardown_socket_pids": [],
+            "evidence_path": "tmp/profile-lock-test/profile-evidence.json",
+        }
+        release.update(overrides)
+        return release
+
+    @staticmethod
     def _process_scope(
         *,
         selector: str = "process_group",
@@ -1095,11 +1127,20 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertEqual(len(commands), 1)
             self.assertEqual(
                 commands[0],
-                ["lsof", "-nP", "-g", "24568", "-i", "-a", "-F0pfgtn"],
+                [
+                    profile_runner.LSOF_EXECUTABLE,
+                    "-w",
+                    "-nP",
+                    "-g",
+                    "24568",
+                    "-i",
+                    "-a",
+                    "-F0pfgtn",
+                ],
             )
             self.assertEqual(evidence["pids"], [])
 
-    def test_listener_pid_probe_is_lsof_scoped_and_rejects_other_ports_without_observing(self) -> None:
+    def test_listener_pid_probe_is_port_scoped_for_both_lock_ports(self) -> None:
         commands: list[list[str]] = []
 
         def observer(command: list[str], **_kwargs: object) -> object:
@@ -1110,18 +1151,119 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             "scripts.live_gate_preflight_safety.run_guarded_subprocess",
             side_effect=observer,
         ):
-            pids, observed = profile_runner._listener_pids(8360)
-            rejected_pids, rejected_observed = profile_runner._listener_pids(8357)
+            pids_8360, observed_8360 = profile_runner._listener_pids(8360)
+            pids_8370, observed_8370 = profile_runner._listener_pids(8370)
+            rejected_pids, rejected_observed = profile_runner._listener_pids(8361)
 
-        self.assertTrue(observed)
-        self.assertEqual(pids, {24568})
+        self.assertTrue(observed_8360)
+        self.assertEqual(pids_8360, {24568})
+        self.assertTrue(observed_8370)
+        self.assertEqual(pids_8370, {24568})
         self.assertFalse(rejected_observed)
         self.assertEqual(rejected_pids, set())
-        self.assertEqual(len(commands), 1)
+        self.assertEqual(len(commands), 2)
         self.assertEqual(
-            commands[0],
-            ["lsof", "-nP", "-t", "-iTCP:8360", "-sTCP:LISTEN"],
+            commands,
+            [
+                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8360", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8370", "-sTCP:LISTEN"],
+            ],
         )
+
+    def test_required_port_checks_fail_closed_for_busy_or_unobservable_port(self) -> None:
+        commands: list[list[str]] = []
+
+        def observer(command: list[str], **_kwargs: object) -> object:
+            commands.append(command)
+            if "-iTCP:8370" in command:
+                return types.SimpleNamespace(returncode=0, stdout=b"45678\n", stderr=b"")
+            return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
+        with mock.patch.object(
+            profile_runner, "_port_state", return_value=(False, True)
+        ), mock.patch(
+            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+            side_effect=observer,
+        ):
+            busy_status = profile_runner._required_port_status()
+
+        self.assertEqual(busy_status, {8360: True, 8370: False})
+        self.assertEqual(
+            commands,
+            [
+                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8360", "-sTCP:LISTEN"],
+                [profile_runner.LSOF_EXECUTABLE, "-w", "-nP", "-t", "-iTCP:8370", "-sTCP:LISTEN"],
+            ],
+        )
+        self.assertEqual(
+            profile_runner._port_failure_code(busy_status, "before_start"),
+            "port_8370_not_free_before_start",
+        )
+
+        commands.clear()
+
+        def unavailable_observer(command: list[str], **_kwargs: object) -> object:
+            commands.append(command)
+            if "-iTCP:8370" in command:
+                raise FileNotFoundError("trusted lsof unavailable")
+            return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
+        with mock.patch.object(
+            profile_runner, "_port_state", return_value=(False, True)
+        ), mock.patch(
+            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+            side_effect=unavailable_observer,
+        ):
+            unavailable_status = profile_runner._required_port_status()
+
+        self.assertEqual(unavailable_status, {8360: True, 8370: False})
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[1][0], profile_runner.LSOF_EXECUTABLE)
+
+    def test_sanitized_environment_lsof_observer_sees_only_own_loopback_socket(self) -> None:
+        self.assertTrue(Path(profile_runner.LSOF_EXECUTABLE).is_file())
+        with tempfile.TemporaryDirectory(
+            prefix="profile-actual-lsof-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            environment = build_guarded_environment(
+                {"PATH": "/usr/bin:/bin"},
+                project_root=PROJECT_ROOT,
+                process_role="parent",
+            )
+            completed = subprocess.run(
+                [
+                    _repository_python(),
+                    str(Path(__file__).resolve()),
+                    "--lsof-process-scope-probe",
+                    str(run_directory),
+                ],
+                cwd="tmp",
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["path"], "/usr/bin:/bin")
+            self.assertTrue(payload["sample"]["observed"])
+            self.assertEqual(payload["sample"]["pids"], [payload["pid"]])
+            evidence = json.loads(
+                (run_directory / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            command = evidence["owner_mappings"][0]["command_evidence"]["command"]
+            self.assertEqual(command[0], profile_runner.LSOF_EXECUTABLE)
+            self.assertIn("-w", command)
+            self.assertIn(str(payload["pid"]), command)
+            self.assertIn("-a", command)
+            self.assertNotIn("shell", command)
 
     def test_socket_sample_maps_non_8360_socket_with_exact_process_group_scope(self) -> None:
         owner_pid = 24568
@@ -1160,7 +1302,16 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         self.assertEqual(
             commands[0],
-            ["lsof", "-nP", "-g", str(owner_pid), "-i", "-a", "-F0pfgtn"],
+            [
+                profile_runner.LSOF_EXECUTABLE,
+                "-w",
+                "-nP",
+                "-g",
+                str(owner_pid),
+                "-i",
+                "-a",
+                "-F0pfgtn",
+            ],
         )
         self.assertIn(owner_pid, evidence["pids"])
         self.assertEqual(evidence["owner_mappings"][0]["socket_count"], 1)
@@ -1168,16 +1319,15 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(command_evidence["stdout_prefix_base64"], "")
         self.assertNotIn(b"8361", sidecar_bytes)
 
-    def test_socket_sample_intersects_controller_pid_and_process_group(self) -> None:
+    def test_socket_sample_checks_pid_and_process_group_identity(self) -> None:
         controller_pid = 31001
         controller_pgid = 30000
         command = [
-            "lsof",
+            profile_runner.LSOF_EXECUTABLE,
+            "-w",
             "-nP",
             "-p",
             str(controller_pid),
-            "-g",
-            str(controller_pgid),
             "-i",
             "-a",
             "-F0pfgtn",
@@ -1352,7 +1502,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         )
         commands: list[list[str]] = []
         expected_command = [
-            "lsof",
+            profile_runner.LSOF_EXECUTABLE,
+            "-w",
             "-nP",
             "-g",
             "10200",
@@ -1853,14 +2004,20 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             def poll() -> int:
                 return 0
 
+        created_locks: list[object] = []
+
         class FakeLock:
-            def __init__(self, _common_directory: Path, _record: dict) -> None:
+            def __init__(self, _common_directory: Path, record: dict) -> None:
+                self.record = dict(record)
+                self.release_record: dict | None = None
                 self.released = False
+                created_locks.append(self)
 
             def acquire(self) -> bool:
                 return True
 
-            def release(self, _record: dict) -> bool:
+            def release(self, record: dict) -> bool:
+                self.release_record = dict(record)
                 self.released = True
                 return True
 
@@ -1935,9 +2092,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 run_id: str,
                 exchange: dict,
                 host_canary_override: object = missing_canary,
-            ) -> tuple[dict, list[str]]:
+            ) -> tuple[dict, list[str], list[int]]:
                 run_directory = evidence_root / run_id
                 run_directory.mkdir()
+                checked_ports: list[int] = []
                 call_result = {
                     "run_id": run_id,
                     "source_sha": "a" * 40,
@@ -1992,6 +2150,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         "pids": [12345] if phase == "host_ready" else [],
                     }
 
+                def record_port_check(port: int) -> bool:
+                    checked_ports.append(port)
+                    return True
+
                 with ExitStack() as stack:
                     stack.enter_context(
                         mock.patch.object(
@@ -2036,7 +2198,11 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         mock.patch.object(
                             profile_runner, "_ensure_run_directory", return_value=run_directory
                         ),
-                        mock.patch.object(profile_runner, "_port_is_free", return_value=True),
+                        mock.patch.object(
+                            profile_runner,
+                            "_port_is_free",
+                            side_effect=record_port_check,
+                        ),
                         mock.patch.object(
                             profile_runner, "_claim_characterization_attempt", return_value=None
                         ),
@@ -2124,9 +2290,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         resume_checkpoint_sha256=None,
                     )
                     result = profile_runner._characterize(args)
-                    return result[0], list(events)
+                    return result[0], list(events), list(checked_ports)
 
-            successful_evidence, successful_events = run_characterization(
+            successful_evidence, successful_events, successful_port_checks = run_characterization(
                 "positive-flow", driver_success
             )
             self.assertEqual(
@@ -2134,6 +2300,20 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 ["worker-launch", "listener-ready", "driver-exchange"],
             )
             self.assertEqual(successful_evidence["driver_exchange"], driver_success)
+            self.assertEqual(
+                successful_port_checks,
+                [8360, 8370, 8360, 8370, 8360, 8370],
+            )
+            self.assertTrue(
+                profile_runner._valid_live_window_lock_record(created_locks[-1].record)
+            )
+            self.assertEqual(
+                created_locks[-1].release_record["ports_free"],
+                {"8360": True, "8370": True},
+            )
+            self.assertTrue(
+                created_locks[-1].release_record["evidence_path"].startswith("tmp/")
+            )
             self.assertEqual(
                 [
                     canary["canary_stage"]
@@ -2367,24 +2547,14 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
 
             lock = _ProfileCharacterizationLock(
                 common_directory,
-                {
-                    "booking_id": "new-run",
-                    "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
-                    "gate": "live-gate-preflight",
-                    "port": 8360,
-                },
+                self._lock_record(run_id="new-run"),
             )
             self.assertFalse(lock.acquire())
             self.assertEqual(holder_path.read_bytes(), holder_bytes)
             self.assertEqual(log_path.read_bytes(), log_bytes)
 
     def test_live_window_lock_accepts_shared_readable_directory_only(self) -> None:
-        record = {
-            "booking_id": "profile-mode-test",
-            "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
-            "gate": "live-gate-preflight",
-            "port": 8360,
-        }
+        record = self._lock_record(run_id="profile-mode-test")
         real_lstat = Path.lstat
         for mode, expected in ((0o755, True), (0o775, False), (0o757, False)):
             with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory(
@@ -2408,7 +2578,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     acquired = lock.acquire()
                     self.assertEqual(acquired, expected)
                     if acquired:
-                        self.assertTrue(lock.release({**record, "event": "released"}))
+                        self.assertTrue(
+                            lock.release(self._release_record(record))
+                        )
                 self.assertFalse((coordination / "live-window.lock").exists())
 
     def test_live_window_lock_refuses_symlinked_coordination_directory(self) -> None:
@@ -2421,12 +2593,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             (common_directory / "neq-coordination").symlink_to(target, target_is_directory=True)
             lock = _ProfileCharacterizationLock(
                 common_directory,
-                {
-                    "booking_id": "profile-symlink-test",
-                    "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
-                    "gate": "live-gate-preflight",
-                    "port": 8360,
-                },
+                self._lock_record(run_id="profile-symlink-test"),
             )
             self.assertFalse(lock.acquire())
             self.assertFalse((target / "live-window.lock").exists())
@@ -2436,34 +2603,115 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             prefix="profile-lock-", dir=PROJECT_ROOT / "tmp"
         ) as temp_directory:
             common_directory = Path(temp_directory)
-            record = {
-                "booking_id": "profile-run-1",
-                "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
-                "gate": "live-gate-preflight",
-                "port": 8360,
-            }
+            record = self._lock_record(run_id="profile-run-1")
             lock = _ProfileCharacterizationLock(common_directory, record)
             self.assertTrue(lock.acquire())
             holder_path = common_directory / "neq-coordination" / "live-window.lock" / "holder.json"
             log_path = common_directory / "neq-coordination" / "bookings.log"
             self.assertTrue(holder_path.is_file())
-            self.assertEqual(len(log_path.read_text(encoding="utf-8").splitlines()), 1)
-            self.assertTrue(lock.release({**record, "event": "released"}))
+            booking_line, = log_path.read_text(encoding="utf-8").splitlines()
+            holder_line = json.loads(booking_line)
+            self.assertEqual(json.loads(holder_path.read_text(encoding="utf-8")), record)
+            self.assertEqual(holder_line, record)
+            self.assertRegex(
+                record["booking_id"],
+                r"^live-gate-preflight-N-[0-9]{8}T[0-9]{6}Z$",
+            )
+            start = profile_runner._parse_utc_timestamp(record["window_start"])
+            end = profile_runner._parse_utc_timestamp(record["window_end"])
+            self.assertIsNotNone(start)
+            self.assertIsNotNone(end)
+            self.assertLessEqual((end - start).total_seconds(), 8 * 60 * 60)
+            self.assertEqual(record["ports"], [8360, 8370])
+            self.assertEqual(record["holder"], "N agent-run")
+            self.assertEqual(
+                record["authorizing_ruling"],
+                "neq-w1-fr11-profiles-characterization-20261112",
+            )
+            release_record = self._release_record(record)
+            self.assertTrue(lock.release(release_record))
             self.assertFalse(holder_path.exists())
             self.assertFalse(holder_path.parent.exists())
-            self.assertEqual(len(log_path.read_text(encoding="utf-8").splitlines()), 2)
+            logged_release = json.loads(log_path.read_text(encoding="utf-8").splitlines()[1])
+            self.assertEqual(logged_release, release_record)
+            self.assertEqual(logged_release["ports_free"], {"8360": True, "8370": True})
+            self.assertTrue(logged_release["evidence_path"].startswith("tmp/"))
+
+    def test_live_window_lock_rejects_missing_or_invalid_holder_metadata(self) -> None:
+        invalid_records = []
+        missing_holder = self._lock_record(run_id="missing-holder")
+        del missing_holder["holder"]
+        invalid_records.append(missing_holder)
+        wrong_ruling = self._lock_record(run_id="wrong-ruling")
+        wrong_ruling["authorizing_ruling"] = "unapproved-ruling"
+        invalid_records.append(wrong_ruling)
+        wrong_ports = self._lock_record(run_id="wrong-ports")
+        wrong_ports["ports"] = [8360]
+        invalid_records.append(wrong_ports)
+        wrong_caps = self._lock_record(run_id="wrong-caps")
+        wrong_caps["frozen_caps"] = {"provider_requests": 1}
+        invalid_records.append(wrong_caps)
+        boolean_caps = self._lock_record(run_id="boolean-caps")
+        boolean_caps["frozen_caps"]["provider_requests"] = False
+        invalid_records.append(boolean_caps)
+        long_window = self._lock_record(run_id="long-window")
+        start = profile_runner._parse_utc_timestamp(long_window["window_start"])
+        long_window["window_end"] = profile_runner._format_utc_timestamp(
+            start + timedelta(hours=9)
+        )
+        invalid_records.append(long_window)
+        malformed_window = self._lock_record(run_id="malformed-window")
+        malformed_window["window_end"] = "not-a-utc-timestamp"
+        invalid_records.append(malformed_window)
+
+        for index, record in enumerate(invalid_records):
+            with self.subTest(index=index), tempfile.TemporaryDirectory(
+                prefix="profile-lock-invalid-", dir=PROJECT_ROOT / "tmp"
+            ) as temp_directory:
+                common_directory = Path(temp_directory)
+                lock = _ProfileCharacterizationLock(common_directory, record)
+                self.assertFalse(lock.acquire())
+                self.assertFalse(
+                    (common_directory / "neq-coordination" / "live-window.lock").exists()
+                )
+                self.assertFalse(
+                    (common_directory / "neq-coordination" / "bookings.log").exists()
+                )
+
+    def test_live_window_lock_cannot_release_without_both_ports_and_evidence(self) -> None:
+        record = self._lock_record(run_id="release-boundary")
+        invalid_releases = (
+            self._release_record(record, ports_free={"8360": True, "8370": False}),
+            self._release_record(record, ports_free={"8360": True}),
+            self._release_record(record, after_teardown_socket_sample_observed=False),
+            self._release_record(record, after_teardown_socket_pids=[12345]),
+            self._release_record(record, evidence_path="/outside/evidence.json"),
+        )
+        for index, release_record in enumerate(invalid_releases):
+            with self.subTest(index=index), tempfile.TemporaryDirectory(
+                prefix="profile-lock-release-blocked-", dir=PROJECT_ROOT / "tmp"
+            ) as temp_directory:
+                common_directory = Path(temp_directory)
+                lock = _ProfileCharacterizationLock(common_directory, record)
+                self.assertTrue(lock.acquire())
+                holder_path = (
+                    common_directory
+                    / "neq-coordination"
+                    / "live-window.lock"
+                    / "holder.json"
+                )
+                log_path = common_directory / "neq-coordination" / "bookings.log"
+                self.assertFalse(lock.release(release_record))
+                self.assertTrue(holder_path.is_file())
+                self.assertEqual(len(log_path.read_text(encoding="utf-8").splitlines()), 1)
+                self.assertTrue(lock.release(self._release_record(record)))
 
     def test_live_window_lock_does_not_release_a_replaced_holder(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-lock-", dir=PROJECT_ROOT / "tmp"
         ) as temp_directory:
             common_directory = Path(temp_directory)
-            record = {
-                "booking_id": "profile-run-2",
-                "authorizing_ruling": "neq-w1-fr11-profiles-characterization-20261112",
-                "gate": "live-gate-preflight",
-                "port": 8360,
-            }
+            record = self._lock_record(run_id="profile-run-2")
             lock = _ProfileCharacterizationLock(common_directory, record)
             self.assertTrue(lock.acquire())
             lock_directory = common_directory / "neq-coordination" / "live-window.lock"
@@ -2473,7 +2721,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             replacement.write_bytes(replacement_bytes)
             holder_path.unlink()
             replacement.replace(holder_path)
-            self.assertFalse(lock.release({**record, "event": "released"}))
+            self.assertFalse(lock.release(self._release_record(record)))
             self.assertEqual(holder_path.read_bytes(), replacement_bytes)
             self.assertTrue(lock_directory.is_dir())
 
@@ -3185,6 +3433,59 @@ def _run_probe_from_sitecustomize() -> None:
         if len(sys.argv) != 5:
             raise SystemExit("profile worker probe arguments are incomplete")
         _run_profile_worker_probe(sys.argv[2], sys.argv[3], sys.argv[4])
+    if mode == "--lsof-process-scope-probe":
+        if len(sys.argv) != 3:
+            raise SystemExit("lsof process-scope probe arguments are incomplete")
+        from scripts.live_gate_preflight_safety import (
+            activate_preflight_safety,
+            current_invocation_command,
+            require_startup_guard_active,
+        )
+
+        activate_preflight_safety()
+        require_startup_guard_active()
+        if os.environ.get("PATH") != "/usr/bin:/bin":
+            raise SystemExit("sanitized observer PATH differs")
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            scope = profile_runner._make_process_scope(
+                selector="pid",
+                pid=os.getpid(),
+                process_group_id=os.getpgrp(),
+                process_role="parent",
+                launch_source="controller-startup-canary",
+                command=current_invocation_command(),
+                environment_sha256="a" * 64,
+                working_directory=Path.cwd(),
+            )
+            sample = profile_runner._socket_pid_sample(
+                "host_ready",
+                run_directory=Path(sys.argv[2]),
+                process_scopes=[scope],
+            )
+            evidence = json.loads(
+                (Path(sys.argv[2]) / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            print(
+                json.dumps(
+                    {
+                        "path": os.environ["PATH"],
+                        "pid": os.getpid(),
+                        "sample": sample,
+                        "evidence": evidence,
+                    },
+                    sort_keys=True,
+                )
+            )
+            if not sample["observed"] or sample["pids"] != [os.getpid()]:
+                raise SystemExit("process-scoped lsof observation failed")
+        finally:
+            listener.close()
+        raise SystemExit(0)
     if mode == "--stub-probe":
         from scripts.live_gate_preflight_safety import activate_preflight_safety
 
