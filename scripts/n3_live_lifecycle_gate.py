@@ -1212,18 +1212,22 @@ class L01SharingOffExecutor:
 class L02IdentityInitExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         try:
-            before = _host_status(context.host_api.get_status())
+            before_response = context.host_api.get_status()
+            before = _host_status(before_response)
+            before_observed = _host_api_observation(before_response)
             if before is None:
-                return _blocked("host_status_invalid")
+                return _blocked("host_status_invalid", observed=before_observed)
             if before.get("state") not in {"off", "initializing_required"}:
-                return _failed("sharing_not_off")
+                return _failed("sharing_not_off", observed=before_observed)
             if before.get("identity_initialized") is not False:
-                return _failed("identity_precondition_not_met")
+                return _failed(
+                    "identity_precondition_not_met", observed=before_observed
+                )
             if (
                 type(before.get("identity_up_invocations")) is not int
                 or before.get("identity_up_invocations") != 0
             ):
-                return _failed("identity_up_counter_not_zero")
+                return _failed("identity_up_counter_not_zero", observed=before_observed)
 
             first = context.host_api.post("initialize-identity", {"confirm": True})
             first_status = _host_status(first)
@@ -1236,7 +1240,10 @@ class L02IdentityInitExecutor:
                 or type(first_status.get("identity_up_invocations")) is not int
                 or first_status.get("identity_up_invocations") != 1
             ):
-                return _failed("identity_initialization_contract_failed")
+                return _failed(
+                    "identity_initialization_contract_failed",
+                    observed=_host_api_observation(first),
+                )
 
             companion_path = _companion_path(context)
             layout = _gate_profile_layout(context)
@@ -1262,7 +1269,10 @@ class L02IdentityInitExecutor:
                 or type(second_status.get("identity_up_invocations")) is not int
                 or second_status.get("identity_up_invocations") != 1
             ):
-                return _failed("identity_initialization_not_idempotent")
+                return _failed(
+                    "identity_initialization_not_idempotent",
+                    observed=_host_api_observation(second),
+                )
             return RowExecutionResult(
                 "PASS",
                 "identity_initialized_once_and_cleaned_up",
@@ -1286,10 +1296,16 @@ class L03PublicAccessExecutor:
         try:
             issued = context.host_api.post("issue-access", {})
             if issued.status != 200 or issued.payload.get("ok") is not True:
-                return _failed("credential_issuance_failed")
+                return _failed(
+                    "credential_issuance_failed",
+                    observed=_host_api_observation(issued),
+                )
             credential = issued.payload.get("credential")
             if not isinstance(credential, str) or not credential or len(credential) > 256:
-                return _failed("issued_credential_unavailable")
+                return _failed(
+                    "issued_credential_unavailable",
+                    observed=_host_api_observation(issued),
+                )
             context.remember_secret(credential)
 
             started = context.host_api.post("start", {})
@@ -1301,7 +1317,10 @@ class L03PublicAccessExecutor:
                 or started_status.get("state") != "ready"
                 or started_status.get("reason") != "ready"
             ):
-                return _failed("sharing_start_not_ready")
+                return _failed(
+                    "sharing_start_not_ready",
+                    observed=_host_api_observation(started),
+                )
 
             invitation = context.host_api.post("copy-invitation", {})
             invitation_url = invitation.payload.get("invitation")
@@ -1310,7 +1329,10 @@ class L03PublicAccessExecutor:
                 or invitation.payload.get("ok") is not True
                 or not isinstance(invitation_url, str)
             ):
-                return _failed("invitation_unavailable")
+                return _failed(
+                    "invitation_unavailable",
+                    observed=_host_api_observation(invitation),
+                )
             context.remember_secret(invitation_url)
             client.bind_invitation(invitation_url)
 
@@ -1425,9 +1447,14 @@ class L04DuplicateStartExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         inspector = context.port_inspector
         try:
-            before = _host_status(context.host_api.get_status())
+            before_response = context.host_api.get_status()
+            before = _host_status(before_response)
+            before_observed = _host_api_observation(before_response)
             if before is None or before.get("state") != "ready":
-                return _blocked("sharing_ready_precondition_unavailable")
+                return _blocked(
+                    "sharing_ready_precondition_unavailable",
+                    observed=before_observed,
+                )
             generation = before.get("generation")
             launches = before.get("companion_launches")
             if (
@@ -1436,7 +1463,9 @@ class L04DuplicateStartExecutor:
                 or type(launches) is not int
                 or launches < 1
             ):
-                return _blocked("sharing_generation_unavailable")
+                return _blocked(
+                    "sharing_generation_unavailable", observed=before_observed
+                )
             if inspector is None:
                 return _blocked("listener_count_unavailable")
             initial_port = inspector.inspect(PLAYER_PORT)
@@ -1451,13 +1480,18 @@ class L04DuplicateStartExecutor:
             second = context.host_api.post("start", {})
             after = _host_status(second)
             if second.status != 200 or second.payload.get("ok") is not True or after is None:
-                return _failed("duplicate_start_failed")
+                return _failed(
+                    "duplicate_start_failed", observed=_host_api_observation(second)
+                )
             if (
                 after.get("state") != "ready"
                 or after.get("generation") != generation
                 or after.get("companion_launches") != launches
             ):
-                return _failed("duplicate_start_changed_generation")
+                return _failed(
+                    "duplicate_start_changed_generation",
+                    observed=_host_api_observation(second),
+                )
             final_port = inspector.inspect(PLAYER_PORT)
             if not _host_listener_count_is_one(final_port, context.host.owner_pid):
                 return _failed("duplicate_listener_created")
@@ -1506,7 +1540,8 @@ class L05RelayLossRecoveryExecutor:
             )
 
         try:
-            before = _host_status(context.host_api.get_status())
+            before_response = context.host_api.get_status()
+            before = _host_status(before_response)
             session = client.session
             old_origin = client.origin
             if (
@@ -1515,13 +1550,22 @@ class L05RelayLossRecoveryExecutor:
                 or session is None
                 or old_origin is None
             ):
-                return _blocked("relay_loss_precondition_unavailable")
+                return _blocked(
+                    "relay_loss_precondition_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
             launches_before = before.get("companion_launches")
             generation_before = before.get("generation")
             if type(launches_before) is not int:
-                return _blocked("companion_counter_unavailable")
+                return _blocked(
+                    "companion_counter_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
             if type(generation_before) is not int or generation_before < 1:
-                return _blocked("sharing_generation_unavailable")
+                return _blocked(
+                    "sharing_generation_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
             host_healthy = observe_host_health()
             if host_healthy is None:
                 return _blocked("host_health_observation_unavailable")
@@ -1544,6 +1588,7 @@ class L05RelayLossRecoveryExecutor:
             policy = RecoveryPolicy(max_attempts=1, backoff_schedule=(1.0,))
             degraded_deadline = context.monotonic() + policy.health_check_interval
             degraded: Mapping[str, object] | None = None
+            degraded_response: HostApiResponse | None = None
             degraded_observations = 0
             max_degraded_observations = (
                 math.ceil(policy.health_check_interval / PUBLIC_POLL_INTERVAL_SECONDS)
@@ -1554,14 +1599,24 @@ class L05RelayLossRecoveryExecutor:
                 and degraded_observations < max_degraded_observations
             ):
                 degraded_observations += 1
-                current = _host_status(context.host_api.get_status())
+                degraded_response = context.host_api.get_status()
+                current = _host_status(degraded_response)
                 if current is None:
-                    return _blocked("sharing_status_unavailable_after_relay_loss")
+                    return _blocked(
+                        "sharing_status_unavailable_after_relay_loss",
+                        observed=_host_api_observation(degraded_response),
+                    )
                 generation = current.get("generation")
                 if type(generation) is not int or generation < 1:
-                    return _blocked("sharing_generation_unavailable")
+                    return _blocked(
+                        "sharing_generation_unavailable",
+                        observed=_host_api_observation(degraded_response),
+                    )
                 if generation != generation_before:
-                    return _failed("sharing_generation_changed_during_recovery")
+                    return _failed(
+                        "sharing_generation_changed_during_recovery",
+                        observed=_host_api_observation(degraded_response),
+                    )
                 host_healthy = observe_host_health()
                 if host_healthy is None:
                     return _blocked("host_health_observation_unavailable")
@@ -1576,10 +1631,16 @@ class L05RelayLossRecoveryExecutor:
                     degraded = current
                     break
                 if current.get("state") in {"failed", "off", "initializing_required"}:
-                    return _failed("sharing_failed_before_degraded_observation")
+                    return _failed(
+                        "sharing_failed_before_degraded_observation",
+                        observed=_host_api_observation(degraded_response),
+                    )
                 context.sleep(min(PUBLIC_POLL_INTERVAL_SECONDS, max(0.0, degraded_deadline - context.monotonic())))
             if degraded is None:
-                return _failed("degraded_transition_not_observed")
+                return _failed(
+                    "degraded_transition_not_observed",
+                    observed=_host_api_observation(degraded_response),
+                )
 
             withdrawn = context.host_api.post("copy-invitation", {})
             if (
@@ -1587,13 +1648,19 @@ class L05RelayLossRecoveryExecutor:
                 and withdrawn.payload.get("ok") is True
                 and isinstance(withdrawn.payload.get("invitation"), str)
             ):
-                return _failed("invitation_not_withdrawn")
+                return _failed(
+                    "invitation_not_withdrawn",
+                    observed=_host_api_observation(withdrawn),
+                )
             if (
                 withdrawn.status != 409
                 or withdrawn.payload.get("ok") is not False
                 or withdrawn.payload.get("reason") != "invitation_unavailable"
             ):
-                return _blocked("invitation_withdrawal_observation_unavailable")
+                return _blocked(
+                    "invitation_withdrawal_observation_unavailable",
+                    observed=_host_api_observation(withdrawn),
+                )
 
             try:
                 response = client.request("GET", "/")
@@ -1620,6 +1687,7 @@ class L05RelayLossRecoveryExecutor:
             )
             recovery_deadline = context.monotonic() + recovery_budget
             recovered: Mapping[str, object] | None = None
+            recovery_response: HostApiResponse | None = None
             recovery_launches = 0
             recovery_observations = 0
             max_recovery_observations = (
@@ -1630,14 +1698,24 @@ class L05RelayLossRecoveryExecutor:
                 and recovery_observations < max_recovery_observations
             ):
                 recovery_observations += 1
-                current = _host_status(context.host_api.get_status())
+                recovery_response = context.host_api.get_status()
+                current = _host_status(recovery_response)
                 if current is None:
-                    return _blocked("sharing_status_unavailable_during_recovery")
+                    return _blocked(
+                        "sharing_status_unavailable_during_recovery",
+                        observed=_host_api_observation(recovery_response),
+                    )
                 generation = current.get("generation")
                 if type(generation) is not int or generation < 1:
-                    return _blocked("sharing_generation_unavailable")
+                    return _blocked(
+                        "sharing_generation_unavailable",
+                        observed=_host_api_observation(recovery_response),
+                    )
                 if generation != generation_before:
-                    return _failed("sharing_generation_changed_during_recovery")
+                    return _failed(
+                        "sharing_generation_changed_during_recovery",
+                        observed=_host_api_observation(recovery_response),
+                    )
                 host_healthy = observe_host_health()
                 if host_healthy is None:
                     return _blocked("host_health_observation_unavailable")
@@ -1650,18 +1728,30 @@ class L05RelayLossRecoveryExecutor:
                     return _failed("player_listener_lost_during_recovery")
                 current_launches = current.get("companion_launches")
                 if type(current_launches) is not int or current_launches < launches_before:
-                    return _blocked("companion_counter_invalid")
+                    return _blocked(
+                        "companion_counter_invalid",
+                        observed=_host_api_observation(recovery_response),
+                    )
                 recovery_launches = current_launches - launches_before
                 if current.get("state") == "ready":
                     recovered = current
                     break
                 if current.get("state") == "failed":
-                    return _failed("bounded_recovery_failed")
+                    return _failed(
+                        "bounded_recovery_failed",
+                        observed=_host_api_observation(recovery_response),
+                    )
                 context.sleep(PUBLIC_POLL_INTERVAL_SECONDS)
             if recovered is None:
-                return _failed("bounded_recovery_timeout")
+                return _failed(
+                    "bounded_recovery_timeout",
+                    observed=_host_api_observation(recovery_response),
+                )
             if recovery_launches != 1:
-                return _failed("recovery_launch_count_invalid")
+                return _failed(
+                    "recovery_launch_count_invalid",
+                    observed=_host_api_observation(recovery_response),
+                )
 
             fresh_invitation = context.host_api.post("copy-invitation", {})
             fresh_url = fresh_invitation.payload.get("invitation")
@@ -1674,7 +1764,10 @@ class L05RelayLossRecoveryExecutor:
                 or fresh_invitation_status.get("state") != "ready"
                 or fresh_invitation_status.get("generation") != generation_before
             ):
-                return _failed("recovered_invitation_unavailable")
+                return _failed(
+                    "recovered_invitation_unavailable",
+                    observed=_host_api_observation(fresh_invitation),
+                )
             context.remember_secret(fresh_url)
             recovery_client = context.public_client_factory()
             new_origin = recovery_client.bind_invitation(fresh_url)
@@ -1748,13 +1841,17 @@ class L05RelayLossRecoveryExecutor:
             recovery_client.disconnect()
             client.disconnect()
             old_origin_client.disconnect()
-            host_health = _host_status(context.host_api.get_status())
+            host_health_response = context.host_api.get_status()
+            host_health = _host_status(host_health_response)
             if (
                 host_health is None
                 or host_health.get("state") != "ready"
                 or host_health.get("generation") != generation_before
             ):
-                return _failed("host_health_not_preserved")
+                return _failed(
+                    "host_health_not_preserved",
+                    observed=_host_api_observation(host_health_response),
+                )
             host_healthy = observe_host_health()
             if host_healthy is None:
                 return _blocked("host_health_observation_unavailable")
@@ -1818,11 +1915,18 @@ class L06CredentialRotationExecutor:
         if not old_credential:
             return _blocked("old_credential_unavailable")
         try:
-            ready_before = _host_status(context.host_api.get_status())
+            ready_before_response = context.host_api.get_status()
+            ready_before = _host_status(ready_before_response)
             if ready_before is None:
-                return _blocked("sharing_status_unavailable")
+                return _blocked(
+                    "sharing_status_unavailable",
+                    observed=_host_api_observation(ready_before_response),
+                )
             if ready_before.get("state") != "ready":
-                return _failed("sharing_not_ready_for_rotation")
+                return _failed(
+                    "sharing_not_ready_for_rotation",
+                    observed=_host_api_observation(ready_before_response),
+                )
 
             old_snapshot = client.authenticated_snapshot(session)
             old_snapshot_valid = _decode_player_snapshot(old_snapshot) is not None
@@ -1846,10 +1950,16 @@ class L06CredentialRotationExecutor:
                 or len(new_credential) > 256
                 or new_credential == old_credential
             ):
-                return _failed("credential_rotation_contract_failed")
+                return _failed(
+                    "credential_rotation_contract_failed",
+                    observed=_host_api_observation(rotated),
+                )
             context.remember_secret(new_credential)
             if rotated_status is None or rotated_status.get("state") != "ready":
-                return _failed("sharing_not_ready_after_rotation")
+                return _failed(
+                    "sharing_not_ready_after_rotation",
+                    observed=_host_api_observation(rotated),
+                )
 
             socket_connected_after = client.socket_connected
             if socket_connected_after is None:
@@ -1867,7 +1977,10 @@ class L06CredentialRotationExecutor:
                 or invitation_status is None
                 or invitation_status.get("state") != "ready"
             ):
-                return _failed("rotated_invitation_unavailable")
+                return _failed(
+                    "rotated_invitation_unavailable",
+                    observed=_host_api_observation(invitation),
+                )
             context.remember_secret(invitation_url)
             client.bind_invitation(invitation_url)
 
@@ -1931,11 +2044,18 @@ class L07StopSharingExecutor:
         if session is None or client.origin is None or type(owner_pid) is not int:
             return _blocked("stop_precondition_unavailable")
         try:
-            before = _host_status(context.host_api.get_status())
+            before_response = context.host_api.get_status()
+            before = _host_status(before_response)
             if before is None:
-                return _blocked("sharing_status_unavailable")
+                return _blocked(
+                    "sharing_status_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
             if before.get("state") != "ready":
-                return _failed("sharing_not_ready_for_stop")
+                return _failed(
+                    "sharing_not_ready_for_stop",
+                    observed=_host_api_observation(before_response),
+                )
             initial_session = client.authenticated_snapshot(session)
             if _decode_player_snapshot(initial_session) is None:
                 return _failed("active_session_not_valid_before_stop")
@@ -1964,7 +2084,10 @@ class L07StopSharingExecutor:
                 or stopped_status is None
                 or stopped_status.get("state") != "off"
             ):
-                return _failed("sharing_stop_failed")
+                return _failed(
+                    "sharing_stop_failed",
+                    observed=_host_api_observation(stopped),
+                )
 
             try:
                 public_after = client.request("GET", "/")
@@ -2016,18 +2139,29 @@ class L08HostExitRestartExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         client = context.public_client
         try:
-            status = _host_status(context.host_api.get_status())
+            status_response = context.host_api.get_status()
+            status = _host_status(status_response)
             if status is None:
-                return _blocked("host_status_unavailable")
+                return _blocked(
+                    "host_status_unavailable",
+                    observed=_host_api_observation(status_response),
+                )
             if status.get("identity_initialized") is not True:
-                return _failed("initialized_identity_not_available")
+                return _failed(
+                    "initialized_identity_not_available",
+                    observed=_host_api_observation(status_response),
+                )
 
             # L07 deliberately stopped sharing. Restore it here to exercise an
             # actual active-host exit, without repeating identity bootstrap.
             if status.get("state") != "ready":
                 if status.get("state") not in {"off", "initializing_required"}:
-                    return _failed("sharing_state_invalid_before_host_exit")
+                    return _failed(
+                        "sharing_state_invalid_before_host_exit",
+                        observed=_host_api_observation(status_response),
+                    )
                 started = context.host_api.post("start", {})
+                status_response = started
                 status = _host_status(started)
                 if (
                     started.status != 200
@@ -2035,16 +2169,27 @@ class L08HostExitRestartExecutor:
                     or status is None
                     or status.get("state") != "ready"
                 ):
-                    return _failed("sharing_start_before_host_exit_failed")
+                    return _failed(
+                        "sharing_start_before_host_exit_failed",
+                        observed=_host_api_observation(started),
+                    )
             if status.get("state") != "ready":
-                return _failed("sharing_not_ready_before_host_exit")
+                return _failed(
+                    "sharing_not_ready_before_host_exit",
+                    observed=_host_api_observation(status_response),
+                )
 
             credential = _current_credential(client)
             if credential is None:
                 return _blocked("active_credential_unavailable")
-            invitation = _bind_current_invitation(context, client)
+            invitation, invitation_response = _bind_current_invitation(
+                context, client
+            )
             if invitation is None:
-                return _blocked("public_invitation_unavailable")
+                return _blocked(
+                    "public_invitation_unavailable",
+                    observed=_host_api_observation(invitation_response),
+                )
             session = _login_public_session(context, client, credential)
             if session is None:
                 return _blocked("active_session_unavailable")
@@ -2122,18 +2267,34 @@ class L08HostExitRestartExecutor:
                     return _blocked("restarted_host_port_ownership_unavailable")
                 return _failed("restarted_host_port_ownership_invalid")
 
-            restarted = _host_status(context.host_api.get_status())
+            restarted_response = context.host_api.get_status()
+            restarted = _host_status(restarted_response)
             if restarted is None:
-                return _blocked("restarted_host_status_unavailable")
+                return _blocked(
+                    "restarted_host_status_unavailable",
+                    observed=_host_api_observation(restarted_response),
+                )
             if restarted.get("state") != "off":
-                return _failed("sharing_auto_started_after_host_restart")
+                return _failed(
+                    "sharing_auto_started_after_host_restart",
+                    observed=_host_api_observation(restarted_response),
+                )
             if restarted.get("identity_initialized") is not True:
-                return _failed("gate_identity_not_preserved_after_restart")
+                return _failed(
+                    "gate_identity_not_preserved_after_restart",
+                    observed=_host_api_observation(restarted_response),
+                )
             launches = restarted.get("companion_launches")
             if type(launches) is not int:
-                return _blocked("restart_reconciliation_observation_unavailable")
+                return _blocked(
+                    "restart_reconciliation_observation_unavailable",
+                    observed=_host_api_observation(restarted_response),
+                )
             if launches != 0:
-                return _failed("sharing_auto_started_after_host_restart")
+                return _failed(
+                    "sharing_auto_started_after_host_restart",
+                    observed=_host_api_observation(restarted_response),
+                )
             restarted_processes = _run_processes_absent(context, (), layout)
             if restarted_processes is None:
                 return _blocked("restart_process_observation_unavailable")
@@ -2174,14 +2335,24 @@ class L09RevokeAccessExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         client = context.public_client
         try:
-            before = _host_status(context.host_api.get_status())
+            before_response = context.host_api.get_status()
+            before = _host_status(before_response)
             if before is None:
-                return _blocked("host_status_unavailable")
+                return _blocked(
+                    "host_status_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
             if before.get("identity_initialized") is not True:
-                return _failed("identity_not_initialized_before_revoke")
+                return _failed(
+                    "identity_not_initialized_before_revoke",
+                    observed=_host_api_observation(before_response),
+                )
             up_before = _identity_up_counter(before)
             if up_before is None:
-                return _blocked("identity_up_counter_unavailable")
+                return _blocked(
+                    "identity_up_counter_unavailable",
+                    observed=_host_api_observation(before_response),
+                )
 
             started = context.host_api.post("start", {})
             ready = _host_status(started)
@@ -2191,18 +2362,33 @@ class L09RevokeAccessExecutor:
                 or ready is None
                 or ready.get("state") != "ready"
             ):
-                return _failed("sharing_start_before_revoke_failed")
+                return _failed(
+                    "sharing_start_before_revoke_failed",
+                    observed=_host_api_observation(started),
+                )
             up_after_start = _identity_up_counter(ready)
             if up_after_start is None:
-                return _blocked("identity_up_counter_unavailable")
+                return _blocked(
+                    "identity_up_counter_unavailable",
+                    observed=_host_api_observation(started),
+                )
             if up_after_start != up_before:
-                return _failed("identity_reinitialized_on_start")
+                return _failed(
+                    "identity_reinitialized_on_start",
+                    observed=_host_api_observation(started),
+                )
 
             credential = _current_credential(client)
             if credential is None:
                 return _blocked("current_credential_unavailable")
-            if _bind_current_invitation(context, client) is None:
-                return _blocked("public_invitation_unavailable")
+            invitation, invitation_response = _bind_current_invitation(
+                context, client
+            )
+            if invitation is None:
+                return _blocked(
+                    "public_invitation_unavailable",
+                    observed=_host_api_observation(invitation_response),
+                )
             session = _login_public_session(context, client, credential)
             if session is None:
                 return _blocked("active_session_unavailable")
@@ -2218,12 +2404,21 @@ class L09RevokeAccessExecutor:
                 or revoked_status is None
                 or revoked_status.get("state") != "off"
             ):
-                return _failed("access_revocation_failed")
+                return _failed(
+                    "access_revocation_failed",
+                    observed=_host_api_observation(revoked),
+                )
             up_after_revoke = _identity_up_counter(revoked_status)
             if up_after_revoke is None:
-                return _blocked("identity_up_counter_unavailable")
+                return _blocked(
+                    "identity_up_counter_unavailable",
+                    observed=_host_api_observation(revoked),
+                )
             if up_after_revoke != up_after_start:
-                return _failed("identity_reinitialized_during_revoke")
+                return _failed(
+                    "identity_reinitialized_during_revoke",
+                    observed=_host_api_observation(revoked),
+                )
 
             old_session = client.authenticated_snapshot(session)
             if not _data_free_protected_refusal(old_session):
@@ -2256,7 +2451,10 @@ class L09RevokeAccessExecutor:
                 or unavailable_invitation.payload.get("reason")
                 != "invitation_unavailable"
             ):
-                return _failed("invitation_available_after_revoke")
+                return _failed(
+                    "invitation_available_after_revoke",
+                    observed=_host_api_observation(unavailable_invitation),
+                )
             return RowExecutionResult(
                 "PASS",
                 "access_revoked_without_identity_rebootstrap",
@@ -2300,14 +2498,24 @@ class L10CleanTeardownExecutor:
             host_pid = context.host.owner_pid
             if type(host_pid) is not int or _observe_owned_host(context) is None:
                 return _blocked("host_process_ownership_unavailable")
-            current = _host_status(context.host_api.get_status())
+            current_response = context.host_api.get_status()
+            current = _host_status(current_response)
             if current is None:
-                return _blocked("host_status_unavailable")
+                return _blocked(
+                    "host_status_unavailable",
+                    observed=_host_api_observation(current_response),
+                )
             if current.get("identity_initialized") is not True:
-                return _failed("gate_identity_not_initialized")
+                return _failed(
+                    "gate_identity_not_initialized",
+                    observed=_host_api_observation(current_response),
+                )
             up_count = _identity_up_counter(current)
             if up_count is None:
-                return _blocked("identity_up_counter_unavailable")
+                return _blocked(
+                    "identity_up_counter_unavailable",
+                    observed=_host_api_observation(current_response),
+                )
 
             stopped = context.host_api.post("stop", {})
             stopped_status = _host_status(stopped)
@@ -2317,7 +2525,10 @@ class L10CleanTeardownExecutor:
                 or stopped_status is None
                 or stopped_status.get("state") != "off"
             ):
-                return _failed("sharing_stop_before_teardown_failed")
+                return _failed(
+                    "sharing_stop_before_teardown_failed",
+                    observed=_host_api_observation(stopped),
+                )
 
             if context.host.stop() is not True:
                 return _blocked("owned_host_stop_unconfirmed")
@@ -2710,7 +2921,8 @@ def _current_credential(client: PublicUrlClient) -> str | None:
 
 def _bind_current_invitation(
     context: RowContext, client: PublicUrlClient
-) -> str | None:
+) -> tuple[str | None, HostApiResponse | None]:
+    response: HostApiResponse | None = None
     try:
         response = context.host_api.post("copy-invitation", {})
         url = response.payload.get("invitation")
@@ -2722,12 +2934,12 @@ def _bind_current_invitation(
             or status is None
             or status.get("state") != "ready"
         ):
-            return None
+            return None, response
         context.remember_secret(url)
         client.bind_invitation(url)
-        return url
+        return url, response
     except (HostApiError, PublicClientError, ValueError):
-        return None
+        return None, response
 
 
 def _login_public_session(
@@ -2880,12 +3092,59 @@ ROW_EXECUTORS: Mapping[str, RowExecutor] = MappingProxyType(
 )
 
 
-def _blocked(reason: str) -> RowExecutionResult:
-    return RowExecutionResult("BLOCKED", reason)
+def _blocked(
+    reason: str, *, observed: Mapping[str, object] | None = None
+) -> RowExecutionResult:
+    return RowExecutionResult("BLOCKED", reason, observed or {})
 
 
-def _failed(reason: str) -> RowExecutionResult:
-    return RowExecutionResult("FAIL", reason)
+def _failed(
+    reason: str, *, observed: Mapping[str, object] | None = None
+) -> RowExecutionResult:
+    return RowExecutionResult("FAIL", reason, observed or {})
+
+
+def _bounded_host_api_code(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    bounded = value[:64]
+    if re.fullmatch(r"[a-z_]{1,64}", bounded) is None:
+        return None
+    return bounded
+
+
+def _host_api_observation(response: object) -> dict[str, object]:
+    selected = response if isinstance(response, HostApiResponse) else None
+    payload = (
+        selected.payload
+        if selected is not None and isinstance(selected.payload, Mapping)
+        else {}
+    )
+    status_value = payload.get("status")
+    status = status_value if isinstance(status_value, Mapping) else {}
+    ok = payload.get("ok")
+    initialized = status.get("identity_initialized")
+    up_invocations = status.get("identity_up_invocations")
+    return {
+        "http_status": (
+            selected.status
+            if selected is not None
+            and type(selected.status) is int
+            and 100 <= selected.status <= 599
+            else None
+        ),
+        "ok": ok if type(ok) is bool else None,
+        "reason": _bounded_host_api_code(payload.get("reason")),
+        "bootstrap_state": _bounded_host_api_code(payload.get("bootstrap_state")),
+        "status_state": _bounded_host_api_code(status.get("state")),
+        "identity_initialized": initialized if type(initialized) is bool else None,
+        "identity_up_invocations": (
+            up_invocations
+            if type(up_invocations) is int
+            and 0 <= up_invocations <= 2_147_483_647
+            else None
+        ),
+    }
 
 
 def _host_status(response: HostApiResponse) -> Mapping[str, object] | None:

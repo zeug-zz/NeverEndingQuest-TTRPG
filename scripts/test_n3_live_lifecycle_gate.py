@@ -1798,6 +1798,136 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertEqual(invalid_counter.verdict, "FAIL")
 
+    def test_l02_contract_failure_records_bounded_host_response_without_secrets(self) -> None:
+        initial = {
+            "state": "off",
+            "reason": "off",
+            "identity_initialized": False,
+            "identity_up_invocations": 0,
+        }
+        secret = "credential-secret-sentinel"
+        failure = gate.HostApiResponse(
+            503,
+            {
+                "ok": False,
+                "reason": "identity_bootstrap_failed",
+                "bootstrap_state": "uncertain",
+                "credential": secret,
+                "access_token": secret,
+                "status": {
+                    "state": "failed",
+                    "identity_initialized": False,
+                    "identity_up_invocations": 0,
+                    "private_value": secret,
+                },
+            },
+        )
+        context = self.make_row_context(
+            api=LifecycleFakeApi(
+                status=initial,
+                post_handlers={"initialize-identity": lambda _payload: failure},
+            )
+        )
+
+        result = gate.L02IdentityInitExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "identity_initialization_contract_failed")
+        self.assertEqual(result.observed["http_status"], 503)
+        self.assertIs(result.observed["ok"], False)
+        self.assertEqual(result.observed["reason"], "identity_bootstrap_failed")
+        self.assertEqual(result.observed["bootstrap_state"], "uncertain")
+        self.assertEqual(result.observed["status_state"], "failed")
+        self.assertEqual(
+            set(result.observed),
+            {
+                "http_status",
+                "ok",
+                "reason",
+                "bootstrap_state",
+                "status_state",
+                "identity_initialized",
+                "identity_up_invocations",
+            },
+        )
+        self.assertNotIn(secret, repr(result.observed))
+
+    def test_l02_second_contract_failure_and_precondition_keep_host_observation(self) -> None:
+        initial = {
+            "state": "initializing_required",
+            "reason": "initializing_required",
+            "identity_initialized": False,
+            "identity_up_invocations": 0,
+        }
+        initialized = {
+            "state": "off",
+            "reason": "off",
+            "identity_initialized": True,
+            "identity_up_invocations": 1,
+        }
+        calls = 0
+
+        def initialize(_payload: Mapping[str, object]) -> gate.HostApiResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "reason": "identity_initialized",
+                        "status": initialized,
+                    },
+                )
+            return gate.HostApiResponse(
+                409,
+                {
+                    "ok": False,
+                    "reason": "identity_already_initialized",
+                    "bootstrap_state": "already_initialized",
+                    "status": initialized,
+                },
+            )
+
+        context = self.make_row_context(
+            api=LifecycleFakeApi(
+                status=initial,
+                post_handlers={"initialize-identity": initialize},
+            ),
+            identity_observer_factory=lambda _layout, _path: FakeIdentityObserver(),
+        )
+        with patch.object(
+            gate,
+            "prepare_profile",
+            return_value=SimpleNamespace(state="ready", layout=object()),
+        ):
+            second_failure = gate.L02IdentityInitExecutor().execute(context)
+        self.assertEqual(
+            second_failure.reason, "identity_initialization_not_idempotent"
+        )
+        self.assertEqual(second_failure.observed["http_status"], 409)
+        self.assertEqual(
+            second_failure.observed["reason"], "identity_already_initialized"
+        )
+        self.assertEqual(
+            second_failure.observed["bootstrap_state"], "already_initialized"
+        )
+
+        precondition = gate.L02IdentityInitExecutor().execute(
+            self.make_row_context(
+                api=LifecycleFakeApi(
+                    status={
+                        **initial,
+                        "state": "ready",
+                        "identity_initialized": True,
+                    }
+                )
+            )
+        )
+        self.assertEqual(precondition.reason, "sharing_not_off")
+        self.assertEqual(precondition.observed["http_status"], 200)
+        self.assertEqual(precondition.observed["status_state"], "ready")
+
     def test_l03_public_access_boundary_uses_only_injected_fakes(self) -> None:
         service = FakePublicService()
         ready = {
