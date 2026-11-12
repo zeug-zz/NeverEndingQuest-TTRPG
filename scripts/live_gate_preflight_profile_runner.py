@@ -81,7 +81,8 @@ _SHA1_OR_SHA256 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NETSTAT_OWNER_PATTERN = re.compile(
     rb":(?P<pid>[0-9]+)\s+(?P<field1>[0-9a-f]{5})\s+"
-    rb"(?P<field2>[0-9a-f]{8})\s+(?P<field3>[0-9a-f]{16})\s*$",
+    rb"(?P<field2>[0-9a-f]{8})\s+(?P<field3>[0-9a-f]{16})"
+    rb"(?:\s+[0-9a-f]{1,16})*\s*\Z",
     re.IGNORECASE,
 )
 _NETSTAT_OWNER_PID_CANDIDATE_PATTERN = re.compile(rb":(?P<pid>[0-9]+)(?=\s|$)")
@@ -2844,6 +2845,87 @@ def _provider_free_client_factory(*_args: Any, **_kwargs: Any) -> None:
     """Keep import-time host globals from constructing provider SDK clients."""
 
 
+def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
+    """Return explicit response strings for the observed startup router tasks.
+
+    Each payload follows the consumer contract at its call site. The
+    ``dm_validation`` payload uses the exact start location declared by the
+    selected preregistered fixture; these are characterization fixtures, not
+    model judgments.
+    """
+    start_locations = {
+        "interior_tavern": (
+            "MP01",
+            "The Lantern and Reed Tavern",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+        "landscape_village": (
+            "MP02",
+            "Rillford Village Green",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+        "transition_tower_approach": (
+            "MP03",
+            "Old Watchtower Approach",
+            "MPA002",
+            "Old Watchtower Approach",
+        ),
+        "combat_stage_tavern_zones": (
+            "MP01",
+            "The Lantern and Reed Tavern",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+    }
+    start_location = start_locations.get(fixture_id)
+    if start_location is None:
+        raise CharacterizationError("unsupported_fixture_party_profile")
+    location_id, location_name, area_id, area_name = start_location
+    return {
+        "travel_narration": json.dumps(
+            {
+                "travelNarration": "The party travels to a new region where fresh adventures await.",
+                "dmGuidance": "Present this as a transition to the new module.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "safety_review": json.dumps(
+            {
+                "safe": True,
+                "reason": "Provider-free characterization stub; not a safety verdict.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "action_prediction": json.dumps(
+            {
+                "requires_actions": True,
+                "reason": "Use the conservative action-routing path in preflight.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "dm_main": (
+            '{"narration":"The party pauses and takes in the scene.",'
+            '"actions":[]}'
+        ),
+        "dm_validation": json.dumps(
+            {
+                "locationId": location_id,
+                "locationName": location_name,
+                "areaId": area_id,
+                "areaName": area_name,
+                "reasoning": "Use the preregistered fixture start location in preflight.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+    }
+
+
 def _worker(args: argparse.Namespace) -> int:
     try:
         _require_worker_startup_guard()
@@ -2958,12 +3040,7 @@ def _worker(args: argparse.Namespace) -> int:
                 )
             stub = FailClosedRouterStub(
                 source_sha=args.source_sha,
-                responses={
-                    "dm_main": (
-                        '{"narration":"The party pauses and takes in the scene.",'
-                        '"actions":[]}'
-                    )
-                },
+                responses=_characterization_stub_responses(args.fixture_id),
                 command=command,
                 pythonpath=os.environ.get("PYTHONPATH", ""),
                 source_root=sandbox,

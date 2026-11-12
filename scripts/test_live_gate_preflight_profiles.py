@@ -33,7 +33,13 @@ from jsonschema import Draft202012Validator
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.mapping_pilot.fixtures import (
+    LOCATION_ID_MAP,
+    build_fixture_payloads,
+    load_verified_fixtures,
+)
 from scripts.live_gate_preflight_profiles import (
+    FIXTURE_IDS,
     PROFILE_PATH,
     PROFILE_SET_ID,
     PROJECT_ROOT,
@@ -690,6 +696,86 @@ class TestPreflightStubAndSafety(unittest.TestCase):
         self.assertEqual(payload["calls"][1]["sequence"], 2)
         self.assertEqual(payload["calls"][1]["task"], "unlisted_task")
         self.assertRegex(payload["calls"][0]["source_file_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_characterization_stub_covers_observed_tasks_with_source_shapes(self) -> None:
+        completed = self._run_guarded_test_child("--profile-stub-probe")
+        payload = json.loads(completed.stdout)
+        expected_tasks = {
+            "travel_narration",
+            "safety_review",
+            "action_prediction",
+            "dm_main",
+            "dm_validation",
+        }
+        self.assertEqual(set(payload["responses"]), expected_tasks)
+        self.assertEqual(payload["call_count"], len(expected_tasks) + 1)
+        self.assertEqual(
+            {call["task"] for call in payload["calls"][:-1]},
+            expected_tasks,
+        )
+        self.assertEqual(len(payload["calls"][:-1]), len(expected_tasks))
+        self.assertEqual(payload["calls"][-1]["task"], "unlisted_task")
+        self.assertTrue(payload["unsupported_call_rejected"])
+        self.assertEqual(payload["failure_code"], "router_task_has_no_stub_response")
+
+        responses = {
+            task: json.loads(response)
+            for task, response in payload["responses"].items()
+        }
+        self.assertEqual(
+            set(responses["travel_narration"]), {"travelNarration", "dmGuidance"}
+        )
+        self.assertIsInstance(responses["safety_review"]["safe"], bool)
+        self.assertIsInstance(responses["safety_review"]["reason"], str)
+        self.assertIsInstance(responses["action_prediction"]["requires_actions"], bool)
+        self.assertIsInstance(responses["action_prediction"]["reason"], str)
+        self.assertEqual(
+            set(responses["dm_main"]), {"narration", "actions"}
+        )
+        fixtures, source_hashes = load_verified_fixtures()
+        module_payloads, _expected_payloads = build_fixture_payloads(
+            fixtures, source_hashes
+        )
+        self.assertEqual(set(fixtures), set(FIXTURE_IDS))
+        for fixture_id in FIXTURE_IDS:
+            with self.subTest(fixture_id=fixture_id):
+                source_location_ids = fixtures[fixture_id]["location_ids"]
+                self.assertEqual(len(source_location_ids), 1)
+                runtime_location_id = LOCATION_ID_MAP[source_location_ids[0]]
+                matches = [
+                    (payload, location)
+                    for relative_path, payload in module_payloads.items()
+                    if relative_path.startswith("areas/")
+                    and not relative_path.endswith("_BU.json")
+                    for location in payload.get("locations", [])
+                    if location.get("locationId") == runtime_location_id
+                ]
+                self.assertEqual(len(matches), 1)
+                area, location = matches[0]
+                declaration = profile_runner._characterization_stub_responses(
+                    fixture_id
+                )
+                start_location = json.loads(declaration["dm_validation"])
+                self.assertEqual(
+                    tuple(
+                        start_location[key]
+                        for key in (
+                            "locationId",
+                            "locationName",
+                            "areaId",
+                            "areaName",
+                        )
+                    ),
+                    (
+                        runtime_location_id,
+                        location["name"],
+                        area["areaId"],
+                        area["areaName"],
+                    ),
+                )
+
+        with self.assertRaises(CharacterizationError):
+            profile_runner._characterization_stub_responses("unsupported_fixture")
 
     def test_stub_redacts_sensitive_command_arguments(self) -> None:
         completed = self._run_guarded_test_child("--stub-probe")
@@ -1377,6 +1463,36 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertNotIn(b"python host", sidecar)
         self.assertTrue(all(not item["command_evidence"]["stdout_prefix_base64"] for item in evidence["protocol_samples"]))
 
+    def test_netstat_census_accepts_macos_owner_fields_after_required_triplet(self) -> None:
+        run_pid = 98085
+        tcp_row = (
+            b"tcp4       0      0  127.0.0.1.55674        *.*                    "
+            b"LISTEN                 0            0  131072  131072           "
+            b"Python:98085  00000 00000002 0000000001c65a53 00000000 00000800 "
+            b"     1      0 000000\n"
+        )
+        udp_row = (
+            b"udp4 0 0 127.0.0.1.55674 *.* 0 0 131072 131072 Python:98085 "
+            b"00000 00000002 0000000001c65a53 00000000 00000800 1 0 000000\n"
+        )
+
+        rows, counts, parseable = profile_runner._parse_netstat_census(
+            tcp_row + udp_row, run_pids={run_pid}
+        )
+
+        self.assertTrue(parseable)
+        self.assertEqual(counts["run_pid_rows"], 2)
+        self.assertEqual(counts["malformed_run_pid_rows"], 0)
+        self.assertEqual(
+            [(row["protocol"], row["pid"], row["local"]) for row in rows],
+            [
+                ("tcp4", run_pid, {"host": "127.0.0.1", "port": 55674}),
+                ("udp4", run_pid, {"host": "127.0.0.1", "port": 55674}),
+            ],
+        )
+        self.assertEqual(rows[0]["state"], "LISTEN")
+        self.assertIsNone(rows[1]["state"])
+
     def test_netstat_fails_closed_on_unrecorded_non_loopback_foreign_endpoint(self) -> None:
         run_pid = 24569
         fixture = _netstat_row(
@@ -1497,6 +1613,44 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory(
             prefix="profile-netstat-malformed-owner-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            run_directory = Path(temp_root)
+            events = [_guard_startup_event(run_pid, run_directory.name)]
+
+            def observer(command: list[str], **_kwargs: object) -> object:
+                output = malformed if command[-1] == "tcp" else b""
+                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+            with mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=observer,
+            ):
+                sample = profile_runner._socket_pid_sample(
+                    "host_ready",
+                    run_directory=run_directory,
+                    process_scopes=[self._process_scope(pid=run_pid)],
+                    guard_events=events,
+                )
+            evidence = json.loads(
+                (run_directory / "socket-sample-host_ready.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertFalse(sample["observed"])
+        self.assertEqual(evidence["failure_code"], "netstat_run_pid_row_malformed")
+        self.assertEqual(evidence["aggregate_counts"]["run_pid_rows"], 1)
+        self.assertEqual(evidence["aggregate_counts"]["malformed_run_pid_rows"], 1)
+
+    def test_netstat_fails_closed_on_nonfield_owner_trailing_suffix(self) -> None:
+        run_pid = 24574
+        malformed = (
+            b"tcp4 0 0 127.0.0.1.8360 *.* LISTEN Python worker:%d "
+            b"00000 00000002 0000000001c65a53 00000000 00000800 not-a-field\n"
+            % run_pid
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="profile-netstat-malformed-owner-tail-", dir=PROJECT_ROOT / "tmp"
         ) as temp_root:
             run_directory = Path(temp_root)
             events = [_guard_startup_event(run_pid, run_directory.name)]
@@ -3961,6 +4115,40 @@ def _run_probe_from_sitecustomize() -> None:
                     "response": response,
                     "call_count": stub.call_count,
                     "calls": stub.calls,
+                    "unsupported_call_rejected": unsupported_call_rejected,
+                },
+                sort_keys=True,
+            )
+        )
+        raise SystemExit(0)
+    if mode == "--profile-stub-probe":
+        from scripts.live_gate_preflight_safety import activate_preflight_safety
+
+        activate_preflight_safety()
+        responses = profile_runner._characterization_stub_responses("interior_tavern")
+        stub = FailClosedRouterStub(
+            source_sha="a" * 40,
+            responses=responses,
+            command=[
+                ".venv/bin/python",
+                "scripts/test_live_gate_preflight_profiles.py",
+                "--profile-stub-probe",
+            ],
+            pythonpath=os.environ.get("PYTHONPATH", ""),
+        )
+        returned = {task: stub(task) for task in responses}
+        unsupported_call_rejected = False
+        try:
+            stub("unlisted_task")
+        except RouterStubError:
+            unsupported_call_rejected = True
+        print(
+            json.dumps(
+                {
+                    "responses": returned,
+                    "call_count": stub.call_count,
+                    "calls": stub.calls,
+                    "failure_code": stub.failure_code,
                     "unsupported_call_rejected": unsupported_call_rejected,
                 },
                 sort_keys=True,
