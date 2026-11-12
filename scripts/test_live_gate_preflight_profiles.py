@@ -24,6 +24,7 @@ import unittest
 from contextlib import ExitStack, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from jsonschema import Draft202012Validator
@@ -2459,6 +2460,16 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 "llm = Router()\n",
                 encoding="utf-8",
             )
+            (utils_directory / "ai_client_factory.py").write_text(
+                "factory_calls = []\n"
+                "class OpenAIError(RuntimeError):\n"
+                "    pass\n"
+                "def create_chat_client(*args, **kwargs):\n"
+                "    factory_calls.append(True)\n"
+                "    raise OpenAIError('synthetic empty-key client construction')\n"
+                "ORIGINAL_FACTORY = create_chat_client\n",
+                encoding="utf-8",
+            )
             probe_directory = sandbox / "mapping_pilot"
             probe_directory.mkdir()
             probe_path = probe_directory / "profile_lifecycle_probe.py"
@@ -2506,6 +2517,15 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         self.assertEqual(result["startup_guard_from_sitecustomize"], True)
                         self.assertEqual(result["sandbox_config_origin_guard_active"], True)
                         self.assertEqual(result["call_count"], 1, completed.stdout)
+                        self.assertTrue(
+                            payload["entrypoint"]["client_factory_result_is_none"]
+                        )
+                        self.assertEqual(
+                            payload["entrypoint"]["original_factory_calls"], 0
+                        )
+                        self.assertTrue(
+                            payload["entrypoint"]["provider_factory_restored"]
+                        )
                         self.assertEqual(
                             result["interpreter"]["executable"], _repository_python()
                         )
@@ -3322,6 +3342,11 @@ def _run_profile_worker_probe(
     for file_path in fake_module_files.values():
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text("# isolated module identity\n", encoding="utf-8")
+    fake_module_files["main"].write_text(
+        "from utils.ai_client_factory import create_chat_client\n"
+        "client = create_chat_client()\n",
+        encoding="utf-8",
+    )
     adapter_path = sandbox / "scripts" / "mapping_pilot" / "adapter.py"
     adapter_path.parent.mkdir(parents=True, exist_ok=True)
     adapter_path.write_text(
@@ -3348,9 +3373,18 @@ def _run_profile_worker_probe(
     original_validate_sandbox = launcher.validate_sandbox
     original_launch = launcher.launch
     original_server_runner = launcher._run_web_interface
+    factory_module: list[Any] = []
 
     def fake_import_module(name: str, package: str | None = None) -> object:
         if name in fake_modules:
+            if name == "web.web_interface":
+                fake_modules[name].dm_main = original_import_module("main")
+                from utils import ai_client_factory
+
+                factory_module.append(ai_client_factory)
+                entrypoint["client_factory_result_is_none"] = (
+                    fake_modules[name].dm_main.client is None
+                )
             return fake_modules[name]
         return original_import_module(name, package)
 
@@ -3402,6 +3436,12 @@ def _run_profile_worker_probe(
         launcher.launch = original_launch
         launcher.validate_sandbox = original_validate_sandbox
         launcher._run_web_interface = original_server_runner
+    if factory_module:
+        factory = factory_module[0]
+        entrypoint["original_factory_calls"] = len(factory.factory_calls)
+        entrypoint["provider_factory_restored"] = (
+            factory.create_chat_client is factory.ORIGINAL_FACTORY
+        )
     worker_result = runner_module._read_json(
         sandbox / "worker-result.json", "worker_result"
     )

@@ -2573,6 +2573,10 @@ def _activate_sandbox_sitecustomize(sandbox: Path) -> None:
         raise CharacterizationError("host_startup_guard_inactive") from exc
 
 
+def _provider_free_client_factory(*_args: Any, **_kwargs: Any) -> None:
+    """Keep import-time host globals from constructing provider SDK clients."""
+
+
 def _worker(args: argparse.Namespace) -> int:
     try:
         _require_worker_startup_guard()
@@ -2645,15 +2649,27 @@ def _worker(args: argparse.Namespace) -> int:
 
         sys.path.insert(0, str(sandbox))
         try:
-            from utils import llm_router
+            from utils import ai_client_factory, llm_router
 
             router_path = Path(llm_router.__file__).resolve(strict=True)
             if router_path != sandbox / "utils" / "llm_router.py":
                 raise CharacterizationError("sandbox_router_source_mismatch")
+            factory_path = Path(ai_client_factory.__file__).resolve(strict=True)
+            if factory_path != sandbox / "utils" / "ai_client_factory.py":
+                raise CharacterizationError(
+                    "sandbox_provider_factory_source_mismatch"
+                )
             router = getattr(llm_router, "llm", None)
             original_call = getattr(router, "call", None)
             if not callable(original_call):
                 raise CharacterizationError("sandbox_router_unavailable")
+            original_create_chat_client = getattr(
+                ai_client_factory, "create_chat_client", None
+            )
+            if not callable(original_create_chat_client):
+                raise CharacterizationError(
+                    "sandbox_provider_factory_unavailable"
+                )
             stub = FailClosedRouterStub(
                 source_sha=args.source_sha,
                 responses={
@@ -2667,6 +2683,12 @@ def _worker(args: argparse.Namespace) -> int:
                 source_root=sandbox,
             )
             router.call = stub
+            # main.py and core.combat.combat_manager.py create module-level
+            # clients during import. The sandbox has blank keys, so router-call
+            # stubbing alone still lets OpenAI client construction abort startup.
+            # Keep those globals inert; routed gameplay calls use the fail-closed
+            # stub above, and no SDK client or credential is created.
+            ai_client_factory.create_chat_client = _provider_free_client_factory
             try:
                 try:
                     server.launch_worker(
@@ -2689,6 +2711,7 @@ def _worker(args: argparse.Namespace) -> int:
                     interrupted = False
                     failure_code = "host_exception_" + type(exc).__name__
             finally:
+                ai_client_factory.create_chat_client = original_create_chat_client
                 if getattr(router, "call", None) is stub:
                     router.call = original_call
         finally:
