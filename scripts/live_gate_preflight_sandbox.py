@@ -24,6 +24,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
+from scripts.live_gate_preflight_safety import SANDBOX_PROVIDER_KEY_PLACEHOLDER
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SANDBOX_RELATIVE = Path("tmp/combat_capture")
@@ -80,13 +82,13 @@ for _name in dir(_model_config):
     if not _name.startswith("_") and not _secret_name.search(_name):
         globals()[_name] = getattr(_model_config, _name)
 
-OPENAI_API_KEY = ""
-OPENROUTER_API_KEY = ""
-ANTHROPIC_API_KEY = ""
-GOOGLE_API_KEY = ""
-GEMINI_API_KEY = ""
-MISTRAL_API_KEY = ""
-COHERE_API_KEY = ""
+OPENAI_API_KEY = "preflight-stub-not-a-key"
+OPENROUTER_API_KEY = "preflight-stub-not-a-key"
+ANTHROPIC_API_KEY = "preflight-stub-not-a-key"
+GOOGLE_API_KEY = "preflight-stub-not-a-key"
+GEMINI_API_KEY = "preflight-stub-not-a-key"
+MISTRAL_API_KEY = "preflight-stub-not-a-key"
+COHERE_API_KEY = "preflight-stub-not-a-key"
 MODULES_DIR = "modules"
 DEFAULT_MODULE = "Mapping_Pilot_Arena"
 EXCHANGE_RATE_API_URL = ""
@@ -572,7 +574,7 @@ def _prepare_new_sandbox(
         "effective_seed": metadata["effective_seed"],
         "profile_id": "%s:p%d" % (metadata["fixture_id"], metadata["party"]["size"]),
         "config_source": "synthetic",
-        "provider_keys_blank": True,
+        "sandbox_provider_key_placeholder": SANDBOX_PROVIDER_KEY_PLACEHOLDER,
         "real_project_config_read_or_copied": False,
         "native_companion_started": False,
         "host_started": False,

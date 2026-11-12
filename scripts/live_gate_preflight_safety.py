@@ -74,6 +74,7 @@ _KNOWN_PROVIDER_KEYS = (
     "MISTRAL_API_KEY",
     "COHERE_API_KEY",
 )
+SANDBOX_PROVIDER_KEY_PLACEHOLDER = "preflight-stub-not-a-key"
 _RUNTIME_INJECTED_ENV_NAMES = ("LC_CTYPE", "__CF_USER_TEXT_ENCODING")
 GUARD_EVENT_ROOT = Path(
     "tmp/router-rollout/live-gate-preflight/profile-characterization"

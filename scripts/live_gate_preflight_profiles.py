@@ -18,7 +18,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from scripts.mapping_pilot.manifest import verify_manifest
-from scripts.live_gate_preflight_safety import expected_guarded_pythonpath
+from scripts.live_gate_preflight_safety import (
+    SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+    expected_guarded_pythonpath,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -544,7 +547,8 @@ def _validate_profile_evidence(
         "controller_interpreter",
         "worker_interpreter",
         "network_guard_active",
-        "provider_keys_blank",
+        "provider_environment_keys_blank",
+        "sandbox_provider_key_placeholder",
         "proxy_values_blank",
         "real_project_config_loaded",
         "sandbox_config_loaded",
@@ -593,7 +597,9 @@ def _validate_profile_evidence(
             evidence.get("worker_interpreter"), project_root
         )
         or evidence.get("network_guard_active") is not True
-        or evidence.get("provider_keys_blank") is not True
+        or evidence.get("provider_environment_keys_blank") is not True
+        or evidence.get("sandbox_provider_key_placeholder")
+        != SANDBOX_PROVIDER_KEY_PLACEHOLDER
         or evidence.get("proxy_values_blank") is not True
         or evidence.get("real_project_config_loaded") is not False
         or evidence.get("sandbox_config_loaded") is not True

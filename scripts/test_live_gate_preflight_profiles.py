@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import io
 import importlib
@@ -51,6 +52,7 @@ from scripts.live_gate_preflight_safety import (
     PROCESS_ROLES,
     PROCESS_ROLE_ENV,
     REQUIRE_STARTUP_GUARD_ENV,
+    SANDBOX_PROVIDER_KEY_PLACEHOLDER,
     STARTUP_GUARD_ENV,
     SUBPROCESS_CANARY_ENV,
     NetworkGuardError,
@@ -185,26 +187,84 @@ def _netstat_row(
 
 class TestLiveGatePreflightProfiles(unittest.TestCase):
     def test_prepared_sandbox_validation_uses_repository_anchored_path(self) -> None:
-        from scripts.mapping_pilot import launcher
-
         with tempfile.TemporaryDirectory(
             prefix="profile-controller-", dir=PROJECT_ROOT / "tmp"
         ) as controller_cwd:
-            with mock.patch.object(profile_runner, "PROJECT_ROOT", PROJECT_ROOT), mock.patch(
-                "scripts.mapping_pilot.launcher.validate_sandbox",
-                wraps=launcher.validate_sandbox,
-            ) as validate:
-                with mock.patch("os.getcwd", return_value=controller_cwd):
-                    result = profile_runner._validate_prepared_sandbox(
-                        fixture_id="interior_tavern",
-                        party_size=1,
-                        lifecycle="startup",
-                        resume_checkpoint_sha256=None,
-                    )
+            project = Path(controller_cwd) / "project"
+            sandbox = project / "tmp" / "combat_capture"
+            (sandbox / "mapping_pilot").mkdir(parents=True)
+            (sandbox / "config.py").write_text("# synthetic test config\n", encoding="ascii")
+            seed_metadata = {
+                "fixture_id": "interior_tavern",
+                "arm": "A",
+                "effective_seed": 42,
+                "party": {"size": 1, "members": ["PC-One"]},
+                "counterbalance": {
+                    "row_id": "E01",
+                    "row_type": "planned",
+                    "script": "scripts/interior.json",
+                    "fixed_seed": 42,
+                },
+            }
+            (sandbox / "mapping_pilot" / "seed_metadata.json").write_text(
+                json.dumps(seed_metadata), encoding="utf-8"
+            )
+            counterbalance_path = (
+                project / "plans" / "v2-mapping-pilot-prereg" / "counterbalance.json"
+            )
+            counterbalance_path.parent.mkdir(parents=True)
+            counterbalance_path.write_text(
+                json.dumps(
+                    {
+                        "rows": [
+                            {
+                                "row_id": "E01",
+                                "row_type": "planned",
+                                "party": 1,
+                                "arm": "A",
+                                "script": "scripts/interior.json",
+                                "fixed_seed": 42,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            script_path = project / "plans" / "v2-mapping-pilot-prereg" / "scripts" / "interior.json"
+            script_path.parent.mkdir()
+            script_path.write_text(
+                json.dumps(
+                    {
+                        "fixture_ids": ["interior_tavern"],
+                        "turns": [
+                            {
+                                "id": "E01-01",
+                                "utterance": "Describe the room.",
+                                "actor": {"party_1": "PC-One"},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
-        self.assertEqual(result[0], PROJECT_ROOT / "tmp" / "combat_capture")
+            with mock.patch.object(profile_runner, "PROJECT_ROOT", project), mock.patch(
+                "scripts.mapping_pilot.launcher.validate_sandbox"
+            ) as validate, mock.patch.object(
+                profile_runner,
+                "_require_synthetic_sandbox_config",
+                return_value=SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+            ), mock.patch("os.getcwd", return_value=controller_cwd):
+                result = profile_runner._validate_prepared_sandbox(
+                    fixture_id="interior_tavern",
+                    party_size=1,
+                    lifecycle="startup",
+                    resume_checkpoint_sha256=None,
+                )
+
+        self.assertEqual(result[0], project / "tmp" / "combat_capture")
         self.assertEqual(validate.call_args.args[0], result[0])
-        self.assertEqual(validate.call_args.kwargs["project_root"], PROJECT_ROOT)
+        self.assertEqual(validate.call_args.kwargs["project_root"], project)
 
     def test_schema_and_versioned_profile_declaration_are_supported(self) -> None:
         document = copy_profile_document()
@@ -308,6 +368,27 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             self._write_evidence(evidence_path, evidence)
             startup["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
             with self.assertRaisesRegex(ProfileValidationError, "identity or safety state differs"):
+                validate_profile_document(document)
+
+    def test_profile_evidence_records_only_the_synthetic_provider_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-placeholder-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                evidence["sandbox_provider_key_placeholder"],
+                SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+            )
+
+            evidence["sandbox_provider_key_placeholder"] = "synthetic-key-must-not-survive"
+            self._write_evidence(evidence_path, evidence)
+            document["profiles"][0]["startup"]["evidence_sha256"] = hashlib.sha256(
+                evidence_path.read_bytes()
+            ).hexdigest()
+            with self.assertRaisesRegex(
+                ProfileValidationError, "identity or safety state differs"
+            ):
                 validate_profile_document(document)
 
     def test_profile_evidence_requires_startup_guard_and_completed_exchange(self) -> None:
@@ -534,7 +615,8 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "controller_interpreter": interpreter,
             "worker_interpreter": interpreter,
             "network_guard_active": True,
-            "provider_keys_blank": True,
+            "provider_environment_keys_blank": True,
+            "sandbox_provider_key_placeholder": SANDBOX_PROVIDER_KEY_PLACEHOLDER,
             "proxy_values_blank": True,
             "real_project_config_loaded": False,
             "sandbox_config_loaded": True,
@@ -1464,111 +1546,71 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(counts["foreign_process_rows"], 1)
         endpoint_parser.assert_not_called()
 
-    def test_listener_pid_probe_is_port_scoped_for_both_lock_ports(self) -> None:
-        commands: list[list[str]] = []
-
-        def observer(command: list[str], **_kwargs: object) -> object:
-            commands.append(command)
-            port = int(command[2].split(":", 1)[1])
-            output = (
-                b"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
-                + b"python 24568 user 3u IPv4 0x123 0t0 TCP *:%d (LISTEN)\n" % port
-            )
-            return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
-
-        with mock.patch(
-            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
-            side_effect=observer,
-        ):
-            pids_8360, observed_8360 = profile_runner._listener_pids(8360)
-            pids_8370, observed_8370 = profile_runner._listener_pids(8370)
-            rejected_pids, rejected_observed = profile_runner._listener_pids(8361)
-
-        self.assertTrue(observed_8360)
-        self.assertEqual(pids_8360, {24568})
-        self.assertTrue(observed_8370)
-        self.assertEqual(pids_8370, {24568})
-        self.assertFalse(rejected_observed)
-        self.assertEqual(rejected_pids, set())
-        self.assertEqual(len(commands), 2)
-        self.assertEqual(
-            commands,
-            [
-                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8360", "-sTCP:LISTEN"],
-                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
-            ],
-        )
-
-    def test_required_port_checks_fail_closed_for_busy_port(self) -> None:
-        commands: list[list[str]] = []
-
-        def observer(command: list[str], **_kwargs: object) -> object:
-            commands.append(command)
-            if "-iTCP:8370" in command:
-                output = (
-                    b"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
-                    b"python 45678 user 3u IPv6 0x456 0t0 TCP [::]:8370 (LISTEN)\n"
-                )
-                return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
-            return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+    def test_required_port_checks_use_exclusive_loopback_bind_without_reuse(self) -> None:
+        probes = [mock.MagicMock(), mock.MagicMock()]
+        for probe in probes:
+            probe.__enter__.return_value = probe
+            probe.__exit__.return_value = False
 
         with mock.patch.object(
-            profile_runner, "_port_state", return_value=(False, True)
-        ), mock.patch(
-            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
-            side_effect=observer,
-        ):
-            busy_status = profile_runner._required_port_status()
+            profile_runner.socket, "socket", side_effect=probes
+        ) as socket_factory, mock.patch(
+            "scripts.live_gate_preflight_safety.run_guarded_subprocess"
+        ) as observer:
+            status = profile_runner._required_port_status()
 
-        self.assertEqual(busy_status, {8360: True, 8370: False})
+        self.assertEqual(status, {8360: True, 8370: True})
         self.assertEqual(
-            commands,
+            socket_factory.call_args_list,
             [
-                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8360", "-sTCP:LISTEN"],
-                [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
+                mock.call(socket.AF_INET, socket.SOCK_STREAM),
+                mock.call(socket.AF_INET, socket.SOCK_STREAM),
             ],
         )
+        for probe, port in zip(probes, profile_runner.REQUIRED_PORTS):
+            probe.setsockopt.assert_called_once_with(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 0
+            )
+            probe.bind.assert_called_once_with(("127.0.0.1", port))
+            probe.__exit__.assert_called_once()
+        observer.assert_not_called()
+
+    def test_required_port_checks_treat_eaddrinuse_as_occupied(self) -> None:
+        probes = [mock.MagicMock(), mock.MagicMock()]
+        for probe in probes:
+            probe.__enter__.return_value = probe
+            probe.__exit__.return_value = False
+        probes[0].bind.side_effect = OSError(errno.EADDRINUSE, "address in use")
+
+        with mock.patch.object(profile_runner.socket, "socket", side_effect=probes):
+            status = profile_runner._required_port_status()
+
+        self.assertEqual(status, {8360: False, 8370: True})
         self.assertEqual(
-            profile_runner._port_failure_code(busy_status, "before_start"),
-            "port_8370_not_free_before_start",
+            profile_runner._port_failure_code(status, "before_start"),
+            "port_8360_not_free_before_start",
         )
+        probes[0].__exit__.assert_called_once()
 
-    def test_required_port_checks_fail_closed_when_lsof_is_missing_or_times_out(self) -> None:
-        for failure in ("missing", "timeout"):
-            with self.subTest(failure=failure):
-                commands: list[list[str]] = []
-                observer_kwargs: list[dict[str, object]] = []
+    def test_required_port_checks_fail_closed_for_inconclusive_bind_errors(self) -> None:
+        probes = [mock.MagicMock(), mock.MagicMock()]
+        for probe in probes:
+            probe.__enter__.return_value = probe
+            probe.__exit__.return_value = False
+        probes[0].bind.side_effect = OSError(errno.EACCES, "bind denied")
+        probes[1].bind.side_effect = OSError("unexpected bind failure")
 
-                def unavailable_observer(
-                    command: list[str], **kwargs: object
-                ) -> object:
-                    commands.append(command)
-                    observer_kwargs.append(dict(kwargs))
-                    if "-iTCP:8370" in command:
-                        if failure == "missing":
-                            raise FileNotFoundError("trusted lsof unavailable")
-                        raise subprocess.TimeoutExpired(command, kwargs.get("timeout", 0))
-                    return types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+        with mock.patch.object(profile_runner.socket, "socket", side_effect=probes):
+            status = profile_runner._required_port_status()
 
-                with mock.patch.object(
-                    profile_runner, "_port_state", return_value=(False, True)
-                ), mock.patch(
-                    "scripts.live_gate_preflight_safety.run_guarded_subprocess",
-                    side_effect=unavailable_observer,
-                ):
-                    unavailable_status = profile_runner._required_port_status()
-
-                self.assertEqual(unavailable_status, {8360: True, 8370: False})
-                self.assertEqual(len(commands), 2)
-                self.assertEqual(commands[1][0], profile_runner.LSOF_EXECUTABLE)
-                self.assertEqual(
-                    commands[1],
-                    [profile_runner.LSOF_EXECUTABLE, "-nP", "-iTCP:8370", "-sTCP:LISTEN"],
-                )
-                self.assertEqual(
-                    observer_kwargs[1]["timeout"],
-                    profile_runner.OBSERVER_TIMEOUT_SECONDS,
-                )
+        self.assertEqual(status, {8360: False, 8370: False})
+        self.assertEqual(
+            profile_runner._port_failure_code(status, "after_teardown"),
+            "port_8360_not_free_after_teardown",
+        )
+        with mock.patch.object(profile_runner.socket, "socket") as socket_factory:
+            self.assertFalse(profile_runner._port_is_free(8361))
+        socket_factory.assert_not_called()
 
     def _obsolete_lsof_test_sanitized_environment_observer_sees_only_own_loopback_socket(self) -> None:
         self.assertTrue(Path(profile_runner.LSOF_EXECUTABLE).is_file())
@@ -2205,6 +2247,34 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     _characterize(args)
             popen.assert_not_called()
 
+    def test_synthetic_config_records_placeholder_and_rejects_realish_key_values(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-config-placeholder-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            config_path = Path(temp_root) / "config.py"
+            config_path.write_bytes(sandbox_preparation._SYNTHETIC_CONFIG.encode("ascii"))
+            self.assertEqual(
+                profile_runner._require_synthetic_sandbox_config(config_path),
+                SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+            )
+
+            placeholder_assignment = (
+                'OPENAI_API_KEY = "%s"' % SANDBOX_PROVIDER_KEY_PLACEHOLDER
+            )
+            config_path.write_text(
+                sandbox_preparation._SYNTHETIC_CONFIG.replace(
+                    placeholder_assignment,
+                    'OPENAI_API_KEY = "not-a-real-key-but-not-the-approved-placeholder"',
+                    1,
+                ),
+                encoding="ascii",
+            )
+            with self.assertRaisesRegex(
+                CharacterizationError,
+                "prepared_sandbox_provider_key_placeholder_invalid",
+            ):
+                profile_runner._require_synthetic_sandbox_config(config_path)
+
     def test_parent_without_interpreter_startup_guard_fails_before_host_launch(self) -> None:
         original_sys_path = list(sys.path)
         environment = {
@@ -2470,7 +2540,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     "guard_active": True,
                     "startup_guard_from_sitecustomize": True,
                     "sandbox_config_origin_guard_active": True,
-                    "provider_keys_blank": True,
+                    "provider_environment_keys_blank": True,
+                    "sandbox_provider_key_placeholder": SANDBOX_PROVIDER_KEY_PLACEHOLDER,
                     "proxy_values_blank": True,
                     "real_project_config_loaded": False,
                     "sandbox_config_loaded": True,
@@ -2546,6 +2617,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                                     "utterance": "Describe the room.",
                                     "character": "PC-One",
                                 },
+                                SANDBOX_PROVIDER_KEY_PLACEHOLDER,
                             ),
                         )
                     )
@@ -2816,7 +2888,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="profile-worker-", dir=PROJECT_ROOT / "tmp") as temp_root:
             sandbox = Path(temp_root).resolve()
             relative_sandbox = sandbox.relative_to(PROJECT_ROOT).as_posix()
-            (sandbox / "config.py").write_text("SANDBOX_PROFILE_CONFIG = True\n", encoding="utf-8")
+            (sandbox / "model_config.py").write_text(
+                'TEST_MODEL_SETTING = "synthetic"\n', encoding="ascii"
+            )
+            (sandbox / "config.py").write_text(
+                sandbox_preparation._SYNTHETIC_CONFIG,
+                encoding="ascii",
+            )
             utils_directory = sandbox / "utils"
             utils_directory.mkdir()
             (utils_directory / "__init__.py").write_text(
@@ -2887,6 +2965,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         self.assertEqual(payload["entrypoint"]["lifecycle"], lifecycle)
                         self.assertEqual(result["startup_guard_from_sitecustomize"], True)
                         self.assertEqual(result["sandbox_config_origin_guard_active"], True)
+                        self.assertEqual(
+                            result["sandbox_provider_key_placeholder"],
+                            SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+                        )
                         self.assertEqual(result["call_count"], 1, completed.stdout)
                         self.assertTrue(
                             payload["entrypoint"]["client_factory_result_is_none"]
@@ -3194,11 +3276,19 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                 self.assertEqual(result["party_size"], party_size)
                 self.assertEqual(result["planned_row_id"], "E01" if party_size == 1 else "E07")
                 self.assertEqual(result["config_source"], "synthetic")
-                self.assertTrue(result["provider_keys_blank"])
+                self.assertEqual(
+                    result["sandbox_provider_key_placeholder"],
+                    SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+                )
                 self.assertFalse(result["real_project_config_read_or_copied"])
                 self.assertFalse(result["native_companion_started"])
                 self.assertFalse(result["host_started"])
                 self.assertEqual(config_text, sandbox_preparation._SYNTHETIC_CONFIG)
+                for key_name in profile_runner._KNOWN_PROVIDER_KEYS:
+                    self.assertIn(
+                        '%s = "%s"' % (key_name, SANDBOX_PROVIDER_KEY_PLACEHOLDER),
+                        config_text,
+                    )
                 self.assertNotIn("source-config-canary", config_text)
                 self.assertFalse((sandbox / "config.py").is_symlink())
                 self.assertEqual(metadata["fixture_id"], "interior_tavern")

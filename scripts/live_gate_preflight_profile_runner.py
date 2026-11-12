@@ -15,6 +15,7 @@ fixture-party pair and one lifecycle, retaining separate evidence.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import errno
 import hashlib
@@ -743,7 +744,7 @@ def _validate_prepared_sandbox(
     party_size: int,
     lifecycle: str,
     resume_checkpoint_sha256: str | None,
-) -> tuple[Path, str, str, str, dict[str, str]]:
+) -> tuple[Path, str, str, str, dict[str, str], str]:
     from scripts.live_gate_preflight_profiles import (
         copy_profile_document,
         load_profile_coverage,
@@ -785,7 +786,7 @@ def _validate_prepared_sandbox(
     )
     if config_path != sandbox / "config.py":
         raise CharacterizationError("prepared_sandbox_config_invalid")
-    _require_synthetic_sandbox_config(config_path)
+    sandbox_provider_key_placeholder = _require_synthetic_sandbox_config(config_path)
 
     metadata_path = _safe_project_file(
         SANDBOX_RELATIVE / "mapping_pilot" / "seed_metadata.json",
@@ -887,12 +888,14 @@ def _validate_prepared_sandbox(
             "utterance": utterance,
             "character": character,
         },
+        sandbox_provider_key_placeholder,
     )
 
 
-def _require_synthetic_sandbox_config(config_path: Path) -> None:
-    """Require exact synthetic config bytes before any characterization launch."""
+def _require_synthetic_sandbox_config(config_path: Path) -> str:
+    """Require placeholder-only provider values before characterization launch."""
     from scripts.live_gate_preflight_sandbox import _SYNTHETIC_CONFIG
+    from scripts.live_gate_preflight_safety import SANDBOX_PROVIDER_KEY_PLACEHOLDER
 
     if config_path.is_symlink() or not config_path.is_file():
         raise CharacterizationError("prepared_sandbox_config_invalid")
@@ -900,8 +903,36 @@ def _require_synthetic_sandbox_config(config_path: Path) -> None:
         observed = config_path.read_bytes()
     except OSError as exc:
         raise CharacterizationError("prepared_sandbox_config_unavailable") from exc
+    try:
+        tree = ast.parse(observed.decode("ascii"), filename=str(config_path))
+    except (SyntaxError, UnicodeError) as exc:
+        raise CharacterizationError("prepared_sandbox_config_identity_mismatch") from exc
+    provider_values: dict[str, str] = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        provider_names = {
+            target.id
+            for target in statement.targets
+            if isinstance(target, ast.Name) and target.id in _KNOWN_PROVIDER_KEYS
+        }
+        for name in provider_names:
+            value = statement.value
+            if (
+                name in provider_values
+                or not isinstance(value, ast.Constant)
+                or type(value.value) is not str
+                or value.value != SANDBOX_PROVIDER_KEY_PLACEHOLDER
+            ):
+                raise CharacterizationError(
+                    "prepared_sandbox_provider_key_placeholder_invalid"
+                )
+            provider_values[name] = value.value
+    if set(provider_values) != set(_KNOWN_PROVIDER_KEYS):
+        raise CharacterizationError("prepared_sandbox_provider_key_placeholder_invalid")
     if observed != _SYNTHETIC_CONFIG.encode("ascii"):
         raise CharacterizationError("prepared_sandbox_config_identity_mismatch")
+    return SANDBOX_PROVIDER_KEY_PLACEHOLDER
 
 
 def _git_common_directory() -> Path:
@@ -1088,7 +1119,7 @@ class _ProfileCharacterizationLock:
 
 
 def _port_state(port: int) -> tuple[bool, bool]:
-    """Return (listener observed, observation complete) using loopback only."""
+    """Return (listener observed, observation complete) using loopback connects."""
     listener = False
     for family, address in (
         (socket.AF_INET, ("127.0.0.1", port)),
@@ -1119,12 +1150,26 @@ def _port_state(port: int) -> tuple[bool, bool]:
     return listener, True
 
 
+def _exclusive_bind_port_state(port: int) -> tuple[bool, bool]:
+    """Return (port occupied, observation complete) via exclusive bind-and-close."""
+    if type(port) is not int or not 1 <= port <= 65535:
+        return False, False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            return True, True
+        return False, False
+    return False, True
+
+
 def _port_is_free(port: int) -> bool:
     if type(port) is not int or port not in REQUIRED_PORTS:
         return False
-    listener, socket_observed = _port_state(port)
-    _listener_processes, process_observed = _listener_pids(port)
-    return socket_observed and process_observed and not listener and not _listener_processes
+    port_occupied, socket_observed = _exclusive_bind_port_state(port)
+    return socket_observed and not port_occupied
 
 
 def _required_port_status() -> dict[int, bool]:
@@ -2213,7 +2258,14 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         _configure_sandbox_import_paths(root, sandbox)
         config_guard = _install_sandbox_config_guard(sandbox)
         _verify_source_identity(args.source_sha)
-        sandbox, planned_row_id, arm, profile_id, first_turn = _validate_prepared_sandbox(
+        (
+            sandbox,
+            planned_row_id,
+            arm,
+            profile_id,
+            first_turn,
+            sandbox_provider_key_placeholder,
+        ) = _validate_prepared_sandbox(
             fixture_id=args.fixture_id,
             party_size=args.party_size,
             lifecycle=args.lifecycle,
@@ -2491,8 +2543,13 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "host_startup_guard_not_initialized"
         elif result.get("sandbox_config_origin_guard_active") is not True:
             failure_code = failure_code or "sandbox_config_origin_guard_inactive"
-        elif result.get("provider_keys_blank") is not True:
+        elif result.get("provider_environment_keys_blank") is not True:
             failure_code = failure_code or "provider_keys_not_blank"
+        elif (
+            result.get("sandbox_provider_key_placeholder")
+            != sandbox_provider_key_placeholder
+        ):
+            failure_code = failure_code or "sandbox_provider_key_placeholder_invalid"
         elif result.get("proxy_values_blank") is not True:
             failure_code = failure_code or "proxy_values_not_blank"
         elif result.get("real_project_config_loaded") is not False:
@@ -2679,8 +2736,13 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 if isinstance(result, Mapping)
                 else None
             ),
-            "provider_keys_blank": (
-                result.get("provider_keys_blank")
+            "provider_environment_keys_blank": (
+                result.get("provider_environment_keys_blank")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "sandbox_provider_key_placeholder": (
+                result.get("sandbox_provider_key_placeholder")
                 if isinstance(result, Mapping)
                 else None
             ),
@@ -2801,6 +2863,7 @@ def _worker(args: argparse.Namespace) -> int:
     interrupted = False
     failure_code: str | None = None
     stub: Any = None
+    sandbox_provider_key_placeholder: str | None = None
     command: list[str] | None = None
     startup_guard_from_sitecustomize = False
     sandbox_config_origin_guard_active = False
@@ -2854,6 +2917,24 @@ def _worker(args: argparse.Namespace) -> int:
 
         sys.path.insert(0, str(sandbox))
         try:
+            sandbox_provider_key_placeholder = _require_synthetic_sandbox_config(
+                sandbox / "config.py"
+            )
+            import config as sandbox_config
+
+            if (
+                Path(sandbox_config.__file__).resolve(strict=True)
+                != (sandbox / "config.py").resolve(strict=True)
+                or not all(
+                    type(getattr(sandbox_config, name, None)) is str
+                    and getattr(sandbox_config, name, None)
+                    == sandbox_provider_key_placeholder
+                    for name in _KNOWN_PROVIDER_KEYS
+                )
+            ):
+                raise CharacterizationError(
+                    "sandbox_provider_key_placeholder_invalid"
+                )
             from utils import ai_client_factory, llm_router
 
             router_path = Path(llm_router.__file__).resolve(strict=True)
@@ -2889,10 +2970,9 @@ def _worker(args: argparse.Namespace) -> int:
             )
             router.call = stub
             # main.py and core.combat.combat_manager.py create module-level
-            # clients during import. The sandbox has blank keys, so router-call
-            # stubbing alone still lets OpenAI client construction abort startup.
-            # Keep those globals inert; routed gameplay calls use the fail-closed
-            # stub above, and no SDK client or credential is created.
+            # clients during import. Keep those globals inert; routed gameplay
+            # calls use the fail-closed stub above, and the sandbox-only provider
+            # placeholders cannot authorize or reach a provider request.
             ai_client_factory.create_chat_client = _provider_free_client_factory
             try:
                 try:
@@ -2936,14 +3016,20 @@ def _worker(args: argparse.Namespace) -> int:
     root_text = str(PROJECT_ROOT)
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
-    from scripts.live_gate_preflight_safety import ACTIVE_GUARD_ENV, require_guard_active
+    from scripts.live_gate_preflight_safety import (
+        ACTIVE_GUARD_ENV,
+        SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+        require_guard_active,
+    )
 
     try:
         require_guard_active()
         guard_active = os.environ.get(ACTIVE_GUARD_ENV) == "1"
     except Exception:
         guard_active = False
-    provider_keys_blank = all(os.environ.get(name, "") == "" for name in _KNOWN_PROVIDER_KEYS)
+    provider_environment_keys_blank = all(
+        os.environ.get(name, "") == "" for name in _KNOWN_PROVIDER_KEYS
+    )
     proxy_values_blank = all(
         not name.upper().endswith("_PROXY") or value == ""
         for name, value in os.environ.items()
@@ -2965,6 +3051,19 @@ def _worker(args: argparse.Namespace) -> int:
             real_project_config_loaded = True
     if not sandbox_config_loaded and failure_code is None:
         failure_code = "sandbox_config_identity_invalid"
+    if config_module is not None:
+        configured_provider_keys = [
+            getattr(config_module, name, None) for name in _KNOWN_PROVIDER_KEYS
+        ]
+        if all(
+            type(value) is str and value == SANDBOX_PROVIDER_KEY_PLACEHOLDER
+            for value in configured_provider_keys
+        ):
+            sandbox_provider_key_placeholder = SANDBOX_PROVIDER_KEY_PLACEHOLDER
+        elif failure_code is None:
+            failure_code = "sandbox_provider_key_placeholder_invalid"
+    elif failure_code is None:
+        failure_code = "sandbox_provider_key_placeholder_invalid"
     stub_failure_code = getattr(stub, "failure_code", None)
     calls = list(getattr(stub, "calls", []))
     call_count = getattr(stub, "call_count", len(calls))
@@ -2976,10 +3075,11 @@ def _worker(args: argparse.Namespace) -> int:
         and not server_returned
         and failure_code is None
         and guard_active
-        and provider_keys_blank
+        and provider_environment_keys_blank
         and proxy_values_blank
         and not real_project_config_loaded
         and sandbox_config_loaded
+        and sandbox_provider_key_placeholder == SANDBOX_PROVIDER_KEY_PLACEHOLDER
         and startup_guard_from_sitecustomize
         and sandbox_config_origin_guard_active
         and type(call_count) is int
@@ -2998,7 +3098,8 @@ def _worker(args: argparse.Namespace) -> int:
             "NEQ_PREFLIGHT_STARTUP_CANARY_REPORT", ""
         ),
         "guard_active": guard_active,
-        "provider_keys_blank": provider_keys_blank,
+        "provider_environment_keys_blank": provider_environment_keys_blank,
+        "sandbox_provider_key_placeholder": sandbox_provider_key_placeholder,
         "proxy_values_blank": proxy_values_blank,
         "real_project_config_loaded": real_project_config_loaded,
         "sandbox_config_loaded": sandbox_config_loaded,
