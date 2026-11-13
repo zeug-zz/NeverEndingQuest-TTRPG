@@ -642,6 +642,8 @@ def _validate_profile_evidence(
             "non_loopback_connect_denied",
             "subprocess_launch_denied",
             "interpreter",
+            "guard_events_complete",
+            "guard_events",
         }
         _require_keys(canary, canary_fields, "startup process canary")
         canary_command = canary.get("command")
@@ -673,6 +675,18 @@ def _validate_profile_evidence(
             or canary.get("subprocess_launch_denied") is not True
         ):
             raise ProfileValidationError("profile evidence process canary identity differs")
+        canary_guard_events = canary.get("guard_events")
+        if (
+            canary.get("guard_events_complete") is not True
+            or not validate_guard_event_records(
+                canary_guard_events,
+                expected_pid=canary["pid"],
+                require_startup_canaries=True,
+            )
+        ):
+            raise ProfileValidationError(
+                "profile evidence process canary guard events are incomplete"
+            )
         canary_pids.append(canary["pid"])
         expected_interpreter = (
             evidence.get("worker_interpreter")
@@ -735,6 +749,7 @@ def _validate_profile_evidence(
     _validate_profile_guarded_processes(
         process_canaries=process_canaries,
         guard_events=guard_events,
+        run_id=evidence["run_id"],
     )
     expected_samples = ("before_host", "host_ready", "after_teardown")
     samples = process_census.get("socket_pid_samples")
@@ -1061,6 +1076,7 @@ def _validate_profile_guarded_processes(
     *,
     process_canaries: list[Any],
     guard_events: list[dict[str, Any]],
+    run_id: str,
 ) -> None:
     canaries = {canary["canary_stage"]: canary for canary in process_canaries}
     startup_by_pid = {
@@ -1068,6 +1084,11 @@ def _validate_profile_guarded_processes(
         for event in guard_events
         if event.get("event_type") == "guard_startup"
     }
+    journal_events_by_pid: dict[int, list[dict[str, Any]]] = {}
+    for event in guard_events:
+        journal_events_by_pid.setdefault(event["pid"], []).append(event)
+    for events in journal_events_by_pid.values():
+        events.sort(key=lambda event: event["sequence"])
     expected = (
         ("controller-startup", "parent"),
         ("host-prelaunch", "host"),
@@ -1086,6 +1107,23 @@ def _validate_profile_guarded_processes(
         ):
             raise ProfileValidationError(
                 "profile evidence guard-event process identity differs"
+            )
+        snapshot = canary.get("guard_events")
+        if not isinstance(snapshot, list) or any(
+            event.get("run_id") not in ("", run_id) for event in snapshot
+        ):
+            raise ProfileValidationError(
+                "profile evidence process canary guard-event identity differs"
+            )
+        normalized_snapshot = [
+            {**event, "run_id": run_id} for event in snapshot
+        ]
+        journal_prefix = journal_events_by_pid.get(canary["pid"], [])[
+            : len(normalized_snapshot)
+        ]
+        if journal_prefix != normalized_snapshot:
+            raise ProfileValidationError(
+                "profile evidence process canary guard events differ from journal"
             )
 
 

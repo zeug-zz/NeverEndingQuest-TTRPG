@@ -135,6 +135,8 @@ def _guard_network_event(
     host: str,
     port: int,
     *,
+    role: str = "host",
+    decision: str = "allowed",
     sequence: int = 2,
 ) -> dict[str, Any]:
     return {
@@ -143,15 +145,45 @@ def _guard_network_event(
         "event_type": "network_attempt",
         "pid": pid,
         "process_group_id": pid,
-        "process_role": "host",
+        "process_role": role,
         "run_id": run_id,
         "observed_at_ns": 1_000_000 + sequence,
         "operation": "connect",
-        "decision": "allowed",
+        "decision": decision,
         "target_host": host,
         "target_port": port,
         "target_host_sha256": None,
         "command_sha256": None,
+        "child_pid": None,
+        "child_is_python": None,
+        "guard_active": None,
+        "interpreter": None,
+        "working_directory": None,
+    }
+
+
+def _guard_subprocess_attempt_event(
+    pid: int,
+    run_id: str,
+    *,
+    role: str = "host",
+    sequence: int = 3,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "sequence": sequence,
+        "event_type": "subprocess_attempt",
+        "pid": pid,
+        "process_group_id": pid,
+        "process_role": role,
+        "run_id": run_id,
+        "observed_at_ns": 1_000_000 + sequence,
+        "operation": "Popen",
+        "decision": "denied",
+        "target_host": None,
+        "target_port": None,
+        "target_host_sha256": None,
+        "command_sha256": "b" * 64,
         "child_pid": None,
         "child_is_python": None,
         "guard_active": None,
@@ -374,6 +406,74 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
 
             del evidence_path
 
+    def test_retained_real_startup_evidence_validates_offline(self) -> None:
+        evidence_path = Path(
+            "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+            "fr11-tower-p1-startup-01/profile-evidence.json"
+        )
+        if not evidence_path.is_file():
+            self.skipTest("retained FR-11 characterization evidence is unavailable")
+        raw = evidence_path.read_bytes()
+        self.assertEqual(
+            hashlib.sha256(raw).hexdigest(),
+            "8908c2e325e0e2289789d4baeda721a553c809e1c9f5b4d99086f0f9f8b71a19",
+        )
+        evidence = json.loads(raw.decode("utf-8"))
+        self.assertEqual(
+            evidence["source_sha"], "7e874277c6bd69de2e13e1282ea0f8a0cda10290"
+        )
+        self.assertEqual(evidence["call_count"], 9)
+
+        document = copy_profile_document()
+        profile = next(
+            item
+            for item in document["profiles"]
+            if item["profile_id"] == "transition_tower_approach:p1"
+        )
+        profile["startup"] = {
+            "status": "measured-under-stub",
+            "call_count": evidence["call_count"],
+            "call_sites": evidence["call_sites"],
+            "source_sha": evidence["source_sha"],
+            "command": evidence["command"],
+            "pythonpath": evidence["pythonpath"],
+            "evidence_path": evidence_path.as_posix(),
+            "evidence_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+
+        coverage = validate_profile_document(
+            document, expected_source_sha=evidence["source_sha"]
+        )
+        self.assertTrue(coverage["structural_row_coverage_complete"])
+        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertFalse(coverage["booking_eligible"])
+        self.assertEqual(coverage["replacement_only_rows_activated"], [])
+
+    def test_profile_evidence_rejects_invalid_embedded_startup_canaries(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-canary-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["process_canaries"][0]["guard_events"][1]["decision"] = "allowed"
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(
+                ProfileValidationError, "process canary guard events are incomplete"
+            ):
+                validate_profile_document(document)
+
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["process_canaries"][0]["guard_events"][0][
+                "process_group_id"
+            ] += 50
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "process canary guard events differ from journal",
+            ):
+                validate_profile_document(document)
+
     def test_profile_evidence_hash_and_identity_mismatches_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-evidence-", dir=PROJECT_ROOT / "tmp"
@@ -594,7 +694,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 evidence["run_id"],
                 process_role="host",
                 process_group_id=10003,
-                sequence=2,
+                sequence=4,
             )
             child_startup = _guard_startup_event(
                 child_pid,
@@ -690,7 +790,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                         evidence["run_id"],
                         process_role="parent",
                         process_group_id=10001,
-                        sequence=2,
+                        sequence=4,
                     ),
                     _guard_startup_event(
                         child_pid,
@@ -753,7 +853,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                     evidence["run_id"],
                     process_role="parent",
                     process_group_id=10001,
-                    sequence=2,
+                    sequence=4,
                 )
             )
             self._write_profile_guard_events(evidence, guard_events)
@@ -801,7 +901,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                         evidence["run_id"],
                         process_role="parent",
                         process_group_id=10001,
-                        sequence=2,
+                        sequence=4,
                     ),
                     _guard_startup_event(
                         child_pid,
@@ -1151,17 +1251,36 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         canaries_by_stage = {
             report["canary_stage"]: report for report in process_canaries
         }
-        guard_events = [
-            _guard_startup_event(
-                report["pid"],
-                run_id,
-                role=report["process_role"],
-                command_sha256=report["command_sha256"],
-                working_directory=report["working_directory"],
-                interpreter=report["interpreter"],
-            )
-            for report in process_canaries
-        ]
+        guard_events = []
+        for report in process_canaries:
+            role = report["process_role"]
+            pid = report["pid"]
+            snapshot = [
+                _guard_startup_event(
+                    pid,
+                    run_id,
+                    role=role,
+                    command_sha256=report["command_sha256"],
+                    working_directory=report["working_directory"],
+                    interpreter=report["interpreter"],
+                ),
+                _guard_network_event(
+                    pid,
+                    run_id,
+                    "192.0.2.1",
+                    8360,
+                    role=role,
+                    decision="denied",
+                    sequence=2,
+                ),
+                _guard_subprocess_attempt_event(pid, run_id, role=role),
+            ]
+            report["guard_events_complete"] = True
+            report["guard_events"] = [
+                {**event, "run_id": ""} if role == "parent" else dict(event)
+                for event in snapshot
+            ]
+            guard_events.extend(snapshot)
 
         def scope(
             stage: str,
@@ -1231,8 +1350,14 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 }
             ],
         }
+        pre_host_pids = {
+            canaries_by_stage["controller-startup"]["pid"],
+            canaries_by_stage["host-prelaunch"]["pid"],
+        }
         event_phases = {
-            "before_host": guard_events[:2],
+            "before_host": [
+                event for event in guard_events if event["pid"] in pre_host_pids
+            ],
             "host_ready": guard_events,
             "after_teardown": guard_events,
         }
