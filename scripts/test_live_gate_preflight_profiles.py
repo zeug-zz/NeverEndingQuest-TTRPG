@@ -2065,135 +2065,142 @@ class TestPreflightStubAndSafety(unittest.TestCase):
     def test_actual_host_command_prelaunch_canary_exits_before_worker_entrypoint(
         self,
     ) -> None:
-        sandbox = PROJECT_ROOT / "tmp" / "combat_capture"
-        run_id = "canary-e01-p1"
-        run_directory = (
-            PROJECT_ROOT
-            / "tmp/router-rollout/live-gate-preflight/profile-characterization"
-            / run_id
-        )
-        self.assertTrue(sandbox.is_dir())
-        self.assertFalse(run_directory.exists())
+        with tempfile.TemporaryDirectory(
+            prefix="profile-host-canary-", dir=PROJECT_ROOT / "tmp"
+        ) as temporary_root:
+            fixture_root = Path(temporary_root).resolve()
+            sandbox = fixture_root / "sandbox"
+            sandbox.mkdir()
+            sandbox_relative = sandbox.relative_to(PROJECT_ROOT).as_posix()
+            run_id = "canary-e01-p1-" + uuid.uuid4().hex[:12]
+            run_directory = (
+                PROJECT_ROOT
+                / profile_runner.PROFILE_EVIDENCE_ROOT
+                / run_id
+            )
+            self.assertFalse(run_directory.exists())
 
-        host_command = profile_runner._host_command(
-            fixture_id="interior_tavern",
-            party_size=1,
-            lifecycle="startup",
-            source_sha="8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624",
-            run_id=run_id,
-            planned_row_id="E01",
-            arm="A",
-            lifecycle_id="canary-e01-p1_s",
-            resume_checkpoint_sha256=None,
-        )
-        self.assertEqual(
-            host_command,
-            [
-                _repository_python(),
-                "-P",
-                "-m",
-                "scripts.live_gate_preflight_profile_runner",
-                "--worker",
-                "--fixture-id",
-                "interior_tavern",
-                "--party-size",
-                "1",
-                "--lifecycle",
-                "startup",
-                "--source-sha",
-                "8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624",
-                "--run-id",
-                run_id,
-                "--planned-row-id",
-                "E01",
-                "--arm",
-                "A",
-                "--lifecycle-id",
-                "canary-e01-p1_s",
-            ],
-        )
-        controller_code = "\n".join(
-            (
-                "import json",
-                "from scripts.live_gate_preflight_safety import _startup_canary_environment_digest, build_guarded_sandbox_environment, run_startup_process_canary",
-                "from scripts.live_gate_preflight_profile_runner import CharacterizationError, _validate_startup_canary_record",
-                f"command = {host_command!r}",
-                "environment = build_guarded_sandbox_environment(",
-                "    'tmp/combat_capture',",
-                f"    project_root={str(PROJECT_ROOT)!r},",
-                "    source_environment={},",
-                "    process_role='host',",
-                ")",
-                f"report = run_startup_process_canary(command=command, cwd={str(sandbox)!r}, env=environment)",
-                "expected_environment_sha256 = _startup_canary_environment_digest(environment)",
-                f"validated = _validate_startup_canary_record(report, process_role='host', command=command, cwd={str(sandbox)!r}, environment_sha256=expected_environment_sha256)",
-                "tampered_environment = dict(environment)",
-                "tampered_environment['TMPDIR'] = 'tmp/not-the-launched-environment'",
-                "tampered_environment_sha256 = _startup_canary_environment_digest(tampered_environment)",
-                "try:",
-                f"    _validate_startup_canary_record(report, process_role='host', command=command, cwd={str(sandbox)!r}, environment_sha256=tampered_environment_sha256)",
-                "except CharacterizationError as exc:",
-                "    tampered_environment_rejected = exc.code == 'startup_canary_report_invalid'",
-                "else:",
-                "    tampered_environment_rejected = False",
-                "print(json.dumps({'command': command, 'report': report, 'expected_environment_sha256': expected_environment_sha256, 'runner_validation': bool(validated), 'tampered_environment_rejected': tampered_environment_rejected}, sort_keys=True))",
+            host_command = profile_runner._host_command(
+                fixture_id="interior_tavern",
+                party_size=1,
+                lifecycle="startup",
+                source_sha="8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624",
+                run_id=run_id,
+                planned_row_id="E01",
+                arm="A",
+                lifecycle_id="canary-e01-p1_s",
+                resume_checkpoint_sha256=None,
             )
-        )
-        controller_environment = build_guarded_environment(
-            source_environment={},
-            project_root=PROJECT_ROOT,
-            process_role="parent",
-        )
-        created_parent_directories: list[Path] = []
-        parent = run_directory.parent
-        while not parent.exists():
-            created_parent_directories.append(parent)
-            parent = parent.parent
-        run_directory.mkdir(parents=True)
-        worker_result_path = run_directory / "worker-result.json"
-        sentinel = b"startup canary must not enter the worker module\n"
-        worker_result_path.write_bytes(sentinel)
-        try:
-            completed = subprocess.run(
-                [_repository_python(), "-c", controller_code],
-                cwd=PROJECT_ROOT / "tmp",
-                env=controller_environment,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
+            self.assertEqual(
+                host_command,
+                [
+                    _repository_python(),
+                    "-P",
+                    "-m",
+                    "scripts.live_gate_preflight_profile_runner",
+                    "--worker",
+                    "--fixture-id",
+                    "interior_tavern",
+                    "--party-size",
+                    "1",
+                    "--lifecycle",
+                    "startup",
+                    "--source-sha",
+                    "8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624",
+                    "--run-id",
+                    run_id,
+                    "--planned-row-id",
+                    "E01",
+                    "--arm",
+                    "A",
+                    "--lifecycle-id",
+                    "canary-e01-p1_s",
+                ],
             )
+            controller_code = "\n".join(
+                (
+                    "import json",
+                    "from scripts.live_gate_preflight_safety import _startup_canary_environment_digest, build_guarded_sandbox_environment, run_startup_process_canary",
+                    "from scripts.live_gate_preflight_profile_runner import CharacterizationError, _validate_startup_canary_record",
+                    f"command = {host_command!r}",
+                    "environment = build_guarded_sandbox_environment(",
+                    f"    {sandbox_relative!r},",
+                    f"    project_root={str(PROJECT_ROOT)!r},",
+                    "    source_environment={},",
+                    "    process_role='host',",
+                    ")",
+                    f"report = run_startup_process_canary(command=command, cwd={str(sandbox)!r}, env=environment)",
+                    "expected_environment_sha256 = _startup_canary_environment_digest(environment)",
+                    f"validated = _validate_startup_canary_record(report, process_role='host', command=command, cwd={str(sandbox)!r}, environment_sha256=expected_environment_sha256)",
+                    "tampered_environment = dict(environment)",
+                    "tampered_environment['TMPDIR'] = 'tmp/not-the-launched-environment'",
+                    "tampered_environment_sha256 = _startup_canary_environment_digest(tampered_environment)",
+                    "try:",
+                    f"    _validate_startup_canary_record(report, process_role='host', command=command, cwd={str(sandbox)!r}, environment_sha256=tampered_environment_sha256)",
+                    "except CharacterizationError as exc:",
+                    "    tampered_environment_rejected = exc.code == 'startup_canary_report_invalid'",
+                    "else:",
+                    "    tampered_environment_rejected = False",
+                    "print(json.dumps({'command': command, 'report': report, 'expected_environment_sha256': expected_environment_sha256, 'runner_validation': bool(validated), 'tampered_environment_rejected': tampered_environment_rejected}, sort_keys=True))",
+                )
+            )
+            controller_environment = build_guarded_environment(
+                source_environment={},
+                project_root=PROJECT_ROOT,
+                process_role="parent",
+            )
+            created_parent_directories: list[Path] = []
+            parent = run_directory.parent
+            while not parent.exists():
+                created_parent_directories.append(parent)
+                parent = parent.parent
+            run_directory.mkdir(parents=True)
+            worker_result_path = run_directory / "worker-result.json"
+            sentinel = b"startup canary must not enter the worker module\n"
+            worker_result_path.write_bytes(sentinel)
+            try:
+                completed = subprocess.run(
+                    [_repository_python(), "-c", controller_code],
+                    cwd=PROJECT_ROOT / "tmp",
+                    env=controller_environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
 
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            payload = json.loads(completed.stdout)
-            report = payload["report"]
-            self.assertEqual(payload["command"], host_command)
-            self.assertEqual(report["process_role"], "host")
-            self.assertEqual(report["command"], host_command)
-            self.assertEqual(
-                report["environment_sha256"],
-                payload["expected_environment_sha256"],
-            )
-            self.assertEqual(report["working_directory"], str(sandbox))
-            self.assertGreater(report["startup_observed_at_ns"], 0)
-            self.assertTrue(report["guard_active"])
-            self.assertTrue(report["non_loopback_connect_denied"])
-            self.assertTrue(report["subprocess_launch_denied"])
-            self.assertEqual(report["interpreter"]["executable"], _repository_python())
-            self.assertEqual(
-                report["interpreter"]["prefix"], str(PROJECT_ROOT / ".venv")
-            )
-            self.assertNotEqual(
-                report["interpreter"]["prefix"],
-                report["interpreter"]["base_prefix"],
-            )
-            self.assertTrue(payload["runner_validation"])
-            self.assertTrue(payload["tampered_environment_rejected"])
-            self.assertEqual(worker_result_path.read_bytes(), sentinel)
-        finally:
-            shutil.rmtree(run_directory)
-            for directory in created_parent_directories:
-                directory.rmdir()
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                report = payload["report"]
+                self.assertEqual(payload["command"], host_command)
+                self.assertEqual(report["process_role"], "host")
+                self.assertEqual(report["command"], host_command)
+                self.assertEqual(
+                    report["environment_sha256"],
+                    payload["expected_environment_sha256"],
+                )
+                self.assertEqual(report["working_directory"], str(sandbox))
+                self.assertGreater(report["startup_observed_at_ns"], 0)
+                self.assertTrue(report["guard_active"])
+                self.assertTrue(report["non_loopback_connect_denied"])
+                self.assertTrue(report["subprocess_launch_denied"])
+                self.assertEqual(
+                    report["interpreter"]["executable"], _repository_python()
+                )
+                self.assertEqual(
+                    report["interpreter"]["prefix"], str(PROJECT_ROOT / ".venv")
+                )
+                self.assertNotEqual(
+                    report["interpreter"]["prefix"],
+                    report["interpreter"]["base_prefix"],
+                )
+                self.assertTrue(payload["runner_validation"])
+                self.assertTrue(payload["tampered_environment_rejected"])
+                self.assertEqual(worker_result_path.read_bytes(), sentinel)
+            finally:
+                shutil.rmtree(run_directory)
+                for directory in created_parent_directories:
+                    directory.rmdir()
 
     def test_stub_refuses_to_initialize_without_guard(self) -> None:
         environment = {
@@ -2388,53 +2395,121 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertNotIn(b"python host", sidecar)
         self.assertTrue(all(not item["command_evidence"]["stdout_prefix_base64"] for item in evidence["protocol_samples"]))
 
-    def test_retained_e04_host_ready_and_after_teardown_allow_guarded_controller_time_wait(
+    def test_e04_shape_accepts_guarded_controller_time_wait_through_teardown(
         self,
     ) -> None:
-        retained_root = (
-            PROJECT_ROOT
-            / "tmp/router-rollout/live-gate-preflight/profile-characterization"
-            / "fr11-e04-p1-startup-01"
-        )
-        retained_samples = {
-            phase: json.loads(
-                (retained_root / ("socket-sample-%s.json" % phase)).read_text(
-                    encoding="ascii"
-                )
-            )
-            for phase in ("before_host", "host_ready", "after_teardown")
-        }
-        guard_events = [
-            json.loads(line)
-            for line in (retained_root / "guard-events.jsonl")
-            .read_text(encoding="ascii")
-            .splitlines()
-        ]
-        process_scopes = retained_samples["host_ready"]["process_scopes"]
-        scopes_by_source = {
-            scope["launch_source"]: scope for scope in process_scopes
-        }
-        controller_pid = scopes_by_source["controller-startup-canary"]["pid"]
-        host_prelaunch_pid = scopes_by_source["host-prelaunch-canary-session"]["pid"]
-        host_pid = scopes_by_source["host-worker-start-new-session"]["pid"]
+        run_id = "e04-synthetic-controller-time-wait"
+        controller_pid = 24586
+        host_prelaunch_pid = 24587
+        host_pid = 24588
+        working_directory = "tmp/e04-synthetic-fixture"
+        command = [_repository_python(), "-m", "scripts.live_gate_preflight_profile_runner"]
 
-        def census_sample(phase: str) -> dict[str, Any]:
-            evidence = retained_samples[phase]
+        def process_scope(
+            *,
+            selector: str,
+            pid: int,
+            process_role: str,
+            launch_source: str,
+        ) -> dict[str, Any]:
+            return profile_runner._make_process_scope(
+                selector=selector,
+                pid=pid,
+                process_group_id=pid,
+                process_role=process_role,
+                launch_source=launch_source,
+                command=command,
+                environment_sha256="a" * 64,
+                working_directory=working_directory,
+            )
+
+        process_scopes = [
+            process_scope(
+                selector="pid",
+                pid=controller_pid,
+                process_role="parent",
+                launch_source="controller-startup-canary",
+            ),
+            process_scope(
+                selector="process_group",
+                pid=host_prelaunch_pid,
+                process_role="host",
+                launch_source="host-prelaunch-canary-session",
+            ),
+            process_scope(
+                selector="process_group",
+                pid=host_pid,
+                process_role="host",
+                launch_source="host-worker-start-new-session",
+            ),
+        ]
+        guard_events = [
+            _guard_startup_event(
+                controller_pid,
+                run_id,
+                role="parent",
+                working_directory=working_directory,
+            ),
+            _guard_child_started_event(
+                controller_pid,
+                host_prelaunch_pid,
+                run_id,
+                process_role="parent",
+                process_group_id=controller_pid,
+            ),
+            _guard_child_started_event(
+                controller_pid,
+                host_pid,
+                run_id,
+                process_role="parent",
+                process_group_id=controller_pid,
+                sequence=3,
+            ),
+            _guard_startup_event(
+                host_prelaunch_pid,
+                run_id,
+                role="host",
+                working_directory=working_directory,
+            ),
+            _guard_startup_event(
+                host_pid,
+                run_id,
+                role="host",
+                working_directory=working_directory,
+            ),
+        ]
+        controller_time_wait_row = {
+            "protocol": "tcp4",
+            "pid": controller_pid,
+            "local": {"host": "127.0.0.1", "port": 51110},
+            "foreign": {"host": "127.0.0.1", "port": profile_runner.HOST_PORT},
+            "state": "TIME_WAIT",
+        }
+        host_listener_row = {
+            "protocol": "tcp4",
+            "pid": host_pid,
+            "local": {"host": "0.0.0.0", "port": profile_runner.HOST_PORT},
+            "foreign": {"host": "0.0.0.0", "port": 0},
+            "state": "LISTEN",
+        }
+
+        def census_sample(phase: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
             return {
-                "phase": evidence["phase"],
-                "port": 8360,
-                "observed": evidence["observed"],
-                "pids": evidence["pids"],
-                "listener_pids": profile_runner._host_ready_listener_pids(
-                    evidence["run_owned_rows"]
-                ),
-                "failure_code": evidence["failure_code"],
+                "phase": phase,
+                "port": profile_runner.HOST_PORT,
+                "observed": True,
+                "pids": sorted({row["pid"] for row in rows}),
+                "listener_pids": profile_runner._host_ready_listener_pids(rows),
+                "failure_code": None,
             }
 
-        before_host = census_sample("before_host")
-        host_ready = census_sample("host_ready")
-        after_teardown = census_sample("after_teardown")
-        self.assertIn(controller_pid, host_ready["pids"])
+        before_host = census_sample("before_host", [])
+        host_ready = census_sample(
+            "host_ready", [controller_time_wait_row, host_listener_row]
+        )
+        after_teardown = census_sample("after_teardown", [controller_time_wait_row])
+        self.assertEqual(controller_time_wait_row["state"], "TIME_WAIT")
+        self.assertEqual(host_ready["pids"], [controller_pid, host_pid])
         self.assertEqual(host_ready["listener_pids"], [host_pid])
         self.assertEqual(after_teardown["pids"], [controller_pid])
         self.assertEqual(after_teardown["listener_pids"], [])
@@ -2444,7 +2519,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 host_ready,
                 host_pid=host_pid,
                 guard_events=guard_events,
-                expected_run_id="fr11-e04-p1-startup-01",
+                expected_run_id=run_id,
             )
         )
         self.assertTrue(
@@ -2452,7 +2527,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 after_teardown,
                 controller_pid=controller_pid,
                 guard_events=guard_events,
-                expected_run_id="fr11-e04-p1-startup-01",
+                expected_run_id=run_id,
             )
         )
 
@@ -2467,7 +2542,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             socket_pid_samples=[before_host, host_ready, after_teardown],
             process_scopes=process_scopes,
             guard_events=guard_events,
-            expected_run_id="fr11-e04-p1-startup-01",
+            expected_run_id=run_id,
         )
         self.assertTrue(census["guard_events_valid"])
         self.assertEqual(census["uncovered_pids"], [])
@@ -2482,7 +2557,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 lingering_host_socket,
                 controller_pid=controller_pid,
                 guard_events=guard_events,
-                expected_run_id="fr11-e04-p1-startup-01",
+                expected_run_id=run_id,
             )
         )
         lingering_listener = {
@@ -2494,7 +2569,23 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 lingering_listener,
                 controller_pid=controller_pid,
                 guard_events=guard_events,
-                expected_run_id="fr11-e04-p1-startup-01",
+                expected_run_id=run_id,
+            )
+        )
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                host_ready,
+                host_pid=host_pid,
+                guard_events=guard_events,
+                expected_run_id="different-run-id",
+            )
+        )
+        self.assertFalse(
+            profile_runner._after_teardown_socket_sample_is_clean(
+                after_teardown,
+                controller_pid=controller_pid,
+                guard_events=guard_events,
+                expected_run_id="different-run-id",
             )
         )
 
