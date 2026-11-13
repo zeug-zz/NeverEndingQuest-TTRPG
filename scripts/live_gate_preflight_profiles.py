@@ -563,6 +563,7 @@ def _validate_profile_evidence(
     pythonpath: str,
     call_count: int,
     call_sites: list[Any],
+    evidence_directory: Path | None = None,
 ) -> None:
     """Verify a measured declaration against its retained, bounded call log."""
     path = _safe_source_path(project_root, evidence_path, "profile evidence")
@@ -619,9 +620,15 @@ def _validate_profile_evidence(
         "teardown",
     }
     legacy_evidence_fields = evidence_fields - {"invocation_identity"}
+    retained_evidence_fields = evidence_fields | {"teardown_evidence"}
+    legacy_retained_evidence_fields = retained_evidence_fields - {
+        "invocation_identity"
+    }
     if not isinstance(evidence, Mapping) or set(evidence) not in (
         evidence_fields,
         legacy_evidence_fields,
+        retained_evidence_fields,
+        legacy_retained_evidence_fields,
     ):
         raise ProfileValidationError("profile evidence fields are malformed")
     historic_identity_unavailable = "invocation_identity" not in evidence
@@ -817,7 +824,20 @@ def _validate_profile_evidence(
         project_root,
         evidence.get("guard_event_journal"),
         run_id=evidence["run_id"],
+        evidence_directory=evidence_directory,
     )
+    for event in guard_events:
+        if event.get("event_type") != "network_attempt" or event.get("decision") != "allowed":
+            continue
+        host = event.get("target_host")
+        try:
+            loopback = isinstance(host, str) and ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            raise ProfileValidationError(
+                "profile evidence guard journal records foreign egress"
+            )
     _validate_profile_guarded_processes(
         process_canaries=process_canaries,
         guard_events=guard_events,
@@ -840,6 +860,7 @@ def _validate_profile_evidence(
             run_id=evidence["run_id"],
             process_canaries=process_canaries,
             guard_events=guard_events,
+            evidence_directory=evidence_directory,
         )
         for scope in scopes:
             source = scope["launch_source"]
@@ -888,6 +909,17 @@ def _validate_profile_evidence(
     )
     after_teardown_rows = sample_rows["after_teardown"]
     after_teardown_owners = sample_pids["after_teardown"]
+    if _socket_listener_pids(after_teardown_rows, port=8360):
+        raise ProfileValidationError(
+            "profile evidence retains an active listener on port 8360"
+        )
+    if any(
+        _socket_listener_pids(sample_rows[phase], port=8370)
+        for phase in expected_samples
+    ):
+        raise ProfileValidationError(
+            "profile evidence retains an active listener on port 8370"
+        )
     if (
         before_host_processes is None
         or not before_host_owners.issubset(before_host_processes)
@@ -896,7 +928,6 @@ def _validate_profile_evidence(
         or not host_ready_listener_pids
         or not set(host_ready_listener_pids).issubset(host_process_pids)
         or not host_ready_owners.issubset(host_ready_processes)
-        or _socket_listener_pids(after_teardown_rows, port=8360)
         or not after_teardown_owners.issubset({controller_pid})
     ):
         raise ProfileValidationError(
@@ -965,11 +996,16 @@ def _validate_profile_evidence(
         raise ProfileValidationError("profile evidence host command differs")
 
     teardown = evidence.get("teardown")
-    if teardown != {
+    valid_teardown = {
         "server_stopped": True,
         "port_8360_free": True,
         "lock_released": True,
-    }:
+    }
+    valid_teardown_with_player_port = {
+        **valid_teardown,
+        "port_8370_free": True,
+    }
+    if teardown not in (valid_teardown, valid_teardown_with_player_port):
         raise ProfileValidationError("profile evidence teardown is incomplete")
 
     calls = evidence.get("calls")
@@ -1102,10 +1138,14 @@ def _read_profile_guard_events(
     journal: Any,
     *,
     run_id: str,
+    evidence_directory: Path | None = None,
 ) -> list[dict[str, Any]]:
     fields = {"path", "sha256", "event_count", "complete"}
     _require_keys(journal, fields, "guard-event journal")
-    expected_path = (GUARD_EVENT_ROOT / run_id / "guard-events.jsonl").as_posix()
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / "guard-events.jsonl").as_posix()
     digest = journal.get("sha256")
     event_count = journal.get("event_count")
     if (
@@ -1142,6 +1182,27 @@ def _read_profile_guard_events(
     ):
         raise ProfileValidationError("profile evidence guard-event ownership is invalid")
     return events
+
+
+def _profile_sidecar_directory(
+    project_root: Path,
+    run_id: str,
+    *,
+    evidence_directory: Path | None,
+) -> PurePosixPath:
+    if evidence_directory is None:
+        return PurePosixPath((GUARD_EVENT_ROOT / run_id).as_posix())
+    try:
+        relative = evidence_directory.resolve(strict=True).relative_to(
+            project_root.resolve(strict=True)
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "profile evidence sidecar directory is missing or unsafe"
+        ) from exc
+    if not relative.parts or relative.parts[0] != "tmp":
+        raise ProfileValidationError("profile evidence sidecar directory is outside tmp")
+    return PurePosixPath(relative.as_posix())
 
 
 def _validate_profile_guarded_processes(
@@ -1207,6 +1268,7 @@ def _read_profile_socket_sample(
     run_id: str,
     process_canaries: list[Any],
     guard_events: list[dict[str, Any]],
+    evidence_directory: Path | None = None,
 ) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]]]:
     sample_fields = {
         "phase",
@@ -1222,7 +1284,10 @@ def _read_profile_socket_sample(
     sample_pids = sample.get("pids")
     listener_pids = sample.get("listener_pids")
     digest = sample.get("evidence_sha256")
-    expected_path = (GUARD_EVENT_ROOT / run_id / ("socket-sample-%s.json" % phase)).as_posix()
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / ("socket-sample-%s.json" % phase)).as_posix()
     if (
         sample.get("phase") != phase
         or type(sample.get("port")) is not int

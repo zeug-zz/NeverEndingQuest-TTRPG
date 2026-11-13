@@ -960,7 +960,17 @@ def _git_common_directory() -> Path:
     return resolved
 
 
-def _append_lock_log(path: Path, record: Mapping[str, Any]) -> None:
+def _append_lock_log(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
+    parent_metadata = path.parent.lstat()
+    get_uid = getattr(os, "getuid", None)
+    current_uid = get_uid() if callable(get_uid) else None
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or path.parent.is_symlink()
+        or (current_uid is not None and parent_metadata.st_uid != current_uid)
+        or (os.name == "posix" and stat.S_IMODE(parent_metadata.st_mode) & 0o022)
+    ):
+        raise OSError("live_window_booking_directory_invalid")
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o600)
     try:
@@ -977,8 +987,16 @@ def _append_lock_log(path: Path, record: Mapping[str, Any]) -> None:
         line = json.dumps(
             dict(record), ensure_ascii=True, sort_keys=True, separators=(",", ":")
         ).encode("ascii") + b"\n"
+        offset = metadata.st_size
         _write_all(descriptor, line)
         os.fsync(descriptor)
+        relative_path = path.resolve(strict=True).relative_to(PROJECT_ROOT).as_posix()
+        return {
+            "path": relative_path,
+            "byte_offset": offset,
+            "byte_length": len(line),
+            "line_sha256": hashlib.sha256(line).hexdigest(),
+        }
     finally:
         os.close(descriptor)
 
@@ -1003,8 +1021,14 @@ class _ProfileCharacterizationLock:
         self.booking_id = booking_id if isinstance(booking_id, str) else ""
         self.acquired = False
         self.recorded = False
+        self.coordination_identity: tuple[int, int] | None = None
         self.lock_identity: tuple[int, int] | None = None
         self.holder_identity: tuple[int, int] | None = None
+        self.release_attempted = False
+        self.release_succeeded = False
+        self.lock_directory_removed = False
+        self.release_record: dict[str, Any] | None = None
+        self.release_log_reference: dict[str, Any] | None = None
 
     def acquire(self) -> bool:
         if not _valid_live_window_lock_record(self.holder_record):
@@ -1025,6 +1049,10 @@ class _ProfileCharacterizationLock:
                 )
             ):
                 return False
+            self.coordination_identity = (
+                coordination_metadata.st_dev,
+                coordination_metadata.st_ino,
+            )
             self.lock_directory.mkdir(mode=0o700, exist_ok=False)
             lock_metadata = self.lock_directory.lstat()
             if not stat.S_ISDIR(lock_metadata.st_mode):
@@ -1061,10 +1089,17 @@ class _ProfileCharacterizationLock:
         return True
 
     def release(self, release_record: Mapping[str, Any]) -> bool:
+        self.release_attempted = True
+        self.release_succeeded = False
+        self.lock_directory_removed = False
+        self.release_record = None
+        self.release_log_reference = None
         if not self.acquired or not self.recorded:
             return False
         holder_path = self.lock_directory / "holder.json"
         try:
+            if not self._coordination_directory_is_owned():
+                return False
             lock_metadata = self.lock_directory.lstat()
             if (
                 not stat.S_ISDIR(lock_metadata.st_mode)
@@ -1092,16 +1127,45 @@ class _ProfileCharacterizationLock:
                 or not _valid_lock_release_record(release_record, self.booking_id)
             ):
                 return False
-            _append_lock_log(self.coordination_directory / "bookings.log", release_record)
             holder_path.unlink()
             self.lock_directory.rmdir()
         except (OSError, CharacterizationError, ValueError):
             return False
+        self.lock_directory_removed = True
         self.acquired = False
         self.recorded = False
         self.lock_identity = None
         self.holder_identity = None
+        if not self._coordination_directory_is_owned():
+            return False
+        try:
+            self.release_log_reference = _append_lock_log(
+                self.coordination_directory / "bookings.log", release_record
+            )
+        except (OSError, CharacterizationError, TypeError, ValueError):
+            return False
+        self.release_record = dict(release_record)
+        self.release_succeeded = True
         return True
+
+    def _coordination_directory_is_owned(self) -> bool:
+        try:
+            metadata = self.coordination_directory.lstat()
+        except OSError:
+            return False
+        get_uid = getattr(os, "getuid", None)
+        current_uid = get_uid() if callable(get_uid) else None
+        return bool(
+            stat.S_ISDIR(metadata.st_mode)
+            and not self.coordination_directory.is_symlink()
+            and self.coordination_identity
+            == (metadata.st_dev, metadata.st_ino)
+            and (current_uid is None or metadata.st_uid == current_uid)
+            and not (
+                os.name == "posix"
+                and stat.S_IMODE(metadata.st_mode) & 0o022
+            )
+        )
 
     def _remove_owned_holder(self) -> None:
         if not self.acquired:
@@ -1124,6 +1188,7 @@ class _ProfileCharacterizationLock:
         except OSError:
             return
         self.acquired = False
+        self.coordination_identity = None
         self.lock_identity = None
         self.holder_identity = None
 
@@ -1162,17 +1227,83 @@ def _port_state(port: int) -> tuple[bool, bool]:
 
 def _exclusive_bind_port_state(port: int) -> tuple[bool, bool]:
     """Return (port occupied, observation complete) via exclusive bind-and-close."""
+    observation = _exclusive_bind_port_observation(port)
+    return observation["result"] == "occupied", observation["observation_complete"]
+
+
+def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
+    """Capture concrete evidence for one exclusive loopback bind-and-close."""
+    observed_at_ns = time.time_ns()
+    probe: socket.socket | None = None
+    socket_created = False
+    bind_attempted = False
+    bind_succeeded = False
+    socket_closed: bool | None = None
+    error: OSError | None = None
     if type(port) is not int or not 1 <= port <= 65535:
-        return False, False
+        return {
+            "schema_version": 1,
+            "method": "exclusive-bind-close",
+            "transport": "tcp",
+            "address": "127.0.0.1",
+            "port": port,
+            "reuse_address": False,
+            "observed_at_ns": observed_at_ns,
+            "socket_created": False,
+            "bind_attempted": False,
+            "bind_succeeded": False,
+            "socket_closed": None,
+            "result": "unobservable",
+            "error_errno": None,
+            "error_type": "InvalidPort",
+            "observation_complete": False,
+        }
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-            probe.bind(("127.0.0.1", port))
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        socket_created = True
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        bind_attempted = True
+        probe.bind(("127.0.0.1", port))
+        bind_succeeded = True
     except OSError as exc:
-        if exc.errno == errno.EADDRINUSE:
-            return True, True
-        return False, False
-    return False, True
+        error = exc
+    finally:
+        if probe is not None:
+            try:
+                probe.close()
+                socket_closed = True
+            except OSError as exc:
+                error = exc
+                socket_closed = False
+    if bind_succeeded and socket_closed is True:
+        result = "free"
+    elif error is not None and error.errno == errno.EADDRINUSE and socket_closed is True:
+        result = "occupied"
+    else:
+        result = "unobservable"
+    return {
+        "schema_version": 1,
+        "method": "exclusive-bind-close",
+        "transport": "tcp",
+        "address": "127.0.0.1",
+        "port": port,
+        "reuse_address": False,
+        "observed_at_ns": observed_at_ns,
+        "socket_created": socket_created,
+        "bind_attempted": bind_attempted,
+        "bind_succeeded": bind_succeeded,
+        "socket_closed": socket_closed,
+        "result": result,
+        "error_errno": error.errno if error is not None else None,
+        "error_type": type(error).__name__ if error is not None else None,
+        "observation_complete": result in ("free", "occupied"),
+    }
+
+
+def _required_port_observations() -> dict[int, dict[str, Any]]:
+    return {
+        port: _exclusive_bind_port_observation(port) for port in REQUIRED_PORTS
+    }
 
 
 def _port_is_free(port: int) -> bool:
@@ -1219,6 +1350,7 @@ def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
     start = _parse_utc_timestamp(value.get("window_start"))
     end = _parse_utc_timestamp(value.get("window_end"))
     ports_free = value.get("ports_free")
+    after_teardown_socket_pids = value.get("after_teardown_socket_pids")
     return bool(
         value.get("event") == "released"
         and value.get("booking_id") == booking_id
@@ -1228,10 +1360,23 @@ def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
         and start <= release_time <= end
         and value.get("server_stopped") is True
         and value.get("after_teardown_socket_sample_observed") is True
-        and value.get("after_teardown_socket_pids") == []
+        and isinstance(after_teardown_socket_pids, list)
+        and all(
+            type(pid) is int and pid > 0 for pid in after_teardown_socket_pids
+        )
+        and after_teardown_socket_pids
+        == sorted(set(after_teardown_socket_pids))
+        and _valid_evidence_path(value.get("after_teardown_socket_sample_path"))
+        and isinstance(value.get("after_teardown_socket_sample_sha256"), str)
+        and _SHA256.fullmatch(value.get("after_teardown_socket_sample_sha256", ""))
+        is not None
         and isinstance(ports_free, Mapping)
-        and dict(ports_free) == {str(port): True for port in REQUIRED_PORTS}
+        and set(ports_free) == {str(port) for port in REQUIRED_PORTS}
+        and all(ports_free.get(str(port)) is True for port in REQUIRED_PORTS)
         and _valid_evidence_path(value.get("evidence_path"))
+        and type(value.get("teardown_evidence_schema_version")) is int
+        and value.get("teardown_evidence_schema_version") == 1
+        and _valid_evidence_path(value.get("teardown_evidence_path"))
     )
 
 
@@ -2942,6 +3087,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     socket_pid_samples: list[dict[str, Any]] = []
     process_census: dict[str, Any] | None = None
     shutdown_request: dict[str, Any] | None = None
+    teardown_port_observations: dict[int, dict[str, Any]] = {}
     try:
         if run_directory is None:
             raise CharacterizationError("profile_evidence_directory_unavailable")
@@ -3072,7 +3218,12 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "host_server_stop_failed"
         else:
             server_stopped = process.poll() is not None
-        port_status = _required_port_status()
+        teardown_port_observations = _required_port_observations()
+        port_status = {
+            port: observation.get("result") == "free"
+            and observation.get("observation_complete") is True
+            for port, observation in teardown_port_observations.items()
+        }
         port_free = _ports_are_free(port_status)
         if not port_free:
             failure_code = failure_code or _port_failure_code(
@@ -3260,6 +3411,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 if run_directory is not None
                 else ""
             )
+            teardown_evidence_path = (
+                (run_directory / "teardown-evidence.json").relative_to(root).as_posix()
+                if run_directory is not None
+                else ""
+            )
             lock_released = lock.release(
                 {
                     **lock_record,
@@ -3272,8 +3428,16 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                         str(port): port_status[port] for port in REQUIRED_PORTS
                     },
                     "after_teardown_socket_sample_observed": True,
-                    "after_teardown_socket_pids": [],
+                    "after_teardown_socket_pids": after_teardown_sample.get("pids"),
+                    "after_teardown_socket_sample_path": after_teardown_sample.get(
+                        "evidence_path"
+                    ),
+                    "after_teardown_socket_sample_sha256": after_teardown_sample.get(
+                        "evidence_sha256"
+                    ),
                     "evidence_path": evidence_path,
+                    "teardown_evidence_schema_version": 1,
+                    "teardown_evidence_path": teardown_evidence_path,
                 }
             )
         if not lock_released:
@@ -3301,6 +3465,151 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         failure_code = failure_code or "process_census_incomplete"
 
     if run_directory is not None:
+        teardown_evidence_path = run_directory / "teardown-evidence.json"
+        teardown_evidence_relative = teardown_evidence_path.relative_to(root).as_posix()
+        after_teardown_sample = next(
+            (
+                sample
+                for sample in socket_pid_samples
+                if sample.get("phase") == "after_teardown"
+            ),
+            None,
+        )
+        worker_result_path = _worker_result_path_for_run(args.run_id, preflight_run_id)
+        shutdown_request_path = _worker_shutdown_request_path_for_run(
+            args.run_id, preflight_run_id
+        )
+        try:
+            worker_result_raw = worker_result_path.read_bytes()
+            worker_result_sha256 = hashlib.sha256(worker_result_raw).hexdigest()
+        except OSError:
+            worker_result_sha256 = None
+        try:
+            shutdown_request_raw = shutdown_request_path.read_bytes()
+            shutdown_request_sha256 = hashlib.sha256(shutdown_request_raw).hexdigest()
+        except OSError:
+            shutdown_request_sha256 = None
+        worker_returncode = (
+            getattr(process, "returncode", None) if process is not None else None
+        )
+        if worker_returncode is None and process is not None:
+            worker_returncode = getattr(process, "return_code", None)
+        worker_reaped = bool(
+            process is not None
+            and process.poll() is not None
+            and type(worker_returncode) is int
+        )
+        worker_stop = {
+            "observed": worker_reaped,
+            "worker_pid": process.pid if process is not None else None,
+            "process_group_id": process.pid if process is not None else None,
+            "stop_operation": "owned-process-group-wait",
+            "requested_signal": (
+                shutdown_request.get("signal_number")
+                if isinstance(shutdown_request, Mapping)
+                else None
+            ),
+            "shutdown_request_path": (
+                shutdown_request_path.relative_to(root).as_posix()
+                if shutdown_request_path.is_file()
+                else None
+            ),
+            "shutdown_request_sha256": shutdown_request_sha256,
+            "worker_result_path": (
+                worker_result_path.relative_to(root).as_posix()
+                if worker_result_path.is_file()
+                else None
+            ),
+            "worker_result_sha256": worker_result_sha256,
+            "server_returned": (
+                result.get("server_returned") if isinstance(result, Mapping) else None
+            ),
+            "interrupted": (
+                result.get("interrupted") if isinstance(result, Mapping) else None
+            ),
+            "graceful_shutdown_requested": (
+                result.get("graceful_shutdown_requested")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "signal_received_at_ns": (
+                result.get("shutdown_signal_received_at_ns")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "returncode": worker_returncode,
+            "reaped": worker_reaped,
+            "observed_at_ns": time.time_ns(),
+        }
+        lock_release_evidence = {
+            "release_attempted": bool(getattr(lock, "release_attempted", False)),
+            "lock_directory_removed": bool(
+                getattr(lock, "lock_directory_removed", False)
+            ),
+            "release_succeeded": lock_released,
+            "booking_record": dict(lock_record),
+            "release_record": getattr(lock, "release_record", None),
+            "durable_record": getattr(lock, "release_log_reference", None),
+        }
+        teardown_sidecar = {
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "preflight_run_id": preflight_run_id,
+            "source_sha": args.source_sha,
+            "runner_source_sha256": hashlib.sha256(
+                Path(__file__).read_bytes()
+            ).hexdigest(),
+            "booking_id": lock_record.get("booking_id"),
+            "controller_pid": os.getpid(),
+            "worker_stop": worker_stop,
+            "port_observations": {
+                str(port): teardown_port_observations.get(port)
+                for port in REQUIRED_PORTS
+            },
+            "socket_census": {
+                "phase": "after_teardown",
+                "path": (
+                    after_teardown_sample.get("evidence_path")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "sha256": (
+                    after_teardown_sample.get("evidence_sha256")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "observed": (
+                    after_teardown_sample.get("observed")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else False
+                ),
+                "pids": (
+                    after_teardown_sample.get("pids")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "listener_pids": (
+                    after_teardown_sample.get("listener_pids")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+            },
+            "shared_lock": lock_release_evidence,
+        }
+        teardown_evidence_descriptor: dict[str, Any] | None = None
+        try:
+            _write_json(teardown_evidence_path, teardown_sidecar)
+            teardown_evidence_descriptor = {
+                "path": teardown_evidence_relative,
+                "sha256": hashlib.sha256(
+                    teardown_evidence_path.read_bytes()
+                ).hexdigest(),
+            }
+        except (CharacterizationError, OSError, ValueError) as exc:
+            failure_code = failure_code or (
+                "teardown_evidence_write_failed_" + type(exc).__name__
+            )
+
         calls = result.get("calls") if isinstance(result, Mapping) else []
         if not isinstance(calls, list):
             calls = []
@@ -3424,6 +3733,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 "port_8370_free": port_status.get(PLAYER_PORT) is True,
                 "lock_released": lock_released,
             },
+            "teardown_evidence": teardown_evidence_descriptor,
         }
         evidence_path = run_directory / "profile-evidence.json"
         _write_json(evidence_path, evidence)

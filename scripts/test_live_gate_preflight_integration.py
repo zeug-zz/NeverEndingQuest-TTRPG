@@ -7,12 +7,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import errno
 import os
+import signal
 import shutil
 import sys
 import tempfile
 import unittest
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,12 +38,25 @@ from scripts.live_gate_preflight_controller import (
 )
 from scripts import live_gate_preflight_sandbox as sandbox
 from scripts import live_gate_preflight_profile_runner as profile_runner
+from scripts import live_gate_preflight_retained as retained
 from scripts import live_gate_preflight_safety as safety
 from scripts.mapping_pilot import launcher, row_runner, server
 
 
 SOURCE_SHA = "a" * 40
 RUN_ID = "row-integration-test"
+
+
+def _synthetic_call_site(
+    source_file: str = "scripts/live_gate_preflight_controller.py", count: int = 1
+) -> dict[str, Any]:
+    source_bytes = (PROJECT_ROOT / source_file).read_bytes()
+    return {
+        "source_file": source_file,
+        "source_line": 1,
+        "source_file_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "count": count,
+    }
 
 
 class _FakeDecodeScope:
@@ -107,6 +125,53 @@ class _FakeServerLauncher:
 
 
 class TestPreflightRowIntegration(unittest.TestCase):
+    def setUp(self) -> None:
+        global RUN_ID
+        RUN_ID = "rtest-" + uuid.uuid4().hex[:12]
+        self.retained_run_directory = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+        )
+        self.addCleanup(
+            shutil.rmtree, self.retained_run_directory, ignore_errors=True
+        )
+        self.fake_common_directory: Path | None = None
+        self._git_common_patch = mock.patch.object(
+            profile_runner,
+            "_git_common_directory",
+            side_effect=self._fake_git_common_directory,
+        )
+        self._git_common_patch.start()
+        self.addCleanup(self._git_common_patch.stop)
+
+    def _fake_git_common_directory(self) -> Path:
+        if self.fake_common_directory is None:
+            raise AssertionError("synthetic durable lock directory was not prepared")
+        return self.fake_common_directory
+
+    @staticmethod
+    def _synthetic_free_bind_observation(port: int) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "method": "exclusive-bind-close",
+            "transport": "tcp",
+            "address": "127.0.0.1",
+            "port": port,
+            "reuse_address": False,
+            "observed_at_ns": 2_000_003,
+            "socket_created": True,
+            "bind_attempted": True,
+            "bind_succeeded": True,
+            "socket_closed": True,
+            "result": "free",
+            "error_errno": None,
+            "error_type": None,
+            "observation_complete": True,
+        }
+
     @staticmethod
     def _caller_declared_identity(
         plan: controller.PreflightRowPlan,
@@ -181,8 +246,15 @@ class TestPreflightRowIntegration(unittest.TestCase):
             resume_checkpoint_sha256=resume_checkpoint_sha256,
         )
 
-    @staticmethod
-    def _fake_characterization(args: Any) -> tuple[dict[str, Any], str, str]:
+    def _fake_characterization(
+        self,
+        args: Any,
+        *,
+        driver_exchange: dict[str, Any] | None = None,
+        observed_call_count: int = 1,
+        observed_call_sites: list[dict[str, Any]] | None = None,
+        server_returned: bool = True,
+    ) -> tuple[dict[str, Any], str, str]:
         command = profile_runner._host_command(
             fixture_id=args.fixture_id,
             party_size=args.party_size,
@@ -195,13 +267,526 @@ class TestPreflightRowIntegration(unittest.TestCase):
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=args.preflight_run_id,
         )
-        call_site = {
-            "source_file": "scripts/example_router_call.py",
-            "source_line": 1,
-            "source_file_sha256": "c" * 64,
-            "count": 1,
+        rows, _reserves = _load_frozen_row_ids(None)
+        frozen_row = next(row for row in rows if row["row_id"] == args.planned_row_id)
+        profile_map, _coverage = _load_profiles([row["row_id"] for row in rows])
+        plan = _resolve_row_plan(
+            args.planned_row_id,
+            prereg_root=None,
+            expected_row=frozen_row,
+            profiles=profile_map,
+        )
+        call_sites = observed_call_sites or [
+            _synthetic_call_site(count=observed_call_count)
+        ]
+        call_count = sum(site["count"] for site in call_sites)
+        pythonpath = safety.expected_guarded_pythonpath(PROJECT_ROOT)
+        calls = [
+            {
+                "sequence": sequence,
+                "task": "dm_main",
+                "source_file": site["source_file"],
+                "source_line": site["source_line"],
+                "source_file_sha256": site["source_file_sha256"],
+                "source_sha": args.source_sha,
+                "command": command,
+                "pythonpath": pythonpath,
+            }
+            for sequence, site in enumerate(
+                [site for site in call_sites for _ in range(site["count"])], start=1
+            )
+        ]
+        evidence_directory = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / args.preflight_run_id
+            / "preflight"
+            / "rows"
+            / args.run_id
+        )
+        evidence_directory.mkdir(parents=True, exist_ok=True)
+        controller_pid, host_prelaunch_pid, host_worker_pid = 101, 102, 103
+        interpreter = profile_runner._interpreter_identity()
+        host_cwd = str(PROJECT_ROOT / "tmp" / "combat_capture")
+        runner_command = [
+            str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+            "-m",
+            "scripts.live_gate_preflight_profile_runner",
+            "--synthetic-controller",
+            "--run-id",
+            args.run_id,
+        ]
+
+        def command_hash(argv: list[str]) -> str:
+            return hashlib.sha256(
+                json.dumps(argv, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+
+        def process_events(
+            pid: int, role: str, argv: list[str], cwd: str
+        ) -> list[dict[str, Any]]:
+            common = {
+                "schema_version": 1,
+                "pid": pid,
+                "process_group_id": pid,
+                "process_role": role,
+                "run_id": args.run_id,
+                "target_host": None,
+                "target_port": None,
+                "target_host_sha256": None,
+                "command_sha256": None,
+                "child_pid": None,
+                "child_is_python": None,
+                "guard_active": None,
+                "interpreter": None,
+                "working_directory": None,
+            }
+            return [
+                {
+                    **common,
+                    "sequence": 1,
+                    "event_type": "guard_startup",
+                    "observed_at_ns": 1_000_001,
+                    "operation": None,
+                    "decision": None,
+                    "command_sha256": command_hash(argv),
+                    "guard_active": True,
+                    "interpreter": interpreter,
+                    "working_directory": cwd,
+                },
+                {
+                    **common,
+                    "sequence": 2,
+                    "event_type": "network_attempt",
+                    "observed_at_ns": 1_000_002,
+                    "operation": "connect",
+                    "decision": "denied",
+                    "target_host": "192.0.2.1",
+                    "target_port": 8360,
+                },
+                {
+                    **common,
+                    "sequence": 3,
+                    "event_type": "subprocess_attempt",
+                    "observed_at_ns": 1_000_003,
+                    "operation": "Popen",
+                    "decision": "denied",
+                    "command_sha256": "d" * 64,
+                },
+            ]
+
+        specs = (
+            (
+                "controller-startup",
+                "parent",
+                controller_pid,
+                runner_command,
+                str(evidence_directory),
+            ),
+            (
+                "host-prelaunch",
+                "host",
+                host_prelaunch_pid,
+                command,
+                host_cwd,
+            ),
+            ("host-startup", "host", host_worker_pid, command, host_cwd),
+        )
+        canaries: list[dict[str, Any]] = []
+        snapshots: dict[str, list[dict[str, Any]]] = {}
+        journal: list[dict[str, Any]] = []
+        for stage, role, pid, argv, cwd in specs:
+            events = process_events(pid, role, argv, cwd)
+            snapshots[stage] = events
+            journal.extend(events)
+            canaries.append(
+                {
+                    "canary_stage": stage,
+                    "process_role": role,
+                    "pid": pid,
+                    "startup_observed_at_ns": 1_000_000 + pid,
+                    "command": argv,
+                    "command_sha256": command_hash(argv),
+                    "environment_sha256": "a" * 64 if role == "parent" else "b" * 64,
+                    "working_directory": cwd,
+                    "guard_active": True,
+                    "non_loopback_connect_denied": True,
+                    "subprocess_launch_denied": True,
+                    "interpreter": interpreter,
+                    "guard_events_complete": True,
+                    "guard_events": events,
+                }
+            )
+        journal_path = evidence_directory / "guard-events.jsonl"
+        journal_bytes = b"".join(
+            json.dumps(
+                event, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ).encode("ascii")
+            + b"\n"
+            for event in journal
+        )
+        journal_path.write_bytes(journal_bytes)
+        journal_descriptor = {
+            "path": journal_path.relative_to(PROJECT_ROOT).as_posix(),
+            "sha256": hashlib.sha256(journal_bytes).hexdigest(),
+            "event_count": len(journal),
+            "complete": True,
         }
+
+        def scope(stage: str, selector: str, role: str, source: str) -> dict[str, Any]:
+            report = next(item for item in canaries if item["canary_stage"] == stage)
+            return {
+                "selector": selector,
+                "pid": report["pid"],
+                "process_group_id": report["pid"],
+                "process_role": role,
+                "launch_source": source,
+                "command_sha256": report["command_sha256"],
+                "environment_sha256": report["environment_sha256"],
+                "working_directory_sha256": hashlib.sha256(
+                    report["working_directory"].encode("utf-8")
+                ).hexdigest(),
+            }
+
+        all_scopes = [
+            scope("controller-startup", "pid", "parent", "controller-startup-canary"),
+            scope("host-prelaunch", "process_group", "host", "host-prelaunch-canary-session"),
+            scope("host-startup", "process_group", "host", "host-worker-start-new-session"),
+        ]
+        rows_by_phase = {
+            "before_host": [],
+            "host_ready": [
+                {
+                    "protocol": "tcp4",
+                    "local": {"host": "127.0.0.1", "port": 8360},
+                    "foreign": {"host": "*", "port": None},
+                    "state": "LISTEN",
+                    "pid": host_worker_pid,
+                },
+                {
+                    "protocol": "tcp4",
+                    "local": {"host": "127.0.0.1", "port": 59635},
+                    "foreign": {"host": "127.0.0.1", "port": 8360},
+                    "state": "ESTABLISHED",
+                    "pid": controller_pid,
+                },
+            ],
+            "after_teardown": [
+                {
+                    "protocol": "tcp4",
+                    "local": {"host": "127.0.0.1", "port": 59635},
+                    "foreign": {"host": "127.0.0.1", "port": 8360},
+                    "state": "TIME_WAIT",
+                    "pid": controller_pid,
+                }
+            ],
+        }
+        census_samples: list[dict[str, Any]] = []
+        for phase in ("before_host", "host_ready", "after_teardown"):
+            phase_canaries = canaries[:2] if phase == "before_host" else canaries
+            phase_events = [
+                event
+                for report in phase_canaries
+                for event in snapshots[report["canary_stage"]]
+            ]
+            phase_scopes = all_scopes[:2] if phase == "before_host" else all_scopes
+            rows = rows_by_phase[phase]
+            pids = sorted({row["pid"] for row in rows})
+            count_fields = (
+                "internet_rows", "unattributed_rows", "pid_zero_rows",
+                "foreign_process_rows", "run_pid_rows", "malformed_run_pid_rows",
+            )
+            aggregate = {key: 0 for key in count_fields}
+            protocol_samples: list[dict[str, Any]] = []
+            for protocol in ("tcp", "udp"):
+                protocol_count = sum(row["protocol"].startswith(protocol) for row in rows)
+                counts = {key: 0 for key in count_fields}
+                counts["internet_rows"] = protocol_count
+                counts["run_pid_rows"] = protocol_count
+                for key in count_fields:
+                    aggregate[key] += counts[key]
+                protocol_samples.append(
+                    {
+                        "protocol": protocol,
+                        "command_evidence": {
+                            "command": ["/usr/sbin/netstat", "-anv", "-W", "-p", protocol],
+                            "returncode": 0,
+                            "failure": None,
+                            "stdout_byte_count": 1,
+                            "stdout_sha256": "e" * 64,
+                            "stdout_truncated": False,
+                            "stdout_prefix_base64": "",
+                            "stderr_byte_count": 0,
+                            "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+                            "stderr_truncated": False,
+                            "stderr_prefix_base64": "",
+                            "observed": True,
+                        },
+                        "counts": counts,
+                        "parseable": True,
+                    }
+                )
+            sidecar = {
+                "schema_version": 3,
+                "run_id": args.run_id,
+                "phase": phase,
+                "observer": "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing",
+                "process_scopes": phase_scopes,
+                "run_process_pids": sorted({event["pid"] for event in phase_events}),
+                "guard_startup_pids": sorted(
+                    event["pid"]
+                    for event in phase_events
+                    if event["event_type"] == "guard_startup"
+                ),
+                "protocol_samples": protocol_samples,
+                "aggregate_counts": aggregate,
+                "run_owned_rows": rows,
+                "pids": pids,
+                "observed": True,
+                "failure_code": None,
+            }
+            sidecar_path = evidence_directory / ("socket-sample-%s.json" % phase)
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            listeners = sorted(
+                row["pid"]
+                for row in rows
+                if row["protocol"] in ("tcp", "tcp4", "tcp6")
+                and row["state"] == "LISTEN"
+                and row["local"]["port"] == 8360
+            )
+            census_samples.append(
+                {
+                    "phase": phase,
+                    "port": 8360,
+                    "observed": True,
+                    "pids": pids,
+                    "listener_pids": listeners,
+                    "failure_code": None,
+                    "evidence_path": sidecar_path.relative_to(PROJECT_ROOT).as_posix(),
+                    "evidence_sha256": hashlib.sha256(sidecar_path.read_bytes()).hexdigest(),
+                }
+            )
+        socket_owners = sorted({pid for sample in census_samples for pid in sample["pids"]})
+        canary_pids = [item["pid"] for item in canaries]
+        census = {
+            "controller_pid": controller_pid,
+            "driver_pid": controller_pid,
+            "host_prelaunch_pid": host_prelaunch_pid,
+            "host_worker_pid": host_worker_pid,
+            "launched_pids": sorted((controller_pid, host_prelaunch_pid, host_worker_pid)),
+            "socket_owner_pids": socket_owners,
+            "python_child_pids": [],
+            "python_pids": sorted((controller_pid, host_prelaunch_pid, host_worker_pid)),
+            "guarded_pids": canary_pids,
+            "canary_pids": canary_pids,
+            "uncovered_pids": [],
+            "guard_events_valid": True,
+            "socket_pid_samples": census_samples,
+            "complete": True,
+        }
+        request = {
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "controller_pid": controller_pid,
+            "worker_pid": host_worker_pid,
+            "process_group_id": host_worker_pid,
+            "signal_number": int(signal.SIGINT),
+            "requested_at_ns": 2_000_000,
+            "readiness_succeeded": True,
+            "exchange_succeeded": True,
+        }
+        (evidence_directory / "shutdown-request.json").write_text(
+            json.dumps(request, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        exchange = dict(driver_exchange or {})
+        exchange.update(
+            {
+                "status": "completed",
+                "step_id": plan.first_turn["step_id"],
+                "start_ready": True,
+                "active_character_set": True,
+                "turn_completed": True,
+                "turn_timed_out": False,
+                "game_output_count": max(1, int(exchange.get("game_output_count", 1))),
+                "failure_code": None,
+                "process_pid": controller_pid,
+            }
+        )
+        received_at_ns = 2_000_001
+        startup_report = {key: value for key, value in canaries[2].items() if key != "canary_stage"}
+        worker_result = {
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "source_sha": args.source_sha,
+            "command": command,
+            "pythonpath": pythonpath,
+            "invocation_identity": safety.compare_invocation_identity(
+                {"command": command, "working_directory": host_cwd, "pythonpath": pythonpath},
+                {"command": command, "working_directory": host_cwd, "pythonpath": pythonpath},
+            ),
+            "interpreter": interpreter,
+            "startup_canary_report": json.dumps(
+                startup_report, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ),
+            "guard_active": True,
+            "provider_environment_keys_blank": True,
+            "sandbox_provider_key_placeholder": safety.SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+            "proxy_values_blank": True,
+            "real_project_config_loaded": False,
+            "sandbox_config_loaded": True,
+            "startup_guard_from_sitecustomize": True,
+            "sandbox_config_origin_guard_active": True,
+            "server_returned": server_returned,
+            "interrupted": True,
+            "graceful_shutdown_requested": True,
+            "shutdown_request": request,
+            "shutdown_signal_received_at_ns": received_at_ns,
+            "outcome": "completed",
+            "failure_code": None,
+            "stub_failure_code": None,
+            "call_count": call_count,
+            "calls": calls,
+        }
+        (evidence_directory / "worker-result.json").write_text(
+            json.dumps(worker_result, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        lock_record = profile_runner._build_live_window_lock_record(
+            run_id=args.run_id,
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            planned_row_id=args.planned_row_id,
+            source_sha=args.source_sha,
+            now=datetime.now(timezone.utc),
+        )
+        evidence_path = (
+            evidence_directory / "profile-evidence.json"
+        ).relative_to(PROJECT_ROOT).as_posix()
+        teardown_path = (
+            evidence_directory / "teardown-evidence.json"
+        ).relative_to(PROJECT_ROOT).as_posix()
+        release_record = {
+            **lock_record,
+            "event": "released",
+            "released_at_utc": profile_runner._format_utc_timestamp(
+                datetime.now(timezone.utc)
+            ),
+            "server_stopped": True,
+            "ports_free": {"8360": True, "8370": True},
+            "after_teardown_socket_sample_observed": True,
+            "after_teardown_socket_pids": census_samples[2]["pids"],
+            "after_teardown_socket_sample_path": census_samples[2][
+                "evidence_path"
+            ],
+            "after_teardown_socket_sample_sha256": census_samples[2][
+                "evidence_sha256"
+            ],
+            "evidence_path": evidence_path,
+            "teardown_evidence_schema_version": 1,
+            "teardown_evidence_path": teardown_path,
+        }
+        self.fake_common_directory = (
+            self.retained_run_directory / "fake-git-common" / args.run_id
+        )
+        coordination = self.fake_common_directory / "neq-coordination"
+        coordination.mkdir(parents=True, exist_ok=True)
+        booking_line = json.dumps(
+            lock_record, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii") + b"\n"
+        release_line = json.dumps(
+            release_record, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii") + b"\n"
+        booking_log = coordination / "bookings.log"
+        booking_log.write_bytes(booking_line + release_line)
+        durable_record = {
+            "path": booking_log.relative_to(PROJECT_ROOT).as_posix(),
+            "byte_offset": len(booking_line),
+            "byte_length": len(release_line),
+            "line_sha256": hashlib.sha256(release_line).hexdigest(),
+        }
+        after_teardown_sample = census_samples[2]
+        teardown_sidecar = {
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "preflight_run_id": args.preflight_run_id,
+            "source_sha": args.source_sha,
+            "runner_source_sha256": hashlib.sha256(
+                Path(profile_runner.__file__).read_bytes()
+            ).hexdigest(),
+            "booking_id": lock_record["booking_id"],
+            "controller_pid": controller_pid,
+            "worker_stop": {
+                "observed": True,
+                "worker_pid": host_worker_pid,
+                "process_group_id": host_worker_pid,
+                "stop_operation": "owned-process-group-wait",
+                "requested_signal": int(signal.SIGINT),
+                "shutdown_request_path": (
+                    evidence_directory / "shutdown-request.json"
+                ).relative_to(PROJECT_ROOT).as_posix(),
+                "shutdown_request_sha256": hashlib.sha256(
+                    (evidence_directory / "shutdown-request.json").read_bytes()
+                ).hexdigest(),
+                "worker_result_path": (
+                    evidence_directory / "worker-result.json"
+                ).relative_to(PROJECT_ROOT).as_posix(),
+                "worker_result_sha256": hashlib.sha256(
+                    (evidence_directory / "worker-result.json").read_bytes()
+                ).hexdigest(),
+                "server_returned": server_returned,
+                "interrupted": True,
+                "graceful_shutdown_requested": True,
+                "signal_received_at_ns": received_at_ns,
+                "returncode": 0,
+                "reaped": True,
+                "observed_at_ns": received_at_ns + 1,
+            },
+            "port_observations": {
+                "8360": self._synthetic_free_bind_observation(8360),
+                "8370": self._synthetic_free_bind_observation(8370),
+            },
+            "socket_census": {
+                "phase": "after_teardown",
+                "path": after_teardown_sample["evidence_path"],
+                "sha256": after_teardown_sample["evidence_sha256"],
+                "observed": after_teardown_sample["observed"],
+                "pids": after_teardown_sample["pids"],
+                "listener_pids": after_teardown_sample["listener_pids"],
+            },
+            "shared_lock": {
+                "release_attempted": True,
+                "lock_directory_removed": True,
+                "release_succeeded": True,
+                "booking_record": lock_record,
+                "release_record": release_record,
+                "durable_record": durable_record,
+            },
+        }
+        teardown_file = evidence_directory / "teardown-evidence.json"
+        teardown_file.write_text(
+            json.dumps(
+                teardown_sidecar,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="ascii",
+        )
         evidence = {
+            "schema_version": 1,
+            "authorization_ruling_id": profile_runner.AUTHORIZATION_RULING_ID,
+            "profile_id": next(
+                profile["profile_id"]
+                for profile in plan.lifecycle_profiles
+                if profile["fixture_id"] == args.fixture_id
+            ),
             "outcome": "completed",
             "run_id": args.run_id,
             "source_sha": args.source_sha,
@@ -209,47 +794,161 @@ class TestPreflightRowIntegration(unittest.TestCase):
             "fixture_id": args.fixture_id,
             "party_size": args.party_size,
             "lifecycle": args.lifecycle,
+            "arm": args.arm,
+            "sandbox_root": "tmp/combat_capture",
             "command": command,
             "working_directory": "tmp/combat_capture",
-            "pythonpath": safety.expected_guarded_pythonpath(PROJECT_ROOT),
-            "invocation_identity": {"status": "matched", "mismatches": []},
+            "pythonpath": pythonpath,
+            "invocation_identity": worker_result["invocation_identity"],
+            "process_canaries": canaries,
+            "guard_event_journal": journal_descriptor,
+            "process_census": census,
+            "worker_shutdown": {
+                "server_returned": server_returned,
+                "interrupted": True,
+                "graceful_shutdown_requested": True,
+                "signal_received_at_ns": received_at_ns,
+                "request": request,
+            },
+            "controller_interpreter": interpreter,
+            "worker_interpreter": interpreter,
             "network_guard_active": True,
             "provider_environment_keys_blank": True,
+            "sandbox_provider_key_placeholder": safety.SANDBOX_PROVIDER_KEY_PLACEHOLDER,
             "proxy_values_blank": True,
             "real_project_config_loaded": False,
             "sandbox_config_loaded": True,
             "startup_guard_from_sitecustomize": True,
             "sandbox_config_origin_guard_active": True,
+            "driver_exchange": exchange,
+            "calls": calls,
+            "call_count": call_count,
+            "call_sites": call_sites,
+            "host_command": command,
+            "runner_command": runner_command,
             "failure_code": None,
-            "worker_shutdown": {
-                "server_returned": True,
-                "interrupted": True,
-                "graceful_shutdown_requested": True,
-                "request": {
-                    "readiness_succeeded": True,
-                    "exchange_succeeded": True,
-                },
-            },
             "teardown": {
                 "server_stopped": True,
                 "port_8360_free": True,
                 "port_8370_free": True,
                 "lock_released": True,
             },
-            "calls": [{"stub": True}],
-            "call_count": 1,
-            "call_sites": [call_site],
-            "driver_exchange": {
-                "status": "completed",
-                "turn_completed": True,
-                "game_output_count": 1,
+            "teardown_evidence": {
+                "path": teardown_path,
+                "sha256": hashlib.sha256(teardown_file.read_bytes()).hexdigest(),
             },
         }
-        evidence_path = (
-            "tmp/router-rollout/live-gate-preflight/%s/preflight/rows/%s/"
-            "profile-evidence.json" % (args.preflight_run_id, args.run_id)
+        evidence_file = evidence_directory / "profile-evidence.json"
+        evidence_file.write_text(
+            json.dumps(evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
         )
-        return evidence, evidence_path, "b" * 64
+        return (
+            evidence,
+            evidence_file.relative_to(PROJECT_ROOT).as_posix(),
+            hashlib.sha256(evidence_file.read_bytes()).hexdigest(),
+        )
+
+    def _retained_case(
+        self, *, server_returned: bool = True
+    ) -> tuple[controller.PreflightRowPlan, str, dict[str, Any], dict[str, Any]]:
+        rows, _reserves = _load_frozen_row_ids(None)
+        profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
+        frozen_row = next(row for row in rows if row["row_id"] == "E01")
+        plan = _resolve_row_plan(
+            "E01", prereg_root=None, expected_row=frozen_row, profiles=profiles
+        )
+        row_run_id = "pf-retained-" + uuid.uuid4().hex[:10]
+        args = SimpleNamespace(
+            fixture_id=plan.fixture_id,
+            party_size=plan.party_size,
+            lifecycle="startup",
+            source_sha=SOURCE_SHA,
+            run_id=row_run_id,
+            planned_row_id=plan.row_id,
+            arm=plan.arm,
+            resume_checkpoint_sha256=None,
+            preflight_run_id=RUN_ID,
+        )
+        evidence, evidence_path, evidence_sha256 = self._fake_characterization(
+            args, server_returned=server_returned
+        )
+        intended_identity = planned_worker_identity(
+            plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            source_sha=SOURCE_SHA,
+            row_run_id=row_run_id,
+            resume_checkpoint_sha256=None,
+            preflight_run_id=RUN_ID,
+        )
+        result = {
+            "evidence": evidence,
+            "evidence_path": evidence_path,
+            "evidence_sha256": evidence_sha256,
+        }
+        return plan, row_run_id, intended_identity, result
+
+    @staticmethod
+    def _rewrite_profile_evidence(result: dict[str, Any], evidence: dict[str, Any]) -> None:
+        evidence_path = PROJECT_ROOT / result["evidence_path"]
+        raw = json.dumps(
+            evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        evidence_path.write_bytes(raw)
+        result["evidence"] = evidence
+        result["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    def _rewrite_teardown_sidecar(
+        self, result: dict[str, Any], sidecar: dict[str, Any]
+    ) -> None:
+        evidence = result["evidence"]
+        descriptor = evidence["teardown_evidence"]
+        sidecar_path = PROJECT_ROOT / descriptor["path"]
+        raw = json.dumps(
+            sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        sidecar_path.write_bytes(raw)
+        descriptor["sha256"] = hashlib.sha256(raw).hexdigest()
+        self._rewrite_profile_evidence(result, evidence)
+
+    def _rewrite_guard_journal(
+        self,
+        result: dict[str, Any],
+        evidence: dict[str, Any],
+        events: list[dict[str, Any]],
+    ) -> None:
+        descriptor = evidence["guard_event_journal"]
+        journal_path = PROJECT_ROOT / descriptor["path"]
+        raw = b"".join(
+            json.dumps(
+                event, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ).encode("ascii")
+            + b"\n"
+            for event in events
+        )
+        journal_path.write_bytes(raw)
+        descriptor["sha256"] = hashlib.sha256(raw).hexdigest()
+        descriptor["event_count"] = len(events)
+        self._rewrite_profile_evidence(result, evidence)
+
+    @staticmethod
+    def _validate_retained_case(
+        plan: controller.PreflightRowPlan,
+        row_run_id: str,
+        intended_identity: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        return retained.validate_retained_supervised_evidence(
+            result,
+            plan=plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            intended_identity=intended_identity,
+            source_sha=SOURCE_SHA,
+            row_run_id=row_run_id,
+            preflight_run_id=RUN_ID,
+        )
 
     def _intended_identities(self) -> dict[str, dict[str, Any]]:
         rows, _reserves = _load_frozen_row_ids(None)
@@ -276,6 +975,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
     def _measured_lifecycle(
         call_site: dict[str, Any], *, source_sha: str = SOURCE_SHA
     ) -> dict[str, Any]:
+        if call_site.get("source_file") == "scripts/example_router_call.py":
+            call_site = _synthetic_call_site(count=call_site["count"])
         return {
             "status": "measured-under-stub",
             "source_sha": source_sha,
@@ -536,60 +1237,31 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 first_turn=plan.first_turn,
                 driver_factory=driver_factory,
             )
-            call_sites = observed_call_sites or [
-                {
-                    "source_file": "scripts/example_router_call.py",
-                    "source_line": 1,
-                    "source_file_sha256": "c" * 64,
-                    "count": observed_call_count,
-                }
-            ]
-            return {
-                "evidence": {
-                    "outcome": "completed",
-                    "run_id": invocation.row_run_id,
-                    "source_sha": source_sha,
-                    "planned_row_id": plan.row_id,
-                    "fixture_id": invocation.fixture_id,
-                    "party_size": plan.party_size,
-                    "lifecycle": invocation.lifecycle,
-                    "command": invocation.intended_identity["command"],
-                    "working_directory": "tmp/combat_capture",
-                    "pythonpath": invocation.intended_identity["pythonpath"],
-                    "invocation_identity": {"status": "matched", "mismatches": []},
-                    "network_guard_active": True,
-                    "provider_environment_keys_blank": True,
-                    "proxy_values_blank": True,
-                    "real_project_config_loaded": False,
-                    "sandbox_config_loaded": True,
-                    "startup_guard_from_sitecustomize": True,
-                    "sandbox_config_origin_guard_active": True,
-                    "failure_code": None,
-                    "worker_shutdown": {
-                        "server_returned": True,
-                        "interrupted": True,
-                        "graceful_shutdown_requested": True,
-                        "request": {
-                            "readiness_succeeded": True,
-                            "exchange_succeeded": True,
-                        },
-                    },
-                    "teardown": {
-                        "server_stopped": True,
-                        "port_8360_free": True,
-                        "port_8370_free": True,
-                        "lock_released": True,
-                    },
-                    "calls": [{"stub": True} for _ in range(observed_call_count)],
-                    "call_count": observed_call_count,
-                    "call_sites": call_sites,
-                    "driver_exchange": exchange,
-                },
-                "evidence_path": (
-                    "tmp/router-rollout/live-gate-preflight/%s/preflight/rows/%s/"
-                    "profile-evidence.json" % (RUN_ID, invocation.row_run_id)
+            args = SimpleNamespace(
+                fixture_id=invocation.fixture_id,
+                party_size=plan.party_size,
+                lifecycle=invocation.lifecycle,
+                source_sha=source_sha,
+                run_id=invocation.row_run_id,
+                planned_row_id=plan.row_id,
+                arm=plan.arm,
+                resume_checkpoint_sha256=(
+                    invocation.resume_checkpoint.get("state_sha256")
+                    if invocation.resume_checkpoint
+                    else None
                 ),
-                "evidence_sha256": "b" * 64,
+                preflight_run_id=preflight_run_id,
+            )
+            evidence, evidence_path, evidence_sha256 = self._fake_characterization(
+                args,
+                driver_exchange=exchange,
+                observed_call_count=observed_call_count,
+                observed_call_sites=observed_call_sites,
+            )
+            return {
+                "evidence": evidence,
+                "evidence_path": evidence_path,
+                "evidence_sha256": evidence_sha256,
             }
 
         def cleanup_sandbox(
@@ -695,6 +1367,378 @@ class TestPreflightRowIntegration(unittest.TestCase):
                     resume_checkpoints=resume_checkpoints,
                 )
         return report, observed
+
+    def test_retained_reconciliation_accepts_both_attributed_shutdown_forms(self) -> None:
+        for server_returned in (True, False):
+            with self.subTest(server_returned=server_returned):
+                plan, row_run_id, identity, result = self._retained_case(
+                    server_returned=server_returned
+                )
+                summary = self._validate_retained_case(
+                    plan, row_run_id, identity, result
+                )
+                self.assertEqual(summary["outcome"], "completed")
+                self.assertTrue(summary["process_census_complete"])
+                self.assertEqual(summary["worker_teardown"]["call_count"], 1)
+
+    def test_retained_reconciliation_rejects_missing_malformed_and_tampered_files(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        guard_path = PROJECT_ROOT / result["evidence"]["guard_event_journal"]["path"]
+        guard_path.write_bytes(b"not-json\n")
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "hash differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        guard_path = PROJECT_ROOT / result["evidence"]["guard_event_journal"]["path"]
+        guard_path.unlink()
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "journal path is missing"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        guard_path = PROJECT_ROOT / evidence["guard_event_journal"]["path"]
+        malformed = b"not-json\n"
+        guard_path.write_bytes(malformed)
+        evidence["guard_event_journal"]["sha256"] = hashlib.sha256(
+            malformed
+        ).hexdigest()
+        evidence["guard_event_journal"]["event_count"] = 1
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "journal is invalid"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        worker_path = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+            / "preflight"
+            / "rows"
+            / row_run_id
+            / "worker-result.json"
+        )
+        worker_path.unlink()
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "worker result file is unavailable"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        socket_sample = result["evidence"]["process_census"]["socket_pid_samples"][2]
+        census_path = PROJECT_ROOT / socket_sample["evidence_path"]
+        census_path.unlink()
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError,
+            "socket sample evidence path is missing",
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        socket_sample = evidence["process_census"]["socket_pid_samples"][2]
+        census_path = PROJECT_ROOT / socket_sample["evidence_path"]
+        malformed_census = b"{not-json"
+        census_path.write_bytes(malformed_census)
+        socket_sample["evidence_sha256"] = hashlib.sha256(malformed_census).hexdigest()
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "socket sample is invalid"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        shutdown_path = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+            / "preflight"
+            / "rows"
+            / row_run_id
+            / "shutdown-request.json"
+        )
+        shutdown_path.unlink()
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "unavailable"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        shutdown_path = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+            / "preflight"
+            / "rows"
+            / row_run_id
+            / "shutdown-request.json"
+        )
+        shutdown_path.write_bytes(b"{not-json")
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "shutdown request is malformed"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        worker_path = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+            / "preflight"
+            / "rows"
+            / row_run_id
+            / "worker-result.json"
+        )
+        worker_result = json.loads(worker_path.read_text(encoding="utf-8"))
+        worker_result["server_returned"] = False
+        worker_path.write_text(
+            json.dumps(worker_result, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "shutdown summary differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        evidence["teardown"].pop("port_8370_free")
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "teardown"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        evidence["teardown"]["server_stopped"] = False
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "teardown"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        evidence["lifecycle"] = "resume"
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(
+            controller.PreflightControllerError,
+            "retained_supervised_evidence_reconciliation_failed",
+        ):
+            controller._validate_supervised_result(
+                result,
+                plan=plan,
+                fixture_id=plan.fixture_id,
+                lifecycle="startup",
+                intended_identity=identity,
+                source_sha=SOURCE_SHA,
+                row_run_id=row_run_id,
+                preflight_run_id=RUN_ID,
+            )
+
+    def test_retained_reconciliation_rejects_unguarded_and_foreign_egress_events(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        journal_path = PROJECT_ROOT / evidence["guard_event_journal"]["path"]
+        events = [json.loads(line) for line in journal_path.read_text().splitlines()]
+        events = [event for event in events if event["pid"] != 103]
+        self._rewrite_guard_journal(result, evidence, events)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "guard-event process identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        journal_path = PROJECT_ROOT / evidence["guard_event_journal"]["path"]
+        events = [json.loads(line) for line in journal_path.read_text().splitlines()]
+        external_attempt = next(
+            event
+            for event in events
+            if event["event_type"] == "network_attempt"
+            and event["target_host"] == "192.0.2.1"
+        )
+        external_attempt["decision"] = "allowed"
+        controller_canary = next(
+            item
+            for item in evidence["process_canaries"]
+            if item["canary_stage"] == "controller-startup"
+        )
+        allowed_attempt = dict(external_attempt)
+        allowed_attempt.update(
+            {
+                "pid": controller_canary["pid"],
+                "process_group_id": controller_canary["pid"],
+                "process_role": "parent",
+                "sequence": 4,
+                "observed_at_ns": 1_000_004,
+                "decision": "allowed",
+                "target_host": "203.0.113.1",
+                "target_port": 443,
+            }
+        )
+        events.append(allowed_attempt)
+        controller_canary["guard_events"].append(dict(allowed_attempt))
+        self._rewrite_guard_journal(result, evidence, events)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "egress"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+    def test_retained_reconciliation_rejects_active_listener_and_incomplete_teardown(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sample = evidence["process_census"]["socket_pid_samples"][2]
+        sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        listener_row = sidecar["run_owned_rows"][0]
+        listener_row["local"] = {"host": "127.0.0.1", "port": 8360}
+        listener_row["foreign"] = {"host": "*", "port": None}
+        listener_row["state"] = "LISTEN"
+        sidecar_path.write_text(
+            json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        sample["listener_pids"] = [listener_row["pid"]]
+        sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "active listener"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sample = evidence["process_census"]["socket_pid_samples"][1]
+        sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        listener_row = sidecar["run_owned_rows"][0]
+        listener_row["local"] = {"host": "127.0.0.1", "port": 8370}
+        listener_row["foreign"] = {"host": "*", "port": None}
+        listener_row["state"] = "LISTEN"
+        sidecar_path.write_text(
+            json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        sample["listener_pids"] = []
+        sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "active listener"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        evidence["teardown"]["port_8370_free"] = False
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "teardown"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+    def test_retained_teardown_sidecar_fails_closed_on_missing_tampered_and_conflicting_proof(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        sidecar_path = PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+        sidecar_path.unlink()
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "unavailable"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        sidecar_path = PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+        sidecar_path.write_bytes(b"tampered teardown bytes")
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "hash differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        malformed_sidecar = b"{not-json"
+        sidecar_path.write_bytes(malformed_sidecar)
+        evidence["teardown_evidence"]["sha256"] = hashlib.sha256(
+            malformed_sidecar
+        ).hexdigest()
+        self._rewrite_profile_evidence(result, evidence)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence is malformed"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["port_observations"]["8360"].update(
+            {
+                "bind_succeeded": False,
+                "error_errno": errno.EADDRINUSE,
+                "error_type": "OSError",
+                "result": "occupied",
+            }
+        )
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "port 8360 is occupied or unobservable"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["port_observations"]["8370"].update(
+            {
+                "bind_succeeded": False,
+                "socket_closed": False,
+                "result": "unobservable",
+                "observation_complete": False,
+            }
+        )
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "port 8370 is occupied or unobservable"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["shared_lock"]["lock_directory_removed"] = False
+        sidecar["shared_lock"]["release_succeeded"] = False
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "shared lock release"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["runner_source_sha256"] = "f" * 64
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "identity differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["booking_id"] = sidecar["booking_id"].replace("-N-", "-S-")
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "shared lock release record identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        evidence = result["evidence"]
+        sidecar_path = PROJECT_ROOT / evidence["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        durable = sidecar["shared_lock"]["durable_record"]
+        durable_path = PROJECT_ROOT / durable["path"]
+        durable_bytes = bytearray(durable_path.read_bytes())
+        durable_bytes[durable["byte_offset"] + 2] ^= 1
+        durable_path.write_bytes(durable_bytes)
+        with self.assertRaisesRegex(retained.RetainedEvidenceError, "line hash differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
 
     def test_all_26_planned_rows_cross_existing_sp3_interfaces(self) -> None:
         identities = self._intended_identities()
@@ -1048,12 +2092,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             expected_row=rows[0],
             profiles=profile_map,
         )
-        call_site = {
-            "source_file": "scripts/example_router_call.py",
-            "source_line": 1,
-            "source_file_sha256": "c" * 64,
-            "count": 1,
-        }
+        call_site = _synthetic_call_site()
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
         profile["startup"] = {
             "status": "measured-under-stub",
@@ -1093,12 +2132,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             expected_row=rows[0],
             profiles=profile_map,
         )
-        expected_site = {
-            "source_file": "scripts/example_router_call.py",
-            "source_line": 1,
-            "source_file_sha256": "c" * 64,
-            "count": 2,
-        }
+        expected_site = _synthetic_call_site(count=2)
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
         profile["startup"] = {
             "status": "measured-under-stub",
@@ -1128,12 +2162,9 @@ class TestPreflightRowIntegration(unittest.TestCase):
             expected_row=rows[0],
             profiles=profile_map,
         )
-        expected_site = {
-            "source_file": "scripts/different_router_call.py",
-            "source_line": 1,
-            "source_file_sha256": "c" * 64,
-            "count": 1,
-        }
+        expected_site = _synthetic_call_site(
+            source_file="scripts/test_live_gate_preflight_profiles.py"
+        )
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
         profile["startup"] = {
             "status": "measured-under-stub",

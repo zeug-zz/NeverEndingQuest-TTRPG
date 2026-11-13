@@ -2530,7 +2530,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             "ports_free": {"8360": True, "8370": True},
             "after_teardown_socket_sample_observed": True,
             "after_teardown_socket_pids": [],
+            "after_teardown_socket_sample_path": (
+                "tmp/profile-lock-test/socket-sample-after_teardown.json"
+            ),
+            "after_teardown_socket_sample_sha256": "a" * 64,
             "evidence_path": "tmp/profile-lock-test/profile-evidence.json",
+            "teardown_evidence_schema_version": 1,
+            "teardown_evidence_path": "tmp/profile-lock-test/teardown-evidence.json",
         }
         release.update(overrides)
         return release
@@ -3315,7 +3321,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 socket.SOL_SOCKET, socket.SO_REUSEADDR, 0
             )
             probe.bind.assert_called_once_with(("127.0.0.1", port))
-            probe.__exit__.assert_called_once()
+            probe.close.assert_called_once()
         observer.assert_not_called()
 
     def test_required_port_checks_treat_eaddrinuse_as_occupied(self) -> None:
@@ -3333,7 +3339,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             profile_runner._port_failure_code(status, "before_start"),
             "port_8360_not_free_before_start",
         )
-        probes[0].__exit__.assert_called_once()
+        probes[0].close.assert_called_once()
 
     def test_required_port_checks_fail_closed_for_inconclusive_bind_errors(self) -> None:
         probes = [mock.MagicMock(), mock.MagicMock()]
@@ -3354,6 +3360,38 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         with mock.patch.object(profile_runner.socket, "socket") as socket_factory:
             self.assertFalse(profile_runner._port_is_free(8361))
         socket_factory.assert_not_called()
+
+    def test_exclusive_bind_observation_retains_free_occupied_and_unknown_details(
+        self,
+    ) -> None:
+        free_probe = mock.MagicMock()
+        occupied_probe = mock.MagicMock()
+        unknown_probe = mock.MagicMock()
+        occupied_probe.bind.side_effect = OSError(errno.EADDRINUSE, "in use")
+        unknown_probe.bind.side_effect = OSError(errno.EACCES, "denied")
+        with mock.patch.object(
+            profile_runner.socket,
+            "socket",
+            side_effect=[free_probe, occupied_probe, unknown_probe],
+        ):
+            free = profile_runner._exclusive_bind_port_observation(8360)
+            occupied = profile_runner._exclusive_bind_port_observation(8360)
+            unknown = profile_runner._exclusive_bind_port_observation(8370)
+
+        self.assertEqual(free["result"], "free")
+        self.assertTrue(free["bind_succeeded"])
+        self.assertTrue(free["socket_closed"])
+        self.assertTrue(free["observation_complete"])
+        self.assertEqual(occupied["result"], "occupied")
+        self.assertEqual(occupied["error_errno"], errno.EADDRINUSE)
+        self.assertTrue(occupied["socket_closed"])
+        self.assertTrue(occupied["observation_complete"])
+        self.assertEqual(unknown["result"], "unobservable")
+        self.assertEqual(unknown["error_errno"], errno.EACCES)
+        self.assertFalse(unknown["observation_complete"])
+        for observation in (free, occupied, unknown):
+            self.assertEqual(observation["method"], "exclusive-bind-close")
+            self.assertFalse(observation["reuse_address"])
 
     def _obsolete_lsof_test_sanitized_environment_observer_sees_only_own_loopback_socket(self) -> None:
         self.assertTrue(Path(profile_runner.LSOF_EXECUTABLE).is_file())
@@ -4258,6 +4296,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.return_code: int | None = None
+                self.returncode: int | None = None
 
             def poll(self) -> int | None:
                 return self.return_code
@@ -4269,6 +4308,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 self.record = dict(record)
                 self.release_record: dict | None = None
                 self.released = False
+                self.release_attempted = False
+                self.release_succeeded = False
+                self.lock_directory_removed = False
+                self.release_log_reference: dict | None = None
                 created_locks.append(self)
 
             def acquire(self) -> bool:
@@ -4277,6 +4320,15 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             def release(self, record: dict) -> bool:
                 self.release_record = dict(record)
                 self.released = True
+                self.release_attempted = True
+                self.release_succeeded = True
+                self.lock_directory_removed = True
+                self.release_log_reference = {
+                    "path": "tmp/fake-bookings.log",
+                    "byte_offset": 0,
+                    "byte_length": 2,
+                    "line_sha256": "a" * 64,
+                }
                 return True
 
         with tempfile.TemporaryDirectory(
@@ -4405,9 +4457,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
 
                 def record_stop(process: FakeProcess) -> bool:
                     process.return_code = 0
+                    process.returncode = 0
                     return True
 
-                def record_worker_result(_path: Path) -> dict:
+                def record_worker_result(path: Path) -> dict:
                     request_path = run_directory / "shutdown-request.json"
                     request = (
                         json.loads(request_path.read_text(encoding="utf-8"))
@@ -4419,7 +4472,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         and request.get("readiness_succeeded") is True
                         and request.get("exchange_succeeded") is True
                     )
-                    return {
+                    worker_result = {
                         **call_result,
                         "server_returned": True,
                         "interrupted": True,
@@ -4437,6 +4490,16 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             else "host_shutdown_prerequisites_not_met"
                         ),
                     }
+                    Path(path).write_text(
+                        json.dumps(
+                            worker_result,
+                            ensure_ascii=True,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        encoding="ascii",
+                    )
+                    return worker_result
 
                 def record_ready(*_args: object, **_kwargs: object) -> bool:
                     events.append("listener-ready")
@@ -4459,6 +4522,29 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 def record_port_check(port: int) -> bool:
                     checked_ports.append(port)
                     return True
+
+                def record_port_observations() -> dict[int, dict]:
+                    observations = {}
+                    for port in profile_runner.REQUIRED_PORTS:
+                        checked_ports.append(port)
+                        observations[port] = {
+                            "schema_version": 1,
+                            "method": "exclusive-bind-close",
+                            "transport": "tcp",
+                            "address": "127.0.0.1",
+                            "port": port,
+                            "reuse_address": False,
+                            "observed_at_ns": 2_000_003,
+                            "socket_created": True,
+                            "bind_attempted": True,
+                            "bind_succeeded": True,
+                            "socket_closed": True,
+                            "result": "free",
+                            "error_errno": None,
+                            "error_type": None,
+                            "observation_complete": True,
+                        }
+                    return observations
 
                 with ExitStack() as stack:
                     stack.enter_context(
@@ -4517,6 +4603,25 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             profile_runner,
                             "_port_is_free",
                             side_effect=record_port_check,
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_required_port_observations",
+                            side_effect=record_port_observations,
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_worker_result_path_for_run",
+                            side_effect=lambda _run_id, _preflight_run_id: (
+                                run_directory / "worker-result.json"
+                            ),
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_worker_shutdown_request_path_for_run",
+                            side_effect=lambda _run_id, _preflight_run_id: (
+                                run_directory / "shutdown-request.json"
+                            ),
                         ),
                         mock.patch.object(
                             profile_runner, "_claim_characterization_attempt", return_value=None
@@ -4985,6 +5090,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         return types.SimpleNamespace(
                             st_mode=(metadata.st_mode & ~0o777) | mode,
                             st_uid=metadata.st_uid,
+                            st_dev=metadata.st_dev,
+                            st_ino=metadata.st_ino,
                         )
                     return real_lstat(path)
 
@@ -5050,6 +5157,18 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertEqual(logged_release, release_record)
             self.assertEqual(logged_release["ports_free"], {"8360": True, "8370": True})
             self.assertTrue(logged_release["evidence_path"].startswith("tmp/"))
+            log_reference = lock.release_log_reference
+            self.assertIsNotNone(log_reference)
+            log_bytes = log_path.read_bytes()
+            release_bytes = log_bytes[
+                log_reference["byte_offset"] : log_reference["byte_offset"]
+                + log_reference["byte_length"]
+            ]
+            self.assertEqual(
+                hashlib.sha256(release_bytes).hexdigest(),
+                log_reference["line_sha256"],
+            )
+            self.assertEqual(log_reference["path"], log_path.relative_to(PROJECT_ROOT).as_posix())
 
     def test_live_window_lock_rejects_missing_or_invalid_holder_metadata(self) -> None:
         invalid_records = []
@@ -5098,7 +5217,12 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self._release_record(record, ports_free={"8360": True, "8370": False}),
             self._release_record(record, ports_free={"8360": True}),
             self._release_record(record, after_teardown_socket_sample_observed=False),
-            self._release_record(record, after_teardown_socket_pids=[12345]),
+            self._release_record(
+                record, after_teardown_socket_pids=[12345, 12345]
+            ),
+            self._release_record(
+                record, after_teardown_socket_pids=[{"pid": 12345}]
+            ),
             self._release_record(record, evidence_path="/outside/evidence.json"),
         )
         for index, release_record in enumerate(invalid_releases):
@@ -5138,6 +5262,30 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertFalse(lock.release(self._release_record(record)))
             self.assertEqual(holder_path.read_bytes(), replacement_bytes)
             self.assertTrue(lock_directory.is_dir())
+
+    def test_live_window_lock_does_not_release_through_replaced_coordination_directory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-lock-coordination-replaced-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_directory:
+            common_directory = Path(temp_directory)
+            record = self._lock_record(run_id="coordination-replaced")
+            lock = _ProfileCharacterizationLock(common_directory, record)
+            self.assertTrue(lock.acquire())
+            coordination = common_directory / "neq-coordination"
+            original = common_directory / "neq-coordination-original"
+            original_holder = coordination / "live-window.lock" / "holder.json"
+            original_holder_bytes = original_holder.read_bytes()
+            coordination.rename(original)
+            coordination.mkdir(mode=0o700)
+
+            self.assertFalse(lock.release(self._release_record(record)))
+            self.assertEqual(
+                (original / "live-window.lock" / "holder.json").read_bytes(),
+                original_holder_bytes,
+            )
+            self.assertFalse((coordination / "live-window.lock").exists())
 
     def test_characterization_claim_allows_one_attempt_per_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory(

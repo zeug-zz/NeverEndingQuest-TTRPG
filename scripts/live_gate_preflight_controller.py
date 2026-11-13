@@ -1030,100 +1030,28 @@ def _validate_supervised_result(
     row_run_id: str,
     preflight_run_id: str,
 ) -> dict[str, Any]:
-    evidence = result.get("evidence")
-    if not isinstance(evidence, Mapping):
+    if not isinstance(result, Mapping):
         raise PreflightControllerError("guarded row evidence is unavailable")
-    calls = evidence.get("calls")
-    call_count = evidence.get("call_count")
-    call_sites = evidence.get("call_sites")
-    shutdown = evidence.get("worker_shutdown")
-    shutdown_request = shutdown.get("request") if isinstance(shutdown, Mapping) else None
-    invocation_identity = evidence.get("invocation_identity")
-    teardown = evidence.get("teardown")
-    driver_exchange = evidence.get("driver_exchange")
-    expected_evidence_path = (
-        "tmp/router-rollout/live-gate-preflight/%s/preflight/rows/%s/profile-evidence.json"
-        % (preflight_run_id, row_run_id)
+    from scripts.live_gate_preflight_retained import (
+        RetainedEvidenceError,
+        validate_retained_supervised_evidence,
     )
-    valid_call_sites = isinstance(call_sites, list) and all(
-        isinstance(site, Mapping)
-        and type(site.get("count")) is int
-        and site["count"] > 0
-        for site in call_sites
-    )
-    observed_site_total = (
-        sum(site["count"] for site in call_sites)
-        if valid_call_sites
-        else None
-    )
-    if (
-        evidence.get("outcome") != "completed"
-        or evidence.get("run_id") != row_run_id
-        or evidence.get("source_sha") != source_sha
-        or evidence.get("planned_row_id") != plan.row_id
-        or evidence.get("fixture_id") != fixture_id
-        or evidence.get("party_size") != plan.party_size
-        or evidence.get("lifecycle") != lifecycle
-        or evidence.get("command") != intended_identity.get("command")
-        or evidence.get("pythonpath") != intended_identity.get("pythonpath")
-        or str(PROJECT_ROOT / str(evidence.get("working_directory", "")))
-        != intended_identity.get("working_directory")
-        or not isinstance(invocation_identity, Mapping)
-        or invocation_identity.get("status") != "matched"
-        or evidence.get("network_guard_active") is not True
-        or evidence.get("provider_environment_keys_blank") is not True
-        or evidence.get("proxy_values_blank") is not True
-        or evidence.get("real_project_config_loaded") is not False
-        or evidence.get("sandbox_config_loaded") is not True
-        or evidence.get("startup_guard_from_sitecustomize") is not True
-        or evidence.get("sandbox_config_origin_guard_active") is not True
-        or evidence.get("failure_code") is not None
-        or not isinstance(shutdown, Mapping)
-        or shutdown.get("server_returned") is not True
-        or shutdown.get("interrupted") is not True
-        or shutdown.get("graceful_shutdown_requested") is not True
-        or not isinstance(shutdown_request, Mapping)
-        or shutdown_request.get("readiness_succeeded") is not True
-        or shutdown_request.get("exchange_succeeded") is not True
-        or not isinstance(teardown, Mapping)
-        or teardown.get("server_stopped") is not True
-        or teardown.get("port_8360_free") is not True
-        or teardown.get("port_8370_free") is not True
-        or teardown.get("lock_released") is not True
-        or type(call_count) is not int
-        or call_count < 1
-        or not isinstance(calls, list)
-        or call_count != len(calls)
-        or not valid_call_sites
-        or not isinstance(driver_exchange, Mapping)
-        or driver_exchange.get("status") != "completed"
-        or driver_exchange.get("turn_completed") is not True
-        or type(driver_exchange.get("game_output_count")) is not int
-        or driver_exchange["game_output_count"] < 1
-        or result.get("evidence_path") != expected_evidence_path
-        or not isinstance(result.get("evidence_sha256"), str)
-        or re.fullmatch(r"[0-9a-f]{64}", result["evidence_sha256"]) is None
-        or observed_site_total != call_count
-    ):
-        raise PreflightControllerError("guarded supervised row evidence is incomplete")
-    return {
-        "outcome": "completed",
-        "first_exchange": dict(driver_exchange),
-        "call_count": call_count,
-        "call_sites": [dict(site) for site in call_sites],
-        "provider_environment_keys_blank": True,
-        "proxy_values_blank": True,
-        "real_project_config_loaded": False,
-        "invocation_identity_status": "matched",
-        "worker_teardown": {
-            "server_stopped": True,
-            "port_8360_free": True,
-            "port_8370_free": True,
-            "shared_live_window_lock_released": True,
-            "guard_active": True,
-            "call_count": call_count,
-        },
-    }
+
+    try:
+        return validate_retained_supervised_evidence(
+            result,
+            plan=plan,
+            fixture_id=fixture_id,
+            lifecycle=lifecycle,
+            intended_identity=intended_identity,
+            source_sha=source_sha,
+            row_run_id=row_run_id,
+            preflight_run_id=preflight_run_id,
+        )
+    except RetainedEvidenceError as exc:
+        raise PreflightControllerError(
+            "retained_supervised_evidence_reconciliation_failed"
+        ) from exc
 
 
 def _run_lifecycle_invocation(
