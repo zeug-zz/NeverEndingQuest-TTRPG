@@ -8,7 +8,7 @@
 ## 2. Exercise row coverage and driver controls
 
 - [ ] 2.1 Integrate the preflight controller with the existing SP3 row runner, launcher, worker, and driver; verify all 26 planned rows' full scripted host path, fixture resolution, declared party size, lifecycle profile, and first scripted transport exchange, including disconnected-location rows and both party sizes, while leaving four replacement-only reserves unactivated, with `.venv/bin/python scripts/test_live_gate_preflight_integration.py`.
-- [ ] 2.2 Add driver fault-injection tests for the attempt cap, time cap, and pause after three consecutive infrastructure failures, plus continuation beyond the first path and row; verify with `.venv/bin/python scripts/test_live_gate_preflight.py` using injected counters and clock without consuming live allowance.
+- [x] 2.2 Add driver fault-injection tests for the attempt cap, time cap, and pause after three consecutive infrastructure failures, plus continuation beyond the first path and row; verify with `.venv/bin/python scripts/test_live_gate_preflight.py` using injected counters and clock without consuming live allowance.
 
 ## 3. Persist identity and preflight-only evidence
 
