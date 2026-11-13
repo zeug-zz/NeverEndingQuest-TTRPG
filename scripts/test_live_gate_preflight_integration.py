@@ -28,6 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import live_gate_preflight_controller as controller
+from scripts import live_gate_preflight_evidence as evidence
 from scripts.live_gate_preflight_controller import (
     PreflightInterfaces,
     _load_frozen_row_ids,
@@ -2949,6 +2950,203 @@ class TestPreflightRowIntegration(unittest.TestCase):
                     "guard-event path identity is invalid",
                 ):
                     safety._validate_guard_event_path(journal, "different-row")
+
+
+class TestSupervisedEvidenceIntegration(unittest.TestCase):
+    def setUp(self) -> None:
+        self.run_id = "evidence-integration-" + uuid.uuid4().hex[:12]
+        self.evidence_root = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / self.run_id
+        )
+        self.addCleanup(self._remove_evidence)
+
+    def _remove_evidence(self) -> None:
+        if self.evidence_root.exists() and not self.evidence_root.is_symlink():
+            shutil.rmtree(self.evidence_root)
+
+    @staticmethod
+    def _zero_safety_counters() -> dict[str, int]:
+        return {
+            "upstream_provider_requests": 0,
+            "provider_budget_used": 0,
+            "live_attempts_used": 0,
+            "reserve_activations": 0,
+        }
+
+    def _worker_identities(self) -> dict[str, dict[str, Any]]:
+        rows, _reserves = _load_frozen_row_ids(None)
+        expected_ids = [str(row["row_id"]) for row in rows]
+        profiles, _coverage = _load_profiles(expected_ids)
+        identities: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            row_id = str(row["row_id"])
+            plan = _resolve_row_plan(
+                row_id,
+                prereg_root=None,
+                expected_row=row,
+                profiles=profiles,
+            )
+            identities[row_id] = controller.planned_worker_identity(
+                plan,
+                source_sha=SOURCE_SHA,
+                row_run_id="pf-%s-%s" % (self.run_id, row_id),
+                preflight_run_id=self.run_id,
+            )
+        return identities
+
+    def test_supervised_entrypoint_persists_worker_identity_mismatch_without_host_start(
+        self,
+    ) -> None:
+        observed_invocation = safety.current_invocation_identity()
+        intended_workers = self._worker_identities()
+        intended_workers["E01"] = {
+            **intended_workers["E01"],
+            "command": ["not-the-planned-worker"],
+        }
+        with (
+            mock.patch.object(sandbox, "prepare_profile_sandbox") as prepare,
+            mock.patch.object(profile_runner, "supervise_preflight_row") as supervise,
+            mock.patch.object(sandbox, "remove_prepared_sandbox") as cleanup,
+        ):
+            result = controller.run_preflight_rows_supervised(
+                source_sha=SOURCE_SHA,
+                run_id=self.run_id,
+                intended_worker_identities=intended_workers,
+                safety_counters=self._zero_safety_counters,
+                dependency_lock_path=PROJECT_ROOT / "requirements-lock.txt",
+                routing_identity={
+                    "provider": "openrouter",
+                    "active_profile": "production-auto",
+                },
+                intended_invocation=observed_invocation,
+            )
+
+        evidence_path = PROJECT_ROOT / result["preflight_evidence_path"]
+        self.assertTrue(evidence_path.is_file())
+        report = json.loads(evidence_path.read_text(encoding="ascii"))
+        self.assertEqual(report["preflight_status"], "BLOCKED")
+        self.assertFalse(report["booking_eligible"])
+        self.assertFalse(report["booking_ruling_issued"])
+        self.assertFalse(report["live_gate_pass"])
+        self.assertEqual(
+            report["execution_provenance"], "supervised-retained-evidence"
+        )
+        self.assertEqual(report["identity"]["source_sha"], SOURCE_SHA)
+        self.assertIsNotNone(report["identity"]["dependency_lock_sha256"])
+        self.assertIsNotNone(report["identity"]["routing_identity_sha256"])
+        self.assertEqual(report["invocation_identity"]["status"], "matched")
+        self.assertEqual(report["row_coverage"]["attempted_row_ids"], ["E01"])
+        first_row = report["row_coverage"]["row_outcomes"][0]
+        self.assertEqual(first_row["row_id"], "E01")
+        self.assertEqual(first_row["status"], "blocked")
+        self.assertEqual(first_row["invocation_identity_status"], "blocked")
+        self.assertFalse(result["booking_eligible"])
+        proposed_identity = {
+            "source_sha": SOURCE_SHA,
+            "dependency_lock_sha256": evidence.dependency_lock_sha256(
+                PROJECT_ROOT / "requirements-lock.txt"
+            ),
+            "routing_identity": {
+                "provider": "openrouter",
+                "active_profile": "production-auto",
+            },
+            "invocation_identity": observed_invocation,
+        }
+        exact = evidence.check_booking_eligibility(
+            run_id=self.run_id,
+            proposed_identity=proposed_identity,
+        )
+        self.assertTrue(exact["identity_match"])
+        self.assertFalse(exact["eligible"])
+        changed = evidence.check_booking_eligibility(
+            run_id=self.run_id,
+            proposed_identity={**proposed_identity, "source_sha": "b" * 40},
+        )
+        self.assertFalse(changed["identity_match"])
+        self.assertFalse(changed["eligible"])
+        self.assertEqual(changed["mismatches"], ["source_sha"])
+        prepare.assert_not_called()
+        supervise.assert_not_called()
+        cleanup.assert_not_called()
+
+    def test_declared_invocation_mismatch_persists_blocked_before_row_execution(
+        self,
+    ) -> None:
+        observed_invocation = safety.current_invocation_identity()
+        intended_invocation = {
+            **observed_invocation,
+            "command": [*observed_invocation["command"], "--different"],
+        }
+        with (
+            mock.patch.object(sandbox, "prepare_profile_sandbox") as prepare,
+            mock.patch.object(profile_runner, "supervise_preflight_row") as supervise,
+        ):
+            result = controller.run_preflight_rows_supervised(
+                source_sha=SOURCE_SHA,
+                run_id=self.run_id,
+                safety_counters=self._zero_safety_counters,
+                dependency_lock_path=PROJECT_ROOT / "requirements-lock.txt",
+                routing_identity={
+                    "provider": "openrouter",
+                    "active_profile": "production-auto",
+                },
+                intended_invocation=intended_invocation,
+            )
+
+        report = json.loads(
+            (PROJECT_ROOT / result["preflight_evidence_path"]).read_text(
+                encoding="ascii"
+            )
+        )
+        self.assertEqual(report["preflight_status"], "BLOCKED")
+        self.assertEqual(report["invocation_identity"]["status"], "blocked")
+        self.assertEqual(
+            report["invocation_identity"]["mismatches"], [{"field": "command"}]
+        )
+        self.assertEqual(report["entrypoint_failure_code"], "invocation_identity_mismatch")
+        self.assertTrue(
+            all(
+                row["status"] == "MISSING"
+                for row in report["row_coverage"]["row_outcomes"]
+            )
+        )
+        self.assertFalse(result["booking_eligible"])
+        prepare.assert_not_called()
+        supervise.assert_not_called()
+
+    def test_missing_required_inputs_persist_blocked_evidence(self) -> None:
+        with (
+            mock.patch.object(sandbox, "prepare_profile_sandbox") as prepare,
+            mock.patch.object(profile_runner, "supervise_preflight_row") as supervise,
+        ):
+            result = controller.run_preflight_rows_supervised(
+                run_id=self.run_id,
+                safety_counters=self._zero_safety_counters,
+            )
+
+        evidence_path = PROJECT_ROOT / result["preflight_evidence_path"]
+        self.assertTrue(evidence_path.is_file())
+        report = json.loads(evidence_path.read_text(encoding="ascii"))
+        self.assertEqual(report["preflight_status"], "BLOCKED")
+        self.assertFalse(report["booking_eligible"])
+        self.assertIsNone(report["identity"]["source_sha"])
+        self.assertIsNone(report["identity"]["dependency_lock_sha256"])
+        self.assertIsNone(report["identity"]["routing_identity_sha256"])
+        self.assertEqual(report["execution_provenance"], "unverified")
+        self.assertTrue(
+            all(
+                row["status"] == "MISSING"
+                for row in report["row_coverage"]["row_outcomes"]
+            )
+        )
+        self.assertFalse(result["booking_eligible"])
+        self.assertTrue(result.get("preflight_failure_code"))
+        prepare.assert_not_called()
+        supervise.assert_not_called()
 
 
 if __name__ == "__main__":

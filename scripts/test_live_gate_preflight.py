@@ -12,6 +12,7 @@ import copy
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -29,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import scripts.live_gate_preflight_stub as router_stub_module
 from scripts import live_gate_preflight_controller as preflight_controller
+from scripts import live_gate_preflight_evidence as preflight_evidence
 from scripts import live_gate_preflight_sandbox as sandbox_preparation
 from scripts import live_gate_preflight_profile_runner as profile_runner
 import scripts.live_gate_preflight_safety as preflight_safety
@@ -1061,6 +1063,321 @@ class TestPreflightControllerContinuation(unittest.TestCase):
                 "router_stub_calls": 29,
             },
         )
+
+
+class TestPreflightEvidence(unittest.TestCase):
+    def setUp(self) -> None:
+        self.run_id = "evidence-test-" + uuid.uuid4().hex[:12]
+        self.evidence_root = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / self.run_id
+        )
+        self.addCleanup(self._remove_evidence)
+        frozen_rows, _reserves = preflight_controller._load_frozen_row_ids(None)
+        self.row_ids = [str(row["row_id"]) for row in frozen_rows]
+        self.source_sha = "a" * 40
+        self.routing_identity = {
+            "provider": "openrouter",
+            "active_profile": "production-auto",
+            "simple_model": "openrouter/auto",
+        }
+        self.invocation_identity = {
+            "command": [
+                str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                "scripts/live_gate_preflight.py",
+                "--provider-free",
+            ],
+            "working_directory": str(PROJECT_ROOT),
+            "pythonpath": ".",
+        }
+
+    def _remove_evidence(self) -> None:
+        if self.evidence_root.exists() and not self.evidence_root.is_symlink():
+            shutil.rmtree(self.evidence_root)
+
+    def _complete_row_report(self) -> dict[str, Any]:
+        row_records = [
+            {"row_id": row_id, "status": "completed"}
+            for row_id in self.row_ids
+        ]
+        return {
+            "report_type": "provider-free-row-preflight",
+            "source_sha": self.source_sha,
+            "status": "completed",
+            "planned_row_count": len(self.row_ids),
+            "planned_row_ids": list(self.row_ids),
+            "attempted_row_ids": list(self.row_ids),
+            "fully_covered_row_ids": list(self.row_ids),
+            "replacement_only_rows_activated": [],
+            "row_results": row_records,
+            "provider_free": {
+                "upstream_provider_requests_delta": 0,
+                "provider_budget_used_delta": 0,
+                "live_attempts_used_delta": 0,
+                "reserve_activations_delta": 0,
+                "router_stub_calls": len(row_records),
+            },
+        }
+
+    def _write_report(
+        self,
+        *,
+        row_report: Any = None,
+        intended_invocation: Any = None,
+        observed_invocation: Any = None,
+        source_sha: Any = None,
+        routing_identity: Any = None,
+        dependency_lock_path: str | Path | None = Path("requirements-lock.txt"),
+    ) -> str:
+        selected_row_report = (
+            self._complete_row_report() if row_report is None else row_report
+        )
+        return preflight_evidence.write_preflight_evidence(
+            run_id=self.run_id,
+            source_sha=self.source_sha if source_sha is None else source_sha,
+            routing_identity=(
+                self.routing_identity if routing_identity is None else routing_identity
+            ),
+            intended_invocation=(
+                self.invocation_identity
+                if intended_invocation is None
+                else intended_invocation
+            ),
+            observed_invocation=(
+                self.invocation_identity
+                if observed_invocation is None
+                else observed_invocation
+            ),
+            row_report=selected_row_report,
+            dependency_lock_path=dependency_lock_path,
+        )
+
+    def _proposed_identity(self) -> dict[str, Any]:
+        return {
+            "source_sha": self.source_sha,
+            "dependency_lock_sha256": preflight_evidence.dependency_lock_sha256(),
+            "routing_identity": copy.deepcopy(self.routing_identity),
+            "invocation_identity": copy.deepcopy(self.invocation_identity),
+        }
+
+    def test_exact_identity_match_does_not_trust_caller_supplied_row_summaries(self) -> None:
+        path = self._write_report()
+
+        report = json.loads((PROJECT_ROOT / path).read_text(encoding="ascii"))
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+
+        self.assertEqual(
+            path,
+            "tmp/router-rollout/live-gate-preflight/%s/preflight/preflight.json"
+            % self.run_id,
+        )
+        self.assertEqual(report["preflight_status"], "BLOCKED")
+        self.assertFalse(report["booking_eligible"])
+        self.assertNotEqual(report["pf_status"], "PASS")
+        self.assertTrue(result["identity_match"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertTrue(
+            all(
+                row["status"] == "MISSING"
+                for row in report["row_coverage"]["row_outcomes"]
+            )
+        )
+        self.assertFalse(result["booking_ruling_issued"])
+        self.assertFalse(result["live_gate_pass"])
+        self.assertEqual(report["booking_ruling_issued"], False)
+        self.assertEqual(report["live_gate_pass"], False)
+        self.assertEqual(report["provider_free"]["status"], "MISSING")
+
+    def test_each_source_dependency_routing_and_invocation_mismatch_blocks(self) -> None:
+        self._write_report()
+        candidates = {
+            "source_sha": {**self._proposed_identity(), "source_sha": "b" * 40},
+            "dependency_lock_sha256": {
+                **self._proposed_identity(),
+                "dependency_lock_sha256": "0" * 64,
+            },
+            "routing_identity": {
+                **self._proposed_identity(),
+                "routing_identity": {
+                    **self.routing_identity,
+                    "active_profile": "different-profile",
+                },
+            },
+            "invocation_identity": {
+                **self._proposed_identity(),
+                "invocation_identity": {
+                    **self.invocation_identity,
+                    "command": [*self.invocation_identity["command"], "--different"],
+                },
+            },
+        }
+        fields = {
+            "source_sha": "source_sha",
+            "dependency_lock_sha256": "dependency_lock_sha256",
+            "routing_identity": "routing_identity_sha256",
+            "invocation_identity": "invocation_identity_sha256",
+        }
+        for mismatch, candidate in candidates.items():
+            with self.subTest(identity=mismatch):
+                result = preflight_evidence.check_booking_eligibility(
+                    run_id=self.run_id, proposed_identity=candidate
+                )
+                self.assertFalse(result["eligible"])
+                self.assertFalse(result["identity_match"])
+                self.assertEqual(result["mismatches"], [fields[mismatch]])
+                self.assertFalse(result["booking_ruling_issued"])
+
+    def test_sensitive_invocation_and_routing_values_are_not_persisted(self) -> None:
+        sensitive_values = (
+            "synthetic-token-do-not-store",
+            "/private/sensitive-worktree",
+            "/private/sensitive-pythonpath",
+            "routing-secret-placeholder",
+        )
+        identity = {
+            "command": ["python", "--token=" + sensitive_values[0]],
+            "working_directory": sensitive_values[1],
+            "pythonpath": sensitive_values[2],
+        }
+        route = {
+            "provider": "openrouter",
+            "active_profile": sensitive_values[3],
+        }
+        self._write_report(
+            row_report={"report_type": "provider-free-row-preflight"},
+            intended_invocation=identity,
+            observed_invocation=identity,
+            routing_identity=route,
+        )
+
+        report_path = self.evidence_root / "preflight" / "preflight.json"
+        raw = report_path.read_bytes().decode("ascii")
+        for value in sensitive_values:
+            self.assertNotIn(value, raw)
+        report = json.loads(raw)
+        self.assertNotIn("command", report["invocation_identity"])
+        self.assertIsNotNone(report["identity"]["routing_identity_sha256"])
+        self.assertFalse(report["booking_eligible"])
+        self.assertFalse(report["live_gate_pass"])
+
+    def test_plain_mapping_cannot_claim_supervised_row_provenance(self) -> None:
+        report = self._complete_row_report()
+        report["execution_provenance"] = "supervised-retained-evidence"
+        self._write_report(row_report=report)
+
+        document = json.loads(
+            (self.evidence_root / "preflight" / "preflight.json").read_text(
+                encoding="ascii"
+            )
+        )
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+        self.assertEqual(document["execution_provenance"], "unverified")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_provider_free_counters_must_show_stub_use_and_zero_external_use(self) -> None:
+        report = self._complete_row_report()
+        report["provider_free"]["router_stub_calls"] = 0
+        self._write_report(row_report=report)
+
+        document = json.loads(
+            (self.evidence_root / "preflight" / "preflight.json").read_text(
+                encoding="ascii"
+            )
+        )
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+        self.assertEqual(document["provider_free"]["status"], "MISSING")
+        self.assertEqual(document["execution_provenance"], "unverified")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_missing_report_and_invalid_proposed_identity_block(self) -> None:
+        missing = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=None
+        )
+        self.assertEqual(missing["status"], "BLOCKED")
+        self.assertFalse(missing["eligible"])
+
+        self._write_report()
+        invalid = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id,
+            proposed_identity={
+                **self._proposed_identity(),
+                "source_sha": "not-a-full-sha",
+            },
+        )
+        self.assertFalse(invalid["eligible"])
+        self.assertIn("source_sha", invalid["mismatches"])
+
+    def test_partial_rows_missing_lifecycle_or_injected_results_cannot_be_eligible(self) -> None:
+        report = self._complete_row_report()
+        report["row_results"].pop()
+        report["attempted_row_ids"] = report["attempted_row_ids"][:-1]
+        report["fully_covered_row_ids"] = report["fully_covered_row_ids"][:-1]
+        self._write_report(row_report=report)
+
+        document = json.loads(
+            (self.evidence_root / "preflight" / "preflight.json").read_text(
+                encoding="ascii"
+            )
+        )
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+        self.assertEqual(document["pf_checks"]["PF2"], "MISSING")
+        self.assertNotEqual(document["pf_status"], "PASS")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_untrusted_row_summaries_cannot_satisfy_lifecycle_coverage(self) -> None:
+        report = self._complete_row_report()
+        self._write_report(row_report=report)
+
+        document = json.loads(
+            (self.evidence_root / "preflight" / "preflight.json").read_text(
+                encoding="ascii"
+            )
+        )
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+        self.assertEqual(document["pf_checks"]["PF4"], "MISSING")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_invalid_identity_teardown_or_fake_row_origin_fails_closed(self) -> None:
+        report = self._complete_row_report()
+        report["execution_provenance"] = "injected-test-interface"
+        self._write_report(
+            row_report=report,
+            source_sha="not-a-sha",
+            routing_identity={"api_key": "must-not-persist"},
+            intended_invocation=None,
+            observed_invocation=None,
+            dependency_lock_path=Path("tmp/missing/requirements-lock.txt"),
+        )
+
+        raw = (self.evidence_root / "preflight" / "preflight.json").read_bytes()
+        document = json.loads(raw.decode("ascii"))
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+        self.assertFalse(document["booking_eligible"])
+        self.assertNotEqual(document["pf_status"], "PASS")
+        self.assertFalse(result["eligible"])
+        self.assertNotIn(b"must-not-persist", raw)
+        self.assertFalse(document["booking_ruling_issued"])
+        self.assertFalse(document["live_gate_pass"])
 
 
 if __name__ == "__main__":
