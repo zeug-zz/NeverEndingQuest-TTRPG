@@ -12,8 +12,8 @@ overall N3 PASS.
 
 The authoritative contract is
 [`n3-live-gate-contract.md`](n3-live-gate-contract.md). The live manifest is
-`n3-live-lifecycle-v2` with SHA-256
-`a9bb1f3f23df1cd216f627dd1974f7a4702da6d533e7f39a4603ca0d30ca3693`; its rows,
+`n3-live-lifecycle-v3` with SHA-256
+`01750d7e32a8140985a51ad8e0bc8616179c03a1930bcb280f9beb13fdb1acfc`; its rows,
 caps, port rules, state-root policy,
 live-window lock, evidence, and teardown rules are pinned together. Do not
 change them between plan inspection, preflight, booking, and live execution.
@@ -41,9 +41,9 @@ facilitator's real OpenTunnel profile.
    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python scripts/n3_live_lifecycle_gate.py plan
    ```
 
-   Confirm manifest ID `n3-live-lifecycle-v2`, digest, row order L01-L10,
-   platform set, caps, ports, and `is_gate_pass: false`. `plan` has no side
-   effects.
+    Confirm manifest ID `n3-live-lifecycle-v3`, digest, row order L01-L10,
+    platform set, caps, ports, the one L03 startup narration allowance, and
+    `is_gate_pass: false`. `plan` has no side effects.
 3. Prepare and validate a fresh isolated `Capture_Arena` copy at
    `tmp/combat_capture` using the repository's Capture_Arena preparation
    procedure (`scripts/seed_combat_capture.py --prepare --party 1`). Confirm it
@@ -99,7 +99,11 @@ facilitator's real OpenTunnel profile.
    exact `holder.json`/`bookings.log` protocol and fields in the contract; the
    driver does not acquire, release, or repair the lock. Confirm the booking,
    active window, preflight path, run ID, SHA, ports, and frozen caps match.
-   Stop if any value is missing, expired, or mismatched.
+    Stop if any value is missing, expired, or mismatched.
+
+The driver rechecks the seed and active `n3-luna`/`openai/gpt-6-luna` profile
+from the isolated capture before starting the host. These checks are static and
+fail closed; do not substitute a different capture or model profile.
 
 ## Gate-owned state and safety checks
 
@@ -141,16 +145,26 @@ The live command starts the owned host on `127.0.0.1:8360`, performs the
 contracted public lifecycle observations through the player listener on
 `127.0.0.1:8370`, and can create a real public tunnel. It allows at most 3,600
 seconds total, 300 seconds per row (420 for L05), four companion `serve`
-launches, one `up`, two tunnel creations, zero provider attempts, and zero
-automatic retries. It fails fast on the first FAIL or infrastructure BLOCKED
+launches, one `up`, two tunnel creations, at most one provider attempt only
+during the L03 startup narration, and zero automatic retries. L03 must emit
+host-side Socket.IO `start_game` exactly once over polling with Origin
+`http://127.0.0.1:8360`. Its `dm_main` receipt must resolve to
+`openai/gpt-6-luna`; its priced cost must be at most USD 0.05, and cumulative
+narration cost must remain at or below USD 1.00. Missing/unpriced receipts,
+retries, extra or out-of-window attempts, and either cost-cap breach fail the
+gate. The provider-free OD-6 preflight and offline tests still make no provider
+calls. The live command fails fast on the first FAIL or infrastructure BLOCKED
 and attempts teardown. Do not start another run or retry automatically.
 
 The process exit status is not a verdict. Read the JSON result and the complete
 evidence at `tmp/router-rollout/v2-network/n3/<run-id>/capture/`. Confirm all ten
-rows are represented, `SHA256SUMS` verifies, the provider ledger shows no
-attempt, secrets and raw managed-host output are absent, and teardown proves
-the identity, processes, ports, public reachability, and state root were
-handled as contracted. Preserve the redacted evidence for primary review. A
+rows are represented, `SHA256SUMS` verifies, the provider ledger contains
+exactly one reservation attributed to the L03 startup window, the receipt
+matches the frozen profile/model/task and cost limits, secrets and raw
+managed-host/narration output are absent, and teardown proves the identity,
+processes, ports, public reachability, and state root were handled as
+contracted. The L03 startup/readiness result must remain recorded even if a
+cost assertion fails. Preserve the redacted evidence for primary review. A
 FAIL or BLOCKED stops the rollout for review; at most three separately approved
 harness iterations are allowed only for a failure attributed to the harness.
 Do not repeat a product, security, credential, budget, or uncertain-ownership
