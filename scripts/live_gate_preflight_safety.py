@@ -79,6 +79,7 @@ _RUNTIME_INJECTED_ENV_NAMES = ("LC_CTYPE", "__CF_USER_TEXT_ENCODING")
 GUARD_EVENT_ROOT = Path(
     "tmp/router-rollout/live-gate-preflight/profile-characterization"
 )
+ROW_PREFLIGHT_GUARD_ROOT = Path("tmp/router-rollout/live-gate-preflight")
 GUARD_EVENT_MAX_COUNT = 4096
 GUARD_EVENT_MAX_BYTES = 512_000
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -144,12 +145,31 @@ def _validate_guard_event_path(path: str | Path, run_id: str) -> Path:
     if not isinstance(run_id, str) or _SAFE_RUN_ID.fullmatch(run_id) is None:
         raise SafetyConfigurationError("preflight guard-event run identity is invalid")
     root = PROJECT_ROOT.resolve(strict=True)
-    expected = root / GUARD_EVENT_ROOT / run_id / "guard-events.jsonl"
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
-    if candidate != expected:
+    try:
+        relative_parts = candidate.relative_to(root).parts
+    except ValueError as exc:
+        raise SafetyConfigurationError(
+            "preflight guard-event path identity is invalid"
+        ) from exc
+    profile_path = (
+        relative_parts == (GUARD_EVENT_ROOT / run_id / "guard-events.jsonl").parts
+    )
+    row_prefix = ROW_PREFLIGHT_GUARD_ROOT.parts
+    row_path = (
+        len(relative_parts) == len(row_prefix) + 5
+        and relative_parts[: len(row_prefix)] == row_prefix
+        and _SAFE_RUN_ID.fullmatch(relative_parts[len(row_prefix)]) is not None
+        and relative_parts[len(row_prefix) + 1 : len(row_prefix) + 3]
+        == ("preflight", "rows")
+        and relative_parts[len(row_prefix) + 3] == run_id
+        and relative_parts[-1] == "guard-events.jsonl"
+    )
+    if not profile_path and not row_path:
         raise SafetyConfigurationError("preflight guard-event path identity is invalid")
+    expected = candidate
     cursor = root
     for part in expected.relative_to(root).parts:
         cursor = cursor / part

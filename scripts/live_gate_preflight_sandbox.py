@@ -696,6 +696,7 @@ def _planned_worker_invocation(
     source_sha: str,
     run_id: str,
     resume_checkpoint_sha256: str | None,
+    preflight_run_id: str | None = None,
 ) -> PlannedWorkerInvocation:
     """Build the worker identity through the same controller command factory."""
     if lifecycle not in ("startup", "resume"):
@@ -748,6 +749,7 @@ def _planned_worker_invocation(
             arm=selected_arm,
             lifecycle_id=lifecycle_id,
             resume_checkpoint_sha256=resume_checkpoint_sha256,
+            preflight_run_id=preflight_run_id,
         )
     except CharacterizationError as exc:
         raise SandboxPreparationError(
@@ -783,6 +785,8 @@ def prepare_profile_sandbox(
     run_id: str,
     intended_host_identity: Mapping[str, Any],
     resume_checkpoint_sha256: str | None = None,
+    resume_checkpoint: Mapping[str, Any] | None = None,
+    preflight_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Seed only after intent matches the internally planned worker launch."""
     _require_preparation_startup_guard()
@@ -797,7 +801,16 @@ def prepare_profile_sandbox(
         source_sha=source_sha,
         run_id=run_id,
         resume_checkpoint_sha256=resume_checkpoint_sha256,
+        preflight_run_id=preflight_run_id,
     )
+    if lifecycle == "resume":
+        if (
+            not isinstance(resume_checkpoint, Mapping)
+            or resume_checkpoint.get("state_sha256") != resume_checkpoint_sha256
+        ):
+            raise SandboxPreparationError("row-bound resume checkpoint is unavailable")
+    elif resume_checkpoint is not None:
+        raise SandboxPreparationError("startup cannot consume a resume checkpoint")
     module_payloads, expected_payloads = _load_profile_seed_inputs(root)
     prepared, identity_evidence = run_after_invocation_identity(
         worker_plan.identity(),
@@ -806,8 +819,278 @@ def prepare_profile_sandbox(
             root, plan, module_payloads, expected_payloads
         ),
     )
+    if lifecycle == "resume":
+        try:
+            _install_row_resume_checkpoint(
+                root,
+                root / SANDBOX_RELATIVE,
+                plan,
+                resume_checkpoint,
+                expected_sha256=str(resume_checkpoint_sha256),
+            )
+        except BaseException:
+            sandbox_path = root / SANDBOX_RELATIVE
+            if not sandbox_path.is_symlink() and sandbox_path.exists():
+                shutil.rmtree(sandbox_path)
+            raise
     prepared["invocation_identity"] = identity_evidence
     return prepared
+
+
+def _install_row_resume_checkpoint(
+    project_root: Path,
+    target_sandbox: Path,
+    plan: Mapping[str, Any],
+    checkpoint: Mapping[str, Any],
+    *,
+    expected_sha256: str,
+) -> None:
+    """Install only canonical state from an explicitly row-bound moved checkpoint."""
+    from scripts.mapping_pilot import launcher
+
+    required_fields = {
+        "checkpoint_root",
+        "state_sha256",
+        "row_id",
+        "fixture_id",
+        "party_size",
+        "arm",
+        "fixed_seed",
+    }
+    row = plan.get("counterbalance")
+    if (
+        set(checkpoint) != required_fields
+        or checkpoint.get("state_sha256") != expected_sha256
+        or checkpoint.get("row_id") != (row.get("row_id") if isinstance(row, Mapping) else None)
+        or checkpoint.get("fixture_id") != plan.get("fixture_id")
+        or checkpoint.get("party_size") != plan.get("party_size")
+        or checkpoint.get("arm") != plan.get("arm")
+        or type(checkpoint.get("fixed_seed")) is not int
+        or checkpoint.get("fixed_seed") != plan.get("effective_seed")
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+    ):
+        raise SandboxPreparationError("resume checkpoint row identity differs")
+
+    checkpoint_relative = _relative_path(
+        checkpoint.get("checkpoint_root"), "resume checkpoint"
+    )
+    if (
+        not checkpoint_relative.parts
+        or checkpoint_relative.parts[0] != "tmp"
+        or checkpoint_relative.as_posix() == SANDBOX_RELATIVE.as_posix()
+    ):
+        raise SandboxPreparationError("resume checkpoint path is outside project tmp")
+    source = _assert_no_symlink_path(
+        project_root, checkpoint_relative, "resume checkpoint"
+    )
+    try:
+        resolved_source = source.resolve(strict=True)
+        resolved_tmp = (project_root / "tmp").resolve(strict=True)
+        resolved_source.relative_to(resolved_tmp)
+        resolved_target = target_sandbox.resolve(strict=True)
+        resolved_target.relative_to(resolved_tmp)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise SandboxPreparationError("resume checkpoint path is unavailable") from exc
+    if not resolved_source.is_dir() or resolved_source == resolved_target:
+        raise SandboxPreparationError("resume checkpoint directory is invalid")
+    try:
+        resolved_source.relative_to(resolved_target)
+    except ValueError:
+        pass
+    else:
+        raise SandboxPreparationError("resume checkpoint cannot be inside active sandbox")
+    try:
+        resolved_target.relative_to(resolved_source)
+    except ValueError:
+        pass
+    else:
+        raise SandboxPreparationError("resume checkpoint cannot contain active sandbox")
+
+    source_metadata_path = _assert_no_symlink_path(
+        resolved_source,
+        "mapping_pilot/seed_metadata.json",
+        "resume checkpoint seed metadata",
+    )
+    try:
+        source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SandboxPreparationError("resume checkpoint seed metadata is unavailable") from exc
+    source_counterbalance = (
+        source_metadata.get("counterbalance")
+        if isinstance(source_metadata, Mapping)
+        else None
+    )
+    source_party = source_metadata.get("party") if isinstance(source_metadata, Mapping) else None
+    if (
+        not isinstance(source_metadata, Mapping)
+        or source_metadata.get("fixture_id") != plan.get("fixture_id")
+        or source_metadata.get("arm") != plan.get("arm")
+        or source_metadata.get("effective_seed") != plan.get("effective_seed")
+        or not isinstance(source_party, Mapping)
+        or source_party.get("size") != plan.get("party_size")
+        or not isinstance(source_counterbalance, Mapping)
+        or source_counterbalance.get("row_id") != checkpoint.get("row_id")
+        or source_counterbalance.get("row_type") != "planned"
+        or source_counterbalance.get("fixed_seed") != plan.get("effective_seed")
+    ):
+        raise SandboxPreparationError("resume checkpoint metadata is not bound to row")
+
+    target_metadata_path = _assert_no_symlink_path(
+        target_sandbox,
+        "mapping_pilot/seed_metadata.json",
+        "active sandbox seed metadata",
+    )
+    try:
+        target_metadata = json.loads(target_metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SandboxPreparationError("active sandbox seed metadata is unavailable") from exc
+    if (
+        not isinstance(target_metadata, Mapping)
+        or target_metadata.get("fixture_id") != source_metadata.get("fixture_id")
+        or target_metadata.get("arm") != source_metadata.get("arm")
+        or target_metadata.get("effective_seed") != source_metadata.get("effective_seed")
+        or target_metadata.get("mapping") != source_metadata.get("mapping")
+        or target_metadata.get("party") != source_metadata.get("party")
+        or target_metadata.get("counterbalance") != source_metadata.get("counterbalance")
+    ):
+        raise SandboxPreparationError("resume checkpoint differs from active seed identity")
+
+    observed_sha256 = launcher._canonical_state_sha256(resolved_source)
+    if observed_sha256 != expected_sha256:
+        raise SandboxPreparationError("resume checkpoint state hash differs")
+
+    for relative, is_directory, required in (
+        ("party_tracker.json", False, True),
+        ("characters", True, True),
+        ("modules/%s/areas" % MAPPING_MODULE, True, True),
+        ("modules/%s/module_plot.json" % MAPPING_MODULE, False, False),
+        ("modules/encounters", True, False),
+        ("encounters", True, False),
+    ):
+        source_entry = _assert_no_symlink_path(
+            resolved_source, relative, "resume checkpoint state"
+        )
+        destination = _assert_no_symlink_path(
+            target_sandbox, relative, "active sandbox state"
+        )
+        if not source_entry.exists():
+            if required:
+                raise SandboxPreparationError("resume checkpoint canonical state is incomplete")
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            elif destination.exists():
+                destination.unlink()
+            continue
+        if source_entry.is_symlink() or source_entry.is_dir() != is_directory:
+            raise SandboxPreparationError("resume checkpoint state path is invalid")
+        if destination.is_symlink():
+            raise SandboxPreparationError("active sandbox state path is unsafe")
+        if destination.is_dir():
+            shutil.rmtree(destination)
+        elif destination.exists():
+            destination.unlink()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if is_directory:
+            _copy_checkpoint_tree(source_entry, destination)
+        else:
+            if not source_entry.is_file():
+                raise SandboxPreparationError("resume checkpoint state file is invalid")
+            shutil.copy2(source_entry, destination)
+
+    if launcher._canonical_state_sha256(target_sandbox) != expected_sha256:
+        raise SandboxPreparationError("installed resume checkpoint state hash differs")
+    try:
+        launcher.validate_sandbox(
+            target_sandbox,
+            arm=str(plan["arm"]),
+            fixture_id=str(plan["fixture_id"]),
+            party_size=int(plan["party_size"]),
+            resume=True,
+            resume_checkpoint_sha256=expected_sha256,
+            project_root=project_root,
+        )
+    except Exception as exc:
+        raise SandboxPreparationError("resume checkpoint is not a valid moved state") from exc
+
+
+def _copy_checkpoint_tree(source: Path, destination: Path) -> None:
+    if source.is_symlink() or not source.is_dir():
+        raise SandboxPreparationError("resume checkpoint state directory is invalid")
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        entries = sorted(os.scandir(source), key=lambda entry: entry.name)
+    except OSError as exc:
+        raise SandboxPreparationError("resume checkpoint state directory is unreadable") from exc
+    for entry in entries:
+        if entry.is_symlink():
+            raise SandboxPreparationError("resume checkpoint state contains a symlink")
+        source_child = source / entry.name
+        destination_child = destination / entry.name
+        try:
+            metadata = entry.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise SandboxPreparationError("resume checkpoint state cannot be inspected") from exc
+        if stat.S_ISDIR(metadata.st_mode):
+            _copy_checkpoint_tree(source_child, destination_child)
+        elif stat.S_ISREG(metadata.st_mode):
+            shutil.copy2(source_child, destination_child)
+        else:
+            raise SandboxPreparationError("resume checkpoint state contains a special file")
+
+
+def remove_prepared_sandbox(
+    plan: Mapping[str, Any], seeded: Mapping[str, Any]
+) -> bool:
+    """Remove only the exact fixture copy created for this planned row."""
+    root = _project_root(PROJECT_ROOT)
+    if (
+        not isinstance(plan, Mapping)
+        or not isinstance(seeded, Mapping)
+        or seeded.get("status") != "prepared"
+        or seeded.get("sandbox_root") != SANDBOX_RELATIVE.as_posix()
+        or seeded.get("fixture_id") != plan.get("fixture_id")
+        or seeded.get("party_size") != plan.get("party_size")
+        or seeded.get("planned_row_id") != plan.get("row_id")
+        or seeded.get("arm") != plan.get("arm")
+        or seeded.get("effective_seed") != plan.get("fixed_seed")
+    ):
+        raise SandboxPreparationError("prepared sandbox identity differs from row plan")
+    sandbox = _assert_no_symlink_path(root, SANDBOX_RELATIVE, "sandbox")
+    if not sandbox.exists():
+        return True
+    if not sandbox.is_dir():
+        raise SandboxPreparationError("prepared sandbox root is not a directory")
+    try:
+        resolved = sandbox.resolve(strict=True)
+        resolved.relative_to((root / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise SandboxPreparationError("prepared sandbox escaped project tmp") from exc
+    metadata_path = _assert_no_symlink_path(
+        root, SANDBOX_RELATIVE / "mapping_pilot" / "seed_metadata.json", "seed metadata"
+    )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SandboxPreparationError("prepared sandbox identity is unavailable") from exc
+    counterbalance = metadata.get("counterbalance") if isinstance(metadata, Mapping) else None
+    party = metadata.get("party") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(counterbalance, Mapping)
+        or metadata.get("fixture_id") != plan.get("fixture_id")
+        or not isinstance(party, Mapping)
+        or party.get("size") != plan.get("party_size")
+        or counterbalance.get("row_id") != plan.get("row_id")
+        or counterbalance.get("row_type") != "planned"
+        or counterbalance.get("fixed_seed") != plan.get("fixed_seed")
+        or metadata.get("arm") != plan.get("arm")
+        or metadata.get("effective_seed") != plan.get("fixed_seed")
+    ):
+        raise SandboxPreparationError("prepared sandbox identity differs from row plan")
+    try:
+        shutil.rmtree(sandbox)
+    except OSError as exc:
+        raise SandboxPreparationError("prepared sandbox cleanup failed") from exc
+    return not sandbox.exists()
 
 
 def _parse_identity_json(value: str) -> Mapping[str, Any]:
@@ -835,6 +1118,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--resume-checkpoint-sha256")
+    parser.add_argument("--preflight-run-id")
     parser.add_argument(
         "--intended-host-identity-json", type=_parse_identity_json, required=True
     )
@@ -853,6 +1137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             intended_host_identity=args.intended_host_identity_json,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            preflight_run_id=args.preflight_run_id,
         )
     except InvocationIdentityMismatch as exc:
         print(

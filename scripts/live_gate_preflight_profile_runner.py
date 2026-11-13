@@ -42,6 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_EVIDENCE_ROOT = Path(
     "tmp/router-rollout/live-gate-preflight/profile-characterization"
 )
+ROW_PREFLIGHT_EVIDENCE_ROOT = Path("tmp/router-rollout/live-gate-preflight")
 SANDBOX_RELATIVE = Path("tmp/combat_capture")
 AUTHORIZATION_RULING_ID = "neq-w1-fr11-profiles-characterization-20261112"
 HOST_PORT = 8360
@@ -273,6 +274,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--planned-row-id", help=argparse.SUPPRESS)
     parser.add_argument("--arm", choices=("A", "B", "D"), help=argparse.SUPPRESS)
     parser.add_argument("--lifecycle-id", help=argparse.SUPPRESS)
+    parser.add_argument("--preflight-run-id", help=argparse.SUPPRESS)
     if argv is None and len(sys.argv) > 1 and sys.argv[1] == "--worker":
         args = parser.parse_args(sys.argv[1:])
     else:
@@ -290,7 +292,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
         if any(value is None for value in required):
             parser.error("internal worker identity is incomplete")
+        if args.preflight_run_id is not None and (
+            not isinstance(args.preflight_run_id, str)
+            or _SAFE_RUN_ID.fullmatch(args.preflight_run_id) is None
+        ):
+            parser.error("internal row-preflight identity is invalid")
         return args
+    if args.preflight_run_id is not None:
+        parser.error("--preflight-run-id is only valid for an internal worker")
     if any(
         value is None
         for value in (args.fixture_id, args.party_size, args.lifecycle, args.source_sha)
@@ -2287,6 +2296,7 @@ def _host_command(
     arm: str,
     lifecycle_id: str,
     resume_checkpoint_sha256: str | None,
+    preflight_run_id: str | None = None,
 ) -> list[str]:
     command = [
         _repository_python(),
@@ -2313,6 +2323,10 @@ def _host_command(
     ]
     if resume_checkpoint_sha256 is not None:
         command.extend(("--resume-checkpoint-sha256", resume_checkpoint_sha256))
+    if preflight_run_id is not None:
+        if _SAFE_RUN_ID.fullmatch(preflight_run_id) is None:
+            raise CharacterizationError("row_preflight_identity_invalid")
+        command.extend(("--preflight-run-id", preflight_run_id))
     return command
 
 
@@ -2436,14 +2450,65 @@ def _make_evidence_sites(calls: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _worker_result_path(run_id: str) -> Path:
+def _row_preflight_run_directory(run_id: str, preflight_run_id: str) -> Path:
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(preflight_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+    ):
+        raise CharacterizationError("row_preflight_identity_invalid")
+    relative = (
+        ROW_PREFLIGHT_EVIDENCE_ROOT
+        / preflight_run_id
+        / "preflight"
+        / "rows"
+        / run_id
+    )
+    cursor = PROJECT_ROOT
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise CharacterizationError("row_preflight_evidence_path_invalid")
+    try:
+        cursor.resolve(strict=False).relative_to((PROJECT_ROOT / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("row_preflight_evidence_path_invalid") from exc
+    return cursor
+
+
+def _worker_result_path(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
+    if preflight_run_id is not None:
+        return _row_preflight_run_directory(run_id, preflight_run_id) / "worker-result.json"
     return PROJECT_ROOT / PROFILE_EVIDENCE_ROOT / run_id / "worker-result.json"
 
 
-def _worker_shutdown_request_path(run_id: str) -> Path:
+def _worker_result_path_for_run(
+    run_id: str, preflight_run_id: str | None
+) -> Path:
+    if preflight_run_id is None:
+        return _worker_result_path(run_id)
+    return _worker_result_path(run_id, preflight_run_id=preflight_run_id)
+
+
+def _worker_shutdown_request_path(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
     if not isinstance(run_id, str) or _SAFE_RUN_ID.fullmatch(run_id) is None:
         raise CharacterizationError("worker_shutdown_request_identity_invalid")
-    return _worker_result_path(run_id).with_name("shutdown-request.json")
+    return _worker_result_path(
+        run_id, preflight_run_id=preflight_run_id
+    ).with_name("shutdown-request.json")
+
+
+def _worker_shutdown_request_path_for_run(
+    run_id: str, preflight_run_id: str | None
+) -> Path:
+    if preflight_run_id is None:
+        return _worker_shutdown_request_path(run_id)
+    return _worker_shutdown_request_path(run_id, preflight_run_id=preflight_run_id)
 
 
 def _worker_shutdown_request_record(
@@ -2558,11 +2623,29 @@ def _write_worker_shutdown_request(
     return request
 
 
-def _ensure_run_directory(run_id: str) -> Path:
+def _ensure_run_directory(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
     tmp_root = PROJECT_ROOT / "tmp"
     if tmp_root.is_symlink() or not tmp_root.is_dir():
         raise CharacterizationError("project_tmp_unavailable")
-    relative = PROFILE_EVIDENCE_ROOT / run_id
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or (
+            preflight_run_id is not None
+            and (
+                not isinstance(preflight_run_id, str)
+                or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+            )
+        )
+    ):
+        raise CharacterizationError("profile_evidence_identity_invalid")
+    relative = (
+        ROW_PREFLIGHT_EVIDENCE_ROOT / preflight_run_id / "preflight" / "rows" / run_id
+        if preflight_run_id is not None
+        else PROFILE_EVIDENCE_ROOT / run_id
+    )
     cursor = PROJECT_ROOT
     for part in relative.parts:
         cursor = cursor / part
@@ -2637,6 +2720,20 @@ def _claim_characterization_attempt(
     _write_json(marker_path, attempt_record)
 
 
+def _claim_characterization_attempt_if_needed(
+    args: argparse.Namespace,
+    *,
+    evidence_root: Path,
+    run_directory: Path,
+    attempt_record: Mapping[str, Any],
+) -> bool:
+    """Keep row preflight attempts separate from one-shot characterization."""
+    if getattr(args, "preflight_run_id", None) is not None:
+        return False
+    _claim_characterization_attempt(evidence_root, run_directory, attempt_record)
+    return True
+
+
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     from utils.file_operations import safe_write_json
 
@@ -2660,6 +2757,7 @@ def _read_worker_result(path: Path) -> dict[str, Any] | None:
 def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     previous_sys_path = list(sys.path)
     root = _require_safe_project_root()
+    preflight_run_id = getattr(args, "preflight_run_id", None)
     root_text = str(root)
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
@@ -2694,7 +2792,13 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             lifecycle=args.lifecycle,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
         )
-        run_directory = _ensure_run_directory(args.run_id)
+        if preflight_run_id is not None and (
+            args.planned_row_id != planned_row_id or args.arm != arm
+        ):
+            raise CharacterizationError("row_preflight_sandbox_identity_mismatch")
+        run_directory = _ensure_run_directory(
+            args.run_id, preflight_run_id=preflight_run_id
+        )
         guard_events_path = run_directory / "guard-events.jsonl"
         from scripts.live_gate_preflight_safety import configure_guard_event_sink
 
@@ -2710,6 +2814,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             arm=arm,
             lifecycle_id=lifecycle_id,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            preflight_run_id=preflight_run_id,
         )
         from scripts.live_gate_preflight_safety import (
             CANARY_REPORT_ENV,
@@ -2871,10 +2976,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             for report in process_canaries
         ):
             raise CharacterizationError("startup_canary_failed_closed")
-        _claim_characterization_attempt(
-            run_directory.parent,
-            run_directory,
-            {
+        _claim_characterization_attempt_if_needed(
+            args,
+            evidence_root=run_directory.parent,
+            run_directory=run_directory,
+            attempt_record={
                 "schema_version": 1,
                 "run_id": args.run_id,
                 "profile_id": profile_id,
@@ -2972,7 +3078,9 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or _port_failure_code(
                 port_status, "after_stop"
             )
-        result = _read_worker_result(_worker_result_path(args.run_id))
+        result = _read_worker_result(
+            _worker_result_path_for_run(args.run_id, preflight_run_id)
+        )
         if result is None:
             failure_code = failure_code or "host_worker_result_missing"
         elif (
@@ -3313,6 +3421,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             "teardown": {
                 "server_stopped": server_stopped,
                 "port_8360_free": port_status.get(HOST_PORT) is True,
+                "port_8370_free": port_status.get(PLAYER_PORT) is True,
                 "lock_released": lock_released,
             },
         }
@@ -3327,6 +3436,69 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     if failure_code is not None or evidence is None:
         raise CharacterizationError(failure_code or "profile_not_measured")
     return evidence, evidence_relative, evidence_sha256
+
+
+def supervise_preflight_row(
+    *,
+    fixture_id: str,
+    party_size: int,
+    planned_row_id: str,
+    arm: str,
+    source_sha: str,
+    row_run_id: str,
+    preflight_run_id: str,
+    lifecycle: str = "startup",
+    resume_checkpoint_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Run one fixture lifecycle through the guarded host and script driver.
+
+    This reuses the same supervisor as characterization while keeping row
+    preflight evidence in its own namespace and never claiming a characterization
+    attempt. The supervisor starts only the guarded worker; that worker delegates
+    host launch to ``mapping_pilot.server.launch_worker``.
+    """
+    if (
+        fixture_id not in _FIXTURE_IDS
+        or type(party_size) is not int
+        or party_size not in (1, 4)
+        or not isinstance(planned_row_id, str)
+        or re.fullmatch(r"E[0-9]{2}", planned_row_id) is None
+        or arm not in ("A", "B", "D")
+        or not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or not isinstance(row_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(row_run_id) is None
+        or not isinstance(preflight_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+        or lifecycle not in ("startup", "resume")
+        or (
+            lifecycle == "resume"
+            and (
+                not isinstance(resume_checkpoint_sha256, str)
+                or not _SHA256.fullmatch(resume_checkpoint_sha256)
+            )
+        )
+        or (lifecycle == "startup" and resume_checkpoint_sha256 is not None)
+    ):
+        raise CharacterizationError("row_preflight_identity_invalid")
+    args = argparse.Namespace(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+        run_id=row_run_id,
+        resume_checkpoint_sha256=resume_checkpoint_sha256,
+        planned_row_id=planned_row_id,
+        arm=arm,
+        lifecycle_id=row_run_id + ("_s" if lifecycle == "startup" else "_r"),
+        preflight_run_id=preflight_run_id,
+    )
+    evidence, evidence_path, evidence_sha256 = _characterize(args)
+    return {
+        "evidence": evidence,
+        "evidence_path": evidence_path,
+        "evidence_sha256": evidence_sha256,
+    }
 
 
 def _lock_holder_for_worker(args: argparse.Namespace) -> Mapping[str, Any]:
@@ -3469,6 +3641,7 @@ def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
 
 
 def _worker(args: argparse.Namespace) -> int:
+    preflight_run_id = getattr(args, "preflight_run_id", None)
     try:
         _require_worker_startup_guard()
     except CharacterizationError as exc:
@@ -3523,6 +3696,7 @@ def _worker(args: argparse.Namespace) -> int:
             arm=args.arm,
             lifecycle_id=args.lifecycle_id,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            preflight_run_id=preflight_run_id,
         )
         expected_pythonpath = os.pathsep.join(
             (
@@ -3652,7 +3826,9 @@ def _worker(args: argparse.Namespace) -> int:
                     shutdown_signal_received_at_ns = observed_at_ns
                     try:
                         candidate = _read_json(
-                            _worker_shutdown_request_path(args.run_id),
+                            _worker_shutdown_request_path_for_run(
+                                args.run_id, preflight_run_id
+                            ),
                             "worker_shutdown_request",
                         )
                     except CharacterizationError:
@@ -3859,7 +4035,10 @@ def _worker(args: argparse.Namespace) -> int:
         "calls": calls,
     }
     try:
-        _write_json(_worker_result_path(args.run_id), result)
+        _write_json(
+            _worker_result_path_for_run(args.run_id, preflight_run_id),
+            result,
+        )
     except Exception:
         return 2
     return 0 if completed else 1
