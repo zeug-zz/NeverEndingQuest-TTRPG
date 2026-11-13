@@ -3433,6 +3433,18 @@ def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
             ensure_ascii=True,
             separators=(",", ":"),
         ),
+        # The startup consumer in core.combat.bootstrap requires narration,
+        # combat_round, and actions. An empty action list keeps this response
+        # mechanically inert while satisfying that real consumer contract.
+        "combat_main": json.dumps(
+            {
+                "narration": "The combatants hold position as the encounter begins.",
+                "combat_round": 1,
+                "actions": [],
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
         "dm_main": (
             '{"narration":"The party pauses and takes in the scene.",'
             '"actions":[]}'

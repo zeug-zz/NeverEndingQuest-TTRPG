@@ -359,6 +359,13 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         with self.assertRaisesRegex(ProfileValidationError, "exactly eight"):
             validate_profile_document(document)
 
+        document = copy_profile_document()
+        document["profiles"][0].pop("startup")
+        with self.assertRaisesRegex(
+            ProfileValidationError, "fixture-party profile fields are malformed"
+        ):
+            validate_profile_document(document)
+
     def test_unsupported_status_and_pair_are_rejected(self) -> None:
         document = copy_profile_document()
         document["profiles"][0]["resume"]["status"] = "inferred"
@@ -1605,19 +1612,28 @@ class TestPreflightStubAndSafety(unittest.TestCase):
             "travel_narration",
             "safety_review",
             "action_prediction",
+            "combat_main",
             "dm_main",
             "dm_validation",
         }
         self.assertEqual(set(payload["responses"]), expected_tasks)
-        self.assertEqual(payload["call_count"], len(expected_tasks) + 1)
+        self.assertEqual(payload["call_count"], len(expected_tasks) + 3)
         self.assertEqual(
-            {call["task"] for call in payload["calls"][:-1]},
+            {call["task"] for call in payload["calls"][:-3]},
             expected_tasks,
         )
-        self.assertEqual(len(payload["calls"][:-1]), len(expected_tasks))
+        self.assertEqual(len(payload["calls"][:-3]), len(expected_tasks))
+        self.assertEqual(
+            [call["task"] for call in payload["calls"][-3:]],
+            ["combat_main", "combat_main", "unlisted_task"],
+        )
         self.assertEqual(payload["calls"][-1]["task"], "unlisted_task")
         self.assertTrue(payload["unsupported_call_rejected"])
         self.assertEqual(payload["failure_code"], "router_task_has_no_stub_response")
+        self.assertEqual(
+            payload["combat_main_repeated_responses"],
+            [payload["responses"]["combat_main"]] * 2,
+        )
 
         responses = {
             task: json.loads(response)
@@ -1633,6 +1649,14 @@ class TestPreflightStubAndSafety(unittest.TestCase):
         self.assertEqual(
             set(responses["dm_main"]), {"narration", "actions"}
         )
+        self.assertEqual(
+            set(responses["combat_main"]), {"narration", "combat_round", "actions"}
+        )
+        self.assertIsInstance(responses["combat_main"]["narration"], str)
+        self.assertTrue(responses["combat_main"]["narration"].strip())
+        self.assertIs(type(responses["combat_main"]["combat_round"]), int)
+        self.assertEqual(responses["combat_main"]["combat_round"], 1)
+        self.assertEqual(responses["combat_main"]["actions"], [])
         fixtures, source_hashes = load_verified_fixtures()
         module_payloads, _expected_payloads = build_fixture_payloads(
             fixtures, source_hashes
@@ -5580,6 +5604,7 @@ def _run_probe_from_sitecustomize() -> None:
             pythonpath=os.environ.get("PYTHONPATH", ""),
         )
         returned = {task: stub(task) for task in responses}
+        combat_main_repeated_responses = [stub("combat_main") for _ in range(2)]
         unsupported_call_rejected = False
         try:
             stub("unlisted_task")
@@ -5593,6 +5618,7 @@ def _run_probe_from_sitecustomize() -> None:
                     "calls": stub.calls,
                     "failure_code": stub.failure_code,
                     "unsupported_call_rejected": unsupported_call_rejected,
+                    "combat_main_repeated_responses": combat_main_repeated_responses,
                 },
                 sort_keys=True,
             )
