@@ -2440,6 +2440,124 @@ def _worker_result_path(run_id: str) -> Path:
     return PROJECT_ROOT / PROFILE_EVIDENCE_ROOT / run_id / "worker-result.json"
 
 
+def _worker_shutdown_request_path(run_id: str) -> Path:
+    if not isinstance(run_id, str) or _SAFE_RUN_ID.fullmatch(run_id) is None:
+        raise CharacterizationError("worker_shutdown_request_identity_invalid")
+    return _worker_result_path(run_id).with_name("shutdown-request.json")
+
+
+def _worker_shutdown_request_record(
+    *,
+    run_id: str,
+    controller_pid: int,
+    worker_pid: int,
+    process_group_id: int,
+    readiness_succeeded: bool,
+    exchange_succeeded: bool,
+    requested_at_ns: int | None = None,
+) -> dict[str, Any]:
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or type(controller_pid) is not int
+        or controller_pid <= 0
+        or type(worker_pid) is not int
+        or worker_pid <= 0
+        or controller_pid == worker_pid
+        or type(process_group_id) is not int
+        or process_group_id != worker_pid
+        or type(readiness_succeeded) is not bool
+        or type(exchange_succeeded) is not bool
+    ):
+        raise CharacterizationError("worker_shutdown_request_identity_invalid")
+    timestamp = time.time_ns() if requested_at_ns is None else requested_at_ns
+    if type(timestamp) is not int or timestamp <= 0:
+        raise CharacterizationError("worker_shutdown_request_timestamp_invalid")
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "controller_pid": controller_pid,
+        "worker_pid": worker_pid,
+        "process_group_id": process_group_id,
+        "signal_number": int(signal.SIGINT),
+        "requested_at_ns": timestamp,
+        "readiness_succeeded": readiness_succeeded,
+        "exchange_succeeded": exchange_succeeded,
+    }
+
+
+def _valid_worker_shutdown_request(
+    value: Any,
+    *,
+    run_id: str,
+    worker_pid: int,
+    process_group_id: int,
+    signal_number: int,
+    signal_received_at_ns: int,
+) -> bool:
+    fields = {
+        "schema_version",
+        "run_id",
+        "controller_pid",
+        "worker_pid",
+        "process_group_id",
+        "signal_number",
+        "requested_at_ns",
+        "readiness_succeeded",
+        "exchange_succeeded",
+    }
+    return (
+        isinstance(value, Mapping)
+        and set(value) == fields
+        and type(value.get("schema_version")) is int
+        and value.get("schema_version") == 1
+        and value.get("run_id") == run_id
+        and type(value.get("controller_pid")) is int
+        and value.get("controller_pid") > 0
+        and value.get("controller_pid") != worker_pid
+        and type(value.get("worker_pid")) is int
+        and value.get("worker_pid") == worker_pid
+        and type(value.get("process_group_id")) is int
+        and value.get("process_group_id") == process_group_id
+        and type(value.get("signal_number")) is int
+        and value.get("signal_number") == signal_number == int(signal.SIGINT)
+        and type(value.get("requested_at_ns")) is int
+        and 0 < value.get("requested_at_ns") <= signal_received_at_ns
+        and type(value.get("readiness_succeeded")) is bool
+        and type(value.get("exchange_succeeded")) is bool
+    )
+
+
+def _write_worker_shutdown_request(
+    process: subprocess.Popen[bytes],
+    *,
+    run_directory: Path,
+    run_id: str,
+    readiness_succeeded: bool,
+    exchange_succeeded: bool,
+) -> dict[str, Any] | None:
+    if process.poll() is not None:
+        return None
+    path = run_directory / "shutdown-request.json"
+    if path.exists() or path.is_symlink():
+        raise CharacterizationError("worker_shutdown_request_already_exists")
+    request = _worker_shutdown_request_record(
+        run_id=run_id,
+        controller_pid=os.getpid(),
+        worker_pid=process.pid,
+        process_group_id=process.pid,
+        readiness_succeeded=readiness_succeeded,
+        exchange_succeeded=exchange_succeeded,
+    )
+    try:
+        _write_json(path, request)
+    except CharacterizationError:
+        raise
+    except Exception as exc:
+        raise CharacterizationError("worker_shutdown_request_write_failed") from exc
+    return request
+
+
 def _ensure_run_directory(run_id: str) -> Path:
     tmp_root = PROJECT_ROOT / "tmp"
     if tmp_root.is_symlink() or not tmp_root.is_dir():
@@ -2718,6 +2836,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     host_startup: dict[str, Any] | None = None
     socket_pid_samples: list[dict[str, Any]] = []
     process_census: dict[str, Any] | None = None
+    shutdown_request: dict[str, Any] | None = None
     try:
         if run_directory is None:
             raise CharacterizationError("profile_evidence_directory_unavailable")
@@ -2829,6 +2948,19 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                     driver_exchange.get("failure_code")
                     or "capture_driver_first_exchange_incomplete"
                 )
+        try:
+            shutdown_request = _write_worker_shutdown_request(
+                process,
+                run_directory=run_directory,
+                run_id=args.run_id,
+                readiness_succeeded=ready,
+                exchange_succeeded=(
+                    isinstance(driver_exchange, Mapping)
+                    and driver_exchange.get("status") == "completed"
+                ),
+            )
+        except CharacterizationError as exc:
+            failure_code = failure_code or exc.code
         if not _stop_owned_process(process):
             server_stopped = False
             failure_code = failure_code or "host_server_stop_failed"
@@ -2871,6 +3003,30 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "real_project_config_loaded"
         elif result.get("sandbox_config_loaded") is not True:
             failure_code = failure_code or "sandbox_config_identity_invalid"
+        elif (
+            type(result.get("server_returned")) is not bool
+            or result.get("interrupted") is not True
+            or result.get("graceful_shutdown_requested") is not True
+        ):
+            failure_code = failure_code or str(
+                result.get("failure_code") or "host_shutdown_not_attributed"
+            )
+        elif (
+            shutdown_request is None
+            or result.get("shutdown_request") != shutdown_request
+        ):
+            failure_code = failure_code or "host_shutdown_request_identity_mismatch"
+        elif (
+            type(result.get("shutdown_signal_received_at_ns")) is not int
+            or result["shutdown_signal_received_at_ns"]
+            < shutdown_request.get("requested_at_ns", 0)
+        ):
+            failure_code = failure_code or "host_shutdown_signal_evidence_invalid"
+        elif (
+            shutdown_request.get("readiness_succeeded") is not True
+            or shutdown_request.get("exchange_succeeded") is not True
+        ):
+            failure_code = failure_code or "host_shutdown_prerequisites_not_met"
         elif result.get("outcome") != "completed":
             failure_code = failure_code or str(result.get("failure_code") or "host_lifecycle_failed")
         elif type(result.get("call_count")) is not int or not isinstance(
@@ -2921,6 +3077,20 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         failure_code = failure_code or "characterization_failed_" + type(exc).__name__
     finally:
         if process is not None and process.poll() is None:
+            if shutdown_request is None and run_directory is not None:
+                try:
+                    shutdown_request = _write_worker_shutdown_request(
+                        process,
+                        run_directory=run_directory,
+                        run_id=args.run_id,
+                        readiness_succeeded=ready,
+                        exchange_succeeded=(
+                            isinstance(driver_exchange, Mapping)
+                            and driver_exchange.get("status") == "completed"
+                        ),
+                    )
+                except CharacterizationError as exc:
+                    failure_code = failure_code or exc.code
             if not _stop_owned_process(process):
                 server_stopped = False
                 failure_code = failure_code or "host_server_stop_failed"
@@ -3056,6 +3226,33 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 "complete": guard_events_complete,
             },
             "process_census": process_census,
+            "worker_shutdown": {
+                "server_returned": (
+                    result.get("server_returned")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "interrupted": (
+                    result.get("interrupted")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "graceful_shutdown_requested": (
+                    result.get("graceful_shutdown_requested")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "signal_received_at_ns": (
+                    result.get("shutdown_signal_received_at_ns")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "request": (
+                    result.get("shutdown_request")
+                    if isinstance(result, Mapping)
+                    else shutdown_request
+                ),
+            },
             "controller_interpreter": _interpreter_identity(),
             "worker_interpreter": (
                 result.get("interpreter") if isinstance(result, Mapping) else None
@@ -3271,6 +3468,9 @@ def _worker(args: argparse.Namespace) -> int:
     sandbox = root / SANDBOX_RELATIVE
     server_returned = False
     interrupted = False
+    graceful_shutdown_requested = False
+    shutdown_request: dict[str, Any] | None = None
+    shutdown_signal_received_at_ns: int | None = None
     failure_code: str | None = None
     stub: Any = None
     sandbox_provider_key_placeholder: str | None = None
@@ -3378,8 +3578,43 @@ def _worker(args: argparse.Namespace) -> int:
             # clients during import. Keep those globals inert; routed gameplay
             # calls use the fail-closed stub above, and the sandbox-only provider
             # placeholders cannot authorize or reach a provider request.
+            previous_sigint_handler = signal.getsignal(signal.SIGINT)
             ai_client_factory.create_chat_client = _provider_free_client_factory
+
+            def handle_shutdown_signal(signum: int, _frame: Any) -> None:
+                nonlocal interrupted
+                nonlocal graceful_shutdown_requested
+                nonlocal shutdown_request
+                nonlocal shutdown_signal_received_at_ns
+
+                observed_at_ns = time.time_ns()
+                if signum == int(signal.SIGINT):
+                    interrupted = True
+                    shutdown_signal_received_at_ns = observed_at_ns
+                    try:
+                        candidate = _read_json(
+                            _worker_shutdown_request_path(args.run_id),
+                            "worker_shutdown_request",
+                        )
+                    except CharacterizationError:
+                        candidate = None
+                    process_group_id = os.getpgrp()
+                    if _valid_worker_shutdown_request(
+                        candidate,
+                        run_id=args.run_id,
+                        worker_pid=os.getpid(),
+                        process_group_id=process_group_id,
+                        signal_number=signum,
+                        signal_received_at_ns=observed_at_ns,
+                    ):
+                        shutdown_request = dict(candidate)
+                        graceful_shutdown_requested = True
+                raise KeyboardInterrupt()
+
+            signal_handler_installed = False
             try:
+                signal.signal(signal.SIGINT, handle_shutdown_signal)
+                signal_handler_installed = True
                 try:
                     server.launch_worker(
                         arm=args.arm,
@@ -3392,18 +3627,51 @@ def _worker(args: argparse.Namespace) -> int:
                         runtime_root=SANDBOX_RELATIVE,
                     )
                     server_returned = True
-                    interrupted = False
+                    if not interrupted:
+                        failure_code = failure_code or (
+                            "host_server_returned_without_graceful_shutdown"
+                        )
+                    elif not graceful_shutdown_requested:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_request"
+                        )
+                    elif (
+                        shutdown_request is None
+                        or shutdown_request.get("readiness_succeeded") is not True
+                        or shutdown_request.get("exchange_succeeded") is not True
+                    ):
+                        failure_code = failure_code or (
+                            "host_shutdown_prerequisites_not_met"
+                        )
                 except KeyboardInterrupt:
                     server_returned = False
-                    interrupted = True
+                    if not interrupted:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_signal"
+                        )
+                    elif not graceful_shutdown_requested:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_request"
+                        )
+                    elif (
+                        shutdown_request is None
+                        or shutdown_request.get("readiness_succeeded") is not True
+                        or shutdown_request.get("exchange_succeeded") is not True
+                    ):
+                        failure_code = failure_code or (
+                            "host_shutdown_prerequisites_not_met"
+                        )
                 except BaseException as exc:
                     server_returned = False
-                    interrupted = False
                     failure_code = "host_exception_" + type(exc).__name__
             finally:
-                ai_client_factory.create_chat_client = original_create_chat_client
-                if getattr(router, "call", None) is stub:
-                    router.call = original_call
+                try:
+                    if signal_handler_installed:
+                        signal.signal(signal.SIGINT, previous_sigint_handler)
+                finally:
+                    ai_client_factory.create_chat_client = original_create_chat_client
+                    if getattr(router, "call", None) is stub:
+                        router.call = original_call
         finally:
             if sys.path and sys.path[0] == str(sandbox):
                 sys.path.pop(0)
@@ -3476,9 +3744,14 @@ def _worker(args: argparse.Namespace) -> int:
         if failure_code is None:
             failure_code = "router_call_missing"
     completed = (
-        interrupted
-        and not server_returned
+        type(server_returned) is bool
+        and interrupted
         and failure_code is None
+        and graceful_shutdown_requested
+        and isinstance(shutdown_request, Mapping)
+        and shutdown_request.get("readiness_succeeded") is True
+        and shutdown_request.get("exchange_succeeded") is True
+        and type(shutdown_signal_received_at_ns) is int
         and guard_active
         and provider_environment_keys_blank
         and proxy_values_blank
@@ -3512,6 +3785,9 @@ def _worker(args: argparse.Namespace) -> int:
         "sandbox_config_origin_guard_active": sandbox_config_origin_guard_active,
         "server_returned": server_returned,
         "interrupted": interrupted,
+        "graceful_shutdown_requested": graceful_shutdown_requested,
+        "shutdown_request": shutdown_request,
+        "shutdown_signal_received_at_ns": shutdown_signal_received_at_ns,
         "outcome": "completed" if completed else "failed",
         "failure_code": failure_code or stub_failure_code,
         "stub_failure_code": stub_failure_code,

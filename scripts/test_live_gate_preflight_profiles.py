@@ -15,6 +15,7 @@ import importlib
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -431,6 +432,37 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             self._write_evidence(evidence_path, evidence)
             startup["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
             with self.assertRaisesRegex(ProfileValidationError, "identity or safety state differs"):
+                validate_profile_document(document)
+
+    def test_profile_evidence_requires_attributed_graceful_worker_shutdown(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-shutdown-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            startup = document["profiles"][0]["startup"]
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertTrue(evidence["worker_shutdown"]["server_returned"])
+            validate_profile_document(document)
+
+            evidence["worker_shutdown"]["request"]["run_id"] = "wrong-run"
+            self._write_evidence(evidence_path, evidence)
+            startup["evidence_sha256"] = hashlib.sha256(
+                evidence_path.read_bytes()
+            ).hexdigest()
+            with self.assertRaisesRegex(
+                ProfileValidationError, "worker shutdown is incomplete"
+            ):
+                validate_profile_document(document)
+
+            evidence["worker_shutdown"]["request"]["run_id"] = evidence["run_id"]
+            evidence["worker_shutdown"]["graceful_shutdown_requested"] = False
+            self._write_evidence(evidence_path, evidence)
+            startup["evidence_sha256"] = hashlib.sha256(
+                evidence_path.read_bytes()
+            ).hexdigest()
+            with self.assertRaisesRegex(
+                ProfileValidationError, "worker shutdown is incomplete"
+            ):
                 validate_profile_document(document)
 
     def test_profile_evidence_requires_repository_venv_prefix_identity(self) -> None:
@@ -1345,6 +1377,23 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 "complete": True,
             },
             "process_census": census,
+            "worker_shutdown": {
+                "server_returned": True,
+                "interrupted": True,
+                "graceful_shutdown_requested": True,
+                "signal_received_at_ns": 3_000_001,
+                "request": {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "controller_pid": 10001,
+                    "worker_pid": 10003,
+                    "process_group_id": 10003,
+                    "signal_number": int(signal.SIGINT),
+                    "requested_at_ns": 3_000_000,
+                    "readiness_succeeded": True,
+                    "exchange_succeeded": True,
+                },
+            },
             "controller_interpreter": interpreter,
             "worker_interpreter": interpreter,
             "network_guard_active": True,
@@ -3712,9 +3761,11 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         class FakeProcess:
             pid = 12345
 
-            @staticmethod
-            def poll() -> int:
-                return 0
+            def __init__(self) -> None:
+                self.return_code: int | None = None
+
+            def poll(self) -> int | None:
+                return self.return_code
 
         created_locks: list[object] = []
 
@@ -3857,6 +3908,41 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     events.append("worker-launch")
                     return FakeProcess()
 
+                def record_stop(process: FakeProcess) -> bool:
+                    process.return_code = 0
+                    return True
+
+                def record_worker_result(_path: Path) -> dict:
+                    request_path = run_directory / "shutdown-request.json"
+                    request = (
+                        json.loads(request_path.read_text(encoding="utf-8"))
+                        if request_path.is_file()
+                        else None
+                    )
+                    shutdown_accepted = (
+                        isinstance(request, dict)
+                        and request.get("readiness_succeeded") is True
+                        and request.get("exchange_succeeded") is True
+                    )
+                    return {
+                        **call_result,
+                        "server_returned": True,
+                        "interrupted": True,
+                        "graceful_shutdown_requested": request is not None,
+                        "shutdown_request": request,
+                        "shutdown_signal_received_at_ns": (
+                            request["requested_at_ns"] + 1
+                            if request is not None
+                            else None
+                        ),
+                        "outcome": "completed" if shutdown_accepted else "failed",
+                        "failure_code": (
+                            None
+                            if shutdown_accepted
+                            else "host_shutdown_prerequisites_not_met"
+                        ),
+                    }
+
                 def record_ready(*_args: object, **_kwargs: object) -> bool:
                     events.append("listener-ready")
                     return True
@@ -3959,10 +4045,14 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             side_effect=record_exchange,
                         ),
                         mock.patch.object(
-                            profile_runner, "_stop_owned_process", return_value=True
+                            profile_runner,
+                            "_stop_owned_process",
+                            side_effect=record_stop,
                         ),
                         mock.patch.object(
-                            profile_runner, "_read_worker_result", return_value=call_result
+                            profile_runner,
+                            "_read_worker_result",
+                            side_effect=record_worker_result,
                         ),
                         mock.patch.dict(
                             os.environ,
@@ -4034,6 +4124,23 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 ["worker-launch", "listener-ready", "driver-exchange"],
             )
             self.assertEqual(successful_evidence["driver_exchange"], driver_success)
+            self.assertEqual(
+                successful_evidence["worker_shutdown"]["graceful_shutdown_requested"],
+                True,
+            )
+            self.assertIs(
+                successful_evidence["worker_shutdown"]["server_returned"], True
+            )
+            self.assertTrue(
+                successful_evidence["worker_shutdown"]["request"][
+                    "readiness_succeeded"
+                ]
+            )
+            self.assertTrue(
+                successful_evidence["worker_shutdown"]["request"][
+                    "exchange_succeeded"
+                ]
+            )
             self.assertEqual(
                 successful_port_checks,
                 [8360, 8370, 8360, 8370, 8360, 8370],
@@ -4225,7 +4332,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 process_role="host",
             )
             for lifecycle in ("startup", "resume"):
-                for outcome in ("complete", "reject"):
+                for outcome in (
+                    "caught",
+                    "propagated",
+                    "reject",
+                    "natural",
+                    "wrong_request",
+                ):
                     with self.subTest(lifecycle=lifecycle, outcome=outcome):
                         completed = subprocess.run(
                             [
@@ -4241,10 +4354,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             check=False,
                             capture_output=True,
                             text=True,
+                            start_new_session=True,
                             timeout=20,
                         )
                         payload = json.loads(completed.stdout)
-                        expected_exit = 0 if outcome == "complete" else 1
+                        expected_exit = (
+                            0 if outcome in {"caught", "propagated"} else 1
+                        )
                         self.assertEqual(
                             completed.returncode,
                             expected_exit,
@@ -4279,19 +4395,59 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             result["interpreter"]["prefix"],
                             result["interpreter"]["base_prefix"],
                         )
-                        if outcome == "complete":
+                        if outcome in {"caught", "propagated"}:
                             self.assertEqual(result["outcome"], "completed")
+                            self.assertTrue(result["graceful_shutdown_requested"])
+                            self.assertTrue(result["interrupted"])
+                            self.assertIs(
+                                result["server_returned"], outcome == "caught"
+                            )
+                            self.assertTrue(
+                                result["shutdown_request"]["readiness_succeeded"]
+                            )
+                            self.assertTrue(
+                                result["shutdown_request"]["exchange_succeeded"]
+                            )
+                            if outcome == "caught":
+                                self.assertTrue(
+                                    payload["entrypoint"][
+                                        "server_caught_keyboard_interrupt"
+                                    ]
+                                )
+                                self.assertIsInstance(
+                                    result["shutdown_signal_received_at_ns"], int
+                                )
                             self.assertEqual(
                                 payload["entrypoint"]["stub_response"]["narration"],
                                 "The party pauses and takes in the scene.",
                             )
-                        else:
+                        elif outcome == "reject":
                             self.assertEqual(result["outcome"], "failed")
                             self.assertEqual(
                                 result["stub_failure_code"],
                                 "router_task_has_no_stub_response",
                             )
                             self.assertFalse(result["interrupted"])
+                            self.assertFalse(result["graceful_shutdown_requested"])
+                        elif outcome == "natural":
+                            self.assertEqual(result["outcome"], "failed")
+                            self.assertTrue(result["server_returned"])
+                            self.assertFalse(result["interrupted"])
+                            self.assertFalse(result["graceful_shutdown_requested"])
+                            self.assertEqual(
+                                result["failure_code"],
+                                "host_server_returned_without_graceful_shutdown",
+                            )
+                        else:
+                            self.assertEqual(result["outcome"], "failed")
+                            self.assertTrue(result["server_returned"])
+                            self.assertTrue(result["interrupted"])
+                            self.assertFalse(result["graceful_shutdown_requested"])
+                            self.assertIsNone(result["shutdown_request"])
+                            self.assertEqual(
+                                result["failure_code"],
+                                "host_interrupt_without_shutdown_request",
+                            )
 
     def test_live_window_lock_contention_preserves_existing_holder_and_log(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -5060,6 +5216,10 @@ def _run_profile_worker_probe(
     runner_module._verify_source_identity = lambda _source_sha: None
     runner_module._lock_holder_for_worker = lambda _args: {}
     runner_module._worker_result_path = lambda _run_id: sandbox / "worker-result.json"
+    original_shutdown_request_path = runner_module._worker_shutdown_request_path
+    runner_module._worker_shutdown_request_path = (
+        lambda _run_id: sandbox / "shutdown-request.json"
+    )
     original_host_command = runner_module._host_command
     runner_module._host_command = lambda **_kwargs: current_invocation_command()
 
@@ -5079,10 +5239,31 @@ def _run_profile_worker_probe(
         probe_path = sandbox / "mapping_pilot" / "profile_lifecycle_probe.py"
         namespace: dict = {}
         exec(compile(probe_path.read_text(encoding="utf-8"), str(probe_path), "exec"), namespace)
-        task = "dm_main" if outcome == "complete" else "unlisted_task"
+        task = "unlisted_task" if outcome == "reject" else "dm_main"
         response = namespace["invoke"](llm_router.llm, task)
         entrypoint["stub_response"] = json.loads(response)
-        raise KeyboardInterrupt()
+        if outcome in {"caught", "propagated", "wrong_request"}:
+            request = runner_module._worker_shutdown_request_record(
+                run_id=args.run_id,
+                controller_pid=max(1, os.getpid() - 1),
+                worker_pid=os.getpid(),
+                process_group_id=os.getpgrp(),
+                readiness_succeeded=True,
+                exchange_succeeded=True,
+            )
+            if outcome == "wrong_request":
+                request["run_id"] = "wrong-" + args.run_id
+            runner_module._write_json(
+                runner_module._worker_shutdown_request_path(args.run_id), request
+            )
+            handler = signal.getsignal(signal.SIGINT)
+            if outcome == "propagated":
+                handler(signal.SIGINT, None)
+            else:
+                try:
+                    handler(signal.SIGINT, None)
+                except KeyboardInterrupt:
+                    entrypoint["server_caught_keyboard_interrupt"] = True
 
     fake_module_files = {
         "web.web_interface": sandbox / "web" / "web_interface.py",
@@ -5183,6 +5364,7 @@ def _run_profile_worker_probe(
         exit_code = runner_module._worker(args)
     finally:
         runner_module._host_command = original_host_command
+        runner_module._worker_shutdown_request_path = original_shutdown_request_path
         importlib.import_module = original_import_module
         launcher.launch = original_launch
         launcher.validate_sandbox = original_validate_sandbox

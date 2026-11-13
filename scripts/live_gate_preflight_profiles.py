@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import stat
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -560,6 +561,7 @@ def _validate_profile_evidence(
         "process_canaries",
         "guard_event_journal",
         "process_census",
+        "worker_shutdown",
         "driver_exchange",
         "outcome",
         "calls",
@@ -861,6 +863,13 @@ def _validate_profile_evidence(
     ):
         raise ProfileValidationError("profile evidence lifecycle exchange is incomplete")
 
+    _validate_worker_shutdown_evidence(
+        evidence.get("worker_shutdown"),
+        run_id=evidence["run_id"],
+        controller_pid=controller_pid,
+        worker_pid=host_worker_pid,
+    )
+
     for command_field in ("host_command", "runner_command"):
         command_value = evidence.get(command_field)
         if not _valid_command(command_value):
@@ -942,6 +951,63 @@ def _validate_profile_evidence(
         or call_sites != normalized_sites
     ):
         raise ProfileValidationError("profile evidence call-site summary differs")
+
+
+def _validate_worker_shutdown_evidence(
+    value: Any,
+    *,
+    run_id: str,
+    controller_pid: int,
+    worker_pid: int,
+) -> None:
+    fields = {
+        "server_returned",
+        "interrupted",
+        "graceful_shutdown_requested",
+        "signal_received_at_ns",
+        "request",
+    }
+    request_fields = {
+        "schema_version",
+        "run_id",
+        "controller_pid",
+        "worker_pid",
+        "process_group_id",
+        "signal_number",
+        "requested_at_ns",
+        "readiness_succeeded",
+        "exchange_succeeded",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ProfileValidationError("profile evidence worker shutdown is incomplete")
+    request = value.get("request")
+    received_at_ns = value.get("signal_received_at_ns")
+    if (
+        type(value.get("server_returned")) is not bool
+        or value.get("interrupted") is not True
+        or value.get("graceful_shutdown_requested") is not True
+        or type(received_at_ns) is not int
+        or received_at_ns <= 0
+        or not isinstance(request, Mapping)
+        or set(request) != request_fields
+        or type(request.get("schema_version")) is not int
+        or request.get("schema_version") != 1
+        or request.get("run_id") != run_id
+        or type(request.get("controller_pid")) is not int
+        or request.get("controller_pid") != controller_pid
+        or type(request.get("worker_pid")) is not int
+        or request.get("worker_pid") != worker_pid
+        or type(request.get("process_group_id")) is not int
+        or request.get("process_group_id") != worker_pid
+        or type(request.get("signal_number")) is not int
+        or request.get("signal_number") != int(signal.SIGINT)
+        or type(request.get("requested_at_ns")) is not int
+        or request.get("requested_at_ns") <= 0
+        or request.get("requested_at_ns") > received_at_ns
+        or request.get("readiness_succeeded") is not True
+        or request.get("exchange_succeeded") is not True
+    ):
+        raise ProfileValidationError("profile evidence worker shutdown is incomplete")
 
 
 def _read_profile_guard_events(
