@@ -3215,6 +3215,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             "command": command,
             "working_directory": SANDBOX_RELATIVE.as_posix(),
             "pythonpath": guarded_environment.get("PYTHONPATH", ""),
+            "invocation_identity": (
+                result.get("invocation_identity")
+                if isinstance(result, Mapping)
+                else None
+            ),
             "process_canaries": sorted(
                 process_canaries,
                 key=lambda report: report.get("canary_stage", ""),
@@ -3485,6 +3490,8 @@ def _worker(args: argparse.Namespace) -> int:
     shutdown_signal_received_at_ns: int | None = None
     failure_code: str | None = None
     stub: Any = None
+    router_stub_cleanup: Any = None
+    invocation_identity_evidence: dict[str, Any] | None = None
     sandbox_provider_key_placeholder: str | None = None
     command: list[str] | None = None
     startup_guard_from_sitecustomize = False
@@ -3492,28 +3499,20 @@ def _worker(args: argparse.Namespace) -> int:
     config_guard: _SandboxConfigOriginGuard | None = None
     previous_sys_path = list(sys.path)
     try:
-        if startup_guard_failure is not None:
-            raise CharacterizationError(startup_guard_failure)
-        if worker_root_failure is not None:
-            raise CharacterizationError(worker_root_failure)
-        _configure_sandbox_import_paths(root, sandbox)
-        _activate_sandbox_sitecustomize(sandbox)
-        from scripts.live_gate_preflight_safety import require_guard_active
-        from scripts.live_gate_preflight_stub import FailClosedRouterStub
-
-        require_guard_active()
-        startup_guard_from_sitecustomize = True
-        config_guard = _install_sandbox_config_guard(sandbox)
-        sandbox_config_origin_guard_active = config_guard in sys.meta_path
-        expected_pythonpath = os.pathsep.join(
-            (
-                str(root / "scripts" / "live_gate_preflight_guard"),
-                str(root),
-            )
+        from scripts.live_gate_preflight_safety import (
+            InvocationIdentityMismatch,
+            NetworkGuardError,
+            current_invocation_identity,
+            compare_invocation_identity,
+            require_guard_active,
+            require_invocation_identity,
+            startup_invocation_identity,
         )
-        if os.environ.get("PYTHONPATH") != expected_pythonpath:
-            raise CharacterizationError("pythonpath_identity_invalid")
-        _verify_source_identity(args.source_sha)
+        from scripts.live_gate_preflight_stub import (
+            FailClosedRouterStub,
+            install_fail_closed_router_stub,
+        )
+
         command = _host_command(
             fixture_id=args.fixture_id,
             party_size=args.party_size,
@@ -3525,11 +3524,60 @@ def _worker(args: argparse.Namespace) -> int:
             lifecycle_id=args.lifecycle_id,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
         )
-        from scripts.live_gate_preflight_safety import current_invocation_command
-
-        actual_command = current_invocation_command()
-        if actual_command != command:
-            raise CharacterizationError("host_command_identity_mismatch")
+        expected_pythonpath = os.pathsep.join(
+            (
+                str(root / "scripts" / "live_gate_preflight_guard"),
+                str(root),
+            )
+        )
+        declared_identity = {
+            "command": command,
+            "working_directory": str(sandbox),
+            "pythonpath": expected_pythonpath,
+        }
+        invocation_identity_evidence = compare_invocation_identity(
+            declared_identity, current_invocation_identity()
+        )
+        if invocation_identity_evidence["mismatches"]:
+            if startup_guard_failure is not None:
+                raise CharacterizationError(startup_guard_failure)
+            raise CharacterizationError("invocation_identity_mismatch")
+        if startup_guard_failure is not None:
+            raise CharacterizationError(startup_guard_failure)
+        try:
+            invocation_identity_evidence = require_invocation_identity(
+                declared_identity, startup_invocation_identity()
+            )
+            require_invocation_identity(
+                declared_identity, current_invocation_identity()
+            )
+        except InvocationIdentityMismatch as exc:
+            invocation_identity_evidence = exc.evidence
+            raise CharacterizationError("invocation_identity_mismatch") from None
+        except NetworkGuardError:
+            invocation_identity_evidence = {
+                "schema_version": 1,
+                "status": "unavailable",
+                "fields_compared": [
+                    "command",
+                    "working_directory",
+                    "pythonpath",
+                ],
+                "mismatches": [],
+                "failure_code": "startup_invocation_identity_unavailable",
+            }
+            raise CharacterizationError(
+                "startup_invocation_identity_unavailable"
+            ) from None
+        if worker_root_failure is not None:
+            raise CharacterizationError(worker_root_failure)
+        _configure_sandbox_import_paths(root, sandbox)
+        _activate_sandbox_sitecustomize(sandbox)
+        require_guard_active()
+        startup_guard_from_sitecustomize = True
+        config_guard = _install_sandbox_config_guard(sandbox)
+        sandbox_config_origin_guard_active = config_guard in sys.meta_path
+        _verify_source_identity(args.source_sha)
         _lock_holder_for_worker(args)
         from scripts.mapping_pilot import server
 
@@ -3568,8 +3616,7 @@ def _worker(args: argparse.Namespace) -> int:
                     "sandbox_provider_factory_source_mismatch"
                 )
             router = getattr(llm_router, "llm", None)
-            original_call = getattr(router, "call", None)
-            if not callable(original_call):
+            if not callable(getattr(router, "call", None)):
                 raise CharacterizationError("sandbox_router_unavailable")
             original_create_chat_client = getattr(
                 ai_client_factory, "create_chat_client", None
@@ -3585,7 +3632,7 @@ def _worker(args: argparse.Namespace) -> int:
                 pythonpath=os.environ.get("PYTHONPATH", ""),
                 source_root=sandbox,
             )
-            router.call = stub
+            router_stub_cleanup = install_fail_closed_router_stub(router, stub)
             # main.py and core.combat.combat_manager.py create module-level
             # clients during import. Keep those globals inert; routed gameplay
             # calls use the fail-closed stub above, and the sandbox-only provider
@@ -3681,9 +3728,13 @@ def _worker(args: argparse.Namespace) -> int:
                     if signal_handler_installed:
                         signal.signal(signal.SIGINT, previous_sigint_handler)
                 finally:
-                    ai_client_factory.create_chat_client = original_create_chat_client
-                    if getattr(router, "call", None) is stub:
-                        router.call = original_call
+                    try:
+                        ai_client_factory.create_chat_client = (
+                            original_create_chat_client
+                        )
+                    finally:
+                        if router_stub_cleanup is not None:
+                            router_stub_cleanup()
         finally:
             if sys.path and sys.path[0] == str(sandbox):
                 sys.path.pop(0)
@@ -3783,6 +3834,7 @@ def _worker(args: argparse.Namespace) -> int:
         "source_sha": args.source_sha,
         "command": command,
         "pythonpath": os.environ.get("PYTHONPATH", ""),
+        "invocation_identity": invocation_identity_evidence,
         "interpreter": _interpreter_identity(),
         "startup_canary_report": os.environ.get(
             "NEQ_PREFLIGHT_STARTUP_CANARY_REPORT", ""

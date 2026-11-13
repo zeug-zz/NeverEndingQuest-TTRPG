@@ -3,7 +3,7 @@
 ## 1. Declare profiles and establish the provider-free boundary
 
 - [x] 1.1 Define a versioned startup/resume call profile for every required fixture-party pair across the 26 planned rows from authoritative source evidence; reject missing or unsupported entries, leave replacement-only reserves untouched, and verify coverage and source binding with `.venv/bin/python scripts/test_live_gate_preflight_profiles.py`.
-- [ ] 1.2 Add the isolated fail-closed router stub and invocation-identity checks at the capture worker boundary; verify command, working directory, and `PYTHONPATH` mismatch blocks before seeding, and that routed calls produce stub responses with zero upstream requests, provider budget, or live-attempt use via `.venv/bin/python scripts/test_live_gate_preflight.py`.
+- [x] 1.2 Add the isolated fail-closed router stub and invocation-identity checks at the capture worker boundary; verify command, working directory, and `PYTHONPATH` mismatch blocks before seeding, and that routed calls produce stub responses with zero upstream requests, provider budget, or live-attempt use via `.venv/bin/python scripts/test_live_gate_preflight.py`.
 
 ## 2. Exercise row coverage and driver controls
 

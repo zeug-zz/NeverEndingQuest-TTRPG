@@ -40,6 +40,7 @@ from scripts.mapping_pilot.fixtures import (
     load_verified_fixtures,
 )
 from scripts.live_gate_preflight_profiles import (
+    AUTHORIZATION_RULING_ID,
     FIXTURE_IDS,
     PROFILE_PATH,
     PROFILE_SET_ID,
@@ -48,6 +49,7 @@ from scripts.live_gate_preflight_profiles import (
     copy_profile_document,
     load_profile_coverage,
     validate_profile_document,
+    _is_exact_historic_profile_evidence,
 )
 from scripts.live_gate_preflight_safety import (
     ENABLE_GUARD_ENV,
@@ -68,6 +70,7 @@ from scripts.live_gate_preflight_safety import (
     build_guarded_environment,
     build_guarded_sandbox_environment,
     current_invocation_command,
+    compare_invocation_identity,
     expected_guarded_pythonpath,
     require_startup_guard_active,
     validate_guard_event_records,
@@ -88,6 +91,47 @@ from scripts.live_gate_preflight_profile_runner import (
 )
 from scripts import live_gate_preflight_profile_runner as profile_runner
 from scripts import live_gate_preflight_sandbox as sandbox_preparation
+
+
+def _sandbox_host_identity(project_root: Path) -> dict[str, Any]:
+    run_id = "pf-profile-sandbox-01"
+    with mock.patch.object(
+        profile_runner,
+        "_repository_python",
+        return_value=str(project_root / ".venv" / "bin" / "python"),
+    ):
+        command = profile_runner._host_command(
+            fixture_id="interior_tavern",
+            party_size=1,
+            lifecycle="startup",
+            source_sha="a" * 40,
+            run_id=run_id,
+            planned_row_id="E01",
+            arm="A",
+            lifecycle_id=run_id + "_s",
+            resume_checkpoint_sha256=None,
+        )
+    return {
+        "command": command,
+        "working_directory": str(project_root / "tmp" / "combat_capture"),
+        "pythonpath": expected_guarded_pythonpath(project_root),
+    }
+
+
+def _sandbox_identity_cli_args(project_root: Path) -> list[str]:
+    identity = json.dumps(
+        _sandbox_host_identity(project_root), ensure_ascii=True, sort_keys=True
+    )
+    return [
+        "--lifecycle",
+        "startup",
+        "--source-sha",
+        "a" * 40,
+        "--run-id",
+        "pf-profile-sandbox-01",
+        "--intended-host-identity-json",
+        identity,
+    ]
 
 
 def _guard_startup_event(
@@ -393,6 +437,8 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             prefix="profile-evidence-", dir=PROJECT_ROOT / "tmp"
         ) as evidence_directory:
             document, evidence_path = self._measured_document(Path(evidence_directory))
+            new_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(new_evidence["invocation_identity"]["status"], "matched")
             schema_path = PROFILE_PATH.with_name("live_gate_preflight_profiles.schema.json")
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
             Draft202012Validator(schema).validate(document)
@@ -412,6 +458,154 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 validate_profile_document(document)
 
             del evidence_path
+
+    def test_historic_identity_exception_is_exactly_pinned_and_tamper_resistant(
+        self,
+    ) -> None:
+        records = (
+            {
+                "path": "tmp/router-rollout/live-gate-preflight/profile-characterization/fr11-tower-p1-startup-01/profile-evidence.json",
+                "sha256": "8908c2e325e0e2289789d4baeda721a553c809e1c9f5b4d99086f0f9f8b71a19",
+                "profile_id": "transition_tower_approach:p1",
+                "fixture_id": "transition_tower_approach",
+                "party_size": 1,
+                "lifecycle": "startup",
+                "source_sha": "7e874277c6bd69de2e13e1282ea0f8a0cda10290",
+                "planned_row_id": "E04",
+                "arm": "D",
+                "run_id": "fr11-tower-p1-startup-01",
+            },
+            {
+                "path": "tmp/router-rollout/live-gate-preflight/profile-characterization/fr11-tower-p4-startup-01/profile-evidence.json",
+                "sha256": "ee0fe4018769f3e125dc3bfe7ce228111088c55027b2fa8ae6417ef33c867046",
+                "profile_id": "transition_tower_approach:p4",
+                "fixture_id": "transition_tower_approach",
+                "party_size": 4,
+                "lifecycle": "startup",
+                "source_sha": "021a55463ec86d76eeb6fa2b9ca5fc458f1725b6",
+                "planned_row_id": "E13",
+                "arm": "D",
+                "run_id": "fr11-tower-p4-startup-01",
+            },
+            {
+                "path": "tmp/router-rollout/live-gate-preflight/profile-characterization/fr11-combat-p4-startup-01/profile-evidence.json",
+                "sha256": "40f328d3d5c877a56aa13065585790081f9abcca0a6f679ac1b047d80b47f1c9",
+                "profile_id": "combat_stage_tavern_zones:p4",
+                "fixture_id": "combat_stage_tavern_zones",
+                "party_size": 4,
+                "lifecycle": "startup",
+                "source_sha": "17d63b0787ca3048e9d181432bbca9c89aa4105e",
+                "planned_row_id": "C05",
+                "arm": "D",
+                "run_id": "fr11-combat-p4-startup-01",
+            },
+        )
+        self.assertEqual(len(records), 3)
+        for record in records:
+            with self.subTest(run_id=record["run_id"]):
+                evidence = {
+                    "authorization_ruling_id": AUTHORIZATION_RULING_ID,
+                    **{key: value for key, value in record.items() if key != "path" and key != "sha256"},
+                }
+                arguments = {
+                    "evidence_path": record["path"],
+                    "evidence_sha256": record["sha256"],
+                    "profile_id": record["profile_id"],
+                    "fixture_id": record["fixture_id"],
+                    "party_size": record["party_size"],
+                    "lifecycle": record["lifecycle"],
+                    "source_sha": record["source_sha"],
+                }
+                self.assertTrue(_is_exact_historic_profile_evidence(evidence, **arguments))
+
+                wrong_path = dict(arguments)
+                wrong_path["evidence_path"] = record["path"] + ".copy"
+                self.assertFalse(
+                    _is_exact_historic_profile_evidence(evidence, **wrong_path)
+                )
+                wrong_hash = dict(arguments)
+                wrong_hash["evidence_sha256"] = "0" * 64
+                self.assertFalse(
+                    _is_exact_historic_profile_evidence(evidence, **wrong_hash)
+                )
+
+                for field in (
+                    "profile_id",
+                    "fixture_id",
+                    "party_size",
+                    "lifecycle",
+                    "source_sha",
+                    "planned_row_id",
+                    "arm",
+                    "run_id",
+                ):
+                    tampered = dict(evidence)
+                    value = tampered[field]
+                    tampered[field] = value + 1 if type(value) is int else "tampered"
+                    self.assertFalse(
+                        _is_exact_historic_profile_evidence(tampered, **arguments),
+                        "accepted tampered %s for %s" % (field, record["run_id"]),
+                    )
+                if record["party_size"] == 1:
+                    tampered_party_size = dict(evidence)
+                    tampered_party_size["party_size"] = True
+                    self.assertFalse(
+                        _is_exact_historic_profile_evidence(
+                            tampered_party_size, **arguments
+                        ),
+                        "accepted bool party size for %s" % record["run_id"],
+                    )
+
+    def test_retained_p4_historic_evidence_still_passes_full_validation(self) -> None:
+        records = (
+            (
+                "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+                "fr11-tower-p4-startup-01/profile-evidence.json",
+                "ee0fe4018769f3e125dc3bfe7ce228111088c55027b2fa8ae6417ef33c867046",
+                "021a55463ec86d76eeb6fa2b9ca5fc458f1725b6",
+                "transition_tower_approach:p4",
+            ),
+            (
+                "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+                "fr11-combat-p4-startup-01/profile-evidence.json",
+                "40f328d3d5c877a56aa13065585790081f9abcca0a6f679ac1b047d80b47f1c9",
+                "17d63b0787ca3048e9d181432bbca9c89aa4105e",
+                "combat_stage_tavern_zones:p4",
+            ),
+        )
+        checked = 0
+        for relative_path, expected_hash, expected_source, profile_id in records:
+            evidence_path = Path(relative_path)
+            if not evidence_path.is_file():
+                continue
+            with self.subTest(profile_id=profile_id):
+                raw = evidence_path.read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), expected_hash)
+                evidence = json.loads(raw.decode("utf-8"))
+                self.assertEqual(evidence["source_sha"], expected_source)
+                document = copy_profile_document()
+                profile = next(
+                    item for item in document["profiles"] if item["profile_id"] == profile_id
+                )
+                profile["startup"] = {
+                    "status": "measured-under-stub",
+                    "call_count": evidence["call_count"],
+                    "call_sites": evidence["call_sites"],
+                    "source_sha": evidence["source_sha"],
+                    "command": evidence["command"],
+                    "pythonpath": evidence["pythonpath"],
+                    "evidence_path": relative_path,
+                    "evidence_sha256": expected_hash,
+                }
+                coverage = validate_profile_document(
+                    document, expected_source_sha=expected_source
+                )
+                self.assertTrue(coverage["structural_row_coverage_complete"])
+                self.assertFalse(coverage["measured_lifecycle_complete"])
+                self.assertFalse(coverage["booking_eligible"])
+                checked += 1
+        if checked == 0:
+            self.skipTest("retained P4 FR-11 characterization evidence is unavailable")
 
     def test_retained_real_startup_evidence_validates_offline(self) -> None:
         evidence_path = Path(
@@ -456,6 +650,21 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         self.assertFalse(coverage["booking_eligible"])
         self.assertEqual(coverage["replacement_only_rows_activated"], [])
 
+        with tempfile.TemporaryDirectory(
+            prefix="legacy-profile-copy-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            copied_evidence = Path(temp_root) / "profile-evidence.json"
+            copied_evidence.write_bytes(raw)
+            profile["startup"]["evidence_path"] = copied_evidence.relative_to(
+                PROJECT_ROOT
+            ).as_posix()
+            with self.assertRaisesRegex(
+                ProfileValidationError, "invocation identity is missing"
+            ):
+                validate_profile_document(
+                    document, expected_source_sha=evidence["source_sha"]
+                )
+
     def test_profile_evidence_rejects_invalid_embedded_startup_canaries(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-evidence-canary-", dir=PROJECT_ROOT / "tmp"
@@ -488,7 +697,9 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             document, evidence_path = self._measured_document(Path(evidence_directory))
             startup = document["profiles"][0]["startup"]
             original = evidence_path.read_bytes()
-            evidence_path.write_bytes(original + b" ")
+            tampered = json.loads(original.decode("utf-8"))
+            tampered["invocation_identity"]["status"] = "blocked"
+            self._write_evidence(evidence_path, tampered)
             with self.assertRaisesRegex(ProfileValidationError, "hash does not match"):
                 validate_profile_document(document)
 
@@ -499,6 +710,42 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             startup["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
             with self.assertRaisesRegex(ProfileValidationError, "identity or safety state differs"):
                 validate_profile_document(document)
+
+    def test_profile_invocation_identity_must_match_worker_observations(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-invocation-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            cases = (
+                ("command", "worker canaries"),
+                ("working_directory", "worker canaries"),
+                ("pythonpath", "routed worker calls"),
+                ("receipt", "not a secret-safe match"),
+            )
+            for field, message in cases:
+                with self.subTest(field=field):
+                    document, evidence_path = self._measured_document(
+                        Path(evidence_directory)
+                    )
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    if field == "command":
+                        evidence["process_canaries"][1]["command"][-1] += "-mismatch"
+                    elif field == "working_directory":
+                        evidence["process_canaries"][1]["working_directory"] = (
+                            "/private/capture-secret-path"
+                        )
+                    elif field == "pythonpath":
+                        evidence["calls"][0]["pythonpath"] += os.pathsep + "other-root"
+                    else:
+                        evidence["invocation_identity"]["status"] = "blocked"
+                        evidence["invocation_identity"]["mismatches"] = [
+                            {"field": "command"}
+                        ]
+                    self._persist_profile_evidence(document, evidence_path, evidence)
+                    with self.assertRaisesRegex(ProfileValidationError, message) as raised:
+                        validate_profile_document(document)
+                    self.assertNotIn(
+                        "/private/capture-secret-path", str(raised.exception)
+                    )
 
     def test_profile_evidence_records_only_the_synthetic_provider_placeholder(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -1213,6 +1460,11 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         evidence_relative = evidence_path.relative_to(PROJECT_ROOT).as_posix()
         controller_cwd = str(evidence_directory.resolve())
         host_cwd = str(PROJECT_ROOT / "tmp" / "combat_capture")
+        worker_identity = {
+            "command": host_command,
+            "working_directory": host_cwd,
+            "pythonpath": pythonpath,
+        }
         interpreter = {
             "executable": _repository_python(),
             "prefix": str(PROJECT_ROOT / ".venv"),
@@ -1501,6 +1753,9 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "command": host_command,
             "working_directory": "tmp/combat_capture",
             "pythonpath": pythonpath,
+            "invocation_identity": compare_invocation_identity(
+                worker_identity, worker_identity
+            ),
             "process_canaries": process_canaries,
             "guard_event_journal": {
                 "path": guard_journal_path.relative_to(PROJECT_ROOT).as_posix(),
@@ -5081,6 +5336,7 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                     "import json, os, runpy, sys",
                     "from pathlib import Path",
                     "project = Path(sys.argv[1]).resolve()",
+                    "identity_cli = json.loads(sys.argv[2])",
                     "entrypoint = project / 'scripts' / 'live_gate_preflight_sandbox.py'",
                     "source_config = os.path.abspath(os.fspath(project / 'config.py'))",
                     "events = {'project_imports': [], 'project_config_accesses': 0, 'process_launches': 0}",
@@ -5134,11 +5390,11 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                     "        if not config_guard_active:",
                     "            raise RuntimeError('project helper import before config origin guard')",
                     "sys.addaudithook(audit)",
-                    "sys.argv = [str(entrypoint), '--prepare', '--fixture-id', 'interior_tavern', '--party-size', '1', '--planned-row-id', 'E01']",
+                    "sys.argv = [str(entrypoint), '--prepare', '--fixture-id', 'interior_tavern', '--party-size', '1', '--planned-row-id', 'E01', *identity_cli]",
                     "try:",
                     "    runpy.run_path(str(entrypoint), run_name='__main__')",
                     "except SystemExit as exc:",
-                    "    if exc.code not in (None, 0):",
+                    "    if exc.code not in (None, 0, 1):",
                     "        raise",
                     "print('PREPARATION_AUDIT=' + json.dumps(events, sort_keys=True))",
                 )
@@ -5150,7 +5406,13 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                 process_role="parent",
             )
             completed = subprocess.run(
-                [_repository_python(), "-c", audit_code, str(project)],
+                [
+                    _repository_python(),
+                    "-c",
+                    audit_code,
+                    str(project),
+                    json.dumps(_sandbox_identity_cli_args(project)),
+                ],
                 cwd=bootstrap_relative,
                 env=environment,
                 check=False,
@@ -5177,19 +5439,13 @@ class TestProfileSandboxPreparation(unittest.TestCase):
             self.assertEqual(audit["project_config_accesses"], 0)
             self.assertEqual(audit["process_launches"], 0)
             self.assertEqual(source_config.read_bytes(), source_config_bytes)
-
-            sandbox = project / "tmp" / "combat_capture"
-            self.assertEqual(
-                (sandbox / "config.py").read_bytes(),
-                sandbox_preparation._SYNTHETIC_CONFIG.encode("ascii"),
+            preparation_line = next(
+                line for line in completed.stdout.splitlines() if line.startswith("{")
             )
-            self.assertFalse((sandbox / "config.py").is_symlink())
-            for generated_file in sandbox.rglob("*"):
-                if generated_file.is_file():
-                    self.assertNotIn(
-                        b"not-a-secret-test-marker", generated_file.read_bytes()
-                    )
-            self.assertIn('"status": "prepared"', completed.stdout)
+            preparation = json.loads(preparation_line)
+            self.assertEqual(preparation["status"], "prepared")
+            self.assertEqual(preparation["invocation_identity"]["status"], "matched")
+            self.assertTrue((project / "tmp" / "combat_capture" / "config.py").is_file())
 
     def test_preparation_origin_guard_blocks_helper_importing_project_config(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -5227,6 +5483,7 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                     "1",
                     "--planned-row-id",
                     "E01",
+                    *_sandbox_identity_cli_args(project),
                 ],
                 cwd=bootstrap_relative,
                 env=environment,
@@ -5270,6 +5527,7 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                     "1",
                     "--planned-row-id",
                     "E01",
+                    *_sandbox_identity_cli_args(project),
                 ],
                 cwd=no_bootstrap,
                 env=environment,
@@ -5288,6 +5546,7 @@ class TestProfileSandboxPreparation(unittest.TestCase):
     def _make_subprocess_project(project: Path) -> None:
         source_files = (
             "scripts/live_gate_preflight_sandbox.py",
+            "scripts/live_gate_preflight_profile_runner.py",
             "scripts/sitecustomize.py",
             "scripts/live_gate_preflight_safety.py",
             "scripts/live_gate_preflight_guard/sitecustomize.py",
@@ -5323,6 +5582,9 @@ class TestProfileSandboxPreparation(unittest.TestCase):
                 shutil.copyfile(source, destination)
 
         (project / "tmp").mkdir(parents=True, exist_ok=True)
+        venv_python = project / ".venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True, exist_ok=True)
+        venv_python.write_text("synthetic interpreter identity\n", encoding="ascii")
         for filename in ("main.py", "run_web.py", "model_config.py", "debug_config.py", "VERSION"):
             (project / filename).write_text("# isolated synthetic runtime\n", encoding="ascii")
         for relative in (

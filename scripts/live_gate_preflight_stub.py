@@ -14,7 +14,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from scripts.live_gate_preflight_safety import NetworkGuardError, require_guard_active
 
@@ -118,6 +118,49 @@ class FailClosedRouterStub:
             self.failure_code = "router_task_has_no_stub_response"
             raise RouterStubError("router task has no explicit stub response")
         return copy.deepcopy(self.responses[task])
+
+
+def install_fail_closed_router_stub(
+    router: Any, stub: FailClosedRouterStub
+) -> Callable[[], None]:
+    """Replace a router call boundary with the guarded explicit-response stub.
+
+    The returned cleanup restores the original callable only while the stub is
+    still installed. A changed boundary is reported as an error rather than
+    silently restoring over an unexpected mutation.
+    """
+    _require_network_guard()
+    if not isinstance(stub, FailClosedRouterStub):
+        raise RouterStubError("router boundary requires a fail-closed stub")
+    original_call = getattr(router, "call", None)
+    if not callable(original_call) or original_call is stub:
+        raise RouterStubError("sandbox router call boundary is unavailable")
+    try:
+        setattr(router, "call", stub)
+    except Exception as exc:
+        raise RouterStubError("sandbox router stub installation failed") from exc
+    if getattr(router, "call", None) is not stub:
+        try:
+            setattr(router, "call", original_call)
+        except Exception:
+            pass
+        raise RouterStubError("sandbox router stub installation failed")
+
+    cleaned = False
+
+    def cleanup() -> None:
+        nonlocal cleaned
+        if cleaned:
+            return
+        if getattr(router, "call", None) is not stub:
+            raise RouterStubError("sandbox router stub boundary changed")
+        try:
+            setattr(router, "call", original_call)
+        except Exception as exc:
+            raise RouterStubError("sandbox router stub cleanup failed") from exc
+        cleaned = True
+
+    return cleanup
 
 
 def _caller_location(source_root: Path) -> tuple[str | None, int | None]:

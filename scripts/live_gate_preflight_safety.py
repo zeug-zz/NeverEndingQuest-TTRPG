@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from collections.abc import Mapping
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 
 ENABLE_GUARD_ENV = "NEQ_PREFLIGHT_NETWORK_GUARD"
@@ -89,6 +89,14 @@ class NetworkGuardError(PermissionError):
 
 class SafetyConfigurationError(ValueError):
     """Raised when the isolated preflight environment is not safe to use."""
+
+
+class InvocationIdentityMismatch(SafetyConfigurationError):
+    """Raised when declared and intended worker invocation identities differ."""
+
+    def __init__(self, evidence: Mapping[str, Any]) -> None:
+        self.evidence = dict(evidence)
+        super().__init__("preflight invocation identity mismatch")
 
 
 _GUARD_INSTALLED = False
@@ -1340,6 +1348,188 @@ def current_invocation_command() -> list[str]:
     if isinstance(original, (list, tuple)) and original:
         return [sys.executable, *(str(argument) for argument in original[1:])]
     return [sys.executable, *sys.argv]
+
+
+_INVOCATION_IDENTITY_KEYS = frozenset(
+    ("command", "working_directory", "pythonpath")
+)
+
+
+def _normalize_invocation_identity(
+    value: Any, *, label: str
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != _INVOCATION_IDENTITY_KEYS:
+        raise SafetyConfigurationError(label + " invocation identity is invalid")
+    command = value.get("command")
+    working_directory = value.get("working_directory")
+    pythonpath = value.get("pythonpath")
+    if (
+        not isinstance(command, (list, tuple))
+        or not command
+        or any(
+            not isinstance(argument, str)
+            or "\x00" in argument
+            for argument in command
+        )
+        or not isinstance(working_directory, str)
+        or not working_directory
+        or "\x00" in working_directory
+        or not isinstance(pythonpath, str)
+        or "\x00" in pythonpath
+    ):
+        raise SafetyConfigurationError(label + " invocation identity is invalid")
+    return {
+        "command": list(command),
+        "working_directory": working_directory,
+        "pythonpath": pythonpath,
+    }
+
+
+def compare_invocation_identity(
+    declared: Any, intended: Any
+) -> dict[str, Any]:
+    """Compare exact argv, cwd, and PYTHONPATH without exposing their values.
+
+    Mismatch evidence contains only field names, argument/entry indexes, counts,
+    and path-shape facts. It deliberately omits raw arguments and paths, which
+    may contain credentials or machine-local details.
+    """
+    expected = _normalize_invocation_identity(declared, label="declared")
+    observed = _normalize_invocation_identity(intended, label="intended")
+    mismatches: list[dict[str, Any]] = []
+
+    expected_command = expected["command"]
+    observed_command = observed["command"]
+    command_indexes = [
+        index
+        for index in range(max(len(expected_command), len(observed_command)))
+        if index >= len(expected_command)
+        or index >= len(observed_command)
+        or expected_command[index] != observed_command[index]
+    ]
+    if command_indexes:
+        mismatches.append(
+            {
+                "field": "command",
+                "declared_argument_count": len(expected_command),
+                "intended_argument_count": len(observed_command),
+                "differing_argument_indexes": command_indexes,
+            }
+        )
+
+    expected_cwd = expected["working_directory"]
+    observed_cwd = observed["working_directory"]
+    if expected_cwd != observed_cwd:
+        mismatches.append(
+            {
+                "field": "working_directory",
+                "declared_is_absolute": Path(expected_cwd).is_absolute(),
+                "intended_is_absolute": Path(observed_cwd).is_absolute(),
+                "declared_component_count": len(Path(expected_cwd).parts),
+                "intended_component_count": len(Path(observed_cwd).parts),
+            }
+        )
+
+    expected_pythonpath = expected["pythonpath"]
+    observed_pythonpath = observed["pythonpath"]
+    if expected_pythonpath != observed_pythonpath:
+        expected_entries = expected_pythonpath.split(os.pathsep)
+        observed_entries = observed_pythonpath.split(os.pathsep)
+        path_indexes = [
+            index
+            for index in range(max(len(expected_entries), len(observed_entries)))
+            if index >= len(expected_entries)
+            or index >= len(observed_entries)
+            or expected_entries[index] != observed_entries[index]
+        ]
+        mismatches.append(
+            {
+                "field": "pythonpath",
+                "declared_entry_count": len(expected_entries),
+                "intended_entry_count": len(observed_entries),
+                "differing_entry_indexes": path_indexes,
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "status": "blocked" if mismatches else "matched",
+        "fields_compared": ["command", "working_directory", "pythonpath"],
+        "mismatches": mismatches,
+    }
+
+
+def require_invocation_identity(
+    declared: Any, intended: Any
+) -> dict[str, Any]:
+    """Require exact invocation identity and return secret-free evidence."""
+    evidence = compare_invocation_identity(declared, intended)
+    if evidence["mismatches"]:
+        raise InvocationIdentityMismatch(evidence)
+    return evidence
+
+
+def run_after_invocation_identity(
+    declared: Any,
+    intended: Any,
+    operation: Callable[[], Any],
+) -> tuple[Any, dict[str, Any]]:
+    """Run one side effect only after exact invocation identity is proven."""
+    if not callable(operation):
+        raise SafetyConfigurationError("preflight boundary operation is invalid")
+    evidence = require_invocation_identity(declared, intended)
+    return operation(), evidence
+
+
+def current_invocation_identity() -> dict[str, Any]:
+    """Return the current process identity used at seed/worker boundaries."""
+    return {
+        "command": current_invocation_command(),
+        "working_directory": str(Path.cwd()),
+        "pythonpath": os.environ.get("PYTHONPATH", ""),
+    }
+
+
+def startup_invocation_identity() -> dict[str, Any]:
+    """Return the invocation captured by the already-installed startup guard."""
+    require_guard_active()
+    if os.environ.get(STARTUP_GUARD_ENV) != "1":
+        raise NetworkGuardError("preflight startup invocation identity is unavailable")
+    try:
+        report = json.loads(os.environ.get(CANARY_REPORT_ENV, ""))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise NetworkGuardError(
+            "preflight startup invocation identity is invalid"
+        ) from exc
+    source_guard = sys.modules.get("scripts.sitecustomize")
+    startup_environment = getattr(source_guard, "_STARTUP_ENVIRONMENT", None)
+    if (
+        not isinstance(report, Mapping)
+        or not isinstance(startup_environment, Mapping)
+        or not isinstance(report.get("command"), list)
+        or not isinstance(report.get("working_directory"), str)
+        or not isinstance(startup_environment.get("PYTHONPATH"), str)
+    ):
+        raise NetworkGuardError("preflight startup invocation identity is incomplete")
+    identity = {
+        "command": report["command"],
+        "working_directory": report["working_directory"],
+        "pythonpath": startup_environment["PYTHONPATH"],
+    }
+    try:
+        _normalize_invocation_identity(identity, label="startup")
+    except SafetyConfigurationError as exc:
+        raise NetworkGuardError(
+            "preflight startup invocation identity is invalid"
+        ) from exc
+    return identity
+
+
+def require_current_invocation_matches_startup() -> dict[str, Any]:
+    """Fail closed if argv, cwd, or PYTHONPATH changed after interpreter startup."""
+    return require_invocation_identity(
+        startup_invocation_identity(), current_invocation_identity()
+    )
 
 
 class _CanarySocket:

@@ -7,8 +7,9 @@
 
 This tool only copies and seeds files below tmp/combat_capture. It does not
 launch Python, a host, a driver, a server, or a native companion. The later
-profile runner owns the guarded host lifecycle and port lock. Its command-line
-controller requires the dedicated preflight guard on PYTHONPATH.
+profile runner owns the guarded host lifecycle and port lock. Seeding requires
+the internally planned worker invocation to match the declared intended
+command, working directory, and PYTHONPATH.
 """
 
 from __future__ import annotations
@@ -18,13 +19,19 @@ import copy
 import fnmatch
 import json
 import os
+import re
 import shutil
 import stat
 import sys
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
-from scripts.live_gate_preflight_safety import SANDBOX_PROVIDER_KEY_PLACEHOLDER
+from scripts.live_gate_preflight_safety import (
+    InvocationIdentityMismatch,
+    SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+    run_after_invocation_identity,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +44,9 @@ _FIXTURE_IDS = (
     "combat_stage_tavern_zones",
 )
 _PARTY_SIZES = (1, 4)
+_SOURCE_SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_CHECKPOINT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_FILES = (
     "main.py",
     "run_web.py",
@@ -106,6 +116,29 @@ _PREPARATION_STARTUP_GUARD_VERIFIED = False
 
 class SandboxPreparationError(RuntimeError):
     """Raised when a requested isolated sandbox cannot be prepared safely."""
+
+
+@dataclass(frozen=True)
+class PlannedWorkerInvocation:
+    """Trusted worker launch plan derived from validated fixture/run inputs."""
+
+    fixture_id: str
+    party_size: int
+    lifecycle: str
+    source_sha: str
+    run_id: str
+    planned_row_id: str
+    arm: str
+    command: tuple[str, ...]
+    working_directory: str
+    pythonpath: str
+
+    def identity(self) -> dict[str, Any]:
+        return {
+            "command": list(self.command),
+            "working_directory": self.working_directory,
+            "pythonpath": self.pythonpath,
+        }
 
 
 def _relative_path(value: str | Path, label: str) -> PurePosixPath:
@@ -639,38 +672,172 @@ def _load_profile_seed_plan(
     return plan, pair_profile
 
 
+def _load_profile_seed_inputs(
+    project_root: Path,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    from scripts.live_gate_preflight_profiles import PREREG_ROOT
+    from scripts.mapping_pilot.fixtures import (
+        build_fixture_payloads,
+        load_verified_fixtures,
+    )
+
+    fixtures, source_hashes = load_verified_fixtures(project_root / PREREG_ROOT)
+    module_payloads, expected_payloads = build_fixture_payloads(
+        fixtures, source_hashes
+    )
+    return module_payloads, expected_payloads
+
+
+def _planned_worker_invocation(
+    project_root: Path,
+    plan: Mapping[str, Any],
+    *,
+    lifecycle: str,
+    source_sha: str,
+    run_id: str,
+    resume_checkpoint_sha256: str | None,
+) -> PlannedWorkerInvocation:
+    """Build the worker identity through the same controller command factory."""
+    if lifecycle not in ("startup", "resume"):
+        raise SandboxPreparationError("worker lifecycle identity is invalid")
+    if not isinstance(source_sha, str) or _SOURCE_SHA.fullmatch(source_sha) is None:
+        raise SandboxPreparationError("worker source identity is invalid")
+    if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+        raise SandboxPreparationError("worker run identity is invalid")
+    if lifecycle == "resume":
+        if (
+            not isinstance(resume_checkpoint_sha256, str)
+            or _CHECKPOINT_SHA256.fullmatch(resume_checkpoint_sha256) is None
+        ):
+            raise SandboxPreparationError("resume checkpoint identity is invalid")
+    elif resume_checkpoint_sha256 is not None:
+        raise SandboxPreparationError("startup checkpoint identity is invalid")
+
+    fixture_id = plan.get("fixture_id")
+    party_size = plan.get("party_size")
+    row = plan.get("counterbalance")
+    if (
+        fixture_id not in _FIXTURE_IDS
+        or type(party_size) is not int
+        or party_size not in _PARTY_SIZES
+        or not isinstance(row, Mapping)
+        or row.get("row_type") != "planned"
+        or not isinstance(row.get("row_id"), str)
+        or row["row_id"].startswith("R")
+        or plan.get("arm") not in ("A", "B", "D")
+    ):
+        raise SandboxPreparationError("planned worker fixture identity is invalid")
+
+    selected_row_id = str(row["row_id"])
+    selected_arm = str(plan["arm"])
+    lifecycle_id = run_id + ("_s" if lifecycle == "startup" else "_r")
+    from scripts.live_gate_preflight_profile_runner import (
+        CharacterizationError,
+        _host_command,
+    )
+    from scripts.live_gate_preflight_safety import expected_guarded_pythonpath
+
+    try:
+        command = _host_command(
+            fixture_id=str(fixture_id),
+            party_size=party_size,
+            lifecycle=lifecycle,
+            source_sha=source_sha,
+            run_id=run_id,
+            planned_row_id=selected_row_id,
+            arm=selected_arm,
+            lifecycle_id=lifecycle_id,
+            resume_checkpoint_sha256=resume_checkpoint_sha256,
+        )
+    except CharacterizationError as exc:
+        raise SandboxPreparationError(
+            "planned worker command is unavailable"
+        ) from exc
+    if not isinstance(command, list) or not command or any(
+        not isinstance(part, str) or not part for part in command
+    ):
+        raise SandboxPreparationError("planned worker command is invalid")
+
+    root = project_root.resolve(strict=True)
+    return PlannedWorkerInvocation(
+        fixture_id=str(fixture_id),
+        party_size=party_size,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+        run_id=run_id,
+        planned_row_id=selected_row_id,
+        arm=selected_arm,
+        command=tuple(command),
+        working_directory=str(root / SANDBOX_RELATIVE),
+        pythonpath=expected_guarded_pythonpath(root),
+    )
+
+
 def prepare_profile_sandbox(
     fixture_id: str,
     party_size: int,
     planned_row_id: str | None = None,
+    *,
+    lifecycle: str,
+    source_sha: str,
+    run_id: str,
+    intended_host_identity: Mapping[str, Any],
+    resume_checkpoint_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Prepare a fresh real runtime copy and source-bound SP3 fixture seed."""
+    """Seed only after intent matches the internally planned worker launch."""
     _require_preparation_startup_guard()
-    _target_path(PROJECT_ROOT)
-    plan, _profile = _load_profile_seed_plan(fixture_id, party_size, planned_row_id)
-    from scripts.mapping_pilot.fixtures import build_fixture_payloads, load_verified_fixtures
-
-    fixtures, source_hashes = load_verified_fixtures(plan["prereg_root"])
-    module_payloads, expected_payloads = build_fixture_payloads(fixtures, source_hashes)
-    return _prepare_new_sandbox(
-        PROJECT_ROOT,
-        plan,
-        module_payloads,
-        expected_payloads,
+    root = _project_root(PROJECT_ROOT)
+    plan, _pair_profile = _load_profile_seed_plan(
+        fixture_id, party_size, planned_row_id
     )
+    worker_plan = _planned_worker_invocation(
+        root,
+        plan,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+        run_id=run_id,
+        resume_checkpoint_sha256=resume_checkpoint_sha256,
+    )
+    module_payloads, expected_payloads = _load_profile_seed_inputs(root)
+    prepared, identity_evidence = run_after_invocation_identity(
+        worker_plan.identity(),
+        intended_host_identity,
+        lambda: _prepare_new_sandbox(
+            root, plan, module_payloads, expected_payloads
+        ),
+    )
+    prepared["invocation_identity"] = identity_evidence
+    return prepared
+
+
+def _parse_identity_json(value: str) -> Mapping[str, Any]:
+    try:
+        identity = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise argparse.ArgumentTypeError("host invocation identity must be JSON") from exc
+    if not isinstance(identity, Mapping):
+        raise argparse.ArgumentTypeError("host invocation identity must be an object")
+    return identity
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare one fresh provider-free profile sandbox under tmp/combat_capture. "
-            "This command does not launch a host or characterize a profile."
+            "Prepare an isolated sandbox only when its intended worker identity "
+            "matches the internally planned invocation; this command never launches a host."
         )
     )
     parser.add_argument("--prepare", action="store_true", required=True)
     parser.add_argument("--fixture-id", choices=_FIXTURE_IDS, required=True)
     parser.add_argument("--party-size", type=int, choices=_PARTY_SIZES, required=True)
     parser.add_argument("--planned-row-id")
+    parser.add_argument("--lifecycle", choices=("startup", "resume"), required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--resume-checkpoint-sha256")
+    parser.add_argument(
+        "--intended-host-identity-json", type=_parse_identity_json, required=True
+    )
     return parser.parse_args(argv)
 
 
@@ -678,8 +845,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         result = prepare_profile_sandbox(
-            args.fixture_id, args.party_size, args.planned_row_id
+            args.fixture_id,
+            args.party_size,
+            args.planned_row_id,
+            lifecycle=args.lifecycle,
+            source_sha=args.source_sha,
+            run_id=args.run_id,
+            intended_host_identity=args.intended_host_identity_json,
+            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
         )
+    except InvocationIdentityMismatch as exc:
+        print(
+            "[FAIL] profile_sandbox="
+            + json.dumps(
+                {
+                    "failure_code": "invocation_identity_mismatch",
+                    "identity_evidence": exc.evidence,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return 1
     except (ImportError, OSError, ValueError, SandboxPreparationError) as exc:
         print("[FAIL] profile_sandbox=" + str(exc), file=sys.stderr)
         return 1

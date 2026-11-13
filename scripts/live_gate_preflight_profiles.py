@@ -60,6 +60,51 @@ _SAFE_TASK = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _PROFILE_EVIDENCE_MAX_BYTES = 512_000
 _PROFILE_WORKING_DIRECTORY = "tmp/combat_capture"
+# Pre-identity evidence is accepted only for these independently validated,
+# source-bound records. Each tuple pins path, bytes, profile, fixture, party,
+# lifecycle, source, planned row, arm, and run; the normal canary/census checks
+# below still validate every accepted record.
+_HISTORIC_PROFILE_EVIDENCE = (
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-tower-p1-startup-01/profile-evidence.json",
+        "8908c2e325e0e2289789d4baeda721a553c809e1c9f5b4d99086f0f9f8b71a19",
+        "transition_tower_approach:p1",
+        "transition_tower_approach",
+        1,
+        "startup",
+        "7e874277c6bd69de2e13e1282ea0f8a0cda10290",
+        "E04",
+        "D",
+        "fr11-tower-p1-startup-01",
+    ),
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-tower-p4-startup-01/profile-evidence.json",
+        "ee0fe4018769f3e125dc3bfe7ce228111088c55027b2fa8ae6417ef33c867046",
+        "transition_tower_approach:p4",
+        "transition_tower_approach",
+        4,
+        "startup",
+        "021a55463ec86d76eeb6fa2b9ca5fc458f1725b6",
+        "E13",
+        "D",
+        "fr11-tower-p4-startup-01",
+    ),
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-combat-p4-startup-01/profile-evidence.json",
+        "40f328d3d5c877a56aa13065585790081f9abcca0a6f679ac1b047d80b47f1c9",
+        "combat_stage_tavern_zones:p4",
+        "combat_stage_tavern_zones",
+        4,
+        "startup",
+        "17d63b0787ca3048e9d181432bbca9c89aa4105e",
+        "C05",
+        "D",
+        "fr11-combat-p4-startup-01",
+    ),
+)
 
 
 class ProfileValidationError(ValueError):
@@ -548,6 +593,7 @@ def _validate_profile_evidence(
         "command",
         "working_directory",
         "pythonpath",
+        "invocation_identity",
         "controller_interpreter",
         "worker_interpreter",
         "network_guard_active",
@@ -572,7 +618,24 @@ def _validate_profile_evidence(
         "failure_code",
         "teardown",
     }
-    _require_keys(evidence, evidence_fields, "profile evidence")
+    legacy_evidence_fields = evidence_fields - {"invocation_identity"}
+    if not isinstance(evidence, Mapping) or set(evidence) not in (
+        evidence_fields,
+        legacy_evidence_fields,
+    ):
+        raise ProfileValidationError("profile evidence fields are malformed")
+    historic_identity_unavailable = "invocation_identity" not in evidence
+    if historic_identity_unavailable and not _is_exact_historic_profile_evidence(
+        evidence,
+        evidence_path=evidence_path,
+        evidence_sha256=evidence_sha256,
+        profile_id=profile_id,
+        fixture_id=fixture_id,
+        party_size=party_size,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+    ):
+        raise ProfileValidationError("profile evidence invocation identity is missing")
     if (
         type(evidence.get("schema_version")) is not int
         or evidence.get("schema_version") != 1
@@ -615,6 +678,15 @@ def _validate_profile_evidence(
         or evidence.get("failure_code") is not None
     ):
         raise ProfileValidationError("profile evidence identity or safety state differs")
+
+    if not historic_identity_unavailable:
+        _validate_profile_invocation_identity(
+            evidence.get("invocation_identity"),
+            evidence=evidence,
+            project_root=project_root,
+            expected_command=command,
+            expected_pythonpath=pythonpath,
+        )
 
     process_canaries = evidence.get("process_canaries")
     if not isinstance(process_canaries, list) or len(process_canaries) != 3:
@@ -1605,6 +1677,135 @@ def _authorized_profile_process_tree(
             elif previous != identity:
                 return None
     return authorized
+
+
+def _is_exact_historic_profile_evidence(
+    evidence: Mapping[str, Any],
+    *,
+    evidence_path: str,
+    evidence_sha256: str,
+    profile_id: str,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    source_sha: str,
+) -> bool:
+    """Allow only exact, source-bound historic records lacking an identity receipt."""
+    signature = next(
+        (item for item in _HISTORIC_PROFILE_EVIDENCE if item[0] == evidence_path),
+        None,
+    )
+    if signature is None:
+        return False
+
+    (
+        expected_path,
+        expected_sha256,
+        expected_profile_id,
+        expected_fixture_id,
+        expected_party_size,
+        expected_lifecycle,
+        expected_source_sha,
+        expected_planned_row_id,
+        expected_arm,
+        expected_run_id,
+    ) = signature
+    return bool(
+        evidence_path == expected_path
+        and evidence_sha256 == expected_sha256
+        and profile_id == expected_profile_id
+        and fixture_id == expected_fixture_id
+        and type(party_size) is int
+        and party_size == expected_party_size
+        and lifecycle == expected_lifecycle
+        and source_sha == expected_source_sha
+        and evidence.get("authorization_ruling_id") == AUTHORIZATION_RULING_ID
+        and evidence.get("profile_id") == expected_profile_id
+        and evidence.get("fixture_id") == expected_fixture_id
+        and type(evidence.get("party_size")) is int
+        and evidence.get("party_size") == expected_party_size
+        and evidence.get("lifecycle") == expected_lifecycle
+        and evidence.get("planned_row_id") == expected_planned_row_id
+        and evidence.get("arm") == expected_arm
+        and evidence.get("run_id") == expected_run_id
+        and evidence.get("source_sha") == expected_source_sha
+    )
+
+
+def _validate_profile_invocation_identity(
+    identity: Any,
+    *,
+    evidence: Mapping[str, Any],
+    project_root: Path,
+    expected_command: list[str],
+    expected_pythonpath: str,
+) -> None:
+    """Bind the secret-safe match receipt to the observed worker evidence."""
+    identity_fields = {
+        "schema_version",
+        "status",
+        "fields_compared",
+        "mismatches",
+    }
+    _require_keys(identity, identity_fields, "profile invocation identity")
+    if (
+        type(identity.get("schema_version")) is not int
+        or identity.get("schema_version") != 1
+        or identity.get("status") != "matched"
+        or identity.get("fields_compared")
+        != ["command", "working_directory", "pythonpath"]
+        or identity.get("mismatches") != []
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity is not a secret-safe match"
+        )
+
+    expected_working_directory = str(
+        project_root.resolve(strict=True) / _PROFILE_WORKING_DIRECTORY
+    )
+    host_command = evidence.get("host_command")
+    if (
+        not _valid_command(expected_command)
+        or evidence.get("command") != expected_command
+        or host_command != expected_command
+        or evidence.get("working_directory") != _PROFILE_WORKING_DIRECTORY
+        or evidence.get("pythonpath") != expected_pythonpath
+        or expected_pythonpath != expected_guarded_pythonpath(project_root)
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from declared worker identity"
+        )
+
+    canaries = evidence.get("process_canaries")
+    host_canaries = (
+        [
+            canary
+            for canary in canaries
+            if isinstance(canary, Mapping)
+            and canary.get("process_role") == "host"
+        ]
+        if isinstance(canaries, list)
+        else []
+    )
+    if len(host_canaries) != 2 or any(
+        canary.get("command") != expected_command
+        or canary.get("working_directory") != expected_working_directory
+        for canary in host_canaries
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from worker canaries"
+        )
+
+    calls = evidence.get("calls")
+    if not isinstance(calls, list) or not calls or any(
+        not isinstance(call, Mapping)
+        or call.get("command") != expected_command
+        or call.get("pythonpath") != expected_pythonpath
+        for call in calls
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from routed worker calls"
+        )
 
 
 def _sorted_positive_pid_list(value: Any) -> bool:
