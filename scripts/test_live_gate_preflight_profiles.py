@@ -5180,6 +5180,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertIsNotNone(start)
             self.assertIsNotNone(end)
             self.assertLessEqual((end - start).total_seconds(), 8 * 60 * 60)
+            self.assertEqual((end - start).total_seconds(), 1800)
+            self.assertEqual(record["frozen_caps"]["window_hours"], 0.5)
             self.assertEqual(record["ports"], [8360, 8370])
             self.assertEqual(record["holder"], "N agent-run")
             self.assertEqual(
@@ -5227,7 +5229,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         long_window = self._lock_record(run_id="long-window")
         start = profile_runner._parse_utc_timestamp(long_window["window_start"])
         long_window["window_end"] = profile_runner._format_utc_timestamp(
-            start + timedelta(hours=9)
+            start + timedelta(seconds=1801)
         )
         invalid_records.append(long_window)
         malformed_window = self._lock_record(run_id="malformed-window")
