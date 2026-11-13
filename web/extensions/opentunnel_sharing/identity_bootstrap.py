@@ -1048,6 +1048,7 @@ def _observe_all(
     return tuple(observations)
 
 
+# TABLETOP MODE: Accept complete native process census absence evidence.
 def _assess_observations(
     observations: Sequence[tuple[ObservationKind, Observation]],
 ) -> Literal["absent", "present", "unknown"]:
@@ -1076,6 +1077,7 @@ def _assess_observations(
             if kind != "service" and observation.basis not in {
                 "proc_scan_complete",
                 "ps_snapshot_complete",
+                "native_process_info_complete",
             }:
                 return "unknown"
             if observation.basis == "unresolvable_on_empty_path" and kind != "service":

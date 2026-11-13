@@ -176,6 +176,26 @@ _MODEL_G9_TRANSPORT_FAULT_PATTERN = re.compile(
 _MODEL_G9_TRANSPORT_FAULT_ASSIGNMENT_PATTERN = re.compile(
     r"^OPENROUTER_TRANSPORT_FAULT_INJECTION_ENABLED\s*=", re.MULTILINE
 )
+_N3_LUNA_PROFILE_ASSIGNMENT = (
+    "# Historical Study 3 rate estimate only; not a live quote. Source: "
+    "scripts/mise_en_scene/llm_staging_study3/sizing.py:21-29.\n"
+    'MODEL_PROFILES["n3-luna"] = {\n'
+    '    "complex": {\n'
+    '        "model": "openai/gpt-6-luna",\n'
+    '        "params": {"max_tokens": 2048},\n'
+    '        "provider": {"allow_fallbacks": False},\n'
+    '        "price_per_1k": {"prompt": 0.0001, "completion": 0.0005},\n'
+    '    },\n'
+    '    "simple": {\n'
+    '        "model": "openai/gpt-6-luna",\n'
+    '        "params": {"max_tokens": 2048},\n'
+    '        "provider": {"allow_fallbacks": False},\n'
+    '        "price_per_1k": {"prompt": 0.0001, "completion": 0.0005},\n'
+    '    },\n'
+    '}\n'
+)
+_N3_LUNA_ROUTE = "n3-luna"
+_N3_LUNA_SCENARIO = "narrator-dialogue-travel"
 _G9_MARKER_NAME = ".g9-capture.json"
 _G10_MARKER_NAME = ".g10-capture.json"
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
@@ -354,7 +374,45 @@ def _replace_g9_config_literals(text: str, scenario_id: str) -> str:
     return updated
 
 
-def _patch_sandbox_model_config(gate: str = "g3", scenario_id: str = "") -> None:
+def _replace_n3_luna_config_literals(text: str) -> str:
+    """Pin only the capture copy to the fixed, priced N3 narration route."""
+    provider_matches = list(_MODEL_G9_PROVIDER_PATTERN.finditer(text))
+    profile_matches = list(_MODEL_G9_PROFILE_PATTERN.finditer(text))
+    if len(provider_matches) != 1:
+        raise RuntimeError("expected exactly one LLM_PROVIDER assignment in sandbox model_config.py")
+    if provider_matches[0].group(0).split("=", 1)[1].strip().strip("'\"") != "openrouter":
+        raise ValueError("n3-luna route requires the existing OpenRouter provider setting")
+    if len(profile_matches) != 1:
+        raise RuntimeError("expected exactly one ACTIVE_PROFILE assignment in sandbox model_config.py")
+    current_profile = profile_matches[0].group(0).split("=", 1)[1].strip().strip("'\"")
+    if current_profile != "production-auto":
+        raise RuntimeError("n3-luna route requires ACTIVE_PROFILE = production-auto before patching")
+    if 'MODEL_PROFILES["n3-luna"]' in text or "MODEL_PROFILES['n3-luna']" in text:
+        raise RuntimeError("sandbox model_config.py already contains the n3-luna route")
+
+    insert_at = profile_matches[0].start()
+    updated = text[:insert_at] + _N3_LUNA_PROFILE_ASSIGNMENT + text[insert_at:]
+    if len(_MODEL_G9_PROFILE_PATTERN.findall(updated)) != 1:
+        raise RuntimeError("n3-luna profile insertion changed ACTIVE_PROFILE structure")
+    updated, replaced = _MODEL_G9_PROFILE_PATTERN.subn(
+        r'\g<1>"n3-luna"', updated, count=1
+    )
+    if replaced != 1 or not re.search(
+        r'^ACTIVE_PROFILE\s*=\s*[\'"]n3-luna[\'"]\s*$', updated, re.MULTILINE
+    ):
+        raise RuntimeError("sandbox ACTIVE_PROFILE did not resolve to n3-luna")
+    if len(re.findall(r'^MODEL_PROFILES\["n3-luna"\]\s*=\s*\{', updated, re.MULTILINE)) != 1:
+        raise RuntimeError("sandbox n3-luna profile insertion was not unique")
+    if len(_MODEL_G9_PROVIDER_PATTERN.findall(updated)) != 1:
+        raise RuntimeError("n3-luna patch changed LLM_PROVIDER structure")
+    return updated
+
+
+def _patch_sandbox_model_config(
+    gate: str = "g3",
+    scenario_id: str = "",
+    model_route: Optional[str] = None,
+) -> None:
     model_config_path = _assert_sandbox_path(SANDBOX_ROOT / "model_config.py")
     if gate == "g9":
         _assert_sandbox_root()
@@ -428,6 +486,12 @@ def _patch_sandbox_model_config(gate: str = "g3", scenario_id: str = "") -> None
             raise RuntimeError("G7 requires exactly one disabled tactical brain and prefetch literal")
     if gate == "g9":
         updated = _replace_g9_config_literals(updated, scenario_id)
+    if model_route is not None:
+        if model_route != _N3_LUNA_ROUTE:
+            raise ValueError("unsupported capture model route")
+        if gate != "g4" or scenario_id != _N3_LUNA_SCENARIO:
+            raise ValueError("n3-luna route requires the G4 narrator-dialogue-travel scenario")
+        updated = _replace_n3_luna_config_literals(updated)
     model_config_path.write_text(updated, encoding="utf-8")
 
 
@@ -1466,6 +1530,7 @@ def prepare(
     gate: Optional[str] = None,
     path: str = "", boundary: str = "", run_dir: str = "", chain_id: str = "",
     mapping_pilot_plan: Optional[Dict[str, Any]] = None,
+    model_route: Optional[str] = None,
 ) -> int:
     """Rebuild the sandbox from scratch and seed it for the capture run."""
     logging.getLogger("utils.file_operations").setLevel(logging.WARNING)
@@ -1477,6 +1542,13 @@ def prepare(
                if scenario_id else None)
     if gate != "g3" and profile is None:
         raise ValueError("--gate %s requires a fixed --scenario profile" % gate)
+    if model_route is not None:
+        if model_route != _N3_LUNA_ROUTE:
+            raise ValueError("unsupported capture model route")
+        if gate != "g4" or scenario_id != _N3_LUNA_SCENARIO:
+            raise ValueError("n3-luna route requires the G4 narrator-dialogue-travel scenario")
+        if mapping_pilot_plan is not None:
+            raise ValueError("n3-luna route cannot be combined with mapping-pilot preparation")
     g9_run_dir: Optional[Path] = None
     if gate == "g9":
         if phase:
@@ -1514,7 +1586,10 @@ def prepare(
     copied = _copy_runtime()
     _hydrate_capture_arena_area_file()
     _patch_sandbox_config()
-    _patch_sandbox_model_config(gate, scenario_id)
+    if model_route is None:
+        _patch_sandbox_model_config(gate, scenario_id)
+    else:
+        _patch_sandbox_model_config(gate, scenario_id, model_route)
     if profile and profile.get("seed_scenario_id", profile["scenario_id"]) == "narrator-dialogue-travel":
         transform_g4_narrator_area_fixture(SANDBOX_ROOT / "modules" / MODULE_DIR_NAME)
     if profile and profile.get("gate") == "g5t":
@@ -1607,6 +1682,11 @@ def prepare(
             "OPENROUTER_TRANSPORT_FAULT_INJECTION_ENABLED = %s" %
             ("True" if scenario_id == "transport-failure" else "False"),
         ))
+    if model_route == _N3_LUNA_ROUTE:
+        model_patches.append(
+            'ACTIVE_PROFILE = "n3-luna" (openai/gpt-6-luna; max_tokens=2048; '
+            'allow_fallbacks=False; historical rates)'
+        )
     print("[PATCH] config.py %s; model_config.py %s" %
           (SANDBOX_PORT_LITERAL, "; ".join(model_patches)))
     print(
@@ -1718,6 +1798,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="fixed capture gate (inferred from a named scenario; otherwise g3)",
     )
     parser.add_argument(
+        "--model-route",
+        choices=(_N3_LUNA_ROUTE,),
+        help="opt-in sandbox-only N3 narration route (G4 narrator-dialogue-travel only)",
+    )
+    parser.add_argument(
         "--branch", choices=capture_fixtures.CAPTURE_BRANCHES,
         help="required for surrender-exit; the two branches are separate runs",
     )
@@ -1762,6 +1847,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.mapping_pilot_seed,
     )
     mapping_pilot_requested = any(value is not None for value in mapping_pilot_values)
+    if args.model_route and not args.prepare:
+        parser.error("--model-route applies only with --prepare")
+    if args.model_route and (
+        gate != "g4"
+        or args.scenario != _N3_LUNA_SCENARIO
+        or mapping_pilot_requested
+    ):
+        parser.error("--model-route n3-luna requires --gate g4 --scenario narrator-dialogue-travel")
     if mapping_pilot_requested and not args.prepare:
         parser.error("mapping-pilot options apply only with --prepare")
     if args.prepare:
@@ -1837,6 +1930,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
         if mapping_pilot_plan is not None:
+            prepare_options = (
+                {"model_route": args.model_route}
+                if args.model_route is not None
+                else {}
+            )
             return prepare(
                 args.party,
                 args.scenario or "",
@@ -1848,9 +1946,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 args.run_dir or "",
                 args.chain_id or "",
                 mapping_pilot_plan,
+                **prepare_options,
             )
-        return prepare(args.party, args.scenario or "", args.branch or "", args.phase or "", gate,
-                       args.path or "", args.boundary or "", args.run_dir or "", args.chain_id or "")
+        prepare_args = (
+            args.party,
+            args.scenario or "",
+            args.branch or "",
+            args.phase or "",
+            gate,
+            args.path or "",
+            args.boundary or "",
+            args.run_dir or "",
+            args.chain_id or "",
+        )
+        if args.model_route is None:
+            return prepare(*prepare_args)
+        return prepare(*prepare_args, model_route=args.model_route)
     if args.rollback_openai:
         if gate != "g9":
             parser.error("--rollback-openai requires --gate g9")
@@ -1866,7 +1977,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return rollback_openai(args.scenario, args.party, args.run_dir)
         except ValueError as exc:
             parser.error(str(exc))
-    if args.scenario or args.branch or args.phase or args.path or args.boundary or args.run_dir or args.chain_id:
+    if (args.scenario or args.branch or args.phase or args.path or args.boundary or
+            args.run_dir or args.chain_id or args.model_route):
         parser.error("--scenario/--branch/--phase/--path/--boundary apply only with --prepare")
     if gate != "g3":
         parser.error("--gate applies only with --prepare")
