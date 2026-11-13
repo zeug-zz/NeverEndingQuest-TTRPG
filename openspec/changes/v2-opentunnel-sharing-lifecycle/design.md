@@ -67,7 +67,7 @@ This lifecycle gate does not establish installer/update readiness, N4 external g
 
 ### Live gate contract
 
-The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v2`, its rows, caps, lock protocol, platform verdicts, state-root policy, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
+The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v3`, its rows, caps, lock protocol, platform verdicts, state-root policy, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). L03 starts the local runtime exactly once through host-side Socket.IO polling and permits only its single priced startup narration attempt within the USD 0.05 per-run and USD 1.00 cumulative narration caps. Seed/profile validation is fail-closed and occurs before host side effects. The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
 
 ## Risks / Trade-offs
 
@@ -83,7 +83,7 @@ The frozen primary-owned live-gate contract, including manifest `n3-live-lifecyc
 1. Record the resolved owner/Overseer rulings below and freeze the matching specs before runtime implementation.
 2. Implement the companion path/profile and one-time identity bootstrap, private N1 verifier store, exact origin binding, then the serialized controller, host-only controls, session revocation, and provider-free failure tests in task order.
 3. Replace the N2 development-only listener opt-in only when the explicit control path is ready. Ordinary startup remains sharing-off; rollback is Stop sharing, confirm owned resources are gone, and retain local host operation.
-4. Build the N3 provider-free preflight/lifecycle harness. Do not run a live tunnel or lifecycle gate as part of implementing or validating this planning change.
+4. Build the provider-free OD-6 preflight and offline lifecycle tests. The separate primary-owned v3 live gate permits only the bounded L03 startup narration described in the frozen contract; do not run a live tunnel or lifecycle gate as part of implementation or validation of this change.
 5. The primary orchestrator may run the separately authorized lifecycle gate only after focused tests and the clean exact-SHA OD-6 preflight. Packaging, N4, and release work remain separate.
 
 No campaign or character-state migration is introduced.

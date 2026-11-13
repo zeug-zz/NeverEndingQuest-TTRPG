@@ -36,7 +36,8 @@ import time
 import tokenize
 import urllib.parse
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol, Sequence
@@ -73,7 +74,7 @@ from web.extensions.player.contracts import PROTOCOL_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_ID = "N3-live"
-MANIFEST_ID = "n3-live-lifecycle-v2"
+MANIFEST_ID = "n3-live-lifecycle-v3"
 EVIDENCE_BASE = Path("tmp/router-rollout/v2-network/n3")
 CAPTURE_RELATIVE = Path("tmp/combat_capture")
 HOST_PORT = 8360
@@ -99,6 +100,12 @@ HOST_START_TIMEOUT_SECONDS = 30.0
 HOST_STOP_TIMEOUT_SECONDS = 8.0
 HOST_POLL_INTERVAL_SECONDS = 0.2
 HOST_API_TIMEOUT_SECONDS = 5.0
+HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS = 120.0
+HOST_RUNTIME_STARTUP_POLL_SECONDS = 0.25
+HOST_SOCKET_ORIGIN = "http://127.0.0.1:%d" % HOST_PORT
+MAX_USAGE_TELEMETRY_BYTES = 1024 * 1024
+MAX_USAGE_TELEMETRY_RECORDS = 10_000
+MAX_MODEL_CONFIG_BYTES = 512 * 1024
 COMPANION_START_POST_TIMEOUT_SECONDS = 180.0
 COMPANION_STARTING_POST_ACTIONS = frozenset(
     {"initialize-identity", "start"}
@@ -111,6 +118,8 @@ TEARDOWN_BOOTSTRAP_POLL_SECONDS = 0.5
 TEARDOWN_BOOTSTRAP_MAX_POLLS = 361
 TEARDOWN_STOP_FALLBACK_TIMEOUT_SECONDS = 60.0
 PROVIDER_BUDGET = 1
+PROVIDER_COST_CAP_USD = 0.05
+CUMULATIVE_NARRATION_COST_CAP_USD = 1.00
 PROVIDER_LEDGER_NAME = "provider-attempt-ledger.jsonl"
 _PROVIDER_LEDGER_RELATIVE = Path("tmp/n2")
 
@@ -144,8 +153,8 @@ LIVE_ROWS = (
     LiveRow(
         "L03", "issue-access-start-auth-entry", 300,
         "Owned host is up; identity initialization has passed; sharing is OFF.",
-        "Issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only.",
-        "Issue-access returns plaintext once; start returns ready; copy-invitation returns an HTTPS URL. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
+        "Precheck the capture seed/profile; connect to the owned host with Socket.IO polling and the local Origin; emit start_game once and wait for bounded local-runtime/startup-narration readiness. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL.",
+        "After fail-closed seed/profile checks, connect to the owned host using Socket.IO polling with Origin http://127.0.0.1:8360 and emit start_game exactly once. Wait within the bounded startup window for game_started, local_runtime readiness, startup narration output, and exactly one priced dm_main receipt from n3-luna resolving to openai/gpt-6-luna. The sole provider reservation must fall inside that window and cost no more than USD 0.05; cumulative narration cost must remain at or below USD 1.00. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
         "The public URL/client path or any required boundary observation cannot be reached or measured safely. Any secret persisted or logged, public host-surface access, rejected valid login, accepted invalid credential/Origin, or missing required cookie/socket property is FAIL.",
     ),
     LiveRow(
@@ -207,7 +216,10 @@ FROZEN_CAPS = MappingProxyType(
         "companion_serve_launches": 4,
         "companion_up_invocations": 1,
         "relay_tunnel_creations": 2,
-        "provider_attempts": 0,
+        "provider_attempts": 1,
+        "startup_narration_calls": 1,
+        "provider_cost_cap_usd": PROVIDER_COST_CAP_USD,
+        "cumulative_narration_cost_cap_usd": CUMULATIVE_NARRATION_COST_CAP_USD,
         "automatic_retries": 0,
         "max_harness_iterations": 3,
     }
@@ -265,11 +277,20 @@ def live_manifest() -> dict[str, object]:
         },
         "caps": dict(FROZEN_CAPS),
         "provider_budget_ceiling": PROVIDER_BUDGET,
+        "startup_narration": {
+            "socket_event": "start_game",
+            "transport": "polling",
+            "host_origin": HOST_SOCKET_ORIGIN,
+            "max_event_emissions": 1,
+            "receipt_task": "dm_main",
+            "profile": "n3-luna",
+            "resolved_model": "openai/gpt-6-luna",
+        },
         "verdict_policy": {
             "macos-arm64": {
                 "pass": "all-required-rows-pass",
                 "blocked": "any-required-row-blocked-or-missing",
-                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt",
+                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt-outside-the-single-priced-L03-startup-window-or-cost-cap-breach",
             },
             "linux-arm64": {
                 "verdict": "BLOCKED",
@@ -303,7 +324,7 @@ def calculate_manifest_digest() -> str:
 
 
 # Updated only as part of a reviewed frozen-contract revision.
-FROZEN_MANIFEST_SHA256 = "a9bb1f3f23df1cd216f627dd1974f7a4702da6d533e7f39a4603ca0d30ca3693"
+FROZEN_MANIFEST_SHA256 = "01750d7e32a8140985a51ad8e0bc8616179c03a1930bcb280f9beb13fdb1acfc"
 
 
 def verify_frozen_manifest() -> bool:
@@ -1174,7 +1195,21 @@ class RowContext:
     companion_sha256: str | None = None
     monotonic: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
+    host_socket_client_factory: Callable[..., object] = field(
+        default_factory=lambda: socketio.Client, repr=False
+    )
+    startup_input_validator: Callable[
+        [Path], tuple[dict[str, bool], "_UsageSnapshot"]
+    ] = field(default_factory=lambda: _validate_capture_startup_inputs, repr=False)
     row_deadline_at: float | None = None
+    provider_attempt_window: tuple[datetime, datetime] | None = field(
+        default=None, repr=False
+    )
+    permitted_provider_attempt_fingerprint: str | None = field(
+        default=None, repr=False
+    )
+    startup_narration_cost_usd: Decimal | None = field(default=None, repr=False)
+    cumulative_narration_cost_usd: Decimal | None = field(default=None, repr=False)
     companion_start_post_attempted: bool = False
     companion_start_post_unconfirmed: bool = False
     companion_start_post_action: str | None = None
@@ -1348,10 +1383,632 @@ class L02IdentityInitExecutor:
             return _blocked("l02_observation_unavailable")
 
 
+@dataclass(frozen=True, slots=True)
+class _UsageReceipt:
+    call_id: str = field(repr=False)
+    attempt_id: str = field(repr=False)
+    task: str
+    profile: str | None
+    requested_model: str | None
+    resolved_model: str | None
+    attempt_number: int | None
+    retry: bool | None
+    fallback: bool | None
+    cost_usd: Decimal | None
+    cost_provenance: str | None
+    cost_complete: bool | None
+    cost_source: str | None
+    error_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _UsageSnapshot:
+    identity: tuple[int, int] | None
+    size: int
+    prefix_sha256: str
+    receipts: tuple[_UsageReceipt, ...]
+    cumulative_narration_cost_usd: Decimal
+    raw: bytes = field(default=b"", repr=False)
+
+
+def _decimal_cost(value: object) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        selected = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return selected if selected.is_finite() and selected >= 0 else None
+
+
+def _parse_telemetry_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return False
+    try:
+        selected = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return isinstance(selected, datetime)
+
+
+def _usage_receipts(raw: bytes) -> tuple[_UsageReceipt, ...]:
+    if not raw:
+        return ()
+    if not raw.endswith(b"\n"):
+        raise GateError("usage_telemetry_invalid")
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeError:
+        raise GateError("usage_telemetry_invalid") from None
+    if len(lines) > MAX_USAGE_TELEMETRY_RECORDS:
+        raise GateError("usage_telemetry_invalid")
+    receipts: list[_UsageReceipt] = []
+    seen_attempts: set[tuple[str, str]] = set()
+    for line in lines:
+        try:
+            record = json.loads(
+                line,
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            raise GateError("usage_telemetry_invalid") from None
+        if not isinstance(record, dict):
+            raise GateError("usage_telemetry_invalid")
+        if record.get("type") == "spike_detected":
+            continue
+        context = record.get("context")
+        if (
+            not isinstance(context, Mapping)
+            or not _parse_telemetry_timestamp(record.get("timestamp"))
+        ):
+            raise GateError("usage_telemetry_invalid")
+        call_id = context.get("call_id")
+        attempt_id = context.get("attempt_id")
+        task = context.get("task")
+        if (
+            not isinstance(call_id, str)
+            or not 1 <= len(call_id) <= 128
+            or re.fullmatch(r"[A-Za-z0-9_.:-]+", call_id) is None
+            or not isinstance(attempt_id, str)
+            or not 1 <= len(attempt_id) <= 128
+            or re.fullmatch(r"[A-Za-z0-9_.:-]+", attempt_id) is None
+            or not isinstance(task, str)
+            or not 1 <= len(task) <= 64
+        ):
+            raise GateError("usage_telemetry_invalid")
+        attempt_identity = (call_id, attempt_id)
+        if attempt_identity in seen_attempts:
+            raise GateError("usage_telemetry_duplicate_receipt")
+        seen_attempts.add(attempt_identity)
+        context_cost = _decimal_cost(context.get("cost_usd"))
+        entry_cost = _decimal_cost(record.get("cost_usd"))
+        provenance = context.get("cost_provenance")
+        cost_complete = context.get("cost_complete")
+        cost_source = record.get("cost_source")
+        if task == "dm_main":
+            expected_source = {
+                "actual": "provider_reported",
+                "estimated": "estimated",
+            }.get(provenance)
+            if (
+                context_cost is None
+                or entry_cost != context_cost
+                or provenance not in {"actual", "estimated"}
+                or cost_complete is not True
+                or cost_source != expected_source
+                or record.get("cost_estimate") is not (provenance == "estimated")
+            ):
+                raise GateError("narration_receipt_unpriced")
+            if provenance == "actual":
+                reported_cost = _decimal_cost(
+                    context.get("provider_reported_cost_usd")
+                )
+                if reported_cost != context_cost:
+                    raise GateError("narration_receipt_unpriced")
+        receipts.append(
+            _UsageReceipt(
+                call_id=call_id,
+                attempt_id=attempt_id,
+                task=task,
+                profile=(
+                    context.get("profile")
+                    if isinstance(context.get("profile"), str)
+                    else None
+                ),
+                requested_model=(
+                    context.get("requested_model")
+                    if isinstance(context.get("requested_model"), str)
+                    else None
+                ),
+                resolved_model=(
+                    context.get("resolved_model")
+                    if isinstance(context.get("resolved_model"), str)
+                    else None
+                ),
+                attempt_number=(
+                    context.get("attempt_number")
+                    if type(context.get("attempt_number")) is int
+                    else None
+                ),
+                retry=(context.get("retry") if type(context.get("retry")) is bool else None),
+                fallback=(
+                    context.get("fallback")
+                    if type(context.get("fallback")) is bool
+                    else None
+                ),
+                cost_usd=context_cost,
+                cost_provenance=(
+                    provenance if isinstance(provenance, str) else None
+                ),
+                cost_complete=(
+                    cost_complete if type(cost_complete) is bool else None
+                ),
+                cost_source=(cost_source if isinstance(cost_source, str) else None),
+                error_type=(
+                    context.get("error_type")
+                    if isinstance(context.get("error_type"), str)
+                    else None
+                ),
+            )
+        )
+    return tuple(receipts)
+
+
+def _read_usage_snapshot(sandbox_root: Path) -> _UsageSnapshot:
+    path = sandbox_root / "telemetry_log.jsonl"
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        return _UsageSnapshot(
+            None,
+            0,
+            hashlib.sha256(b"").hexdigest(),
+            (),
+            Decimal("0"),
+        )
+    except OSError:
+        raise GateError("usage_telemetry_unavailable") from None
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise GateError("usage_telemetry_path_invalid")
+    if before.st_size > MAX_USAGE_TELEMETRY_BYTES:
+        raise GateError("usage_telemetry_invalid")
+    raw = _read_bounded_regular_file(
+        path, MAX_USAGE_TELEMETRY_BYTES, "usage_telemetry_invalid"
+    )
+    try:
+        after = path.lstat()
+    except OSError:
+        raise GateError("usage_telemetry_unavailable") from None
+    identity = (before.st_dev, before.st_ino)
+    if (
+        stat.S_ISLNK(after.st_mode)
+        or not stat.S_ISREG(after.st_mode)
+        or (after.st_dev, after.st_ino) != identity
+        or after.st_size != len(raw)
+    ):
+        raise GateError("usage_telemetry_changed")
+    receipts = _usage_receipts(raw)
+    narration_cost = sum(
+        (receipt.cost_usd or Decimal("0"))
+        for receipt in receipts
+        if receipt.task == "dm_main"
+    )
+    return _UsageSnapshot(
+        identity,
+        len(raw),
+        hashlib.sha256(raw).hexdigest(),
+        receipts,
+        narration_cost,
+        raw,
+    )
+
+
+def _usage_receipts_after(
+    baseline: _UsageSnapshot, current: _UsageSnapshot
+) -> tuple[_UsageReceipt, ...]:
+    if current.size < baseline.size:
+        raise GateError("usage_telemetry_truncated")
+    if baseline.identity is not None and current.identity != baseline.identity:
+        raise GateError("usage_telemetry_replaced")
+    if (
+        len(current.raw) != current.size
+        or hashlib.sha256(current.raw[: baseline.size]).hexdigest()
+        != baseline.prefix_sha256
+    ):
+        raise GateError("usage_telemetry_changed")
+    appended = _usage_receipts(current.raw[baseline.size :])
+    baseline_ids = {(item.call_id, item.attempt_id) for item in baseline.receipts}
+    if any((item.call_id, item.attempt_id) in baseline_ids for item in appended):
+        raise GateError("usage_telemetry_duplicate_receipt")
+    return appended
+
+
+def _literal_profile_assignment(source: bytes) -> bool:
+    try:
+        module = ast.parse(source.decode("ascii"), mode="exec")
+    except (SyntaxError, UnicodeError, ValueError):
+        return False
+    active_values: list[object] = []
+    profile_values: list[object] = []
+    for statement in module.body:
+        if isinstance(statement, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == "ACTIVE_PROFILE"
+                for target in statement.targets
+            ):
+                try:
+                    active_values.append(ast.literal_eval(statement.value))
+                except (ValueError, TypeError, SyntaxError):
+                    return False
+            for target in statement.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "MODEL_PROFILES"
+                ):
+                    try:
+                        key = ast.literal_eval(target.slice)
+                    except (ValueError, TypeError, SyntaxError):
+                        return False
+                    if key == "n3-luna":
+                        try:
+                            profile_values.append(ast.literal_eval(statement.value))
+                        except (ValueError, TypeError, SyntaxError):
+                            return False
+        elif isinstance(statement, ast.AnnAssign):
+            if isinstance(statement.target, ast.Name) and statement.target.id == "ACTIVE_PROFILE":
+                try:
+                    active_values.append(ast.literal_eval(statement.value))
+                except (ValueError, TypeError, SyntaxError):
+                    return False
+    if active_values != ["n3-luna"] or len(profile_values) != 1:
+        return False
+    profile = profile_values[0]
+    if not isinstance(profile, dict) or set(profile) != {"complex", "simple"}:
+        return False
+    for tier in ("complex", "simple"):
+        selected = profile.get(tier)
+        if (
+            not isinstance(selected, dict)
+            or selected.get("model") != "openai/gpt-6-luna"
+            or not isinstance(selected.get("provider"), dict)
+            or selected["provider"].get("allow_fallbacks") is not False
+        ):
+            return False
+    return True
+
+
+def _validate_capture_startup_inputs(
+    sandbox_root: Path,
+) -> tuple[dict[str, bool], _UsageSnapshot]:
+    try:
+        from scripts.n3_start_game_offline_proof import (
+            check_capture_seed_provider_free,
+        )
+
+        seed_checks = check_capture_seed_provider_free(sandbox_root)
+    except Exception:
+        raise GateError("startup_seed_precheck_failed") from None
+    required_checks = {
+        "registry_has_no_unregistered_modules",
+        "no_active_combat",
+        "no_history_user_messages",
+        "provider_free_startup_seed",
+    }
+    if (
+        not isinstance(seed_checks, dict)
+        or any(seed_checks.get(name) is not True for name in required_checks)
+    ):
+        raise GateError("startup_seed_precheck_failed")
+    model_path = sandbox_root / "model_config.py"
+    try:
+        info = model_path.lstat()
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_size > MAX_MODEL_CONFIG_BYTES
+            or model_path.resolve(strict=True) != model_path
+        ):
+            raise GateError("startup_profile_precheck_failed")
+        model_source = _read_bounded_regular_file(
+            model_path, MAX_MODEL_CONFIG_BYTES, "startup_profile_precheck_failed"
+        )
+    except GateError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise GateError("startup_profile_precheck_failed") from None
+    if not _literal_profile_assignment(model_source):
+        raise GateError("startup_profile_precheck_failed")
+    usage = _read_usage_snapshot(sandbox_root)
+    if usage.cumulative_narration_cost_usd > Decimal(
+        str(CUMULATIVE_NARRATION_COST_CAP_USD)
+    ):
+        raise GateError("cumulative_narration_cost_cap_reached")
+    return {name: True for name in sorted(required_checks)}, usage
+
+
+def _context_provider_ledger(
+    context: RowContext,
+    *,
+    allowed_window: tuple[datetime, datetime] | None = None,
+) -> dict[str, object]:
+    ledger_path = _validate_provider_ledger_target(
+        context.sandbox_root, context.run_id, must_not_exist=False
+    )
+    owner_pid = getattr(context.host, "owner_pid", None)
+    listener_pids = getattr(context.host, "listener_pids", None)
+    expected_pids = listener_pids if isinstance(listener_pids, (list, tuple)) else None
+    if not expected_pids:
+        expected_pids = [owner_pid] if type(owner_pid) is int else []
+    return _validate_provider_ledger(
+        ledger_path,
+        context.run_id,
+        expected_pids=expected_pids,
+        allowed_reservation_window=allowed_window,
+    )
+
+
+def _startup_receipt_is_valid(receipt: _UsageReceipt) -> bool:
+    return bool(
+        receipt.task == "dm_main"
+        and receipt.profile == "n3-luna"
+        and receipt.requested_model == "openai/gpt-6-luna"
+        and receipt.resolved_model == "openai/gpt-6-luna"
+        and receipt.attempt_number == 1
+        and receipt.retry is False
+        and receipt.fallback is False
+        and receipt.error_type is None
+        and receipt.cost_usd is not None
+        and receipt.cost_provenance in {"actual", "estimated"}
+        and receipt.cost_complete is True
+    )
+
+
+def _start_local_game_runtime(
+    context: RowContext,
+) -> tuple[dict[str, object] | None, RowExecutionResult | None]:
+    try:
+        seed_checks, usage_baseline = context.startup_input_validator(
+            context.sandbox_root
+        )
+        before = _host_status(context.host_api.get_status())
+        before_checks = before.get("checks") if before is not None else None
+        local_runtime = (
+            before_checks.get("local_runtime")
+            if isinstance(before_checks, Mapping)
+            else None
+        )
+        if type(local_runtime) is not bool:
+            return None, _blocked("startup_runtime_status_unavailable")
+        if local_runtime:
+            return None, _failed("startup_runtime_already_running")
+        ledger_before = _context_provider_ledger(context)
+        if (
+            ledger_before.get("attempt_count") != 0
+            or ledger_before.get("reservation_count") != 0
+            or ledger_before.get("verdict") != "PASS"
+        ):
+            return None, _failed("provider_attempt_outside_startup_window")
+        client = context.host_socket_client_factory(
+            reconnection=False,
+            logger=False,
+            handle_sigint=False,
+            request_timeout=HOST_API_TIMEOUT_SECONDS,
+        )
+    except GateError as exc:
+        return None, _failed(exc.reason)
+    except (HostApiError, TypeError, ValueError):
+        return None, _blocked("startup_precheck_unavailable")
+
+    events = {"game_started": False, "error": False, "game_output": 0}
+    events_lock = threading.Lock()
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    disconnected = False
+
+    def mark_started(*_args: object) -> None:
+        with events_lock:
+            events["game_started"] = True
+
+    def mark_error(*_args: object) -> None:
+        with events_lock:
+            events["error"] = True
+
+    def mark_output(*_args: object) -> None:
+        with events_lock:
+            events["game_output"] = min(int(events["game_output"]) + 1, 2)
+
+    try:
+        on = getattr(client, "on", None)
+        connect = getattr(client, "connect", None)
+        emit = getattr(client, "emit", None)
+        if not callable(on) or not callable(connect) or not callable(emit):
+            return None, _blocked("host_socket_client_invalid")
+        on("game_started", mark_started)
+        on("game_output", mark_output)
+        on("error", mark_error)
+        on("connect_error", mark_error)
+        remaining = _row_remaining_seconds(context)
+        startup_timeout = HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS
+        if remaining is not None:
+            startup_timeout = min(startup_timeout, remaining)
+        if startup_timeout <= 0:
+            return None, _blocked("startup_row_deadline_exceeded")
+        startup_deadline = context.monotonic() + startup_timeout
+        connect(
+            "http://127.0.0.1:%d" % HOST_PORT,
+            headers={"Origin": HOST_SOCKET_ORIGIN},
+            transports=["polling"],
+            wait=True,
+            wait_timeout=min(
+                HOST_API_TIMEOUT_SECONDS,
+                max(0.05, startup_deadline - context.monotonic()),
+            ),
+            retry=False,
+        )
+        if context.monotonic() >= startup_deadline:
+            return None, _blocked("startup_runtime_timeout")
+        if getattr(client, "connected", False) is not True:
+            return None, _blocked("host_socket_connection_unavailable")
+        ledger_connected = _context_provider_ledger(context)
+        if (
+            ledger_connected.get("attempt_count") != 0
+            or ledger_connected.get("reservation_count") != 0
+            or ledger_connected.get("verdict") != "PASS"
+        ):
+            return None, _failed("provider_attempt_outside_startup_window")
+        connected_usage = _read_usage_snapshot(context.sandbox_root)
+        if _usage_receipts_after(usage_baseline, connected_usage):
+            return None, _failed("startup_receipt_outside_startup_window")
+
+        started_at = datetime.now(timezone.utc)
+        context.provider_attempt_window = (started_at, started_at)
+        emit("start_game")
+        latest_usage = connected_usage
+        latest_status: Mapping[str, object] | None = None
+        startup_receipts: tuple[_UsageReceipt, ...] = ()
+        while True:
+            remaining = startup_deadline - context.monotonic()
+            if remaining <= 0:
+                return None, _blocked("startup_runtime_timeout")
+            with events_lock:
+                event_state = dict(events)
+            if event_state["error"]:
+                return None, _failed("game_runtime_start_rejected")
+            try:
+                response = context.host_api.get_status(
+                    timeout_seconds=min(
+                        HOST_API_TIMEOUT_SECONDS,
+                        max(0.05, remaining),
+                    )
+                )
+                latest_status = _host_status(response)
+                latest_usage = _read_usage_snapshot(context.sandbox_root)
+                startup_receipts = _usage_receipts_after(
+                    usage_baseline, latest_usage
+                )
+            except (HostApiError, GateError):
+                return None, _blocked("startup_observation_unavailable")
+            if len(startup_receipts) > 1:
+                return None, _failed("startup_provider_receipt_count_invalid")
+            if startup_receipts and not _startup_receipt_is_valid(startup_receipts[0]):
+                return None, _failed("startup_narration_receipt_invalid")
+            status_checks = (
+                latest_status.get("checks")
+                if isinstance(latest_status, Mapping)
+                else None
+            )
+            runtime_ready = (
+                isinstance(status_checks, Mapping)
+                and status_checks.get("local_runtime") is True
+            )
+            if (
+                context.monotonic() < startup_deadline
+                and event_state["game_started"] is True
+                and event_state["game_output"] >= 1
+                and runtime_ready
+                and len(startup_receipts) == 1
+            ):
+                break
+            remaining = startup_deadline - context.monotonic()
+            if remaining <= 0:
+                return None, _blocked("startup_runtime_timeout")
+            context.sleep(min(HOST_RUNTIME_STARTUP_POLL_SECONDS, remaining))
+
+        ended_at = datetime.now(timezone.utc)
+        context.provider_attempt_window = (started_at, ended_at)
+        ledger_after = _context_provider_ledger(
+            context, allowed_window=context.provider_attempt_window
+        )
+        if (
+            ledger_after.get("verdict") != "PASS"
+            or ledger_after.get("attempt_count") != 1
+            or ledger_after.get("reservation_count") != 1
+            or ledger_after.get("startup_window_verified") is not True
+        ):
+            return None, _failed("provider_attempt_outside_startup_window")
+        receipt = startup_receipts[0]
+        assert receipt.cost_usd is not None
+        cumulative_cost = latest_usage.cumulative_narration_cost_usd
+        startup_observed = {
+            "startup_seed_checks_passed": seed_checks,
+            "host_socket_transport": "polling",
+            "host_socket_origin": HOST_SOCKET_ORIGIN,
+            "start_game_event_emissions": 1,
+            "game_started_event_observed": True,
+            "local_runtime_ready": True,
+            "startup_narration_output_observed": True,
+            "startup_narration_receipt_count": 1,
+            "startup_narration_task": receipt.task,
+            "startup_narration_profile": receipt.profile,
+            "startup_narration_requested_model": receipt.requested_model,
+            "startup_narration_model": receipt.resolved_model,
+            "startup_narration_attempt_number": receipt.attempt_number,
+            "startup_narration_retry": receipt.retry,
+            "startup_narration_fallback": receipt.fallback,
+            "startup_narration_cost_provenance": receipt.cost_provenance,
+            "startup_narration_cost_complete": receipt.cost_complete,
+            "startup_narration_cost_source": receipt.cost_source,
+            "startup_narration_cost_usd": float(receipt.cost_usd),
+            "cumulative_narration_cost_usd": float(cumulative_cost),
+            "provider_attempts_in_startup_window": 1,
+        }
+        context.permitted_provider_attempt_fingerprint = str(
+            ledger_after["attempt_fingerprint"]
+        )
+        context.startup_narration_cost_usd = receipt.cost_usd
+        context.cumulative_narration_cost_usd = cumulative_cost
+        if receipt.cost_usd > Decimal(str(PROVIDER_COST_CAP_USD)):
+            return startup_observed, _failed(
+                "startup_provider_cost_cap_exceeded", observed=startup_observed
+            )
+        if cumulative_cost > Decimal(str(CUMULATIVE_NARRATION_COST_CAP_USD)):
+            return startup_observed, _failed(
+                "cumulative_narration_cost_cap_exceeded",
+                observed=startup_observed,
+            )
+        return (
+            startup_observed,
+            None,
+        )
+    except GateError as exc:
+        return None, _failed(exc.reason)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None, _blocked("startup_runtime_unavailable")
+    finally:
+        if started_at is not None and ended_at is None:
+            ended_at = datetime.now(timezone.utc)
+            context.provider_attempt_window = (started_at, ended_at)
+        try:
+            disconnect = getattr(client, "disconnect", None)
+            if not callable(disconnect):
+                raise RuntimeError("host Socket.IO disconnect unavailable")
+            disconnect()
+            disconnected = True
+        except Exception:
+            disconnected = False
+        if not disconnected:
+            context.provider_attempt_window = None
+
+
 class L03PublicAccessExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         client = context.public_client
         try:
+            startup_observed, startup_failure = _start_local_game_runtime(context)
+            if startup_failure is not None:
+                if startup_observed is not None and not startup_failure.observed:
+                    return RowExecutionResult(
+                        startup_failure.verdict,
+                        startup_failure.reason,
+                        startup_observed,
+                        startup_failure.recovery_attempts,
+                    )
+                return startup_failure
+            if startup_observed is None:
+                return _blocked("startup_observation_unavailable")
+
             issued = context.host_api.post("issue-access", {})
             if issued.status != 200 or issued.payload.get("ok") is not True:
                 return _failed(
@@ -1482,6 +2139,7 @@ class L03PublicAccessExecutor:
                 "PASS",
                 "public_player_boundary_verified",
                 {
+                    **startup_observed,
                     "public_shell_status": shell.status,
                     "unauthenticated_snapshot_status": protected.status,
                     "unauthenticated_snapshot_data_free": True,
@@ -4282,6 +4940,9 @@ class LiveGateDependencies:
     identity_observer_factory: Callable[[ProfileLayout, Path], IdentityObserver] = (
         lambda layout, path: DefaultIdentityObserver(layout, path)
     )
+    startup_input_validator: Callable[
+        [Path], tuple[dict[str, bool], _UsageSnapshot]
+    ] = _validate_capture_startup_inputs
 
 
 def _default_dependencies(root: Path) -> LiveGateDependencies:
@@ -4641,7 +5302,7 @@ def _valid_lock_caps(value: object, platform_key: str) -> bool:
         and value["party_size"] == 1
         and value.get("platform") == platform_key
         and type(value.get("provider_dispatch_attempts")) is int
-        and value["provider_dispatch_attempts"] == 0
+        and value["provider_dispatch_attempts"] == FROZEN_CAPS["provider_attempts"]
         and type(value.get("max_tunnel_creations")) is int
         and value["max_tunnel_creations"] == FROZEN_CAPS["relay_tunnel_creations"]
         and type(value.get("max_companion_launches")) is int
@@ -5361,11 +6022,34 @@ def _read_bounded_regular_file(path: Path, max_bytes: int, reason: str) -> bytes
             os.close(descriptor)
 
 
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return None
+    try:
+        selected = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if selected.tzinfo is None:
+        return None
+    return selected.astimezone(timezone.utc)
+
+
+def _ledger_window_bounds(
+    started: datetime, ended: datetime
+) -> tuple[datetime, datetime]:
+    if started.tzinfo is None or ended.tzinfo is None or ended < started:
+        raise GateError("provider_startup_window_invalid")
+    lower = started.astimezone(timezone.utc).replace(microsecond=0)
+    upper = ended.astimezone(timezone.utc).replace(microsecond=0)
+    return lower, upper
+
+
 def _validate_provider_ledger(
     path: Path,
     run_id: str,
     *,
     expected_pids: Sequence[int],
+    allowed_reservation_window: tuple[datetime, datetime] | None = None,
 ) -> dict[str, object]:
     owned_pids: list[int] = []
     try:
@@ -5414,6 +6098,8 @@ def _validate_provider_ledger(
     activation_count = 0
     reservations = 0
     attempts = 0
+    attempt_records: list[dict[str, object]] = []
+    reservation_timestamps: list[datetime] = []
     for record in records[1:]:
         if (
             not isinstance(record, dict)
@@ -5437,7 +6123,6 @@ def _validate_provider_ledger(
                 activation_count >= FROZEN_CAPS["companion_serve_launches"]
                 or activation_count >= len(owned_pids)
                 or record_pid != owned_pids[activation_count]
-                or reservations
                 or record.get("transport_guard") != "httpx-client-single-request"
             ):
                 raise GateError("provider_ledger_invalid")
@@ -5446,34 +6131,68 @@ def _validate_provider_ledger(
             activated = True
         elif event == "reservation":
             reservation_number = record.get("reservation_number")
+            reserved_at = _parse_utc_timestamp(record.get("timestamp_utc"))
             if (
                 record_pid not in activation_pids
                 or type(reservation_number) is not int
                 or reservation_number != reservations + 1
+                or reserved_at is None
             ):
                 raise GateError("provider_ledger_invalid")
             reservations += 1
             attempts += 1
+            attempt_records.append(record)
+            reservation_timestamps.append(reserved_at)
         elif event == "refusal":
+            refused_at = _parse_utc_timestamp(record.get("timestamp_utc"))
             if (
                 record_pid not in activation_pids
                 or reservations < PROVIDER_BUDGET
                 or type(record.get("reservation_number")) is not int
                 or record.get("reservation_number") != PROVIDER_BUDGET + 1
                 or record.get("reason") != "budget_exhausted"
+                or refused_at is None
             ):
                 raise GateError("provider_ledger_invalid")
             attempts += 1
+            attempt_records.append(record)
         else:
             raise GateError("provider_ledger_invalid")
     if not activated:
         raise GateError("provider_ledger_not_active")
+    attempt_fingerprint = hashlib.sha256(
+        json.dumps(
+            attempt_records,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+    in_window = False
+    if allowed_reservation_window is None:
+        verdict = "PASS" if attempts == 0 else "FAIL"
+    else:
+        try:
+            window_start, window_end = _ledger_window_bounds(
+                *allowed_reservation_window
+            )
+        except (TypeError, ValueError):
+            raise GateError("provider_startup_window_invalid") from None
+        in_window = (
+            len(reservation_timestamps) == 1
+            and attempts == 1
+            and reservations == 1
+            and window_start <= reservation_timestamps[0] <= window_end
+        )
+        verdict = "PASS" if in_window else "FAIL"
     return {
         "activated": True,
         "activation_count": activation_count,
         "reservation_count": reservations,
         "attempt_count": attempts,
-        "verdict": "FAIL" if attempts else "PASS",
+        "attempt_fingerprint": attempt_fingerprint,
+        "startup_window_verified": in_window,
+        "verdict": verdict,
     }
 
 
@@ -5614,6 +6333,7 @@ class LiveGateRunner:
         self.counter_owner_pid: int | None = None
         self.recovery_attempts = 0
         self.provider_ledger: dict[str, object] = {"status": "not-checked"}
+        self.startup_precheck: dict[str, object] = {"status": "not-checked"}
         self.lock_record: Mapping[str, object] | None = None
         self.secrets: list[str] = []
         self.companion_record: dict[str, object] = {"verified": False}
@@ -5678,6 +6398,7 @@ class LiveGateRunner:
                 ),
                 monotonic=self.dependencies.monotonic,
                 sleep=self.dependencies.sleep,
+                startup_input_validator=self.dependencies.startup_input_validator,
             )
             self._start_host()
             if not self.infrastructure_failures and not self.semantic_failures:
@@ -5791,6 +6512,23 @@ class LiveGateRunner:
         if sandbox != self.dependencies.root / CAPTURE_RELATIVE:
             raise GateError("capture_sandbox_path_mismatch")
         self.companion_install_root = sandbox
+        try:
+            seed_checks, usage_snapshot = self.dependencies.startup_input_validator(
+                sandbox
+            )
+        except GateError:
+            raise
+        except Exception:
+            raise GateError("startup_precheck_unavailable") from None
+        self.startup_precheck = {
+            "status": "passed",
+            "seed_checks": seed_checks,
+            "profile": "n3-luna",
+            "resolved_model": "openai/gpt-6-luna",
+            "cumulative_narration_cost_usd_before_run": float(
+                usage_snapshot.cumulative_narration_cost_usd
+            ),
+        }
         _validate_provider_ledger_target(
             sandbox, self.arguments.run_id, must_not_exist=True
         )
@@ -6085,32 +6823,50 @@ class LiveGateRunner:
                 self._add_infrastructure("required_row_blocked:" + row.row_id)
                 self._append_blocked_rows(index + 1, "fail-fast")
                 return
-            self._check_provider_ledger_during_run()
+            self._check_provider_ledger_during_run(row.row_id)
             if self.infrastructure_failures or self.semantic_failures:
                 self._append_blocked_rows(index + 1, "fail-fast")
                 return
 
-    def _check_provider_ledger_during_run(self) -> None:
-        if self.companion_install_root is None:
+    def _check_provider_ledger_during_run(self, row_id: str) -> None:
+        if self.companion_install_root is None or self.context is None:
             self._add_infrastructure("capture_sandbox_path_mismatch")
             return
         try:
-            ledger_path = _validate_provider_ledger_target(
-                self.companion_install_root,
-                self.arguments.run_id,
-                must_not_exist=False,
+            allowed_window = (
+                self.context.provider_attempt_window
+                if row_id == "L03" or self.context.provider_attempt_window is not None
+                else None
             )
-            status = _validate_provider_ledger(
-                ledger_path,
-                self.arguments.run_id,
-                expected_pids=getattr(self.host, "listener_pids", None),
+            status = _context_provider_ledger(
+                self.context, allowed_window=allowed_window
             )
         except GateError as exc:
             self._add_infrastructure(exc.reason)
             return
         self.provider_ledger = status
-        if status["attempt_count"]:
-            self.semantic_failures.append("provider_attempt_observed")
+        if status.get("verdict") != "PASS":
+            self.semantic_failures.append("provider_attempt_policy_violation")
+            return
+        if allowed_window is None:
+            if status.get("attempt_count") != 0:
+                self.semantic_failures.append("provider_attempt_policy_violation")
+            return
+        expected_fingerprint = self.context.permitted_provider_attempt_fingerprint
+        if (
+            row_id == "L03"
+            and (
+                status.get("attempt_count") != 1
+                or status.get("reservation_count") != 1
+                or status.get("startup_window_verified") is not True
+            )
+        ):
+            self.semantic_failures.append("provider_attempt_policy_violation")
+        if (
+            not isinstance(expected_fingerprint, str)
+            or status.get("attempt_fingerprint") != expected_fingerprint
+        ):
+            self.semantic_failures.append("provider_attempt_ledger_changed")
 
     def _observe_counter_sample(self, counters: Mapping[str, int]) -> None:
         if self.host is None:
@@ -6174,14 +6930,33 @@ class LiveGateRunner:
                 expected_path,
                 self.arguments.run_id,
                 expected_pids=getattr(self.host, "listener_pids", None),
+                allowed_reservation_window=(
+                    self.context.provider_attempt_window
+                    if self.context is not None
+                    else None
+                ),
             )
         except GateError as exc:
             self.provider_ledger = {"status": exc.reason}
             self._add_infrastructure(exc.reason)
             return
         self.provider_ledger = status
-        if status["attempt_count"]:
-            self.semantic_failures.append("provider_attempt_observed")
+        if status.get("verdict") != "PASS":
+            self.semantic_failures.append("provider_attempt_policy_violation")
+        if self.context is not None and self.context.provider_attempt_window is not None:
+            expected_fingerprint = (
+                self.context.permitted_provider_attempt_fingerprint
+            )
+            if (
+                status.get("attempt_count") != 1
+                or status.get("reservation_count") != 1
+                or status.get("startup_window_verified") is not True
+                or not isinstance(expected_fingerprint, str)
+                or status.get("attempt_fingerprint") != expected_fingerprint
+            ):
+                self.semantic_failures.append("provider_attempt_ledger_changed")
+        elif status.get("attempt_count") != 0:
+            self.semantic_failures.append("provider_attempt_outside_startup_window")
 
     def _observe_result_secrets(self, result: RowExecutionResult) -> None:
         _remember_payload_secrets(result.observed, self.secrets)
@@ -6564,6 +7339,7 @@ class LiveGateRunner:
             "preflight_clean": True,
             "companion": dict(self.companion_record),
             "frozen_caps": dict(FROZEN_CAPS),
+            "startup_precheck": dict(self.startup_precheck),
             "companion_counters": self.counter_snapshot,
             "companion_counters_cumulative": self.cumulative_counters,
             "recovery_override_attempts": self.recovery_attempts,

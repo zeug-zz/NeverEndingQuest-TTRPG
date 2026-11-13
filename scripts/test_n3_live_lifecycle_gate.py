@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping
@@ -225,6 +226,39 @@ class LifecycleFakeApi:
             200,
             {"ok": True, "reason": "ready", "status": self.status},
         )
+
+
+class FakeHostSocketClient:
+    def __init__(self, on_emit, **options: object) -> None:
+        self.on_emit = on_emit
+        self.options = options
+        self.handlers: dict[str, object] = {}
+        self.connected = False
+        self.connect_args: tuple[object, ...] = ()
+        self.connect_kwargs: dict[str, object] = {}
+        self.emitted: list[str] = []
+        self.disconnect_calls = 0
+
+    def on(self, event: str, handler) -> None:
+        self.handlers[event] = handler
+
+    def connect(self, *args: object, **kwargs: object) -> None:
+        self.connect_args = args
+        self.connect_kwargs = kwargs
+        self.connected = True
+
+    def emit(self, event: str) -> None:
+        self.emitted.append(event)
+        self.on_emit(event, self)
+
+    def trigger(self, event: str, *args: object) -> None:
+        handler = self.handlers.get(event)
+        if callable(handler):
+            handler(*args)
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        self.connected = False
 
 
 class MappedPortInspector:
@@ -613,6 +647,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.addCleanup(self.profile_root_patch.stop)
         self.run_id = TEST_RUN_ID
         self._owned_context_counter = 0
+        self._l03_context_counter = 0
         self.report_argument = (
             gate.EVIDENCE_BASE / self.run_id / "preflight" / "preflight.json"
         ).as_posix()
@@ -790,6 +825,155 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             monotonic=monotonic or (lambda: 1000.0),
             sleep=sleep or (lambda _seconds: None),
         )
+
+    def _usage_record(
+        self,
+        *,
+        call_id: str,
+        attempt_id: str,
+        cost: float,
+        model: str = "openai/gpt-6-luna",
+        task: str = "dm_main",
+    ) -> bytes:
+        context = {
+            "call_id": call_id,
+            "attempt_id": attempt_id,
+            "task": task,
+            "profile": "n3-luna",
+            "requested_model": model,
+            "resolved_model": model,
+            "attempt_number": 1,
+            "retry": False,
+            "fallback": False,
+            "error_type": None,
+            "cost_usd": cost,
+            "cost_provenance": "actual",
+            "cost_complete": True,
+            "provider_reported_cost_usd": cost,
+        }
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "context": context,
+            "cost_usd": cost,
+            "cost_source": "provider_reported",
+            "cost_estimate": False,
+        }
+        return (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
+
+    def prepare_l03_startup(
+        self,
+        context: gate.RowContext,
+        api: LifecycleFakeApi,
+        *,
+        receipt_cost: float = 0.01,
+        receipt_model: str = "openai/gpt-6-luna",
+        receipt_count: int = 1,
+        reserve_attempt: bool = True,
+        startup_events: bool = True,
+        local_runtime_ready: bool = True,
+        baseline_cost: float = 0.0,
+        reservation_timestamp: str | None = None,
+    ) -> list[FakeHostSocketClient]:
+        self._l03_context_counter += 1
+        context.run_id = "%s-startup-%d" % (
+            self.run_id,
+            self._l03_context_counter,
+        )
+        sandbox = context.sandbox_root
+        ledger_path = gate._validate_provider_ledger_target(
+            sandbox, context.run_id, must_not_exist=True
+        )
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_records = [
+            {
+                "event": "header",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": context.run_id,
+            },
+            {
+                "event": "activated",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": context.run_id,
+                "transport_guard": "httpx-client-single-request",
+                "pid": context.host.owner_pid,
+            },
+        ]
+        ledger_path.write_text(
+            "".join(json.dumps(item, sort_keys=True) + "\n" for item in ledger_records),
+            encoding="ascii",
+        )
+        usage_path = sandbox / "telemetry_log.jsonl"
+        if usage_path.exists():
+            usage_path.unlink()
+        if baseline_cost > 0:
+            usage_path.write_bytes(
+                self._usage_record(
+                    call_id="baseline-call",
+                    attempt_id="baseline-attempt",
+                    cost=baseline_cost,
+                )
+            )
+        usage_baseline = gate._read_usage_snapshot(sandbox)
+        checks = {
+            "registry_has_no_unregistered_modules": True,
+            "no_active_combat": True,
+            "no_history_user_messages": True,
+            "provider_free_startup_seed": True,
+        }
+        context.startup_input_validator = lambda _root: (checks, usage_baseline)
+        api.status_sequence = [
+            {
+                "state": "off",
+                "checks": {"local_runtime": False},
+            },
+            {
+                "state": "off",
+                "checks": {"local_runtime": local_runtime_ready},
+            },
+        ]
+        clients: list[FakeHostSocketClient] = []
+
+        def on_emit(event: str, client: FakeHostSocketClient) -> None:
+            if event != "start_game":
+                return
+            if reserve_attempt:
+                timestamp = reservation_timestamp or datetime.now(
+                    timezone.utc
+                ).isoformat(timespec="seconds").replace("+00:00", "Z")
+                reservation = {
+                    "event": "reservation",
+                    "schema_version": 1,
+                    "budget": gate.PROVIDER_BUDGET,
+                    "run_id": context.run_id,
+                    "reservation_number": 1,
+                    "pid": context.host.owner_pid,
+                    "timestamp_utc": timestamp,
+                }
+                with ledger_path.open("a", encoding="ascii") as stream:
+                    stream.write(json.dumps(reservation, sort_keys=True) + "\n")
+            with usage_path.open("ab") as stream:
+                for index in range(receipt_count):
+                    stream.write(
+                        self._usage_record(
+                            call_id="startup-call-%d" % index,
+                            attempt_id="startup-attempt-%d" % index,
+                            cost=receipt_cost,
+                            model=receipt_model,
+                        )
+                    )
+            if startup_events:
+                client.trigger("game_started")
+                client.trigger("game_output", "narration must not be retained")
+
+        def factory(**options: object) -> FakeHostSocketClient:
+            client = FakeHostSocketClient(on_emit, **options)
+            clients.append(client)
+            return client
+
+        context.host_socket_client_factory = factory
+        return clients
 
     def prepare_public_client(
         self,
@@ -1504,7 +1688,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "frozen_caps": {
                 "party_size": 1,
                 "platform": "macos-arm64",
-                "provider_dispatch_attempts": 0,
+                "provider_dispatch_attempts": 1,
                 "max_tunnel_creations": 2,
                 "max_companion_launches": 4,
                 "window_hours": 1,
@@ -1532,9 +1716,27 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         companion_error: str | None = None,
         sandbox_error: str | None = None,
         state_base_provider=None,
+        startup_validator=None,
     ) -> gate.LiveGateDependencies:
         selected_ports = ports or self.ports
         selected_api = api or self.fake_api
+        selected_startup_validator = startup_validator or (
+            lambda _sandbox: (
+                {
+                    "registry_has_no_unregistered_modules": True,
+                    "no_active_combat": True,
+                    "no_history_user_messages": True,
+                    "provider_free_startup_seed": True,
+                },
+                gate._UsageSnapshot(
+                    None,
+                    0,
+                    hashlib.sha256(b"").hexdigest(),
+                    (),
+                    Decimal("0"),
+                ),
+            )
+        )
 
         def make_host(
             root: Path, sandbox: Path, state_root: Path, run_id: str
@@ -1574,6 +1776,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             ),
             monotonic=lambda: 1000.0,
             utc_now=lambda: TEST_NOW,
+            startup_input_validator=selected_startup_validator,
         )
 
     def test_l01_passes_both_inactive_states_and_fails_on_exposure(self) -> None:
@@ -1968,6 +2171,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             },
         )
         context = self.make_row_context(api=api, public_service=service)
+        clients = self.prepare_l03_startup(context, api)
         result = gate.L03PublicAccessExecutor().execute(context)
         self.assertEqual(result.verdict, "PASS")
         self.assertTrue(result.observed["unauthenticated_snapshot_data_free"])
@@ -1977,14 +2181,36 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertNotIn(service.credential, repr(result))
         self.assertNotIn(service.accepted_origin, repr(result))
         self.assertIn(service.credential, context.secrets)
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(clients[0].connect_args, ("http://127.0.0.1:8360",))
+        self.assertEqual(
+            clients[0].connect_kwargs["headers"],
+            {"Origin": "http://127.0.0.1:8360"},
+        )
+        self.assertEqual(clients[0].connect_kwargs["transports"], ["polling"])
+        self.assertFalse(clients[0].options["reconnection"])
+        self.assertFalse(clients[0].connect_kwargs["retry"])
+        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assertEqual(clients[0].disconnect_calls, 1)
+        self.assertEqual(result.observed["provider_attempts_in_startup_window"], 1)
+        self.assertEqual(result.observed["startup_narration_receipt_count"], 1)
+        self.assertEqual(
+            result.observed["startup_narration_requested_model"],
+            "openai/gpt-6-luna",
+        )
+        self.assertEqual(
+            result.observed["startup_narration_cost_provenance"], "actual"
+        )
+        self.assertEqual(result.observed["startup_narration_cost_complete"], True)
+        self.assertEqual(result.observed["startup_narration_retry"], False)
+        self.assertEqual(result.observed["startup_narration_fallback"], False)
+        self.assertNotIn("narration must not be retained", repr(result))
 
         exposed_service = FakePublicService()
         exposed_service.overrides[("POST", "/api/player-sharing/start")] = (
             FakePublicService._json(200, {"state": "ready"})
         )
-        exposed = gate.L03PublicAccessExecutor().execute(
-            self.make_row_context(
-                api=LifecycleFakeApi(
+        exposed_api = LifecycleFakeApi(
                     status={"state": "off"},
                     post_handlers={
                         "issue-access": lambda _payload: gate.HostApiResponse(
@@ -2002,10 +2228,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                             },
                         ),
                     },
-                ),
-                public_service=exposed_service,
-            )
+                )
+        exposed_context = self.make_row_context(
+            api=exposed_api, public_service=exposed_service
         )
+        self.prepare_l03_startup(exposed_context, exposed_api)
+        exposed = gate.L03PublicAccessExecutor().execute(exposed_context)
         self.assertEqual(exposed.verdict, "FAIL")
         self.assertEqual(exposed.reason, "public_host_route_exposed")
 
@@ -2013,9 +2241,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         data_service.overrides[("GET", "/api/player/snapshot")] = (
             FakePublicService._json(403, {"error": "not_found", "party": {"name": "secret"}})
         )
-        data_exposure = gate.L03PublicAccessExecutor().execute(
-            self.make_row_context(
-                api=LifecycleFakeApi(
+        data_api = LifecycleFakeApi(
                     status={"state": "off"},
                     post_handlers={
                         "issue-access": lambda _payload: gate.HostApiResponse(
@@ -2029,10 +2255,10 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                             {"ok": True, "invitation": data_service.accepted_origin},
                         ),
                     },
-                ),
-                public_service=data_service,
-            )
-        )
+                )
+        data_context = self.make_row_context(api=data_api, public_service=data_service)
+        self.prepare_l03_startup(data_context, data_api)
+        data_exposure = gate.L03PublicAccessExecutor().execute(data_context)
         self.assertEqual(data_exposure.verdict, "FAIL")
         self.assertEqual(
             data_exposure.reason, "unauthenticated_snapshot_boundary_failed"
@@ -2040,9 +2266,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
         unavailable_service = FakePublicService()
         unavailable_service.set_available(False)
-        unavailable = gate.L03PublicAccessExecutor().execute(
-            self.make_row_context(
-                api=LifecycleFakeApi(
+        unavailable_api = LifecycleFakeApi(
                     status={"state": "off"},
                     post_handlers={
                         "issue-access": lambda _payload: gate.HostApiResponse(
@@ -2060,10 +2284,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                             },
                         ),
                     },
-                ),
-                public_service=unavailable_service,
-            )
+                )
+        unavailable_context = self.make_row_context(
+            api=unavailable_api, public_service=unavailable_service
         )
+        self.prepare_l03_startup(unavailable_context, unavailable_api)
+        unavailable = gate.L03PublicAccessExecutor().execute(unavailable_context)
         self.assertEqual(unavailable.verdict, "BLOCKED")
 
         def execute_l03_variant(
@@ -2088,11 +2314,11 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                     ),
                 },
             )
-            return gate.L03PublicAccessExecutor().execute(
-                self.make_row_context(
-                    api=variant_api, public_service=variant_service
-                )
+            variant_context = self.make_row_context(
+                api=variant_api, public_service=variant_service
             )
+            self.prepare_l03_startup(variant_context, variant_api)
+            return gate.L03PublicAccessExecutor().execute(variant_context)
 
         unauthenticated_200_service = FakePublicService()
         unauthenticated_200_service.overrides[("GET", "/api/player/snapshot")] = (
@@ -2148,6 +2374,177 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             missing_socket_snapshot.reason, "public_response_contract_invalid"
         )
+
+    def test_l03_startup_prechecks_fail_before_socket_connection(self) -> None:
+        context = self.make_row_context()
+        api = context.host_api
+        assert isinstance(api, LifecycleFakeApi)
+        clients = self.prepare_l03_startup(context, api)
+
+        def reject_seed(_sandbox: Path):
+            raise gate.GateError("startup_seed_precheck_failed")
+
+        context.startup_input_validator = reject_seed
+        result = gate.L03PublicAccessExecutor().execute(context)
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "startup_seed_precheck_failed")
+        self.assertEqual(clients, [])
+        self.assertEqual(api.calls, [])
+
+        existing_runtime_context = self.make_row_context(
+            api=LifecycleFakeApi(
+                status={
+                    "checks": {"local_runtime": True},
+                }
+            )
+        )
+        existing_runtime_api = existing_runtime_context.host_api
+        assert isinstance(existing_runtime_api, LifecycleFakeApi)
+        runtime_clients = self.prepare_l03_startup(
+            existing_runtime_context, existing_runtime_api
+        )
+        existing_runtime_api.status_sequence[0] = {
+            "checks": {"local_runtime": True}
+        }
+        result = gate.L03PublicAccessExecutor().execute(existing_runtime_context)
+        self.assertEqual(result.reason, "startup_runtime_already_running")
+        self.assertEqual(runtime_clients, [])
+
+    def test_l03_startup_cost_failures_preserve_runtime_observations(self) -> None:
+        high_cost_api = LifecycleFakeApi()
+        high_cost_context = self.make_row_context(api=high_cost_api)
+        self.prepare_l03_startup(
+            high_cost_context, high_cost_api, receipt_cost=0.06
+        )
+        high_cost = gate.L03PublicAccessExecutor().execute(high_cost_context)
+        self.assertEqual(high_cost.verdict, "FAIL")
+        self.assertEqual(high_cost.reason, "startup_provider_cost_cap_exceeded")
+        self.assertTrue(high_cost.observed["game_started_event_observed"])
+        self.assertTrue(high_cost.observed["local_runtime_ready"])
+        self.assertEqual(high_cost.observed["startup_narration_cost_usd"], 0.06)
+
+        cumulative_api = LifecycleFakeApi()
+        cumulative_context = self.make_row_context(api=cumulative_api)
+        self.prepare_l03_startup(
+            cumulative_context,
+            cumulative_api,
+            receipt_cost=0.02,
+            baseline_cost=0.99,
+        )
+        cumulative = gate.L03PublicAccessExecutor().execute(cumulative_context)
+        self.assertEqual(cumulative.verdict, "FAIL")
+        self.assertEqual(
+            cumulative.reason, "cumulative_narration_cost_cap_exceeded"
+        )
+        self.assertTrue(cumulative.observed["local_runtime_ready"])
+        self.assertEqual(
+            cumulative.observed["cumulative_narration_cost_usd"], 1.01
+        )
+
+        wrong_model_api = LifecycleFakeApi()
+        wrong_model_context = self.make_row_context(api=wrong_model_api)
+        wrong_model_clients = self.prepare_l03_startup(
+            wrong_model_context,
+            wrong_model_api,
+            receipt_model="openai/other-model",
+        )
+        wrong_model = gate.L03PublicAccessExecutor().execute(wrong_model_context)
+        self.assertEqual(wrong_model.reason, "startup_narration_receipt_invalid")
+        self.assertEqual(wrong_model_clients[0].emitted, ["start_game"])
+
+        extra_receipt_api = LifecycleFakeApi()
+        extra_receipt_context = self.make_row_context(api=extra_receipt_api)
+        extra_receipt_clients = self.prepare_l03_startup(
+            extra_receipt_context, extra_receipt_api, receipt_count=2
+        )
+        extra_receipt = gate.L03PublicAccessExecutor().execute(
+            extra_receipt_context
+        )
+        self.assertEqual(extra_receipt.verdict, "FAIL")
+        self.assertEqual(
+            extra_receipt.reason, "startup_provider_receipt_count_invalid"
+        )
+        self.assertEqual(extra_receipt_clients[0].emitted, ["start_game"])
+
+    def test_l03_startup_readiness_wait_is_bounded(self) -> None:
+        clock = [0.0]
+        api = LifecycleFakeApi()
+        context = self.make_row_context(
+            api=api,
+            monotonic=lambda: clock[0],
+            sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        )
+        clients = self.prepare_l03_startup(
+            context, api, local_runtime_ready=False
+        )
+        with patch.object(gate, "HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS", 1.0):
+            result = gate.L03PublicAccessExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "startup_runtime_timeout")
+        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assertEqual(clients[0].disconnect_calls, 1)
+        self.assertGreaterEqual(clock[0], 1.0)
+
+    def test_startup_profile_and_usage_receipt_parsers_fail_closed(self) -> None:
+        profile_source = b'''MODEL_PROFILES["n3-luna"] = {
+    "complex": {"model": "openai/gpt-6-luna", "provider": {"allow_fallbacks": False}},
+    "simple": {"model": "openai/gpt-6-luna", "provider": {"allow_fallbacks": False}},
+}
+ACTIVE_PROFILE = "n3-luna"
+'''
+        self.assertTrue(gate._literal_profile_assignment(profile_source))
+        self.assertFalse(
+            gate._literal_profile_assignment(
+                profile_source.replace(
+                    b'ACTIVE_PROFILE = "n3-luna"',
+                    b'ACTIVE_PROFILE = get_profile()',
+                )
+            )
+        )
+        self.assertFalse(
+            gate._literal_profile_assignment(
+                profile_source.replace(
+                    b'"openai/gpt-6-luna"', b'"openai/other-model"', 1
+                )
+            )
+        )
+
+        sandbox = self.root / gate.CAPTURE_RELATIVE
+        model_path = sandbox / "model_config.py"
+        model_path.write_bytes(profile_source)
+        checks = {
+            "registry_has_no_unregistered_modules": True,
+            "no_active_combat": True,
+            "no_history_user_messages": True,
+            "provider_free_startup_seed": True,
+        }
+        with patch(
+            "scripts.n3_start_game_offline_proof.check_capture_seed_provider_free",
+            return_value=checks,
+        ):
+            validated_checks, usage = gate._validate_capture_startup_inputs(
+                sandbox
+            )
+        self.assertEqual(validated_checks, checks)
+        self.assertEqual(usage.cumulative_narration_cost_usd, Decimal("0"))
+
+        bad_checks = dict(checks)
+        bad_checks["provider_free_startup_seed"] = False
+        with patch(
+            "scripts.n3_start_game_offline_proof.check_capture_seed_provider_free",
+            return_value=bad_checks,
+        ):
+            with self.assertRaisesRegex(gate.GateError, "startup_seed_precheck_failed"):
+                gate._validate_capture_startup_inputs(sandbox)
+
+        malformed_receipt = self._usage_record(
+            call_id="unpriced-call",
+            attempt_id="unpriced-attempt",
+            cost=0.01,
+        ).replace(b'"cost_complete": true', b'"cost_complete": false')
+        with self.assertRaisesRegex(gate.GateError, "narration_receipt_unpriced"):
+            gate._usage_receipts(malformed_receipt)
 
     def test_public_url_client_rejects_unsafe_inputs_and_bounds_failures(self) -> None:
         service = FakePublicService()
@@ -3027,7 +3424,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(gate.FROZEN_CAPS["companion_serve_launches"], 4)
         self.assertEqual(gate.FROZEN_CAPS["companion_up_invocations"], 1)
         self.assertEqual(gate.FROZEN_CAPS["relay_tunnel_creations"], 2)
-        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 0)
+        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 1)
         self.assertEqual(gate.FROZEN_CAPS["automatic_retries"], 0)
         manifest = gate.live_manifest()
         self.assertTrue(
@@ -3038,6 +3435,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "owner-run-required",
         )
         self.assertEqual(manifest["provider_budget_ceiling"], 1)
+        self.assertEqual(manifest["manifest_id"], "n3-live-lifecycle-v3")
+        self.assertIn("emit start_game once", manifest["rows"][2]["action"])
+        self.assertEqual(manifest["startup_narration"]["max_event_emissions"], 1)
+        self.assertEqual(manifest["startup_narration"]["resolved_model"], "openai/gpt-6-luna")
+        self.assertEqual(manifest["caps"]["provider_cost_cap_usd"], 0.05)
+        self.assertEqual(manifest["caps"]["cumulative_narration_cost_cap_usd"], 1.0)
 
     def test_plan_and_help_have_no_side_effects(self) -> None:
         before = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*"))
@@ -3081,6 +3484,20 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertIsNone(result["evidence_path"])
         self.assertEqual(self.host_factory_calls, 0)
+
+    def test_seed_profile_precheck_blocks_before_owned_host_start(self) -> None:
+        def reject_startup(_sandbox: Path):
+            raise gate.GateError("startup_profile_precheck_failed")
+
+        dependencies = self.make_dependencies(startup_validator=reject_startup)
+        result = gate.run_live_gate(dependencies, self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertIn(
+            "startup_profile_precheck_failed", result["infrastructure_failures"]
+        )
+        self.assertEqual(self.host_factory_calls, 0)
+        self.assertIsNone(self.fake_host)
 
     def test_partial_private_state_tree_creation_is_cleaned_up(self) -> None:
         original_mkdir = Path.mkdir
@@ -3327,7 +3744,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         for key, value in {
             "party_size": 4,
             "platform": "linux-arm64",
-            "provider_dispatch_attempts": 1,
+            "provider_dispatch_attempts": 0,
             "max_tunnel_creations": 3,
             "max_companion_launches": 5,
             "window_hours": 4,
@@ -4602,7 +5019,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             + "\n"
             + json.dumps({"event": "activated", "schema_version": 1, "budget": 1, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
             + "\n"
-            + json.dumps({"event": "reservation", "schema_version": 1, "budget": 1, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "host": "provider-secret.example"})
+            + json.dumps({"event": "reservation", "schema_version": 1, "budget": 1, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "timestamp_utc": TEST_NOW.isoformat(), "host": "provider-secret.example"})
             + "\n",
             encoding="ascii",
         )
@@ -4611,6 +5028,108 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertEqual(result["verdict"], "FAIL")
         self.assertEqual(result["reservation_count"], 1)
+
+    def test_provider_ledger_accepts_only_one_attempt_in_startup_window(self) -> None:
+        sandbox = self.root / gate.CAPTURE_RELATIVE
+        state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
+        ledger = Path(
+            gate.build_host_environment(sandbox, state, self.run_id)[
+                "NEQ_PROVIDER_ATTEMPT_LEDGER"
+            ]
+        )
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        records = [
+            {
+                "event": "header",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+            },
+            {
+                "event": "activated",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+                "transport_guard": "httpx-client-single-request",
+                "pid": 444,
+            },
+            {
+                "event": "reservation",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+                "reservation_number": 1,
+                "pid": 444,
+                "timestamp_utc": (TEST_NOW + timedelta(seconds=2)).isoformat(),
+            },
+        ]
+        ledger.write_text(
+            "".join(json.dumps(item, sort_keys=True) + "\n" for item in records),
+            encoding="ascii",
+        )
+        accepted = gate._validate_provider_ledger(
+            ledger,
+            self.run_id,
+            expected_pids=[444],
+            allowed_reservation_window=(
+                TEST_NOW,
+                TEST_NOW + timedelta(seconds=5),
+            ),
+        )
+        self.assertEqual(accepted["verdict"], "PASS")
+        self.assertTrue(accepted["startup_window_verified"])
+        self.assertEqual(accepted["attempt_count"], 1)
+
+        records[-1]["timestamp_utc"] = (
+            TEST_NOW - timedelta(seconds=1)
+        ).isoformat()
+        ledger.write_text(
+            "".join(json.dumps(item, sort_keys=True) + "\n" for item in records),
+            encoding="ascii",
+        )
+        rejected = gate._validate_provider_ledger(
+            ledger,
+            self.run_id,
+            expected_pids=[444],
+            allowed_reservation_window=(
+                TEST_NOW,
+                TEST_NOW + timedelta(seconds=5),
+            ),
+        )
+        self.assertEqual(rejected["verdict"], "FAIL")
+        self.assertFalse(rejected["startup_window_verified"])
+
+        records[-1]["timestamp_utc"] = (
+            TEST_NOW + timedelta(seconds=2)
+        ).isoformat()
+        records.append(
+            {
+                "event": "refusal",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+                "reservation_number": gate.PROVIDER_BUDGET + 1,
+                "pid": 444,
+                "timestamp_utc": (TEST_NOW + timedelta(seconds=3)).isoformat(),
+                "reason": "budget_exhausted",
+            }
+        )
+        ledger.write_text(
+            "".join(json.dumps(item, sort_keys=True) + "\n" for item in records),
+            encoding="ascii",
+        )
+        repeated_attempt = gate._validate_provider_ledger(
+            ledger,
+            self.run_id,
+            expected_pids=[444],
+            allowed_reservation_window=(
+                TEST_NOW,
+                TEST_NOW + timedelta(seconds=5),
+            ),
+        )
+        self.assertEqual(repeated_attempt["attempt_count"], 2)
+        self.assertEqual(repeated_attempt["verdict"], "FAIL")
+        self.assertFalse(repeated_attempt["startup_window_verified"])
 
     def test_provider_ledger_activations_follow_listener_pid_sequence(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
