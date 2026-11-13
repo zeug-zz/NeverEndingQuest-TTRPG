@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -951,6 +952,213 @@ class TestPreflightRowIntegration(unittest.TestCase):
             preflight_run_id=RUN_ID,
         )
 
+    def _run_prelaunch_characterization_failure(
+        self,
+        *,
+        run_id: str,
+        common_directory: Path,
+        canary_side_effect: Any,
+    ) -> tuple[profile_runner.CharacterizationError, dict[str, Any]]:
+        with tempfile.TemporaryDirectory(
+            prefix="prelaunch-failure-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_root_text:
+            run_directory = Path(evidence_root_text) / "run"
+            run_directory.mkdir()
+            guard_journal = run_directory / "guard-events.jsonl"
+            guard_journal.write_bytes(b"synthetic guard evidence\n")
+            sandbox_root = PROJECT_ROOT / profile_runner.SANDBOX_RELATIVE
+            host_command = ["python", "guarded-host-worker"]
+            runner_command = ["python", "profile-runner"]
+            expected_pythonpath = os.pathsep.join(
+                (
+                    str(PROJECT_ROOT / "scripts" / "live_gate_preflight_guard"),
+                    str(PROJECT_ROOT),
+                )
+            )
+
+            def validate_canary(
+                report: Any,
+                *,
+                process_role: str,
+                command: list[str],
+                cwd: Path,
+                environment_sha256: str,
+                expected_pid: int | None = None,
+            ) -> dict[str, Any]:
+                return {
+                    "process_role": process_role,
+                    "pid": (
+                        expected_pid
+                        if expected_pid is not None
+                        else report.get("pid", 24680)
+                    ),
+                    "command": list(command),
+                    "environment_sha256": environment_sha256,
+                    "working_directory": str(cwd),
+                    "interpreter": profile_runner._interpreter_identity(),
+                }
+
+            args = SimpleNamespace(
+                fixture_id="interior_tavern",
+                party_size=1,
+                lifecycle="startup",
+                source_sha=SOURCE_SHA,
+                run_id=run_id,
+                resume_checkpoint_sha256=None,
+                planned_row_id="E01",
+                arm="A",
+                preflight_run_id=RUN_ID,
+            )
+            with ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_require_safe_project_root",
+                        return_value=PROJECT_ROOT,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(profile_runner, "_require_parent_startup_guard")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner, "_configure_sandbox_import_paths"
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(profile_runner, "_install_sandbox_config_guard")
+                )
+                stack.enter_context(
+                    mock.patch.object(profile_runner, "_verify_source_identity")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_validate_prepared_sandbox",
+                        return_value=(
+                            sandbox_root,
+                            "E01",
+                            "A",
+                            "interior_tavern:p1",
+                            {
+                                "step_id": "E01-01",
+                                "utterance": "Describe the room.",
+                                "character": "PC-One",
+                            },
+                            safety.SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+                        ),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_ensure_run_directory",
+                        return_value=run_directory,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch(
+                        "scripts.live_gate_preflight_safety.configure_guard_event_sink"
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner, "_host_command", return_value=host_command
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety,
+                        "current_invocation_command",
+                        return_value=runner_command,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety,
+                        "build_guarded_sandbox_environment",
+                        return_value={"PYTHONPATH": expected_pythonpath},
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety,
+                        "_startup_canary_environment_digest",
+                        return_value="b" * 64,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety, "_startup_environment_snapshot", return_value={}
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety, "_startup_environment_digest", return_value="a" * 64
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_validate_startup_canary_record",
+                        side_effect=validate_canary,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_git_common_directory",
+                        return_value=common_directory,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(profile_runner, "_remove_import_guard")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        profile_runner,
+                        "_read_guard_events_for_run",
+                        return_value=([], guard_journal.read_bytes(), False),
+                    )
+                )
+                port_status = stack.enter_context(
+                    mock.patch.object(profile_runner, "_required_port_status")
+                )
+                port_observations = stack.enter_context(
+                    mock.patch.object(
+                        profile_runner, "_required_port_observations"
+                    )
+                )
+                host_process_launch = stack.enter_context(
+                    mock.patch.object(profile_runner.subprocess, "Popen")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        safety,
+                        "run_startup_process_canary",
+                        side_effect=canary_side_effect,
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            safety.CANARY_REPORT_ENV: json.dumps(
+                                {"process_role": "parent"}
+                            )
+                        },
+                    )
+                )
+                with self.assertRaises(profile_runner.CharacterizationError) as caught:
+                    profile_runner._characterize(args)
+
+            port_status.assert_not_called()
+            port_observations.assert_not_called()
+            host_process_launch.assert_not_called()
+            failure_path = run_directory / "failure-evidence.json"
+            self.assertTrue(failure_path.is_file())
+            return caught.exception, json.loads(failure_path.read_text(encoding="utf-8"))
+
     def _intended_identities(self) -> dict[str, dict[str, Any]]:
         rows, _reserves = _load_frozen_row_ids(None)
         profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
@@ -1381,6 +1589,73 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 self.assertEqual(summary["outcome"], "completed")
                 self.assertTrue(summary["process_census_complete"])
                 self.assertEqual(summary["worker_teardown"]["call_count"], 1)
+                self.assertTrue(summary["worker_teardown"]["server_stopped"])
+                self.assertTrue(summary["worker_teardown"]["port_8360_free"])
+                self.assertTrue(summary["worker_teardown"]["port_8370_free"])
+                self.assertTrue(
+                    summary["worker_teardown"]["shared_live_window_lock_released"]
+                )
+                teardown_path = (
+                    PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+                )
+                teardown = json.loads(teardown_path.read_text(encoding="utf-8"))
+                self.assertEqual(teardown["socket_census"]["listener_pids"], [])
+                self.assertTrue(
+                    all(
+                        teardown["port_observations"][port]["result"] == "free"
+                        and teardown["port_observations"][port][
+                            "observation_complete"
+                        ]
+                        for port in ("8360", "8370")
+                    )
+                )
+
+    def test_prelaunch_guard_and_lock_contention_preserve_failure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="prelaunch-lock-contention-", dir=PROJECT_ROOT / "tmp"
+        ) as common_root_text:
+            common_root = Path(common_root_text)
+            coordination = common_root / "neq-coordination"
+            lock_directory = coordination / "live-window.lock"
+            lock_directory.mkdir(parents=True, mode=0o700)
+            holder_path = lock_directory / "holder.json"
+            holder_bytes = b'{"booking_id":"foreign-holder"}\n'
+            holder_path.write_bytes(holder_bytes)
+            bookings_path = coordination / "bookings.log"
+            booking_bytes = b'{"booking_id":"existing-booking"}\n'
+            bookings_path.write_bytes(booking_bytes)
+
+            guard_error, guard_evidence = self._run_prelaunch_characterization_failure(
+                run_id="guard-failure-" + uuid.uuid4().hex[:8],
+                common_directory=common_root,
+                canary_side_effect=RuntimeError("synthetic guard rejection"),
+            )
+            self.assertEqual(guard_error.code, "host_prelaunch_canary_failed")
+            self.assertEqual(guard_evidence["phase"], "host_prelaunch_canary")
+            self.assertFalse(guard_evidence["guard_event_journal"]["complete"])
+            self.assertIsNone(guard_evidence["guard_event_journal"]["sha256"])
+            self.assertTrue(
+                guard_evidence["guard_event_journal"]["path"].startswith("tmp/")
+            )
+            self.assertFalse(guard_evidence["host_launch_attempted"])
+
+            contention_error, contention_evidence = (
+                self._run_prelaunch_characterization_failure(
+                    run_id="lock-contention-" + uuid.uuid4().hex[:8],
+                    common_directory=common_root,
+                    canary_side_effect=lambda **_kwargs: {"pid": 24680},
+                )
+            )
+            self.assertEqual(
+                contention_error.code, "shared_live_window_lock_unavailable"
+            )
+            self.assertEqual(
+                contention_evidence["phase"], "shared_live_window_lock_acquire"
+            )
+            self.assertFalse(contention_evidence["host_launch_attempted"])
+            self.assertFalse(contention_evidence["shared_live_window_lock"]["acquired"])
+            self.assertEqual(holder_path.read_bytes(), holder_bytes)
+            self.assertEqual(bookings_path.read_bytes(), booking_bytes)
 
     def test_retained_reconciliation_rejects_missing_malformed_and_tampered_files(
         self,

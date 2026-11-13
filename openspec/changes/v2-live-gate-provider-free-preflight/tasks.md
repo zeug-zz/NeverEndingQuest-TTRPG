@@ -13,7 +13,7 @@
 ## 3. Persist identity and preflight-only evidence
 
 - [ ] 3.1 Record source SHA, dependency-lock identity, secret-free routing identity, invocation identity, per-row outcomes, provider-free result, and PF status in the required preflight evidence directory; verify exact-identity booking eligibility and mismatch rejection with `.venv/bin/python scripts/test_live_gate_preflight.py`.
-- [ ] 3.2 Acquire and release the shared live-window lock around host startup and teardown, preserve failure evidence, and check ports 8360 and 8370; verify lock contention blocks launch and successful teardown leaves no listener using `.venv/bin/python scripts/test_live_gate_preflight_integration.py`.
+- [x] 3.2 Acquire and release the shared live-window lock around host startup and teardown, preserve failure evidence, and check ports 8360 and 8370; verify lock contention blocks launch and successful teardown leaves no listener using `.venv/bin/python scripts/test_live_gate_preflight_integration.py`.
 
 ## 4. Verify the source comparison and publish the operating rule
 

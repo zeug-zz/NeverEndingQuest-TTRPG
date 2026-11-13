@@ -2892,6 +2892,101 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
         raise CharacterizationError("profile_evidence_write_failed")
 
 
+def _persist_prelaunch_failure_evidence(
+    run_directory: Path,
+    args: argparse.Namespace,
+    *,
+    failure_code: str,
+    phase: str,
+    command: Sequence[str],
+    runner_command: Sequence[str],
+) -> None:
+    """Retain a bounded failure record before any host process is launched."""
+    root = PROJECT_ROOT.resolve(strict=True)
+    if run_directory.is_symlink():
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid")
+    resolved_directory = run_directory.resolve(strict=True)
+    try:
+        relative_directory = resolved_directory.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid") from exc
+    if not relative_directory.parts or relative_directory.parts[0] != "tmp":
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid")
+    run_id = getattr(args, "run_id", None)
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not resolved_directory.is_dir()
+    ):
+        raise CharacterizationError("prelaunch_failure_evidence_identity_invalid")
+
+    guard_events, guard_events_raw, guard_events_complete = _read_guard_events_for_run(
+        resolved_directory, run_id
+    )
+    guard_path = (relative_directory / "guard-events.jsonl").as_posix()
+    safe_command = list(command) if all(isinstance(part, str) for part in command) else []
+    safe_runner_command = (
+        list(runner_command)
+        if all(isinstance(part, str) for part in runner_command)
+        else []
+    )
+    source_sha = getattr(args, "source_sha", None)
+    if not isinstance(source_sha, str) or _SHA1_OR_SHA256.fullmatch(source_sha) is None:
+        source_sha = None
+
+    report = {
+        "schema_version": 1,
+        "report_type": "profile-characterization-failure",
+        "outcome": "failed",
+        "run_id": run_id,
+        "preflight_run_id": getattr(args, "preflight_run_id", None),
+        "source_sha": source_sha,
+        "fixture_id": getattr(args, "fixture_id", None),
+        "party_size": getattr(args, "party_size", None),
+        "lifecycle": getattr(args, "lifecycle", None),
+        "planned_row_id": getattr(args, "planned_row_id", None),
+        "phase": phase,
+        "failure_code": failure_code,
+        "host_launch_attempted": False,
+        "shared_live_window_lock": {
+            "required": True,
+            "acquired": False,
+            "held_during_host": False,
+            "released": False,
+        },
+        "invocation_identity": {
+            "command_sha256": hashlib.sha256(
+                json.dumps(
+                    safe_command, ensure_ascii=True, separators=(",", ":")
+                ).encode("ascii")
+            ).hexdigest()
+            if safe_command
+            else None,
+            "runner_command_sha256": hashlib.sha256(
+                json.dumps(
+                    safe_runner_command,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+            ).hexdigest()
+            if safe_runner_command
+            else None,
+            "working_directory": SANDBOX_RELATIVE.as_posix(),
+        },
+        "guard_event_journal": {
+            "path": guard_path,
+            "sha256": (
+                hashlib.sha256(guard_events_raw).hexdigest()
+                if guard_events_complete
+                else None
+            ),
+            "event_count": len(guard_events),
+            "complete": guard_events_complete,
+        },
+    }
+    _write_json(resolved_directory / "failure-evidence.json", report)
+
+
 def _read_worker_result(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -2914,8 +3009,10 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     run_directory: Path | None = None
     runner_command: list[str] = []
     command: list[str] = []
+    phase = "parent_startup_guard"
     try:
         _require_parent_startup_guard()
+        phase = "run_identity"
         if args.run_id is None:
             args.run_id = "pf-" + uuid.uuid4().hex[:24]
         if not isinstance(args.run_id, str) or _SAFE_RUN_ID.fullmatch(args.run_id) is None:
@@ -2923,7 +3020,9 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         sandbox = root / SANDBOX_RELATIVE
         _configure_sandbox_import_paths(root, sandbox)
         config_guard = _install_sandbox_config_guard(sandbox)
+        phase = "source_identity"
         _verify_source_identity(args.source_sha)
+        phase = "prepared_sandbox_validation"
         (
             sandbox,
             planned_row_id,
@@ -2949,6 +3048,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
 
         configure_guard_event_sink(guard_events_path, run_id=args.run_id)
         lifecycle_id = args.run_id + ("_s" if args.lifecycle == "startup" else "_r")
+        phase = "host_command_identity"
         command = _host_command(
             fixture_id=args.fixture_id,
             party_size=args.party_size,
@@ -3011,6 +3111,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             ),
             expected_pid=os.getpid(),
         )
+        phase = "host_prelaunch_canary"
         try:
             host_prelaunch = run_startup_process_canary(
                 command=command,
@@ -3053,6 +3154,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             ),
         ]
 
+        phase = "shared_live_window_lock_acquire"
         common_directory = _git_common_directory()
         lock_record = _build_live_window_lock_record(
             run_id=args.run_id,
@@ -3065,9 +3167,25 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         lock = _ProfileCharacterizationLock(common_directory, lock_record)
         if not lock.acquire():
             raise CharacterizationError("shared_live_window_lock_unavailable")
-    except BaseException:
-        _remove_import_guard(config_guard)
-        sys.path[:] = previous_sys_path
+    except BaseException as exc:
+        try:
+            if run_directory is not None:
+                failure_code = (
+                    exc.code
+                    if isinstance(exc, CharacterizationError)
+                    else "prelaunch_failed_" + type(exc).__name__
+                )
+                _persist_prelaunch_failure_evidence(
+                    run_directory,
+                    args,
+                    failure_code=failure_code,
+                    phase=phase,
+                    command=command,
+                    runner_command=runner_command,
+                )
+        finally:
+            _remove_import_guard(config_guard)
+            sys.path[:] = previous_sys_path
         raise
 
     process: subprocess.Popen[bytes] | None = None
@@ -3188,7 +3306,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = "process_census_host_owner_invalid"
         if not ready:
             failure_code = failure_code or "host_startup_not_ready"
-        else:
+        elif failure_code is None:
             driver_exchange = _drive_profile_exchange(
                 party_size=args.party_size,
                 runtime_root=sandbox,
