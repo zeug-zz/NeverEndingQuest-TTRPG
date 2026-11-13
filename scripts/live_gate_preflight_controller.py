@@ -17,13 +17,25 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
 
-from scripts.live_gate_preflight_safety import compare_invocation_identity
+from scripts.live_gate_preflight_evidence import (
+    PreflightEvidenceError,
+    check_booking_eligibility,
+    dependency_lock_sha256,
+    routing_identity_sha256,
+    write_preflight_evidence,
+)
+from scripts.live_gate_preflight_safety import (
+    SafetyConfigurationError,
+    compare_invocation_identity,
+    current_invocation_identity,
+)
 from scripts.mapping_pilot import launcher, row_runner
 from scripts.mapping_pilot.manifest import (
     DEFAULT_PREREG_ROOT,
@@ -42,6 +54,7 @@ _COUNTER_FIELDS = (
     "reserve_activations",
 )
 _LIFECYCLES = ("startup", "resume")
+_SUPERVISED_REPORT_TOKEN = object()
 
 
 class PreflightControllerError(ValueError):
@@ -97,6 +110,14 @@ class PreflightLifecycleInvocation:
     row_run_id: str
     intended_identity: Mapping[str, Any]
     resume_checkpoint: Mapping[str, Any] | None = None
+
+
+class _SupervisedPreflightReport(dict[str, Any]):
+    """In-process marker for a report returned by the guarded worker path."""
+
+    def __init__(self, value: Mapping[str, Any], *, token: object) -> None:
+        super().__init__(value)
+        self._attestation = token
 
 
 @dataclass(frozen=True)
@@ -231,10 +252,13 @@ def supervised_preflight_interfaces(
 
 def run_preflight_rows_supervised(
     *,
-    source_sha: str,
-    run_id: str,
-    intended_worker_identities: Mapping[str, Mapping[str, Any]],
-    safety_counters: Callable[[], Mapping[str, Any]],
+    source_sha: str | None = None,
+    run_id: str | None = None,
+    intended_worker_identities: Mapping[str, Mapping[str, Any]] | None = None,
+    safety_counters: Callable[[], Mapping[str, Any]] | None = None,
+    dependency_lock_path: str | Path | None = None,
+    routing_identity: Mapping[str, Any] | None = None,
+    intended_invocation: Mapping[str, Any] | None = None,
     intended_lifecycle_identities: Mapping[
         str, Mapping[str, Mapping[str, Mapping[str, Any]]]
     ]
@@ -242,19 +266,118 @@ def run_preflight_rows_supervised(
     prereg_root: str | Path | None = None,
     resume_checkpoints: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Run the frozen rows through their real guarded worker/driver lifecycle."""
-    return run_preflight_rows(
-        source_sha=source_sha,
-        run_id=run_id,
-        intended_worker_identities=intended_worker_identities,
-        intended_lifecycle_identities=intended_lifecycle_identities,
-        interfaces=supervised_preflight_interfaces(
-            run_id=run_id,
-            safety_counters=safety_counters,
-        ),
-        prereg_root=prereg_root,
-        resume_checkpoints=resume_checkpoints,
+    """Run supervised rows and always persist their report-only evidence.
+
+    The observed invocation comes from this process, while row outcomes and
+    teardown are produced by the guarded controller. Caller-supplied PF or
+    teardown summaries are deliberately not accepted as evidence.
+    """
+    failures: list[str] = []
+    if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+        run_id = "blocked-" + uuid.uuid4().hex[:16]
+        failures.append("run_identity_missing_or_invalid")
+
+    observed_invocation: Mapping[str, Any] | None
+    try:
+        observed_invocation = current_invocation_identity()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        observed_invocation = None
+        failures.append("observed_invocation_unavailable")
+
+    if not isinstance(source_sha, str) or _SOURCE_SHA.fullmatch(source_sha) is None:
+        failures.append("source_sha_missing_or_invalid")
+    try:
+        lock_sha256 = dependency_lock_sha256(dependency_lock_path)
+    except PreflightEvidenceError:
+        lock_sha256 = None
+        failures.append("dependency_lock_missing_or_invalid")
+    try:
+        routing_identity_sha256(routing_identity)
+    except (PreflightEvidenceError, TypeError, ValueError):
+        failures.append("routing_identity_missing_or_invalid")
+    try:
+        invocation_evidence = compare_invocation_identity(
+            intended_invocation, observed_invocation
+        )
+        if invocation_evidence.get("status") != "matched":
+            failures.append("invocation_identity_mismatch")
+    except (SafetyConfigurationError, TypeError, ValueError):
+        failures.append("invocation_identity_missing_or_invalid")
+    if not callable(safety_counters):
+        failures.append("safety_counters_unavailable")
+
+    row_report: _SupervisedPreflightReport | None = None
+    if not failures:
+        try:
+            raw_report = run_preflight_rows(
+                source_sha=source_sha,
+                run_id=run_id,
+                intended_worker_identities=intended_worker_identities,
+                intended_lifecycle_identities=intended_lifecycle_identities,
+                interfaces=supervised_preflight_interfaces(
+                    run_id=run_id,
+                    safety_counters=safety_counters,
+                ),
+                prereg_root=prereg_root,
+                resume_checkpoints=resume_checkpoints,
+            )
+            raw_report["execution_provenance"] = "supervised-retained-evidence"
+            row_report = _SupervisedPreflightReport(
+                raw_report, token=_SUPERVISED_REPORT_TOKEN
+            )
+        except Exception as exc:
+            failures.append(_failure_code(exc))
+
+    failure_code = (
+        failures[0]
+        if len(failures) == 1
+        else "preflight_inputs_incomplete"
+        if failures
+        else None
     )
+    evidence_path = write_preflight_evidence(
+        run_id=run_id,
+        source_sha=source_sha,
+        dependency_lock_path=dependency_lock_path,
+        routing_identity=routing_identity,
+        intended_invocation=intended_invocation,
+        observed_invocation=observed_invocation,
+        row_report=row_report,
+        entrypoint_failure_code=failure_code,
+    )
+    candidate_identity = {
+        "source_sha": source_sha,
+        "dependency_lock_sha256": lock_sha256,
+        "routing_identity": routing_identity,
+        "invocation_identity": intended_invocation,
+    }
+    eligibility = check_booking_eligibility(
+        run_id=run_id,
+        proposed_identity=candidate_identity,
+    )
+    result = dict(row_report) if row_report is not None else {
+        "schema_version": 1,
+        "report_type": "provider-free-row-preflight",
+        "preflight_only": True,
+        "source_sha": source_sha,
+        "run_id": run_id,
+        "status": "blocked",
+        "row_results": [],
+        "booking_eligible": False,
+        "live_gate_pass": False,
+    }
+    result.update(
+        {
+            "preflight_evidence_path": evidence_path,
+            "preflight_status": eligibility["status"],
+            "booking_eligible": eligibility["eligible"],
+            "booking_ruling_issued": False,
+            "live_gate_pass": False,
+        }
+    )
+    if failure_code is not None:
+        result["preflight_failure_code"] = failure_code
+    return result
 
 
 def planned_worker_identity(
@@ -483,6 +606,12 @@ def run_preflight_rows(
                             "first_exchange": startup_evidence["first_exchange"],
                             "worker_teardown": startup_evidence["worker_teardown"],
                             "sandbox_cleanup": True,
+                            "retained_evidence_path": startup_evidence.get(
+                                "retained_evidence_path"
+                            ),
+                            "retained_evidence_sha256": startup_evidence.get(
+                                "retained_evidence_sha256"
+                            ),
                         }
                     )
                     if fixture_id == plan.fixture_id:
@@ -594,6 +723,12 @@ def run_preflight_rows(
                             "first_exchange": resume_evidence["first_exchange"],
                             "worker_teardown": resume_evidence["worker_teardown"],
                             "sandbox_cleanup": True,
+                            "retained_evidence_path": resume_evidence.get(
+                                "retained_evidence_path"
+                            ),
+                            "retained_evidence_sha256": resume_evidence.get(
+                                "retained_evidence_sha256"
+                            ),
                         }
                     )
                     if resume_check["status"] == "mismatched":
@@ -1038,7 +1173,7 @@ def _validate_supervised_result(
     )
 
     try:
-        return validate_retained_supervised_evidence(
+        validated = validate_retained_supervised_evidence(
             result,
             plan=plan,
             fixture_id=fixture_id,
@@ -1048,6 +1183,9 @@ def _validate_supervised_result(
             row_run_id=row_run_id,
             preflight_run_id=preflight_run_id,
         )
+        validated["retained_evidence_path"] = result["evidence_path"]
+        validated["retained_evidence_sha256"] = result["evidence_sha256"]
+        return validated
     except RetainedEvidenceError as exc:
         raise PreflightControllerError(
             "retained_supervised_evidence_reconciliation_failed"
