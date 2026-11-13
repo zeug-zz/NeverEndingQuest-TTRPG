@@ -50,6 +50,8 @@ from scripts.live_gate_preflight_profiles import (
     load_profile_coverage,
     validate_profile_document,
     _is_exact_historic_profile_evidence,
+    _valid_command,
+    _valid_controller_command,
 )
 from scripts.live_gate_preflight_safety import (
     ENABLE_GUARD_ENV,
@@ -285,6 +287,41 @@ def _netstat_row(
 
 
 class TestLiveGatePreflightProfiles(unittest.TestCase):
+    def test_controller_command_allows_only_multiline_code_argument(self) -> None:
+        command = ["/venv/bin/python", "-P", "-c", "print('one')\nprint('two')"]
+        self.assertTrue(_valid_controller_command(command))
+        self.assertFalse(_valid_command(command))
+        self.assertEqual(command[3], "print('one')\nprint('two')")
+        digest = hashlib.sha256(
+            json.dumps(command, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+        self.assertNotEqual(
+            digest,
+            hashlib.sha256(
+                json.dumps(command[:3] + [command[3].replace("\n", " ")], separators=(",", ":")).encode("ascii")
+            ).hexdigest(),
+        )
+
+    def test_controller_command_rejects_other_controls_and_secrets(self) -> None:
+        base = ["/venv/bin/python", "-P", "-c", "print('ok')\nprint('next')"]
+        for mutation in (
+            lambda value: value.__setitem__(0, "/host\npython"),
+            lambda value: value.__setitem__(1, "-P\n"),
+            lambda value: value.__setitem__(3, "print('a')\r\nprint('b')"),
+            lambda value: value.__setitem__(3, "print('a')\tprint('b')"),
+            lambda value: value.__setitem__(3, "print('a')\x7f"),
+            lambda value: value.__setitem__(3, "token=supersecretvalue"),
+        ):
+            command = list(base)
+            mutation(command)
+            self.assertFalse(_valid_controller_command(command), repr(command))
+        altered = list(base)
+        altered[3] += "\nprint('altered')"
+        self.assertNotEqual(
+            hashlib.sha256(json.dumps(base, separators=(",", ":")).encode()).hexdigest(),
+            hashlib.sha256(json.dumps(altered, separators=(",", ":")).encode()).hexdigest(),
+        )
+
     def test_prepared_sandbox_validation_uses_repository_anchored_path(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-controller-", dir=PROJECT_ROOT / "tmp"

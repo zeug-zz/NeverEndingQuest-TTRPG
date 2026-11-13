@@ -737,7 +737,11 @@ def _validate_profile_evidence(
             or type(canary.get("startup_observed_at_ns")) is not int
             or canary.get("startup_observed_at_ns") <= 0
             or canary_command != expected_command
-            or not _valid_command(canary_command)
+            or not (
+                _valid_controller_command(canary_command)
+                if expected_stage == "controller-startup"
+                else _valid_command(canary_command)
+            )
             or not isinstance(command_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", command_sha256) is None
             or hashlib.sha256(
@@ -988,10 +992,10 @@ def _validate_profile_evidence(
         worker_pid=host_worker_pid,
     )
 
-    for command_field in ("host_command", "runner_command"):
-        command_value = evidence.get(command_field)
-        if not _valid_command(command_value):
-            raise ProfileValidationError("profile evidence command is invalid")
+    if not _valid_command(evidence.get("host_command")):
+        raise ProfileValidationError("profile evidence command is invalid")
+    if not _valid_controller_command(evidence.get("runner_command")):
+        raise ProfileValidationError("profile evidence command is invalid")
     if evidence.get("host_command") != command:
         raise ProfileValidationError("profile evidence host command differs")
 
@@ -1897,6 +1901,26 @@ def _valid_command(value: Any) -> bool:
             for part in value
         )
     )
+
+
+def _valid_controller_command(value: Any) -> bool:
+    if _valid_command(value):
+        return True
+    if not (
+        isinstance(value, list)
+        and len(value) == 4
+        and all(isinstance(part, str) and part for part in value)
+        and value[1] == "-P"
+        and value[2] == "-c"
+        and "\n" in value[3]
+        and "\r" not in value[3]
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value[3] if character != "\n")
+        and not any(_SECRET_TEXT.search(part) for part in value)
+    ):
+        return False
+    normalized = list(value)
+    normalized[3] = normalized[3].replace("\n", " ")
+    return _valid_command(normalized)
 
 
 def _valid_interpreter_identity(value: Any, project_root: Path) -> bool:
