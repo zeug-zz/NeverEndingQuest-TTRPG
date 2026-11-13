@@ -54,6 +54,7 @@ from scripts.live_gate_preflight_safety import (
     CONNECT_CANARY_ENV,
     EXPECTED_PREFIX_ENV,
     EXPECTED_PYTHON_ENV,
+    GUARD_EVENT_ROOT,
     GUARD_DIRECTORY,
     PROCESS_ROLES,
     PROCESS_ROLE_ENV,
@@ -89,14 +90,22 @@ from scripts import live_gate_preflight_sandbox as sandbox_preparation
 
 
 def _guard_startup_event(
-    pid: int, run_id: str, *, role: str = "host", sequence: int = 1
+    pid: int,
+    run_id: str,
+    *,
+    role: str = "host",
+    sequence: int = 1,
+    process_group_id: int | None = None,
+    command_sha256: str = "a" * 64,
+    working_directory: str = "tmp/combat_capture",
+    interpreter: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "sequence": sequence,
         "event_type": "guard_startup",
         "pid": pid,
-        "process_group_id": pid,
+        "process_group_id": pid if process_group_id is None else process_group_id,
         "process_role": role,
         "run_id": run_id,
         "observed_at_ns": 1_000_000 + sequence,
@@ -105,16 +114,17 @@ def _guard_startup_event(
         "target_host": None,
         "target_port": None,
         "target_host_sha256": None,
-        "command_sha256": "a" * 64,
+        "command_sha256": command_sha256,
         "child_pid": None,
         "child_is_python": None,
         "guard_active": True,
-        "interpreter": {
+        "interpreter": interpreter
+        or {
             "executable": str(PROJECT_ROOT / ".venv" / "bin" / "python"),
             "prefix": str(PROJECT_ROOT / ".venv"),
             "base_prefix": "/usr/local",
         },
-        "working_directory": "tmp/combat_capture",
+        "working_directory": working_directory,
     }
 
 
@@ -150,15 +160,21 @@ def _guard_network_event(
 
 
 def _guard_child_started_event(
-    pid: int, child_pid: int, run_id: str, *, sequence: int = 2
+    pid: int,
+    child_pid: int,
+    run_id: str,
+    *,
+    process_role: str = "parent",
+    process_group_id: int | None = None,
+    sequence: int = 2,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "sequence": sequence,
         "event_type": "subprocess_started",
         "pid": pid,
-        "process_group_id": pid,
-        "process_role": "parent",
+        "process_group_id": pid if process_group_id is None else process_group_id,
+        "process_role": process_role,
         "run_id": run_id,
         "observed_at_ns": 1_000_000 + sequence,
         "operation": "Popen",
@@ -502,9 +518,524 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         with self.assertRaisesRegex(ProfileValidationError, "fields are malformed"):
             validate_profile_document(document)
 
+    def test_profile_evidence_validates_socket_rows_and_guard_ownership_end_to_end(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-census-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            samples = evidence["process_census"]["socket_pid_samples"]
+            host_ready = next(sample for sample in samples if sample["phase"] == "host_ready")
+            after_teardown = next(
+                sample for sample in samples if sample["phase"] == "after_teardown"
+            )
+            self.assertEqual(host_ready["pids"], [10001, 10003])
+            self.assertEqual(host_ready["listener_pids"], [10003])
+            self.assertEqual(after_teardown["pids"], [10001])
+            self.assertEqual(after_teardown["listener_pids"], [])
+            self.assertTrue(
+                validate_profile_document(document)["structural_row_coverage_complete"]
+            )
+
+    def test_profile_evidence_accepts_guarded_host_child_listener(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-host-child-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            child_pid = 10004
+            journal_path = PROJECT_ROOT / evidence["guard_event_journal"]["path"]
+            guard_events = [
+                json.loads(line)
+                for line in journal_path.read_text(encoding="ascii").splitlines()
+            ]
+            worker_startup = next(
+                event
+                for event in guard_events
+                if event.get("event_type") == "guard_startup" and event["pid"] == 10003
+            )
+            child_started = _guard_child_started_event(
+                10003,
+                child_pid,
+                evidence["run_id"],
+                process_role="host",
+                process_group_id=10003,
+                sequence=2,
+            )
+            child_startup = _guard_startup_event(
+                child_pid,
+                evidence["run_id"],
+                role="host",
+                process_group_id=10003,
+                command_sha256="b" * 64,
+                working_directory=str(PROJECT_ROOT / "tmp" / "combat_capture"),
+            )
+            self.assertEqual(worker_startup["sequence"], 1)
+            guard_events.extend([child_started, child_startup])
+            journal_raw = b"".join(
+                json.dumps(
+                    event, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+                ).encode("ascii")
+                + b"\n"
+                for event in guard_events
+            )
+            journal_path.write_bytes(journal_raw)
+            evidence["guard_event_journal"]["sha256"] = hashlib.sha256(
+                journal_raw
+            ).hexdigest()
+            evidence["guard_event_journal"]["event_count"] = len(guard_events)
+
+            census = evidence["process_census"]
+            for sample in census["socket_pid_samples"]:
+                sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+                sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                if sample["phase"] == "host_ready":
+                    listener = next(
+                        row
+                        for row in sidecar["run_owned_rows"]
+                        if row["state"] == "LISTEN"
+                    )
+                    listener["pid"] = child_pid
+                    sample["pids"] = sorted(
+                        {row["pid"] for row in sidecar["run_owned_rows"]}
+                    )
+                    sample["listener_pids"] = [child_pid]
+                    sidecar["pids"] = sample["pids"]
+                if sample["phase"] != "before_host":
+                    sidecar["run_process_pids"] = sorted(
+                        {event["pid"] for event in guard_events}
+                        | {
+                            event["child_pid"]
+                            for event in guard_events
+                            if event.get("event_type") == "subprocess_started"
+                        }
+                        | {10001, 10002, 10003}
+                    )
+                    sidecar["guard_startup_pids"] = sorted(
+                        event["pid"]
+                        for event in guard_events
+                        if event.get("event_type") == "guard_startup"
+                    )
+                sidecar_path.write_text(
+                    json.dumps(
+                        sidecar,
+                        ensure_ascii=True,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    encoding="ascii",
+                )
+                sample["evidence_sha256"] = hashlib.sha256(
+                    sidecar_path.read_bytes()
+                ).hexdigest()
+
+            census["socket_owner_pids"] = [10001, child_pid]
+            census["python_child_pids"] = [child_pid]
+            census["python_pids"] = [10001, 10002, 10003, child_pid]
+            census["guarded_pids"] = [10001, 10002, 10003, child_pid]
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            self.assertTrue(
+                validate_profile_document(document)["structural_row_coverage_complete"]
+            )
+
+    def test_profile_evidence_accepts_guarded_controller_child_sockets_before_host(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-controller-child-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            child_pid = 10004
+            guard_events = self._read_profile_guard_events(evidence)
+            guard_events.extend(
+                [
+                    _guard_child_started_event(
+                        10001,
+                        child_pid,
+                        evidence["run_id"],
+                        process_role="parent",
+                        process_group_id=10001,
+                        sequence=2,
+                    ),
+                    _guard_startup_event(
+                        child_pid,
+                        evidence["run_id"],
+                        role="parent",
+                        process_group_id=10001,
+                        command_sha256="c" * 64,
+                    ),
+                ]
+            )
+            self._write_profile_guard_events(evidence, guard_events)
+
+            for phase in ("before_host", "host_ready", "after_teardown"):
+                sample, sidecar_path, sidecar = self._read_profile_socket_sidecar(
+                    evidence, phase
+                )
+                sidecar["run_process_pids"] = sorted(
+                    set(sidecar["run_process_pids"]) | {child_pid}
+                )
+                sidecar["guard_startup_pids"] = sorted(
+                    set(sidecar["guard_startup_pids"]) | {child_pid}
+                )
+                if phase in ("before_host", "host_ready"):
+                    sidecar["run_owned_rows"].append(
+                        {
+                            "foreign": {"host": "127.0.0.1", "port": 59638},
+                            "local": {"host": "127.0.0.1", "port": 59637},
+                            "pid": child_pid,
+                            "protocol": "tcp4",
+                            "state": "ESTABLISHED",
+                        }
+                    )
+                self._write_profile_socket_sidecar(
+                    sample, sidecar_path, sidecar
+                )
+
+            census = evidence["process_census"]
+            census["socket_owner_pids"] = [10001, 10003, child_pid]
+            census["python_child_pids"] = [child_pid]
+            census["python_pids"] = [10001, 10002, 10003, child_pid]
+            census["guarded_pids"] = [10001, 10002, 10003, child_pid]
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            self.assertTrue(
+                validate_profile_document(document)["structural_row_coverage_complete"]
+            )
+
+    def test_profile_evidence_rejects_controller_child_socket_without_startup(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-controller-child-unguarded-",
+            dir=PROJECT_ROOT / "tmp",
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            child_pid = 10004
+            guard_events = self._read_profile_guard_events(evidence)
+            guard_events.append(
+                _guard_child_started_event(
+                    10001,
+                    child_pid,
+                    evidence["run_id"],
+                    process_role="parent",
+                    process_group_id=10001,
+                    sequence=2,
+                )
+            )
+            self._write_profile_guard_events(evidence, guard_events)
+            for phase in ("host_ready", "after_teardown"):
+                sample, sidecar_path, sidecar = self._read_profile_socket_sidecar(
+                    evidence, phase
+                )
+                sidecar["run_process_pids"] = sorted(
+                    set(sidecar["run_process_pids"]) | {child_pid}
+                )
+                if phase == "host_ready":
+                    sidecar["run_owned_rows"].append(
+                        {
+                            "foreign": {"host": "127.0.0.1", "port": 59638},
+                            "local": {"host": "127.0.0.1", "port": 59637},
+                            "pid": child_pid,
+                            "protocol": "tcp4",
+                            "state": "ESTABLISHED",
+                        }
+                    )
+                self._write_profile_socket_sidecar(
+                    sample, sidecar_path, sidecar
+                )
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(
+                ProfileValidationError, "socket sample guard ownership differs"
+            ):
+                validate_profile_document(document)
+
+    def test_profile_evidence_rejects_guarded_controller_child_as_host_listener(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-controller-listener-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            child_pid = 10004
+            guard_events = self._read_profile_guard_events(evidence)
+            guard_events.extend(
+                [
+                    _guard_child_started_event(
+                        10001,
+                        child_pid,
+                        evidence["run_id"],
+                        process_role="parent",
+                        process_group_id=10001,
+                        sequence=2,
+                    ),
+                    _guard_startup_event(
+                        child_pid,
+                        evidence["run_id"],
+                        role="parent",
+                        process_group_id=10001,
+                        command_sha256="c" * 64,
+                    ),
+                ]
+            )
+            self._write_profile_guard_events(evidence, guard_events)
+            for phase in ("host_ready", "after_teardown"):
+                sample, sidecar_path, sidecar = self._read_profile_socket_sidecar(
+                    evidence, phase
+                )
+                sidecar["run_process_pids"] = sorted(
+                    set(sidecar["run_process_pids"]) | {child_pid}
+                )
+                sidecar["guard_startup_pids"] = sorted(
+                    set(sidecar["guard_startup_pids"]) | {child_pid}
+                )
+                if phase == "host_ready":
+                    sidecar["run_owned_rows"].append(
+                        {
+                            "foreign": {"host": "*", "port": None},
+                            "local": {"host": "127.0.0.1", "port": 8360},
+                            "pid": child_pid,
+                            "protocol": "tcp4",
+                            "state": "LISTEN",
+                        }
+                    )
+                self._write_profile_socket_sidecar(
+                    sample, sidecar_path, sidecar
+                )
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(
+                ProfileValidationError, "process census socket ownership differs"
+            ):
+                validate_profile_document(document)
+
+    def test_profile_evidence_rejects_malformed_incomplete_and_unguarded_samples(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-census-invalid-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            sample = next(
+                item
+                for item in evidence["process_census"]["socket_pid_samples"]
+                if item["phase"] == "host_ready"
+            )
+            sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            sidecar["run_owned_rows"][0]["local"]["port"] = "8360"
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(ProfileValidationError, "socket sample identity differs"):
+                validate_profile_document(document)
+
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["guard_event_journal"]["complete"] = False
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(ProfileValidationError, "guard-event journal is incomplete"):
+                validate_profile_document(document)
+
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            sample = next(
+                item
+                for item in evidence["process_census"]["socket_pid_samples"]
+                if item["phase"] == "host_ready"
+            )
+            sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            unguarded_pid = 19999
+            sidecar["run_owned_rows"].append(
+                {
+                    "foreign": {"host": "*", "port": None},
+                    "local": {"host": "127.0.0.1", "port": 8360},
+                    "pid": unguarded_pid,
+                    "protocol": "tcp4",
+                    "state": "LISTEN",
+                }
+            )
+            sidecar["run_owned_rows"].sort(key=lambda row: row["pid"])
+            sidecar["pids"] = sorted({row["pid"] for row in sidecar["run_owned_rows"]})
+            sidecar["aggregate_counts"]["internet_rows"] += 1
+            sidecar["aggregate_counts"]["run_pid_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["internet_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["run_pid_rows"] += 1
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            sample["pids"] = sidecar["pids"]
+            sample["listener_pids"] = [10003, unguarded_pid]
+            sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(ProfileValidationError, "socket sample guard ownership differs"):
+                validate_profile_document(document)
+
+    def test_profile_evidence_rejects_spoofed_listener_and_surviving_host_socket(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-census-teardown-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            sample = next(
+                item
+                for item in evidence["process_census"]["socket_pid_samples"]
+                if item["phase"] == "host_ready"
+            )
+            sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            sidecar["run_owned_rows"].append(
+                {
+                    "foreign": {"host": "*", "port": None},
+                    "local": {"host": "127.0.0.1", "port": 8360},
+                    "pid": 10001,
+                    "protocol": "tcp4",
+                    "state": "LISTEN",
+                }
+            )
+            sidecar["run_owned_rows"].sort(key=lambda row: row["pid"])
+            sidecar["aggregate_counts"]["internet_rows"] += 1
+            sidecar["aggregate_counts"]["run_pid_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["internet_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["run_pid_rows"] += 1
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            sample["listener_pids"] = [10001, 10003]
+            sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(ProfileValidationError, "socket ownership differs"):
+                validate_profile_document(document)
+
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            sample = next(
+                item
+                for item in evidence["process_census"]["socket_pid_samples"]
+                if item["phase"] == "after_teardown"
+            )
+            sidecar_path = PROJECT_ROOT / sample["evidence_path"]
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            sidecar["run_owned_rows"].append(
+                {
+                    "foreign": {"host": "127.0.0.1", "port": 8360},
+                    "local": {"host": "127.0.0.1", "port": 59644},
+                    "pid": 10003,
+                    "protocol": "tcp4",
+                    "state": "ESTABLISHED",
+                }
+            )
+            sidecar["run_owned_rows"].sort(key=lambda row: row["pid"])
+            sidecar["pids"] = sorted({row["pid"] for row in sidecar["run_owned_rows"]})
+            sidecar["aggregate_counts"]["internet_rows"] += 1
+            sidecar["aggregate_counts"]["run_pid_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["internet_rows"] += 1
+            sidecar["protocol_samples"][0]["counts"]["run_pid_rows"] += 1
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            sample["pids"] = sidecar["pids"]
+            sample["evidence_sha256"] = hashlib.sha256(sidecar_path.read_bytes()).hexdigest()
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(ProfileValidationError, "socket ownership differs"):
+                validate_profile_document(document)
+
+    def _persist_profile_evidence(
+        self, document: dict[str, Any], evidence_path: Path, evidence: dict[str, Any]
+    ) -> None:
+        self._write_evidence(evidence_path, evidence)
+        document["profiles"][0]["startup"]["evidence_sha256"] = hashlib.sha256(
+            evidence_path.read_bytes()
+        ).hexdigest()
+
+    def _read_profile_guard_events(self, evidence: dict[str, Any]) -> list[dict[str, Any]]:
+        path = PROJECT_ROOT / evidence["guard_event_journal"]["path"]
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="ascii").splitlines()
+        ]
+
+    def _write_profile_guard_events(
+        self, evidence: dict[str, Any], events: list[dict[str, Any]]
+    ) -> None:
+        journal = evidence["guard_event_journal"]
+        path = PROJECT_ROOT / journal["path"]
+        raw = b"".join(
+            json.dumps(
+                event, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ).encode("ascii")
+            + b"\n"
+            for event in events
+        )
+        path.write_bytes(raw)
+        journal["sha256"] = hashlib.sha256(raw).hexdigest()
+        journal["event_count"] = len(events)
+
+    def _read_profile_socket_sidecar(
+        self, evidence: dict[str, Any], phase: str
+    ) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+        sample = next(
+            item
+            for item in evidence["process_census"]["socket_pid_samples"]
+            if item["phase"] == phase
+        )
+        path = PROJECT_ROOT / sample["evidence_path"]
+        return sample, path, json.loads(path.read_text(encoding="utf-8"))
+
+    def _write_profile_socket_sidecar(
+        self, sample: dict[str, Any], path: Path, sidecar: dict[str, Any]
+    ) -> None:
+        rows = sidecar["run_owned_rows"]
+        sidecar["pids"] = sorted({row["pid"] for row in rows})
+        sample["pids"] = sidecar["pids"]
+        sample["listener_pids"] = profile_runner._host_ready_listener_pids(rows)
+        count_fields = (
+            "internet_rows",
+            "unattributed_rows",
+            "pid_zero_rows",
+            "foreign_process_rows",
+            "run_pid_rows",
+            "malformed_run_pid_rows",
+        )
+        aggregate = {key: 0 for key in count_fields}
+        for protocol_sample in sidecar["protocol_samples"]:
+            protocol = protocol_sample["protocol"]
+            protocol_rows = [
+                row
+                for row in rows
+                if row["protocol"].startswith(protocol)
+            ]
+            counts = {key: 0 for key in count_fields}
+            counts["internet_rows"] = len(protocol_rows)
+            counts["run_pid_rows"] = len(protocol_rows)
+            protocol_sample["counts"] = counts
+            for key in count_fields:
+                aggregate[key] += counts[key]
+        sidecar["aggregate_counts"] = aggregate
+        path.write_text(
+            json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        sample["evidence_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
     def _measured_document(self, evidence_directory: Path) -> tuple[dict, Path]:
         document = copy_profile_document()
         profile = document["profiles"][0]
+        run_id = "profile-test-" + uuid.uuid4().hex[:12]
+        run_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
+        run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, run_directory, ignore_errors=True)
         source_file = "scripts/test_live_gate_preflight_profiles.py"
         source_hash = hashlib.sha256((PROJECT_ROOT / source_file).read_bytes()).hexdigest()
         command = [
@@ -516,10 +1047,10 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             party_size=profile["party_size"],
             lifecycle="startup",
             source_sha="a" * 40,
-            run_id="profile-test-001",
+            run_id=run_id,
             planned_row_id=profile["planned_row_ids"][0],
             arm="A",
-            lifecycle_id="profile-test-001_s",
+            lifecycle_id=run_id + "_s",
             resume_checkpoint_sha256=None,
         )
         pythonpath = expected_guarded_pythonpath(PROJECT_ROOT)
@@ -585,6 +1116,212 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             canary("host", "host-prelaunch", host_command, host_cwd, 10002, "b" * 64),
             canary("host", "host-startup", host_command, host_cwd, 10003, "b" * 64),
         ]
+        canaries_by_stage = {
+            report["canary_stage"]: report for report in process_canaries
+        }
+        guard_events = [
+            _guard_startup_event(
+                report["pid"],
+                run_id,
+                role=report["process_role"],
+                command_sha256=report["command_sha256"],
+                working_directory=report["working_directory"],
+                interpreter=report["interpreter"],
+            )
+            for report in process_canaries
+        ]
+
+        def scope(
+            stage: str,
+            selector: str,
+            process_group_id: int,
+            role: str,
+            launch_source: str,
+        ) -> dict[str, Any]:
+            report = canaries_by_stage[stage]
+            return {
+                "selector": selector,
+                "pid": report["pid"],
+                "process_group_id": process_group_id,
+                "process_role": role,
+                "launch_source": launch_source,
+                "command_sha256": report["command_sha256"],
+                "environment_sha256": report["environment_sha256"],
+                "working_directory_sha256": hashlib.sha256(
+                    report["working_directory"].encode("utf-8")
+                ).hexdigest(),
+            }
+
+        process_scopes = [
+            scope(
+                "controller-startup", "pid", 10001, "parent", "controller-startup-canary"
+            ),
+            scope(
+                "host-prelaunch",
+                "process_group",
+                10002,
+                "host",
+                "host-prelaunch-canary-session",
+            ),
+            scope(
+                "host-startup",
+                "process_group",
+                10003,
+                "host",
+                "host-worker-start-new-session",
+            ),
+        ]
+        rows_by_phase = {
+            "before_host": [],
+            "host_ready": [
+                {
+                    "foreign": {"host": "*", "port": None},
+                    "local": {"host": "127.0.0.1", "port": 8360},
+                    "pid": 10003,
+                    "protocol": "tcp4",
+                    "state": "LISTEN",
+                },
+                {
+                    "foreign": {"host": "127.0.0.1", "port": 8360},
+                    "local": {"host": "127.0.0.1", "port": 59635},
+                    "pid": 10001,
+                    "protocol": "tcp4",
+                    "state": "TIME_WAIT",
+                },
+            ],
+            "after_teardown": [
+                {
+                    "foreign": {"host": "127.0.0.1", "port": 8360},
+                    "local": {"host": "127.0.0.1", "port": 59635},
+                    "pid": 10001,
+                    "protocol": "tcp4",
+                    "state": "TIME_WAIT",
+                }
+            ],
+        }
+        event_phases = {
+            "before_host": guard_events[:2],
+            "host_ready": guard_events,
+            "after_teardown": guard_events,
+        }
+        census_samples: list[dict[str, Any]] = []
+        for phase in ("before_host", "host_ready", "after_teardown"):
+            phase_events = event_phases[phase]
+            phase_scopes = process_scopes[:2] if phase == "before_host" else process_scopes
+            rows = rows_by_phase[phase]
+            owners = sorted({row["pid"] for row in rows})
+            listeners = sorted(profile_runner._host_ready_listener_pids(rows))
+            aggregate_counts = {
+                "internet_rows": len(rows),
+                "unattributed_rows": 0,
+                "pid_zero_rows": 0,
+                "foreign_process_rows": 0,
+                "run_pid_rows": len(rows),
+                "malformed_run_pid_rows": 0,
+            }
+            protocol_samples = []
+            for protocol in ("tcp", "udp"):
+                counts = dict(aggregate_counts)
+                if protocol == "udp":
+                    counts = {key: 0 for key in aggregate_counts}
+                protocol_samples.append(
+                    {
+                        "protocol": protocol,
+                        "command_evidence": {
+                            "command": ["/usr/sbin/netstat", "-anv", "-W", "-p", protocol],
+                            "returncode": 0,
+                            "failure": None,
+                            "stdout_byte_count": 1,
+                            "stdout_sha256": hashlib.sha256(
+                                (phase + protocol).encode("ascii")
+                            ).hexdigest(),
+                            "stdout_truncated": False,
+                            "stdout_prefix_base64": "",
+                            "stderr_byte_count": 0,
+                            "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+                            "stderr_truncated": False,
+                            "stderr_prefix_base64": "",
+                            "observed": True,
+                        },
+                        "counts": counts,
+                        "parseable": True,
+                    }
+                )
+            sidecar = {
+                "schema_version": 3,
+                "run_id": run_id,
+                "phase": phase,
+                "observer": "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing",
+                "process_scopes": phase_scopes,
+                "run_process_pids": sorted(
+                    {event["pid"] for event in phase_events}
+                    | {
+                        event["child_pid"]
+                        for event in phase_events
+                        if event.get("event_type") == "subprocess_started"
+                    }
+                    | {item["pid"] for item in phase_scopes}
+                ),
+                "guard_startup_pids": sorted(
+                    event["pid"]
+                    for event in phase_events
+                    if event.get("event_type") == "guard_startup"
+                ),
+                "protocol_samples": protocol_samples,
+                "aggregate_counts": aggregate_counts,
+                "run_owned_rows": rows,
+                "pids": owners,
+                "observed": True,
+                "failure_code": None,
+            }
+            sidecar_path = run_directory / ("socket-sample-%s.json" % phase)
+            sidecar_path.write_text(
+                json.dumps(sidecar, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+                encoding="ascii",
+            )
+            census_samples.append(
+                {
+                    "phase": phase,
+                    "port": 8360,
+                    "observed": True,
+                    "pids": owners,
+                    "listener_pids": listeners,
+                    "failure_code": None,
+                    "evidence_path": sidecar_path.relative_to(PROJECT_ROOT).as_posix(),
+                    "evidence_sha256": hashlib.sha256(
+                        sidecar_path.read_bytes()
+                    ).hexdigest(),
+                }
+            )
+        guard_journal_path = run_directory / "guard-events.jsonl"
+        guard_journal_raw = b"".join(
+            json.dumps(
+                event, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ).encode("ascii")
+            + b"\n"
+            for event in guard_events
+        )
+        guard_journal_path.write_bytes(guard_journal_raw)
+        socket_owner_pids = sorted(
+            {pid for sample in census_samples for pid in sample["pids"]}
+        )
+        guarded_pids = sorted(report["pid"] for report in process_canaries)
+        census = {
+            "controller_pid": 10001,
+            "driver_pid": 10001,
+            "host_prelaunch_pid": 10002,
+            "host_worker_pid": 10003,
+            "launched_pids": [10001, 10002, 10003],
+            "socket_owner_pids": socket_owner_pids,
+            "python_child_pids": [],
+            "python_pids": [10001, 10002, 10003],
+            "guarded_pids": guarded_pids,
+            "canary_pids": guarded_pids,
+            "uncovered_pids": [],
+            "guard_events_valid": True,
+            "socket_pid_samples": census_samples,
+            "complete": True,
+        }
         evidence = {
             "schema_version": 1,
             "authorization_ruling_id": "neq-w1-fr11-profiles-characterization-20261112",
@@ -595,29 +1332,19 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "planned_row_id": profile["planned_row_ids"][0],
             "arm": "A",
             "sandbox_root": "tmp/combat_capture",
-            "run_id": "profile-test-001",
+            "run_id": run_id,
             "source_sha": "a" * 40,
             "command": host_command,
             "working_directory": "tmp/combat_capture",
             "pythonpath": pythonpath,
             "process_canaries": process_canaries,
-            "process_census": {
-                "controller_pid": 10001,
-                "driver_pid": 10001,
-                "host_prelaunch_pid": 10002,
-                "host_worker_pid": 10003,
-                "launched_pids": [10001, 10002, 10003],
-                "socket_owner_pids": [10003],
-                "python_pids": [10001, 10002, 10003],
-                "guarded_pids": [10001, 10002, 10003],
-                "uncovered_pids": [],
-                "socket_pid_samples": [
-                    {"phase": "before_host", "port": 8360, "observed": True, "pids": []},
-                    {"phase": "host_ready", "port": 8360, "observed": True, "pids": [10003]},
-                    {"phase": "after_teardown", "port": 8360, "observed": True, "pids": []},
-                ],
+            "guard_event_journal": {
+                "path": guard_journal_path.relative_to(PROJECT_ROOT).as_posix(),
+                "sha256": hashlib.sha256(guard_journal_raw).hexdigest(),
+                "event_count": len(guard_events),
                 "complete": True,
             },
+            "process_census": census,
             "controller_interpreter": interpreter,
             "worker_interpreter": interpreter,
             "network_guard_active": True,
@@ -1463,6 +2190,316 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertNotIn(b"python host", sidecar)
         self.assertTrue(all(not item["command_evidence"]["stdout_prefix_base64"] for item in evidence["protocol_samples"]))
 
+    def test_retained_e04_host_ready_and_after_teardown_allow_guarded_controller_time_wait(
+        self,
+    ) -> None:
+        retained_root = (
+            PROJECT_ROOT
+            / "tmp/router-rollout/live-gate-preflight/profile-characterization"
+            / "fr11-e04-p1-startup-01"
+        )
+        retained_samples = {
+            phase: json.loads(
+                (retained_root / ("socket-sample-%s.json" % phase)).read_text(
+                    encoding="ascii"
+                )
+            )
+            for phase in ("before_host", "host_ready", "after_teardown")
+        }
+        guard_events = [
+            json.loads(line)
+            for line in (retained_root / "guard-events.jsonl")
+            .read_text(encoding="ascii")
+            .splitlines()
+        ]
+        process_scopes = retained_samples["host_ready"]["process_scopes"]
+        scopes_by_source = {
+            scope["launch_source"]: scope for scope in process_scopes
+        }
+        controller_pid = scopes_by_source["controller-startup-canary"]["pid"]
+        host_prelaunch_pid = scopes_by_source["host-prelaunch-canary-session"]["pid"]
+        host_pid = scopes_by_source["host-worker-start-new-session"]["pid"]
+
+        def census_sample(phase: str) -> dict[str, Any]:
+            evidence = retained_samples[phase]
+            return {
+                "phase": evidence["phase"],
+                "port": 8360,
+                "observed": evidence["observed"],
+                "pids": evidence["pids"],
+                "listener_pids": profile_runner._host_ready_listener_pids(
+                    evidence["run_owned_rows"]
+                ),
+                "failure_code": evidence["failure_code"],
+            }
+
+        before_host = census_sample("before_host")
+        host_ready = census_sample("host_ready")
+        after_teardown = census_sample("after_teardown")
+        self.assertIn(controller_pid, host_ready["pids"])
+        self.assertEqual(host_ready["listener_pids"], [host_pid])
+        self.assertEqual(after_teardown["pids"], [controller_pid])
+        self.assertEqual(after_teardown["listener_pids"], [])
+
+        self.assertTrue(
+            profile_runner._host_ready_listener_is_authorized(
+                host_ready,
+                host_pid=host_pid,
+                guard_events=guard_events,
+                expected_run_id="fr11-e04-p1-startup-01",
+            )
+        )
+        self.assertTrue(
+            profile_runner._after_teardown_socket_sample_is_clean(
+                after_teardown,
+                controller_pid=controller_pid,
+                guard_events=guard_events,
+                expected_run_id="fr11-e04-p1-startup-01",
+            )
+        )
+
+        census = profile_runner._make_process_census(
+            process_canaries=[
+                {"canary_stage": "controller-startup", "pid": controller_pid},
+                {"canary_stage": "host-prelaunch", "pid": host_prelaunch_pid},
+                {"canary_stage": "host-startup", "pid": host_pid},
+            ],
+            process=types.SimpleNamespace(pid=host_pid),
+            driver_exchange={"process_pid": controller_pid},
+            socket_pid_samples=[before_host, host_ready, after_teardown],
+            process_scopes=process_scopes,
+            guard_events=guard_events,
+            expected_run_id="fr11-e04-p1-startup-01",
+        )
+        self.assertTrue(census["guard_events_valid"])
+        self.assertEqual(census["uncovered_pids"], [])
+        self.assertTrue(census["complete"])
+
+        lingering_host_socket = {
+            **after_teardown,
+            "pids": sorted([controller_pid, host_pid]),
+        }
+        self.assertFalse(
+            profile_runner._after_teardown_socket_sample_is_clean(
+                lingering_host_socket,
+                controller_pid=controller_pid,
+                guard_events=guard_events,
+                expected_run_id="fr11-e04-p1-startup-01",
+            )
+        )
+        lingering_listener = {
+            **after_teardown,
+            "listener_pids": [controller_pid],
+        }
+        self.assertFalse(
+            profile_runner._after_teardown_socket_sample_is_clean(
+                lingering_listener,
+                controller_pid=controller_pid,
+                guard_events=guard_events,
+                expected_run_id="fr11-e04-p1-startup-01",
+            )
+        )
+
+    def test_host_ready_accepts_guarded_authorized_host_child_listener(self) -> None:
+        run_id = "host-child-listener-test"
+        host_pid = 24580
+        child_pid = 24581
+        child_startup = _guard_startup_event(child_pid, run_id, role="host")
+        child_startup["process_group_id"] = host_pid
+        guard_events = [
+            _guard_startup_event(host_pid, run_id, role="host"),
+            _guard_child_started_event(
+                host_pid,
+                child_pid,
+                run_id,
+                process_role="host",
+                process_group_id=host_pid,
+            ),
+            child_startup,
+        ]
+        sample = {
+            "phase": "host_ready",
+            "port": 8360,
+            "observed": True,
+            "pids": [child_pid],
+            "listener_pids": [child_pid],
+            "failure_code": None,
+        }
+
+        self.assertTrue(
+            profile_runner._host_ready_listener_is_authorized(
+                sample,
+                host_pid=host_pid,
+                guard_events=guard_events,
+                expected_run_id=run_id,
+            )
+        )
+
+    def test_host_ready_rejects_absent_foreign_wrong_unguarded_and_malformed_listeners(
+        self,
+    ) -> None:
+        host_pid = 24582
+        controller_pid = 24583
+        foreign_pid = 98767
+        unguarded_child_pid = 24584
+
+        def observe(
+            tcp_fixture: bytes,
+            *,
+            include_controller: bool = False,
+            include_unguarded_child: bool = False,
+        ) -> tuple[dict, list[dict], str]:
+            with tempfile.TemporaryDirectory(
+                prefix="profile-host-ready-negative-", dir=PROJECT_ROOT / "tmp"
+            ) as temp_root:
+                run_directory = Path(temp_root)
+                run_id = run_directory.name
+                guard_events = [_guard_startup_event(host_pid, run_id, role="host")]
+                process_scopes = [self._process_scope(pid=host_pid)]
+                if include_controller:
+                    guard_events.append(
+                        _guard_startup_event(controller_pid, run_id, role="parent")
+                    )
+                    process_scopes.append(
+                        self._process_scope(
+                            selector="pid",
+                            pid=controller_pid,
+                            process_group_id=controller_pid,
+                            process_role="parent",
+                            launch_source="controller-startup-canary",
+                        )
+                    )
+                if include_unguarded_child:
+                    guard_events.append(
+                        _guard_child_started_event(
+                            host_pid,
+                            unguarded_child_pid,
+                            run_id,
+                            process_role="host",
+                            process_group_id=host_pid,
+                        )
+                    )
+
+                def observer(command: list[str], **_kwargs: object) -> object:
+                    output = tcp_fixture if command[-1] == "tcp" else b""
+                    return types.SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+                with mock.patch(
+                    "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                    side_effect=observer,
+                ):
+                    sample = profile_runner._socket_pid_sample(
+                        "host_ready",
+                        run_directory=run_directory,
+                        process_scopes=process_scopes,
+                        guard_events=guard_events,
+                    )
+                return sample, guard_events, run_id
+
+        absent, absent_events, absent_run_id = observe(b"")
+        self.assertTrue(absent["observed"])
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                absent,
+                host_pid=host_pid,
+                guard_events=absent_events,
+                expected_run_id=absent_run_id,
+            )
+        )
+
+        wrong_owner, wrong_owner_events, wrong_owner_run_id = observe(
+            _netstat_row(
+                "tcp4",
+                controller_pid,
+                "127.0.0.1.8360",
+                "*.*",
+                state="LISTEN",
+                process_name="python controller",
+            ),
+            include_controller=True,
+        )
+        self.assertTrue(wrong_owner["observed"])
+        self.assertEqual(wrong_owner["listener_pids"], [controller_pid])
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                wrong_owner,
+                host_pid=host_pid,
+                guard_events=wrong_owner_events,
+                expected_run_id=wrong_owner_run_id,
+            )
+        )
+
+        foreign, foreign_events, foreign_run_id = observe(
+            _netstat_row(
+                "tcp4",
+                foreign_pid,
+                "127.0.0.1.8360",
+                "*.*",
+                state="LISTEN",
+                process_name="foreign listener",
+            )
+        )
+        self.assertTrue(foreign["observed"])
+        self.assertEqual(foreign["pids"], [])
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                foreign,
+                host_pid=host_pid,
+                guard_events=foreign_events,
+                expected_run_id=foreign_run_id,
+            )
+        )
+
+        unguarded, unguarded_events, unguarded_run_id = observe(
+            _netstat_row(
+                "tcp4",
+                host_pid,
+                "127.0.0.1.8360",
+                "*.*",
+                state="LISTEN",
+            )
+            + _netstat_row(
+                "tcp4",
+                unguarded_child_pid,
+                "127.0.0.1.51112",
+                "127.0.0.1.51113",
+                state="ESTABLISHED",
+            ),
+            include_unguarded_child=True,
+        )
+        self.assertFalse(unguarded["observed"])
+        self.assertEqual(
+            unguarded["failure_code"], "socket_owner_missing_guard_startup_event"
+        )
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                unguarded,
+                host_pid=host_pid,
+                guard_events=unguarded_events,
+                expected_run_id=unguarded_run_id,
+            )
+        )
+
+        malformed, malformed_events, malformed_run_id = observe(
+            _netstat_row(
+                "tcp4",
+                host_pid,
+                "not-an-endpoint",
+                "*.*",
+                state="LISTEN",
+            )
+        )
+        self.assertFalse(malformed["observed"])
+        self.assertEqual(malformed["failure_code"], "netstat_run_pid_row_malformed")
+        self.assertFalse(
+            profile_runner._host_ready_listener_is_authorized(
+                malformed,
+                host_pid=host_pid,
+                guard_events=malformed_events,
+                expected_run_id=malformed_run_id,
+            )
+        )
+
     def test_netstat_census_accepts_macos_owner_fields_after_required_triplet(self) -> None:
         run_pid = 98085
         tcp_row = (
@@ -1557,7 +2594,15 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 sample = profile_runner._socket_pid_sample(
                     "host_ready",
                     run_directory=run_directory,
-                    process_scopes=[self._process_scope(pid=child_pid)],
+                    process_scopes=[
+                        self._process_scope(
+                            selector="pid",
+                            pid=parent_pid,
+                            process_group_id=parent_pid,
+                            process_role="parent",
+                            launch_source="controller-startup-canary",
+                        )
+                    ],
                     guard_events=events,
                 )
             evidence = json.loads(
@@ -2313,6 +3358,90 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(census["uncovered_pids"], [unguarded_child_pid])
         self.assertFalse(census["complete"])
 
+    def test_process_census_accepts_guarded_controller_child_socket_before_host(
+        self,
+    ) -> None:
+        controller_pid = 10001
+        host_prelaunch_pid = 10002
+        host_worker_pid = 10003
+        child_pid = 10004
+        run_id = "census-controller-child-test"
+        guard_events = [
+            _guard_startup_event(controller_pid, run_id, role="parent"),
+            _guard_child_started_event(
+                controller_pid,
+                child_pid,
+                run_id,
+                process_role="parent",
+                process_group_id=controller_pid,
+                sequence=2,
+            ),
+            _guard_startup_event(
+                child_pid,
+                run_id,
+                role="parent",
+                process_group_id=controller_pid,
+            ),
+            _guard_startup_event(host_prelaunch_pid, run_id, role="host"),
+            _guard_startup_event(host_worker_pid, run_id, role="host"),
+        ]
+        census = profile_runner._make_process_census(
+            process_canaries=[
+                {"canary_stage": "controller-startup", "pid": controller_pid},
+                {"canary_stage": "host-prelaunch", "pid": host_prelaunch_pid},
+                {"canary_stage": "host-startup", "pid": host_worker_pid},
+            ],
+            process=types.SimpleNamespace(pid=host_worker_pid),
+            driver_exchange={"process_pid": controller_pid},
+            socket_pid_samples=[
+                {
+                    "phase": "before_host",
+                    "port": 8360,
+                    "observed": True,
+                    "pids": [child_pid],
+                    "listener_pids": [],
+                    "failure_code": None,
+                },
+                {
+                    "phase": "host_ready",
+                    "port": 8360,
+                    "observed": True,
+                    "pids": [host_worker_pid],
+                    "listener_pids": [host_worker_pid],
+                    "failure_code": None,
+                },
+                {
+                    "phase": "after_teardown",
+                    "port": 8360,
+                    "observed": True,
+                    "pids": [],
+                    "listener_pids": [],
+                    "failure_code": None,
+                },
+            ],
+            process_scopes=[
+                self._process_scope(
+                    selector="pid",
+                    pid=controller_pid,
+                    process_group_id=controller_pid,
+                    process_role="parent",
+                    launch_source="controller-startup-canary",
+                ),
+                self._process_scope(
+                    pid=host_prelaunch_pid,
+                    launch_source="host-prelaunch-canary-session",
+                ),
+                self._process_scope(pid=host_worker_pid),
+            ],
+            guard_events=guard_events,
+            expected_run_id=run_id,
+        )
+
+        self.assertEqual(census["socket_owner_pids"], [host_worker_pid, child_pid])
+        self.assertEqual(census["python_child_pids"], [child_pid])
+        self.assertEqual(census["uncovered_pids"], [])
+        self.assertTrue(census["complete"])
+
     def test_sandbox_preparer_is_bound_to_the_declared_source_sha(self) -> None:
         relative = "scripts/live_gate_preflight_sandbox.py"
         self.assertIn(relative, profile_runner._SOURCE_BOUND_FILES)
@@ -2679,7 +3808,12 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 run_directory = evidence_root / run_id
                 run_directory.mkdir()
                 run_guard_events = [
-                    _guard_startup_event(os.getpid(), run_id, role="parent"),
+                    _guard_startup_event(
+                        os.getpid(),
+                        run_id,
+                        role="parent",
+                        process_group_id=os.getpgrp(),
+                    ),
                     _guard_startup_event(24680, run_id),
                     _guard_startup_event(12345, run_id),
                 ]
@@ -2737,6 +3871,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         "port": 8360,
                         "observed": True,
                         "pids": [12345] if phase == "host_ready" else [],
+                        "listener_pids": [12345] if phase == "host_ready" else [],
+                        "failure_code": None,
                     }
 
                 def record_port_check(port: int) -> bool:

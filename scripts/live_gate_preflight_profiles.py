@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -19,8 +20,10 @@ from typing import Any
 
 from scripts.mapping_pilot.manifest import verify_manifest
 from scripts.live_gate_preflight_safety import (
+    GUARD_EVENT_ROOT,
     SANDBOX_PROVIDER_KEY_PLACEHOLDER,
     expected_guarded_pythonpath,
+    validate_guard_event_records,
 )
 
 
@@ -555,6 +558,7 @@ def _validate_profile_evidence(
         "startup_guard_from_sitecustomize",
         "sandbox_config_origin_guard_active",
         "process_canaries",
+        "guard_event_journal",
         "process_census",
         "driver_exchange",
         "outcome",
@@ -704,9 +708,12 @@ def _validate_profile_evidence(
         "host_worker_pid",
         "launched_pids",
         "socket_owner_pids",
+        "python_child_pids",
         "python_pids",
         "guarded_pids",
+        "canary_pids",
         "uncovered_pids",
+        "guard_events_valid",
         "socket_pid_samples",
         "complete",
     }
@@ -717,28 +724,96 @@ def _validate_profile_evidence(
     controller_pid = process_by_stage["controller-startup"]["pid"]
     host_prelaunch_pid = process_by_stage["host-prelaunch"]["pid"]
     host_worker_pid = process_by_stage["host-startup"]["pid"]
+    canary_pids = sorted(canary["pid"] for canary in process_canaries)
+    guard_events = _read_profile_guard_events(
+        project_root,
+        evidence.get("guard_event_journal"),
+        run_id=evidence["run_id"],
+    )
+    _validate_profile_guarded_processes(
+        process_canaries=process_canaries,
+        guard_events=guard_events,
+    )
     expected_samples = ("before_host", "host_ready", "after_teardown")
     samples = process_census.get("socket_pid_samples")
     if not isinstance(samples, list) or len(samples) != len(expected_samples):
         raise ProfileValidationError("profile evidence process census is incomplete")
     socket_owners: set[int] = set()
     sample_pids: dict[str, set[int]] = {}
+    sample_rows: dict[str, list[dict[str, Any]]] = {}
+    sample_scopes: dict[str, list[dict[str, Any]]] = {}
+    common_scopes: dict[str, dict[str, Any]] = {}
     for sample, phase in zip(samples, expected_samples):
-        if (
-            not isinstance(sample, Mapping)
-            or set(sample) != {"phase", "port", "observed", "pids"}
-            or sample.get("phase") != phase
-            or sample.get("port") != 8360
-            or sample.get("observed") is not True
-            or not isinstance(sample.get("pids"), list)
-            or any(type(pid) is not int or pid <= 0 for pid in sample["pids"])
-            or sample["pids"] != sorted(set(sample["pids"]))
-        ):
-            raise ProfileValidationError("profile evidence process census socket sample differs")
-        sample_pids[phase] = set(sample["pids"])
-        socket_owners.update(sample["pids"])
+        rows, owners, scopes = _read_profile_socket_sample(
+            project_root,
+            sample,
+            phase=phase,
+            run_id=evidence["run_id"],
+            process_canaries=process_canaries,
+            guard_events=guard_events,
+        )
+        for scope in scopes:
+            source = scope["launch_source"]
+            prior_scope = common_scopes.get(source)
+            if prior_scope is not None and prior_scope != scope:
+                raise ProfileValidationError(
+                    "profile evidence process census socket scopes differ"
+                )
+            common_scopes[source] = scope
+        sample_pids[phase] = owners
+        sample_rows[phase] = rows
+        sample_scopes[phase] = scopes
+        socket_owners.update(owners)
+
+    guarded_pids = sorted(
+        {
+            event["pid"]
+            for event in guard_events
+            if event.get("event_type") == "guard_startup"
+        }
+    )
+    python_child_pids = sorted(
+        {
+            event["child_pid"]
+            for event in guard_events
+            if event.get("event_type") == "subprocess_started"
+            and event.get("child_is_python") is True
+        }
+    )
     launched_pids = sorted({controller_pid, host_prelaunch_pid, host_worker_pid})
-    python_pids = sorted(set(launched_pids) | socket_owners)
+    python_pids = sorted(
+        set(launched_pids) | set(python_child_pids) | socket_owners | set(guarded_pids)
+    )
+    uncovered_pids = sorted(set(python_pids) - set(guarded_pids))
+    host_process_pids = _authorized_host_process_pids(guard_events, host_worker_pid)
+    host_ready_rows = sample_rows["host_ready"]
+    host_ready_owners = sample_pids["host_ready"]
+    host_ready_listener_pids = _socket_listener_pids(host_ready_rows, port=8360)
+    before_host_rows = sample_rows["before_host"]
+    before_host_owners = sample_pids["before_host"]
+    before_host_processes = _authorized_profile_process_tree(
+        sample_scopes["before_host"], guard_events
+    )
+    host_ready_processes = _authorized_profile_process_tree(
+        sample_scopes["host_ready"], guard_events
+    )
+    after_teardown_rows = sample_rows["after_teardown"]
+    after_teardown_owners = sample_pids["after_teardown"]
+    if (
+        before_host_processes is None
+        or not before_host_owners.issubset(before_host_processes)
+        or _socket_listener_pids(before_host_rows, port=8360)
+        or host_ready_processes is None
+        or not host_ready_listener_pids
+        or not set(host_ready_listener_pids).issubset(host_process_pids)
+        or not host_ready_owners.issubset(host_ready_processes)
+        or _socket_listener_pids(after_teardown_rows, port=8360)
+        or not after_teardown_owners.issubset({controller_pid})
+    ):
+        raise ProfileValidationError(
+            "profile evidence process census socket ownership differs"
+        )
+
     if (
         process_census.get("controller_pid") != controller_pid
         or process_census.get("driver_pid") != controller_pid
@@ -746,14 +821,15 @@ def _validate_profile_evidence(
         or process_census.get("host_worker_pid") != host_worker_pid
         or process_census.get("launched_pids") != launched_pids
         or process_census.get("socket_owner_pids") != sorted(socket_owners)
+        or process_census.get("python_child_pids") != python_child_pids
         or process_census.get("python_pids") != python_pids
-        or process_census.get("guarded_pids") != sorted(canary_pids)
-        or process_census.get("uncovered_pids") != []
+        or process_census.get("guarded_pids") != guarded_pids
+        or process_census.get("canary_pids") != canary_pids
+        or process_census.get("uncovered_pids") != uncovered_pids
+        or process_census.get("guard_events_valid") is not True
         or process_census.get("complete") is not True
-        or sample_pids.get("before_host") != set()
-        or sample_pids.get("host_ready") != {host_worker_pid}
-        or sample_pids.get("after_teardown") != set()
-        or set(python_pids) != set(canary_pids)
+        or uncovered_pids
+        or not set(canary_pids).issubset(guarded_pids)
     ):
         raise ProfileValidationError("profile evidence process census identity differs")
     driver_exchange = evidence.get("driver_exchange")
@@ -866,6 +942,577 @@ def _validate_profile_evidence(
         or call_sites != normalized_sites
     ):
         raise ProfileValidationError("profile evidence call-site summary differs")
+
+
+def _read_profile_guard_events(
+    project_root: Path,
+    journal: Any,
+    *,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    fields = {"path", "sha256", "event_count", "complete"}
+    _require_keys(journal, fields, "guard-event journal")
+    expected_path = (GUARD_EVENT_ROOT / run_id / "guard-events.jsonl").as_posix()
+    digest = journal.get("sha256")
+    event_count = journal.get("event_count")
+    if (
+        journal.get("path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(event_count) is not int
+        or event_count < 1
+        or journal.get("complete") is not True
+    ):
+        raise ProfileValidationError("profile evidence guard-event journal is incomplete")
+    path = _safe_source_path(project_root, expected_path, "guard-event journal")
+    raw = _read_bounded_evidence(path)
+    if hashlib.sha256(raw).hexdigest() != digest or not raw.endswith(b"\n"):
+        raise ProfileValidationError("profile evidence guard-event journal hash differs")
+    try:
+        events: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line:
+                raise ValueError("blank guard-event line")
+            event = json.loads(
+                line.decode("ascii"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            if not isinstance(event, Mapping):
+                raise ValueError("guard-event entry is not an object")
+            events.append(dict(event))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence guard-event journal is invalid") from exc
+    if (
+        len(events) != event_count
+        or not validate_guard_event_records(events, expected_run_id=run_id)
+    ):
+        raise ProfileValidationError("profile evidence guard-event ownership is invalid")
+    return events
+
+
+def _validate_profile_guarded_processes(
+    *,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+) -> None:
+    canaries = {canary["canary_stage"]: canary for canary in process_canaries}
+    startup_by_pid = {
+        event["pid"]: event
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    expected = (
+        ("controller-startup", "parent"),
+        ("host-prelaunch", "host"),
+        ("host-startup", "host"),
+    )
+    for stage, role in expected:
+        canary = canaries[stage]
+        startup = startup_by_pid.get(canary["pid"])
+        if (
+            startup is None
+            or startup.get("process_role") != role
+            or startup.get("command_sha256") != canary.get("command_sha256")
+            or startup.get("interpreter") != canary.get("interpreter")
+            or startup.get("working_directory") != canary.get("working_directory")
+            or (role == "host" and startup.get("process_group_id") != canary["pid"])
+        ):
+            raise ProfileValidationError(
+                "profile evidence guard-event process identity differs"
+            )
+
+
+def _read_profile_socket_sample(
+    project_root: Path,
+    sample: Any,
+    *,
+    phase: str,
+    run_id: str,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]]]:
+    sample_fields = {
+        "phase",
+        "port",
+        "observed",
+        "pids",
+        "listener_pids",
+        "failure_code",
+        "evidence_path",
+        "evidence_sha256",
+    }
+    _require_keys(sample, sample_fields, "process census socket sample")
+    sample_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    digest = sample.get("evidence_sha256")
+    expected_path = (GUARD_EVENT_ROOT / run_id / ("socket-sample-%s.json" % phase)).as_posix()
+    if (
+        sample.get("phase") != phase
+        or type(sample.get("port")) is not int
+        or sample.get("port") != 8360
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or not isinstance(sample_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in sample_pids)
+        or sample_pids != sorted(set(sample_pids))
+        or not isinstance(listener_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or sample.get("evidence_path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        raise ProfileValidationError("profile evidence process census socket sample differs")
+    path = _safe_source_path(project_root, expected_path, "socket sample evidence")
+    raw = _read_bounded_evidence(path)
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ProfileValidationError("profile evidence socket sample hash differs")
+    try:
+        sidecar = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence socket sample is invalid") from exc
+    sidecar_fields = {
+        "schema_version",
+        "run_id",
+        "phase",
+        "observer",
+        "process_scopes",
+        "run_process_pids",
+        "guard_startup_pids",
+        "protocol_samples",
+        "aggregate_counts",
+        "run_owned_rows",
+        "pids",
+        "observed",
+        "failure_code",
+    }
+    _require_keys(sidecar, sidecar_fields, "socket sample evidence")
+    rows = sidecar.get("run_owned_rows")
+    if (
+        type(sidecar.get("schema_version")) is not int
+        or sidecar.get("schema_version") != 3
+        or sidecar.get("run_id") != run_id
+        or sidecar.get("phase") != phase
+        or sidecar.get("observer")
+        != "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing"
+        or sidecar.get("observed") is not True
+        or sidecar.get("failure_code") is not None
+        or not isinstance(rows, list)
+        or any(not _valid_profile_socket_row(row) for row in rows)
+    ):
+        raise ProfileValidationError("profile evidence socket sample identity differs")
+    row_pids = {row["pid"] for row in rows}
+    sorted_row_pids = sorted(row_pids)
+    actual_listeners = sorted(_socket_listener_pids(rows, port=8360))
+    if (
+        sidecar.get("pids") != sorted_row_pids
+        or sample_pids != sorted_row_pids
+        or listener_pids != actual_listeners
+    ):
+        raise ProfileValidationError("profile evidence socket sample row summary differs")
+    if any(
+        _profile_socket_has_unrecorded_foreign_endpoint(row, guard_events)
+        for row in rows
+    ):
+        raise ProfileValidationError(
+            "profile evidence socket sample has an unguarded foreign endpoint"
+        )
+
+    scopes = _validate_profile_socket_scopes(
+        sidecar.get("process_scopes"),
+        process_canaries=process_canaries,
+        guard_events=guard_events,
+        phase=phase,
+    )
+    authorized_processes = _authorized_profile_process_tree(scopes, guard_events)
+    run_process_pids = sidecar.get("run_process_pids")
+    startup_pids = sidecar.get("guard_startup_pids")
+    all_run_pids = {
+        event["pid"] for event in guard_events
+    } | {
+        event["child_pid"]
+        for event in guard_events
+        if event.get("event_type") == "subprocess_started"
+    } | {canary["pid"] for canary in process_canaries}
+    all_startup_pids = {
+        event["pid"]
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    if (
+        not _sorted_positive_pid_list(run_process_pids)
+        or not set(run_process_pids).issubset(all_run_pids)
+        or not set(scope["pid"] for scope in scopes).issubset(run_process_pids)
+        or not set(row_pids).issubset(run_process_pids)
+        or not _sorted_positive_pid_list(startup_pids)
+        or not set(startup_pids).issubset(all_startup_pids)
+        or not set(scope["pid"] for scope in scopes).issubset(startup_pids)
+        or not row_pids.issubset(startup_pids)
+        or authorized_processes is None
+        or not row_pids.issubset(authorized_processes)
+        or (phase != "before_host" and set(startup_pids) != all_startup_pids)
+    ):
+        raise ProfileValidationError("profile evidence socket sample guard ownership differs")
+    _validate_profile_protocol_samples(sidecar)
+    return rows, row_pids, scopes
+
+
+def _validate_profile_socket_scopes(
+    value: Any,
+    *,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+    phase: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ProfileValidationError("profile evidence socket process scopes are incomplete")
+    canaries = {canary["canary_stage"]: canary for canary in process_canaries}
+    startup_by_pid = {
+        event["pid"]: event
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    expected_sources = [
+        ("controller-startup-canary", "controller-startup", "pid", "parent"),
+        (
+            "host-prelaunch-canary-session",
+            "host-prelaunch",
+            "process_group",
+            "host",
+        ),
+    ]
+    if phase != "before_host":
+        expected_sources.append(
+            ("host-worker-start-new-session", "host-startup", "process_group", "host")
+        )
+    if len(value) != len(expected_sources):
+        raise ProfileValidationError("profile evidence socket process scopes are incomplete")
+    scope_fields = {
+        "selector",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "launch_source",
+        "command_sha256",
+        "environment_sha256",
+        "working_directory_sha256",
+    }
+    scopes_by_source: dict[str, dict[str, Any]] = {}
+    for scope in value:
+        _require_keys(scope, scope_fields, "socket process scope")
+        source = scope.get("launch_source")
+        if not isinstance(source, str):
+            raise ProfileValidationError("profile evidence socket process scope is malformed")
+        if source in scopes_by_source:
+            raise ProfileValidationError("profile evidence socket process scopes are duplicated")
+        scopes_by_source[source] = dict(scope)
+    normalized: list[dict[str, Any]] = []
+    for source, stage, selector, role in expected_sources:
+        scope = scopes_by_source.get(source)
+        canary = canaries[stage]
+        pid = canary["pid"]
+        startup = startup_by_pid.get(pid)
+        expected_group = (
+            startup.get("process_group_id") if role == "parent" and startup else pid
+        )
+        if (
+            scope is None
+            or type(scope.get("pid")) is not int
+            or type(scope.get("process_group_id")) is not int
+            or scope.get("selector") not in ("pid", "process_group")
+            or scope.get("process_role") not in ("parent", "host")
+            or scope.get("selector") != selector
+            or scope.get("pid") != pid
+            or scope.get("process_group_id") != expected_group
+            or scope.get("process_role") != role
+            or scope.get("command_sha256") != canary.get("command_sha256")
+            or scope.get("environment_sha256") != canary.get("environment_sha256")
+            or scope.get("working_directory_sha256")
+            != hashlib.sha256(canary["working_directory"].encode("utf-8")).hexdigest()
+            or any(
+                not isinstance(scope.get(field), str)
+                or re.fullmatch(r"[0-9a-f]{64}", scope[field]) is None
+                for field in (
+                    "command_sha256",
+                    "environment_sha256",
+                    "working_directory_sha256",
+                )
+            )
+        ):
+            raise ProfileValidationError("profile evidence socket process scope identity differs")
+        normalized.append(scope)
+    return normalized
+
+
+def _validate_profile_protocol_samples(sidecar: Mapping[str, Any]) -> None:
+    samples = sidecar.get("protocol_samples")
+    if not isinstance(samples, list) or len(samples) != 2:
+        raise ProfileValidationError("profile evidence socket protocol samples are incomplete")
+    expected_count_fields = {
+        "internet_rows",
+        "unattributed_rows",
+        "pid_zero_rows",
+        "foreign_process_rows",
+        "run_pid_rows",
+        "malformed_run_pid_rows",
+    }
+    aggregate = sidecar.get("aggregate_counts")
+    _require_keys(aggregate, expected_count_fields, "socket aggregate counts")
+    if any(type(aggregate.get(key)) is not int or aggregate[key] < 0 for key in expected_count_fields):
+        raise ProfileValidationError("profile evidence socket aggregate counts are malformed")
+    totals = {key: 0 for key in expected_count_fields}
+    empty_sha256 = hashlib.sha256(b"").hexdigest()
+    for sample, protocol in zip(samples, ("tcp", "udp")):
+        _require_keys(sample, {"protocol", "command_evidence", "counts", "parseable"}, "socket protocol sample")
+        command_evidence = sample.get("command_evidence")
+        command_fields = {
+            "command",
+            "returncode",
+            "failure",
+            "stdout_byte_count",
+            "stdout_sha256",
+            "stdout_truncated",
+            "stdout_prefix_base64",
+            "stderr_byte_count",
+            "stderr_sha256",
+            "stderr_truncated",
+            "stderr_prefix_base64",
+            "observed",
+        }
+        _require_keys(command_evidence, command_fields, "socket observer command evidence")
+        command = command_evidence.get("command")
+        if (
+            sample.get("protocol") != protocol
+            or sample.get("parseable") is not True
+            or not isinstance(command, list)
+            or len(command) != 5
+            or not isinstance(command[0], str)
+            or command[1:] != ["-anv", "-W", "-p", protocol]
+            or command_evidence.get("returncode") != 0
+            or type(command_evidence.get("returncode")) is not int
+            or command_evidence.get("failure") is not None
+            or command_evidence.get("observed") is not True
+            or type(command_evidence.get("stdout_byte_count")) is not int
+            or command_evidence.get("stdout_byte_count") < 0
+            or not _is_sha256(command_evidence.get("stdout_sha256"))
+            or command_evidence.get("stdout_truncated") is not False
+            or command_evidence.get("stdout_prefix_base64") != ""
+            or type(command_evidence.get("stderr_byte_count")) is not int
+            or command_evidence.get("stderr_byte_count") != 0
+            or command_evidence.get("stderr_sha256") != empty_sha256
+            or command_evidence.get("stderr_truncated") is not False
+            or command_evidence.get("stderr_prefix_base64") != ""
+        ):
+            raise ProfileValidationError("profile evidence socket observer command differs")
+        counts = sample.get("counts")
+        _require_keys(counts, expected_count_fields, "socket protocol counts")
+        if any(type(counts.get(key)) is not int or counts[key] < 0 for key in expected_count_fields):
+            raise ProfileValidationError("profile evidence socket protocol counts are malformed")
+        for key in expected_count_fields:
+            totals[key] += counts[key]
+    if (
+        totals != dict(aggregate)
+        or aggregate.get("malformed_run_pid_rows") != 0
+        or aggregate.get("run_pid_rows") != len(sidecar.get("run_owned_rows", []))
+    ):
+        raise ProfileValidationError("profile evidence socket aggregate counts differ")
+
+
+def _valid_profile_socket_row(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "protocol",
+        "local",
+        "foreign",
+        "state",
+        "pid",
+    }:
+        return False
+    protocol = value.get("protocol")
+    is_tcp = isinstance(protocol, str) and protocol in ("tcp", "tcp4", "tcp6")
+    is_udp = isinstance(protocol, str) and protocol in ("udp", "udp4", "udp6")
+    state = value.get("state")
+    return bool(
+        (is_tcp or is_udp)
+        and type(value.get("pid")) is int
+        and value.get("pid") > 0
+        and _valid_profile_socket_endpoint(value.get("local"))
+        and _valid_profile_socket_endpoint(value.get("foreign"))
+        and (
+            (is_udp and state is None)
+            or (
+                is_tcp
+                and isinstance(state, str)
+                and state.isascii()
+                and bool(state)
+                and state.replace("_", "").isalpha()
+            )
+        )
+    )
+
+
+def _valid_profile_socket_endpoint(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"host", "port"}:
+        return False
+    host = value.get("host")
+    port = value.get("port")
+    if not isinstance(host, str):
+        return False
+    if host == "*":
+        valid_host = True
+    else:
+        try:
+            valid_host = str(ipaddress.ip_address(host)) == host
+        except ValueError:
+            valid_host = False
+    return bool(
+        valid_host
+        and (
+            (port is None and host == "*")
+            or (type(port) is int and 0 <= port <= 65535)
+        )
+    )
+
+
+def _socket_listener_pids(rows: list[Mapping[str, Any]], *, port: int) -> set[int]:
+    return {
+        row["pid"]
+        for row in rows
+        if _is_tcp_listener(row) and row["local"].get("port") == port
+    }
+
+
+def _profile_socket_has_unrecorded_foreign_endpoint(
+    row: Mapping[str, Any], guard_events: list[dict[str, Any]]
+) -> bool:
+    endpoint = row.get("foreign")
+    if not isinstance(endpoint, Mapping) or endpoint.get("host") == "*":
+        return False
+    host = endpoint.get("host")
+    port = endpoint.get("port")
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except (TypeError, ValueError):
+        return True
+    if is_loopback:
+        return False
+    return not any(
+        event.get("event_type") == "network_attempt"
+        and event.get("pid") == row.get("pid")
+        and event.get("target_host") == host
+        and event.get("target_port") == port
+        for event in guard_events
+    )
+
+
+def _is_tcp_listener(row: Mapping[str, Any]) -> bool:
+    return bool(
+        row.get("protocol") in ("tcp", "tcp4", "tcp6")
+        and row.get("state") == "LISTEN"
+        and isinstance(row.get("local"), Mapping)
+    )
+
+
+def _authorized_host_process_pids(
+    guard_events: list[dict[str, Any]], host_worker_pid: int
+) -> set[int]:
+    authorized = _authorized_profile_process_tree(
+        [{"pid": host_worker_pid, "process_role": "host", "process_group_id": host_worker_pid}],
+        guard_events,
+    )
+    if authorized is None:
+        return set()
+    return {
+        pid
+        for pid, (role, _process_group_id) in authorized.items()
+        if role == "host"
+    }
+
+
+def _authorized_profile_process_tree(
+    scopes: list[dict[str, Any]], guard_events: list[dict[str, Any]]
+) -> dict[int, tuple[str, int]] | None:
+    startup_by_pid: dict[int, list[dict[str, Any]]] = {}
+    for event in guard_events:
+        if event.get("event_type") == "guard_startup":
+            startup_by_pid.setdefault(event["pid"], []).append(event)
+
+    authorized: dict[int, tuple[str, int]] = {}
+    for scope in scopes:
+        pid = scope.get("pid")
+        role = scope.get("process_role")
+        process_group_id = scope.get("process_group_id")
+        startups = startup_by_pid.get(pid, []) if type(pid) is int else []
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or role not in ("parent", "host")
+            or type(process_group_id) is not int
+            or process_group_id <= 0
+            or len(startups) != 1
+            or startups[0].get("process_role") != role
+            or startups[0].get("process_group_id") != process_group_id
+        ):
+            return None
+        identity = (role, process_group_id)
+        if pid in authorized and authorized[pid] != identity:
+            return None
+        authorized[pid] = identity
+
+    if not authorized:
+        return None
+    changed = True
+    while changed:
+        changed = False
+        for event in guard_events:
+            if event.get("event_type") != "subprocess_started":
+                continue
+            parent_pid = event.get("pid")
+            parent_identity = authorized.get(parent_pid)
+            child_pid = event.get("child_pid")
+            if (
+                parent_identity is None
+                or type(child_pid) is not int
+                or child_pid <= 0
+                or event.get("process_role") != parent_identity[0]
+                or event.get("process_group_id") != parent_identity[1]
+            ):
+                continue
+            startups = startup_by_pid.get(child_pid, [])
+            if len(startups) != 1:
+                continue
+            startup = startups[0]
+            child_group = startup.get("process_group_id")
+            if (
+                startup.get("process_role") != parent_identity[0]
+                or type(child_group) is not int
+                or child_group not in (parent_identity[1], child_pid)
+            ):
+                continue
+            identity = (startup["process_role"], child_group)
+            previous = authorized.get(child_pid)
+            if previous is None:
+                authorized[child_pid] = identity
+                changed = True
+            elif previous != identity:
+                return None
+    return authorized
+
+
+def _sorted_positive_pid_list(value: Any) -> bool:
+    return bool(
+        isinstance(value, list)
+        and all(type(pid) is int and pid > 0 for pid in value)
+        and value == sorted(set(value))
+    )
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _valid_command(value: Any) -> bool:

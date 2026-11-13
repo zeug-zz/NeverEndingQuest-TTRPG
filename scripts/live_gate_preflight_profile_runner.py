@@ -1506,6 +1506,215 @@ def _foreign_endpoint_recorded(
     )
 
 
+def _host_ready_listener_pids(rows: Sequence[Mapping[str, Any]]) -> list[int]:
+    """Return owners of run-owned TCP listeners bound to the host port."""
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return []
+    return sorted(
+        {
+            int(row["pid"])
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("protocol") in ("tcp", "tcp4", "tcp6")
+            and row.get("state") == "LISTEN"
+            and isinstance(row.get("local"), Mapping)
+            and type(row["local"].get("port")) is int
+            and row["local"].get("port") == HOST_PORT
+            and type(row.get("pid")) is int
+            and row.get("pid") > 0
+        }
+    )
+
+
+def _authorized_guarded_process_tree(
+    roots: Mapping[int, tuple[str, int]],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> dict[int, tuple[str, int]] | None:
+    """Resolve guarded descendants rooted in the exact launched process scopes."""
+    startup_by_pid: dict[int, list[Mapping[str, Any]]] = {}
+    for event in guard_events:
+        if event.get("event_type") == "guard_startup":
+            pid = event.get("pid")
+            if type(pid) is int and pid > 0:
+                startup_by_pid.setdefault(pid, []).append(event)
+
+    authorized: dict[int, tuple[str, int]] = {}
+    for pid, (role, process_group_id) in roots.items():
+        startups = startup_by_pid.get(pid, [])
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or role not in ("parent", "host")
+            or type(process_group_id) is not int
+            or process_group_id <= 0
+            or len(startups) != 1
+            or startups[0].get("process_role") != role
+            or startups[0].get("process_group_id") != process_group_id
+        ):
+            return None
+        authorized[pid] = (role, process_group_id)
+
+    changed = True
+    while changed:
+        changed = False
+        for event in guard_events:
+            if event.get("event_type") != "subprocess_started":
+                continue
+            parent_pid = event.get("pid")
+            parent_identity = authorized.get(parent_pid)
+            child_pid = event.get("child_pid")
+            if (
+                parent_identity is None
+                or type(child_pid) is not int
+                or child_pid <= 0
+                or event.get("process_role") != parent_identity[0]
+                or event.get("process_group_id") != parent_identity[1]
+            ):
+                continue
+            child_startups = startup_by_pid.get(child_pid, [])
+            if len(child_startups) != 1:
+                continue
+            startup = child_startups[0]
+            child_group = startup.get("process_group_id")
+            child_identity = (startup.get("process_role"), child_group)
+            if (
+                startup.get("process_role") != parent_identity[0]
+                or type(child_group) is not int
+                or child_group not in (parent_identity[1], child_pid)
+            ):
+                continue
+            previous = authorized.get(child_pid)
+            if previous is None:
+                authorized[child_pid] = child_identity
+                changed = True
+            elif previous != child_identity:
+                return None
+    return authorized
+
+
+def _authorized_scoped_process_tree(
+    process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> dict[int, tuple[str, int]] | None:
+    if not process_scopes or any(not _valid_process_scope(scope) for scope in process_scopes):
+        return None
+    roots: dict[int, tuple[str, int]] = {}
+    for scope in process_scopes:
+        pid = int(scope["pid"])
+        identity = (str(scope["process_role"]), int(scope["process_group_id"]))
+        if pid in roots and roots[pid] != identity:
+            return None
+        roots[pid] = identity
+    return _authorized_guarded_process_tree(roots, guard_events)
+
+
+def _host_ready_listener_is_authorized(
+    sample: Any,
+    *,
+    host_pid: int,
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
+) -> bool:
+    """Require an observed host-owned listener, not just any socket by its PID."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    if (
+        not isinstance(sample, Mapping)
+        or sample.get("phase") != "host_ready"
+        or sample.get("port") != HOST_PORT
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or type(host_pid) is not int
+        or host_pid <= 0
+        or not isinstance(expected_run_id, str)
+        or not isinstance(guard_events, Sequence)
+        or isinstance(guard_events, (str, bytes))
+    ):
+        return False
+    socket_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    if (
+        not isinstance(socket_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in socket_pids)
+        or socket_pids != sorted(set(socket_pids))
+        or not isinstance(listener_pids, list)
+        or not listener_pids
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or not set(listener_pids).issubset(socket_pids)
+    ):
+        return False
+
+    events = list(guard_events)
+    if not validate_guard_event_records(events, expected_run_id=expected_run_id):
+        return False
+    authorized_processes = _authorized_guarded_process_tree(
+        {host_pid: ("host", host_pid)}, events
+    )
+    if authorized_processes is None:
+        return False
+    listener_owners = set(listener_pids)
+    return bool(listener_owners) and listener_owners.issubset(
+        {
+            pid
+            for pid, (role, _process_group_id) in authorized_processes.items()
+            if role == "host"
+        }
+    )
+
+
+def _after_teardown_socket_sample_is_clean(
+    sample: Any,
+    *,
+    controller_pid: int,
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
+) -> bool:
+    """Allow guarded controller residue only when it is not a listener."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    if (
+        not isinstance(sample, Mapping)
+        or sample.get("phase") != "after_teardown"
+        or sample.get("port") != HOST_PORT
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or type(controller_pid) is not int
+        or controller_pid <= 0
+        or not isinstance(expected_run_id, str)
+        or not isinstance(guard_events, Sequence)
+        or isinstance(guard_events, (str, bytes))
+    ):
+        return False
+    socket_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    if (
+        not isinstance(socket_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in socket_pids)
+        or socket_pids != sorted(set(socket_pids))
+        or not isinstance(listener_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or listener_pids
+        or not set(socket_pids).issubset({controller_pid})
+    ):
+        return False
+
+    events = list(guard_events)
+    if not validate_guard_event_records(events, expected_run_id=expected_run_id):
+        return False
+    controller_startup = [
+        event
+        for event in events
+        if event.get("event_type") == "guard_startup"
+        and event.get("pid") == controller_pid
+    ]
+    return (
+        len(controller_startup) == 1
+        and controller_startup[0].get("process_role") == "parent"
+    )
+
+
 def _discard_observer_output(evidence: dict[str, Any]) -> None:
     """Keep aggregate hashes but never persist raw socket or error output."""
     evidence["stdout_prefix_base64"] = ""
@@ -1696,8 +1905,11 @@ def _socket_pid_sample(
         if event.get("event_type") == "guard_startup"
         and type(event.get("pid")) is int
     }
+    authorized_processes = _authorized_scoped_process_tree(scopes, events)
     evidence["run_process_pids"] = sorted(run_pids)
     evidence["guard_startup_pids"] = sorted(startup_pids)
+    if authorized_processes is None:
+        evidence["failure_code"] = "process_scope_guard_identity_invalid"
 
     rows: list[dict[str, Any]] = []
     observed = bool(scopes) and evidence["failure_code"] is None
@@ -1741,6 +1953,9 @@ def _socket_pid_sample(
     if missing_startup_pids:
         observed = False
         evidence["failure_code"] = "socket_owner_missing_guard_startup_event"
+    elif authorized_processes is None or not owners.issubset(authorized_processes):
+        observed = False
+        evidence["failure_code"] = "socket_owner_not_authorized_run_process"
     for row in rows:
         foreign = row["foreign"]
         if _non_loopback_endpoint(foreign) and not _foreign_endpoint_recorded(
@@ -1752,9 +1967,18 @@ def _socket_pid_sample(
     evidence["observed"] = observed
     if observed:
         evidence["failure_code"] = None
+    sample_evidence_path = run_directory / ("socket-sample-%s.json" % phase)
+    sample_evidence_relative: str | None = None
+    sample_evidence_sha256: str | None = None
     try:
         _write_socket_sample_evidence(run_directory, phase, evidence)
-    except (CharacterizationError, OSError):
+        sample_evidence_relative = sample_evidence_path.relative_to(
+            PROJECT_ROOT
+        ).as_posix()
+        sample_evidence_sha256 = hashlib.sha256(
+            sample_evidence_path.read_bytes()
+        ).hexdigest()
+    except (CharacterizationError, OSError, ValueError):
         observed = False
         evidence["observed"] = False
         evidence["failure_code"] = "socket_sample_evidence_write_failed"
@@ -1763,7 +1987,10 @@ def _socket_pid_sample(
         "port": HOST_PORT,
         "observed": observed,
         "pids": sorted(owners),
+        "listener_pids": _host_ready_listener_pids(rows),
         "failure_code": evidence["failure_code"],
+        "evidence_path": sample_evidence_relative,
+        "evidence_sha256": sample_evidence_sha256,
     }
 
 
@@ -1863,7 +2090,8 @@ def _make_process_census(
     socket_owner_pids = {
         pid
         for sample in socket_pid_samples
-        for pid in sample.get("pids", [])
+        if isinstance(sample, Mapping) and isinstance(sample.get("pids"), list)
+        for pid in sample["pids"]
         if type(pid) is int and pid > 0
     }
     python_pids = launched_pids | child_python_pids | socket_owner_pids | guarded_pids
@@ -1875,18 +2103,28 @@ def _make_process_census(
     samples_complete = (
         len(socket_pid_samples) == len(expected_phases)
         and all(
-            sample.get("phase") == phase
+            isinstance(sample, Mapping)
+            and sample.get("phase") == phase
+            and type(sample.get("port")) is int
             and sample.get("port") == HOST_PORT
             and sample.get("observed") is True
+            and sample.get("failure_code") is None
             and isinstance(sample.get("pids"), list)
             and all(type(pid) is int and pid > 0 for pid in sample["pids"])
+            and sample["pids"] == sorted(set(sample["pids"]))
+            and isinstance(sample.get("listener_pids"), list)
+            and all(
+                type(pid) is int and pid > 0 for pid in sample["listener_pids"]
+            )
+            and sample["listener_pids"] == sorted(set(sample["listener_pids"]))
+            and set(sample["listener_pids"]).issubset(sample["pids"])
             for sample, phase in zip(socket_pid_samples, expected_phases)
         )
     )
     sample_pids = {
         sample.get("phase"): set(sample.get("pids", []))
         for sample in socket_pid_samples
-        if isinstance(sample, Mapping)
+        if isinstance(sample, Mapping) and isinstance(sample.get("pids"), list)
     }
     startup_records_complete = (
         isinstance(controller, Mapping)
@@ -1896,11 +2134,61 @@ def _make_process_census(
         and host_startup.get("pid") == host_worker_pid
         and driver_pid == controller_pid
     )
+    host_ready_sample = next(
+        (
+            sample
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping) and sample.get("phase") == "host_ready"
+        ),
+        None,
+    )
+    host_ready_listener_valid = _host_ready_listener_is_authorized(
+        host_ready_sample,
+        host_pid=host_worker_pid if type(host_worker_pid) is int else 0,
+        guard_events=guard_events,
+        expected_run_id=expected_run_id,
+    )
+    after_teardown_sample = next(
+        (
+            sample
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping)
+            and sample.get("phase") == "after_teardown"
+        ),
+        None,
+    )
+    after_teardown_clean = _after_teardown_socket_sample_is_clean(
+        after_teardown_sample,
+        controller_pid=controller_pid if type(controller_pid) is int else 0,
+        guard_events=guard_events,
+        expected_run_id=expected_run_id,
+    )
+    authorized_processes = _authorized_scoped_process_tree(process_scopes, guard_events)
+    samples_by_phase = {
+        sample.get("phase"): sample
+        for sample in socket_pid_samples
+        if isinstance(sample, Mapping)
+    }
+    before_host_sample = samples_by_phase.get("before_host")
+    before_host_listener_pids = (
+        before_host_sample.get("listener_pids")
+        if isinstance(before_host_sample, Mapping)
+        else None
+    )
+    before_host_has_no_listener = (
+        isinstance(before_host_listener_pids, list)
+        and before_host_listener_pids == []
+    )
+    socket_owners_authorized = authorized_processes is not None and all(
+        sample_pids.get(phase, set()).issubset(authorized_processes)
+        for phase in expected_phases
+    )
     socket_ownership_complete = (
-        sample_pids.get("before_host") == set()
+        before_host_has_no_listener
+        and socket_owners_authorized
         and bool(host_worker_pid)
-        and host_worker_pid in sample_pids.get("host_ready", set())
-        and sample_pids.get("after_teardown") == set()
+        and host_ready_listener_valid
+        and after_teardown_clean
     )
     return {
         "controller_pid": controller_pid,
@@ -1915,7 +2203,23 @@ def _make_process_census(
         "canary_pids": sorted(canary_pids),
         "uncovered_pids": sorted(uncovered_pids),
         "guard_events_valid": guard_events_valid,
-        "socket_pid_samples": [dict(sample) for sample in socket_pid_samples],
+        "socket_pid_samples": [
+            {
+                key: sample.get(key)
+                for key in (
+                    "phase",
+                    "port",
+                    "observed",
+                    "pids",
+                    "listener_pids",
+                    "failure_code",
+                    "evidence_path",
+                    "evidence_sha256",
+                )
+            }
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping)
+        ],
         "complete": bool(
             startup_records_complete
             and launch_scopes_complete
@@ -2432,7 +2736,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         before_start_failure = _port_failure_code(port_status, "before_start")
         if before_start_failure is not None:
             raise CharacterizationError(before_start_failure)
-        if not pre_host_sample["observed"] or pre_host_sample["pids"]:
+        if (
+            not pre_host_sample["observed"]
+            or not isinstance(pre_host_sample.get("listener_pids"), list)
+            or pre_host_sample["listener_pids"]
+        ):
             raise CharacterizationError("process_census_before_host_invalid")
         from scripts.live_gate_preflight_safety import (
             authorize_subprocess_launch,
@@ -2497,8 +2805,14 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             guard_events_complete=guard_events_complete,
         )
         socket_pid_samples.append(ready_sample)
-        if not ready_sample["observed"] or (
-            ready and ready_sample["pids"] != [process.pid]
+        if not isinstance(ready_sample, Mapping) or ready_sample.get("observed") is not True or (
+            ready
+            and not _host_ready_listener_is_authorized(
+                ready_sample,
+                host_pid=process.pid,
+                guard_events=guard_events,
+                expected_run_id=args.run_id,
+            )
         ):
             failure_code = "process_census_host_owner_invalid"
         if not ready:
@@ -2639,10 +2953,24 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             and socket_pid_samples[-1].get("phase") == "after_teardown"
             else None
         )
-        after_teardown_sample_complete = bool(
-            isinstance(after_teardown_sample, Mapping)
-            and after_teardown_sample.get("observed") is True
-            and after_teardown_sample.get("pids") == []
+        controller_report = next(
+            (
+                report
+                for report in process_canaries
+                if isinstance(report, Mapping)
+                and report.get("canary_stage") == "controller-startup"
+            ),
+            {},
+        )
+        after_teardown_sample_complete = _after_teardown_socket_sample_is_clean(
+            after_teardown_sample,
+            controller_pid=(
+                controller_report.get("pid")
+                if type(controller_report.get("pid")) is int
+                else 0
+            ),
+            guard_events=guard_events,
+            expected_run_id=args.run_id,
         )
         if not server_stopped or not port_free:
             failure_code = failure_code or "host_teardown_unverified"
