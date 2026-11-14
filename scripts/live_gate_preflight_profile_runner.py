@@ -3890,7 +3890,6 @@ def supervise_preflight_row(
         or type(party_size) is not int
         or party_size not in (1, 4)
         or not isinstance(planned_row_id, str)
-        or re.fullmatch(r"E[0-9]{2}", planned_row_id) is None
         or arm not in ("A", "B", "D")
         or not isinstance(source_sha, str)
         or _SHA1_OR_SHA256.fullmatch(source_sha) is None
@@ -3909,6 +3908,12 @@ def supervise_preflight_row(
         or (lifecycle == "startup" and resume_checkpoint_sha256 is not None)
     ):
         raise CharacterizationError("row_preflight_identity_invalid")
+    _validate_supervised_planned_row(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        planned_row_id=planned_row_id,
+        arm=arm,
+    )
     args = argparse.Namespace(
         fixture_id=fixture_id,
         party_size=party_size,
@@ -3927,6 +3932,48 @@ def supervise_preflight_row(
         "evidence_path": evidence_path,
         "evidence_sha256": evidence_sha256,
     }
+
+
+def _validate_supervised_planned_row(
+    *, fixture_id: str, party_size: int, planned_row_id: str, arm: str
+) -> None:
+    """Bind a supervised launch to the frozen planned row and its profile."""
+    try:
+        from scripts.live_gate_preflight_controller import (
+            _load_frozen_row_ids,
+            _load_profiles,
+            _resolve_row_plan,
+        )
+
+        frozen_rows, _reserve_row_ids = _load_frozen_row_ids(None)
+        expected_row = next(
+            (
+                row
+                for row in frozen_rows
+                if row.get("row_id") == planned_row_id
+            ),
+            None,
+        )
+        if not isinstance(expected_row, Mapping):
+            raise ValueError("planned row is not in the frozen counterbalance")
+        profiles, _coverage = _load_profiles(
+            [str(row["row_id"]) for row in frozen_rows]
+        )
+        plan = _resolve_row_plan(
+            planned_row_id,
+            prereg_root=None,
+            expected_row=expected_row,
+            profiles=profiles,
+        )
+        if (
+            plan.row_id != planned_row_id
+            or plan.party_size != party_size
+            or plan.arm != arm
+            or fixture_id not in plan.fixture_ids
+        ):
+            raise ValueError("supervised row identity differs from frozen plan")
+    except Exception as exc:
+        raise CharacterizationError("row_preflight_identity_invalid") from exc
 
 
 def _lock_holder_for_worker(args: argparse.Namespace) -> Mapping[str, Any]:

@@ -2979,6 +2979,71 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertFalse(claimed)
         claim.assert_not_called()
 
+    def test_supervised_adapter_accepts_frozen_combat_rows_before_characterize(
+        self,
+    ) -> None:
+        args_seen: list[Any] = []
+        evidence = {"outcome": "completed"}
+        accepted_rows = (
+            ("C01", "combat_stage_tavern_zones", 1, "A"),
+            ("C05", "combat_stage_tavern_zones", 4, "D"),
+        )
+
+        def characterize(args: Any) -> tuple[dict[str, Any], str, str]:
+            args_seen.append(args)
+            return evidence, "tmp/evidence", "d" * 64
+
+        with mock.patch.object(
+            profile_runner, "_characterize", side_effect=characterize
+        ) as characterize_mock:
+            results = [
+                profile_runner.supervise_preflight_row(
+                    fixture_id=fixture_id,
+                    party_size=party_size,
+                    planned_row_id=row_id,
+                    arm=arm,
+                    source_sha=SOURCE_SHA,
+                    row_run_id="pf-row-integration-test-" + row_id,
+                    preflight_run_id=RUN_ID,
+                )
+                for row_id, fixture_id, party_size, arm in accepted_rows
+            ]
+
+        self.assertEqual([result["evidence"] for result in results], [evidence] * 2)
+        self.assertEqual(
+            [args.planned_row_id for args in args_seen], ["C01", "C05"]
+        )
+        self.assertEqual(characterize_mock.call_count, 2)
+
+    def test_supervised_adapter_rejects_nonplanned_and_mismatched_rows_prelaunch(
+        self,
+    ) -> None:
+        invalid_rows = (
+            ("R01", "combat_stage_tavern_zones", 1, "A"),
+            ("C0x", "combat_stage_tavern_zones", 1, "A"),
+            ("C99", "combat_stage_tavern_zones", 1, "A"),
+            ("C01", "interior_tavern", 1, "A"),
+            ("C01", "combat_stage_tavern_zones", 4, "A"),
+            ("C05", "combat_stage_tavern_zones", 4, "A"),
+        )
+        with mock.patch.object(profile_runner, "_characterize") as characterize:
+            for row_id, fixture_id, party_size, arm in invalid_rows:
+                with self.subTest(row_id=row_id, fixture_id=fixture_id):
+                    with self.assertRaisesRegex(
+                        profile_runner.CharacterizationError,
+                        "row_preflight_identity_invalid",
+                    ):
+                        profile_runner.supervise_preflight_row(
+                            fixture_id=fixture_id,
+                            party_size=party_size,
+                            planned_row_id=row_id,
+                            arm=arm,
+                            source_sha=SOURCE_SHA,
+                            row_run_id="pf-row-integration-test-invalid",
+                            preflight_run_id=RUN_ID,
+                        )
+            characterize.assert_not_called()
+
     def test_supervised_interfaces_bind_seed_worker_and_cleanup_apis(self) -> None:
         rows, _reserves = _load_frozen_row_ids(None)
         profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
