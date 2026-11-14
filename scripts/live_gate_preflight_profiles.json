@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "profile_set_id": "live-gate-preflight-call-profiles-v1",
+  "authorization_ruling_id": "neq-w1-fr11-profiles-characterization-20261112",
+  "source_binding": {
+    "manifest_path": "plans/v2-mapping-pilot-prereg/MANIFEST.sha256",
+    "manifest_sha256": "49d600b9a7080253d99aa66a725bd981a594afbc3fde76b5df70253219d59c07",
+    "counterbalance_path": "plans/v2-mapping-pilot-prereg/counterbalance.json",
+    "counterbalance_sha256": "ef680c1c9049d9c570c66a1fb337fcca664f87abbd4dcca81e6133be2539ff70",
+    "profile_state_source_path": "openspec/changes/v2-mapping-pilot-execution/reports/sp4-primary-report.md",
+    "profile_state_source_sha256": "27367f4b48865c601c54b6013fa67d40a6119215cd9114275f3151c505fa10a5",
+    "reported_profile_report_sha256": "75f4e9304652ebecc46390d94daa3f57f7a6eeba77840e8140610a3da2b702db",
+    "profile_state_locator": "sp4-primary-report.md:105-117,148-149"
+  },
+  "profiles": [
+    {
+      "profile_id": "interior_tavern:p1",
+      "fixture_id": "interior_tavern",
+      "party_size": 1,
+      "planned_row_ids": ["E01", "E02", "E03"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "interior_tavern:p4",
+      "fixture_id": "interior_tavern",
+      "party_size": 4,
+      "planned_row_ids": ["E07", "E08", "E09", "E10", "E11", "E12"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "landscape_village:p1",
+      "fixture_id": "landscape_village",
+      "party_size": 1,
+      "planned_row_ids": ["E04", "E05", "E06"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "landscape_village:p4",
+      "fixture_id": "landscape_village",
+      "party_size": 4,
+      "planned_row_ids": ["E13", "E14", "E15", "E16", "E17", "E18"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "transition_tower_approach:p1",
+      "fixture_id": "transition_tower_approach",
+      "party_size": 1,
+      "planned_row_ids": ["E04", "E05", "E06"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "transition_tower_approach:p4",
+      "fixture_id": "transition_tower_approach",
+      "party_size": 4,
+      "planned_row_ids": ["E13", "E14", "E15", "E16", "E17", "E18"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "combat_stage_tavern_zones:p1",
+      "fixture_id": "combat_stage_tavern_zones",
+      "party_size": 1,
+      "planned_row_ids": ["C01", "C02", "C03", "C04"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    },
+    {
+      "profile_id": "combat_stage_tavern_zones:p4",
+      "fixture_id": "combat_stage_tavern_zones",
+      "party_size": 4,
+      "planned_row_ids": ["C05", "C06", "C07", "C08"],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      },
+      "resume": {
+        "status": "MISSING",
+        "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
+      }
+    }
+  ]
+}

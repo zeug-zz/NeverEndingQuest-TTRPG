@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "live-gate-preflight-call-profiles-v1",
+  "title": "Live gate preflight startup and resume call profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_set_id",
+    "authorization_ruling_id",
+    "source_binding",
+    "profiles"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_set_id": {"const": "live-gate-preflight-call-profiles-v1"},
+    "authorization_ruling_id": {
+      "const": "neq-w1-fr11-profiles-characterization-20261112"
+    },
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_path",
+        "manifest_sha256",
+        "counterbalance_path",
+        "counterbalance_sha256",
+        "profile_state_source_path",
+        "profile_state_source_sha256",
+        "reported_profile_report_sha256",
+        "profile_state_locator"
+      ],
+      "properties": {
+        "manifest_path": {"const": "plans/v2-mapping-pilot-prereg/MANIFEST.sha256"},
+        "manifest_sha256": {"pattern": "^[0-9a-f]{64}$"},
+        "counterbalance_path": {"const": "plans/v2-mapping-pilot-prereg/counterbalance.json"},
+        "counterbalance_sha256": {"pattern": "^[0-9a-f]{64}$"},
+        "profile_state_source_path": {
+          "const": "openspec/changes/v2-mapping-pilot-execution/reports/sp4-primary-report.md"
+        },
+        "profile_state_source_sha256": {"pattern": "^[0-9a-f]{64}$"},
+        "reported_profile_report_sha256": {"pattern": "^[0-9a-f]{64}$"},
+        "profile_state_locator": {"type": "string", "minLength": 1}
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/profile"}
+    }
+  },
+  "$defs": {
+    "lifecycle": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {"const": "MISSING"},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "call_count",
+            "call_sites",
+            "source_sha",
+            "command",
+            "pythonpath",
+            "evidence_path",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "status": {"const": "measured-under-stub"},
+            "call_count": {"type": "integer", "minimum": 1},
+            "call_sites": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/callSite"}
+            },
+            "source_sha": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "command": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string"}
+            },
+            "pythonpath": {"type": "string", "minLength": 1},
+            "evidence_path": {
+              "type": "string",
+              "pattern": "^tmp/(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+            },
+            "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      ]
+    },
+    "callSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_file", "source_line", "source_file_sha256", "count"],
+      "properties": {
+        "source_file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "source_line": {"type": "integer", "minimum": 1},
+        "source_file_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile_id",
+        "fixture_id",
+        "party_size",
+        "planned_row_ids",
+        "source_binding_id",
+        "startup",
+        "resume"
+      ],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "fixture_id": {
+          "enum": [
+            "interior_tavern",
+            "landscape_village",
+            "transition_tower_approach",
+            "combat_stage_tavern_zones"
+          ]
+        },
+        "party_size": {"enum": [1, 4]},
+        "planned_row_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[EC][0-9]{2}$"},
+          "uniqueItems": true
+        },
+        "source_binding_id": {"const": "sp3-frozen-row-and-script-manifest-v1"},
+        "startup": {"$ref": "#/$defs/lifecycle"},
+        "resume": {"$ref": "#/$defs/lifecycle"}
+      }
+    }
+  }
+}
