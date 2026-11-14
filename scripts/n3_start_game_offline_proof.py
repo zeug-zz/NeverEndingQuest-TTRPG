@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import builtins
+import errno
 import importlib
 import ipaddress
 import json
@@ -109,6 +110,9 @@ MODEL_SECRET_VALUE_PATTERN = re.compile(
 )
 SAFE_ORIGIN_PATH_PATTERN = re.compile(r"[A-Za-z0-9_./-]{1,180}\Z")
 SAFE_ORIGIN_FUNCTION_PATTERN = re.compile(r"[A-Za-z0-9_<>,.-]{1,80}\Z")
+SAFE_DNS_HOST_LABEL_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z"
+)
 SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(?:\.env\b|\b(?:config(?:uration)?|environment|environ|"
     r"api[_ -]?key|secret|token|password|credential|authorization|bearer|"
@@ -231,7 +235,11 @@ def _startup_failure_category(
     recorder_failure: Optional[str] = None,
 ) -> str:
     """Map an exception and fixed diagnostic stage to a closed category."""
-    if exception_class == "EgressBlocked":
+    if exception_class in (
+        "EgressBlocked",
+        "ConnectionRefusedError",
+        "gaierror",
+    ):
         if stage == "host_import":
             return "host_import_egress_blocked"
         if stage == "socketio_test_client":
@@ -505,7 +513,10 @@ def _host_class(host: Any) -> str:
     elif host is None:
         return "non_loopback"
     else:
-        normalized = str(host)
+        try:
+            normalized = str(host)
+        except BaseException:
+            return "non_loopback"
     normalized = normalized.strip().strip("[]").rstrip(".").lower()
     if normalized == "localhost" or normalized.endswith(".localhost"):
         return "loopback"
@@ -524,9 +535,68 @@ def _safe_port(port: Any) -> Optional[int]:
     if isinstance(port, int):
         return port if 0 <= port <= 65535 else None
     if isinstance(port, str) and port.isascii() and port.isdecimal():
-        parsed = int(port)
+        if len(port) > 5:
+            return None
+        try:
+            parsed = int(port)
+        except ValueError:
+            return None
         return parsed if parsed <= 65535 else None
     return None
+
+
+def _safe_refusal_hostname(host: Any) -> Optional[str]:
+    """Return an exact, bounded hostname/IP literal without URL or secret data."""
+    if isinstance(host, bytes):
+        try:
+            value = host.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    elif isinstance(host, str):
+        value = host
+    else:
+        return None
+    if (
+        not value
+        or value.lower() == "unavailable"
+        or len(value) > 253
+        or not value.isascii()
+        or value != value.strip()
+        or MODEL_SECRET_VALUE_PATTERN.search(value)
+        or SENSITIVE_DIAGNOSTIC_PATTERN.search(value)
+    ):
+        return None
+
+    candidate = (
+        value[1:-1]
+        if value.startswith("[") and value.endswith("]")
+        else value
+    )
+    try:
+        ipaddress.ip_address(candidate)
+        return value
+    except ValueError:
+        pass
+
+    hostname = candidate[:-1] if candidate.endswith(".") else candidate
+    if not hostname or len(hostname) > 253:
+        return None
+    if any(
+        not SAFE_DNS_HOST_LABEL_PATTERN.fullmatch(label)
+        for label in hostname.split(".")
+    ):
+        return None
+    return value
+
+
+def _connection_refused_error() -> ConnectionRefusedError:
+    return ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+
+
+def _name_resolution_refused_error() -> socket.gaierror:
+    return socket.gaierror(
+        getattr(socket, "EAI_NONAME", -2), "Name or service not known"
+    )
 
 
 def _address_parts(address: Any) -> tuple[Any, Any]:
@@ -921,6 +991,8 @@ def _startup_diagnostic_report(
     host_imports_verified: bool = False,
     startup_boundary_guard_active: bool = False,
     egress_attributions: Any = None,
+    egress_refusals: Any = None,
+    egress_refusal_count: Any = None,
     failure_exception_class: Optional[str] = None,
     failure_category: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -937,6 +1009,14 @@ def _startup_diagnostic_report(
     safe_router_calls = _bounded_count(router_calls)
     safe_provider_calls = _bounded_count(provider_calls)
     safe_network_attempts = _bounded_count(network_attempts)
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals
+    )
+    refusal_coverage_complete = bool(
+        refusal_events_valid
+        and _bounded_count(egress_refusal_count) == safe_network_attempts
+        and len(safe_egress_refusals) == safe_network_attempts
+    )
     safe_failure_class = _safe_exception_class(failure_exception_class)
     safe_failure_category = (
         failure_category
@@ -960,6 +1040,7 @@ def _startup_diagnostic_report(
         and host_imports_verified
         and startup_boundary_guard_active
         and event_schema_valid
+        and refusal_coverage_complete
         and not call_overflow
     )
     expected_call_sequence = [
@@ -1031,6 +1112,8 @@ def _startup_diagnostic_report(
         "router_call_count": safe_router_calls,
         "provider_call_count": safe_provider_calls,
         "network_attempt_count": safe_network_attempts,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
         "network_attempt_attributions": _safe_egress_attributions(
             egress_attributions
         ),
@@ -1508,13 +1591,15 @@ def _expected_startup_narration_intercept(
 
 
 class EgressGuard:
-    """Observe socket destinations and refuse every non-loopback operation."""
+    """Deny non-loopback operations before transport using ordinary socket errors."""
 
     def __init__(self, *, deny_loopback: bool = False) -> None:
         self._lock = threading.Lock()
         self._deny_loopback = deny_loopback
         self._attempts: list[dict[str, Any]] = []
         self._attempt_count = 0
+        self._refusals: list[dict[str, Any]] = []
+        self._refusal_count = 0
         self._sandbox_root: Optional[Path] = None
         self._attributions: dict[
             tuple[tuple[str, ...], tuple[str, ...], str], dict[str, Any]
@@ -1527,13 +1612,16 @@ class EgressGuard:
     def set_sandbox_root(self, sandbox_root: Path) -> None:
         self._sandbox_root = sandbox_root
 
-    def _record_attribution(self, host: Any) -> None:
+    def _record_attribution(
+        self, host: Any, thread_class: Optional[str] = None
+    ) -> None:
         project_frames, library_packages = _collect_egress_origin(
             traceback.extract_stack(limit=MAX_EGRESS_STACK_FRAMES),
             self._sandbox_root,
         )
         hostname = _hostname_class(host)
-        thread_class = _thread_name_class()
+        if thread_class not in ("main", "background", "other"):
+            thread_class = _thread_name_class()
         key = (tuple(project_frames), tuple(library_packages), hostname)
         with self._lock:
             attribution = self._attributions.get(key)
@@ -1555,22 +1643,88 @@ class EgressGuard:
                 attribution["thread_classes"].sort()
             attribution["count"] = min(attribution["count"] + 1, MAX_COUNTER)
 
+    def _record_refusal(
+        self, host: Any, port: Any, caller_frame: Any
+    ) -> str:
+        """Retain one safe destination and source record for each refusal."""
+        safe_hostname = _safe_refusal_hostname(host) or "unavailable"
+        safe_port: Any = _safe_port(port)
+        if safe_port is None:
+            safe_port = "unavailable"
+        try:
+            thread_id: Any = threading.get_ident()
+            if (
+                isinstance(thread_id, bool)
+                or not isinstance(thread_id, int)
+                or not 0 < thread_id <= (1 << 64) - 1
+            ):
+                thread_id = "unavailable"
+        except BaseException:
+            thread_id = "unavailable"
+        try:
+            thread_class: Any = _thread_name_class()
+            if thread_class not in ("main", "background", "other"):
+                thread_class = "unavailable"
+        except BaseException:
+            thread_class = "unavailable"
+        try:
+            call_site: Any = _project_relative_call_site(
+                caller_frame, self._sandbox_root or REPO_ROOT
+            )
+            if call_site == "unknown:0":
+                call_site = "unavailable"
+        except BaseException:
+            call_site = "unavailable"
+        event = {
+            "hostname": safe_hostname,
+            "port": safe_port,
+            "thread_id": thread_id,
+            "thread_class": thread_class,
+            "call_site": call_site,
+        }
+        with self._lock:
+            self._refusal_count = min(self._refusal_count + 1, MAX_COUNTER)
+            if len(self._refusals) < MAX_RECORDED_EGRESS:
+                event["sequence"] = self._refusal_count
+                self._refusals.append(event)
+        return (
+            thread_class
+            if thread_class in ("main", "background", "other")
+            else "other"
+        )
+
     def _record(self, host: Any, port: Any, record_loopback: bool) -> str:
-        host_class = _host_class(host)
+        safe_hostname = _safe_refusal_hostname(host)
+        safe_port = _safe_port(port)
+        port_unavailable = port is None or safe_port is None
+        host_class = (
+            _host_class(host)
+            if safe_hostname is not None and not port_unavailable
+            else "non_loopback"
+        )
+        refused = host_class == "non_loopback" or (
+            host_class == "loopback" and self._deny_loopback
+        )
         if (
             host_class == "non_loopback"
             or record_loopback
             or self._deny_loopback
         ):
-            entry = {"host_class": host_class, "port": _safe_port(port)}
+            entry = {"host_class": host_class, "port": safe_port}
             with self._lock:
                 self._attempt_count = min(self._attempt_count + 1, MAX_COUNTER)
                 if len(self._attempts) < MAX_RECORDED_EGRESS:
                     self._attempts.append(entry)
-        if host_class == "non_loopback" or (
-            host_class == "loopback" and self._deny_loopback
-        ):
-            self._record_attribution(host)
+        if refused:
+            thread_class = self._record_refusal(
+                safe_hostname, port, sys._getframe(1)
+            )
+            try:
+                self._record_attribution(host, thread_class)
+            except BaseException:
+                # Refusal must never depend on successful diagnostic attribution.
+                pass
+        if host_class == "loopback" and self._deny_loopback:
             raise EgressBlocked("network destination refused")
         return host_class
 
@@ -1578,10 +1732,13 @@ class EgressGuard:
         original = self._originals[(socket.socket, method_name)]
         if getattr(sock, "family", None) == getattr(socket, "AF_UNIX", object()):
             if self._deny_loopback:
-                self._record("unix-socket", None, record_loopback=True)
+                self._record(None, None, record_loopback=True)
+                raise EgressBlocked("unix socket destination refused")
             return original(sock, address)
         host, port = _address_parts(address)
-        self._record(host, port, record_loopback=True)
+        host_class = self._record(host, port, record_loopback=True)
+        if host_class == "non_loopback":
+            raise _connection_refused_error()
         return original(sock, address)
 
     def _send(
@@ -1594,7 +1751,8 @@ class EgressGuard:
         original = self._originals[(socket.socket, method_name)]
         family = getattr(sock, "family", None)
         if self._deny_loopback:
-            self._record("socket-send", None, record_loopback=True)
+            self._record(None, None, record_loopback=True)
+            raise EgressBlocked("socket send destination refused")
         elif method_name in ("sendto", "sendmsg"):
             address = kwargs.get("address")
             if address is None and method_name == "sendto" and len(args) > 1:
@@ -1603,45 +1761,60 @@ class EgressGuard:
                 address = args[3]
             if address is not None and family != getattr(socket, "AF_UNIX", object()):
                 host, port = _address_parts(address)
-                self._record(host, port, record_loopback=False)
+                host_class = self._record(host, port, record_loopback=False)
+                if host_class == "non_loopback":
+                    raise _connection_refused_error()
         return original(sock, *args, **kwargs)
 
     def _bind(self, sock: Any, address: Any, method_name: str) -> Any:
         original = self._originals[(socket.socket, method_name)]
         if self._deny_loopback:
             host, port = _address_parts(address)
-            self._record(host, port, record_loopback=True)
+            host_class = self._record(host, port, record_loopback=True)
+            if host_class == "non_loopback":
+                raise EgressBlocked("socket bind destination refused")
         return original(sock, address)
 
     def _listen(self, sock: Any, backlog: Any) -> Any:
         original = self._originals[(socket.socket, "listen")]
         if self._deny_loopback:
-            self._record("socket-listener", None, record_loopback=True)
+            self._record(None, None, record_loopback=True)
+            raise EgressBlocked("socket listener refused")
         return original(sock, backlog)
 
     def _create_connection(self, address: Any, *args: Any, **kwargs: Any) -> Any:
         original = self._originals[(socket, "create_connection")]
         host, port = _address_parts(address)
-        self._record(host, port, record_loopback=True)
+        host_class = self._record(host, port, record_loopback=True)
+        if host_class == "non_loopback":
+            raise _connection_refused_error()
         return original(address, *args, **kwargs)
+
+    def _record_name_lookup(self, host: Any, port: Any) -> None:
+        try:
+            host_class = self._record(host, port, record_loopback=False)
+        except EgressBlocked:
+            raise _name_resolution_refused_error() from None
+        if host_class == "non_loopback":
+            raise _name_resolution_refused_error()
 
     def _getaddrinfo(
         self, host: Any, port: Any, *args: Any, **kwargs: Any
     ) -> Any:
         original = self._originals[(socket, "getaddrinfo")]
-        self._record(host, port, record_loopback=False)
+        self._record_name_lookup(host, port)
         return original(host, port, *args, **kwargs)
 
     def _resolve_name(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         original = self._originals[(socket, method_name)]
         host = args[0] if args else kwargs.get("host", kwargs.get("hostname"))
-        self._record(host, None, record_loopback=False)
+        self._record_name_lookup(host, None)
         return original(*args, **kwargs)
 
     def _getnameinfo(self, address: Any, *args: Any, **kwargs: Any) -> Any:
         original = self._originals[(socket, "getnameinfo")]
         host, port = _address_parts(address)
-        self._record(host, port, record_loopback=False)
+        self._record_name_lookup(host, port)
         return original(address, *args, **kwargs)
 
     def install(self) -> "EgressGuard":
@@ -1770,6 +1943,10 @@ class EgressGuard:
         )
         return result
 
+    def refusal_snapshot(self) -> tuple[list[dict[str, Any]], int]:
+        with self._lock:
+            return [dict(item) for item in self._refusals], self._refusal_count
+
     def attempt_count(self) -> int:
         with self._lock:
             return self._attempt_count
@@ -1882,7 +2059,7 @@ def run_guard_self_test() -> dict[str, Any]:
 
         try:
             socket.socket.connect(FakeSocket(), ("203.0.113.19", 443))
-        except EgressBlocked:
+        except ConnectionRefusedError:
             egress_detected = True
         finally:
             patches.restore()
@@ -2458,6 +2635,88 @@ def _safe_egress_attributions(values: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _safe_egress_refusals(
+    values: Any,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Sanitize per-refusal evidence and report whether every field is present."""
+    if not isinstance(values, (list, tuple)):
+        return [], False
+    safe_events: list[dict[str, Any]] = []
+    valid = len(values) <= MAX_RECORDED_EGRESS
+    for index, value in enumerate(values[:MAX_RECORDED_EGRESS], start=1):
+        event_valid = isinstance(value, dict)
+        if not isinstance(value, dict):
+            value = {}
+
+        hostname = _safe_refusal_hostname(value.get("hostname"))
+        if hostname is None:
+            hostname = "unavailable"
+            event_valid = False
+
+        raw_port = value.get("port")
+        port = _safe_port(raw_port)
+        if port is None:
+            port = "unavailable"
+            event_valid = False
+
+        thread_id = value.get("thread_id")
+        if (
+            isinstance(thread_id, bool)
+            or not isinstance(thread_id, int)
+            or not 0 < thread_id <= (1 << 64) - 1
+        ):
+            thread_id = "unavailable"
+            event_valid = False
+
+        thread_class = value.get("thread_class")
+        if thread_class not in ("main", "background", "other"):
+            thread_class = "unavailable"
+            event_valid = False
+
+        call_site = value.get("call_site")
+        safe_call_site = "unavailable"
+        if isinstance(call_site, str) and ":" in call_site:
+            path, line_value = call_site.rsplit(":", 1)
+            path_parts = Path(path).parts
+            if (
+                not path.startswith("/")
+                and ".." not in path_parts
+                and "\\" not in path
+                and SAFE_ORIGIN_PATH_PATTERN.fullmatch(path)
+                and path.endswith(".py")
+                and line_value.isascii()
+                and line_value.isdecimal()
+                and 1 <= len(line_value) <= 7
+                and 1 <= int(line_value) <= MAX_COUNTER
+            ):
+                safe_call_site = path + ":" + line_value
+            else:
+                event_valid = False
+        else:
+            event_valid = False
+
+        sequence = value.get("sequence")
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence != index
+        ):
+            sequence = index
+            event_valid = False
+        safe_events.append(
+            {
+                "hostname": hostname,
+                "port": port,
+                "thread_id": thread_id,
+                "thread_class": thread_class,
+                "call_site": safe_call_site,
+                "sequence": sequence,
+            }
+        )
+        valid = valid and event_valid
+    return safe_events, valid
+
+
 def _known_startup_egress_contacts(
     attributions: list[dict[str, Any]], enabled: bool
 ) -> list[dict[str, Any]]:
@@ -2516,6 +2775,8 @@ def build_report(
     blocked_reason: Optional[str] = None,
     ledger_valid: bool = True,
     egress_attributions: Optional[list[dict[str, Any]]] = None,
+    egress_refusals: Optional[list[dict[str, Any]]] = None,
+    egress_refusal_count: Optional[int] = None,
     initial_narration_request: Optional[dict[str, Any]] = None,
     expect_startup_narration: bool = False,
     require_priced_route: bool = False,
@@ -2536,6 +2797,29 @@ def build_report(
     }
     safe_egress_attributions = _safe_egress_attributions(
         egress_attributions or []
+    )
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals if egress_refusals is not None else []
+    )
+    non_loopback_attempt_count = sum(
+        1
+        for attempt in safe_egress
+        if attempt["host_class"] == "non_loopback"
+    )
+    recorded_refusal_count = (
+        _bounded_count(egress_refusal_count)
+        if egress_refusal_count is not None
+        else non_loopback_attempt_count
+    )
+    egress_attempts_valid = (
+        isinstance(egress_attempts, (list, tuple))
+        and len(safe_egress) == min(len(egress_attempts), MAX_RECORDED_EGRESS)
+    )
+    refusal_coverage_complete = bool(
+        egress_attempts_valid
+        and refusal_events_valid
+        and recorded_refusal_count == non_loopback_attempt_count
+        and len(safe_egress_refusals) == recorded_refusal_count
     )
     known_product_contacts = _known_startup_egress_contacts(
         safe_egress_attributions, expect_startup_narration
@@ -2572,6 +2856,8 @@ def build_report(
         "provider_function_calls": _bounded_count(provider_function_calls),
         "egress_attempts": safe_egress,
         "egress_attributions": safe_egress_attributions,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
         "known_product_contacts": known_product_contacts,
         "initial_narration_request": safe_initial_request,
         "route_pin": route_pin,
@@ -2601,6 +2887,8 @@ def build_report(
         report["blocked_reason"] = safe_blocked_reason
 
     failures: list[str] = []
+    if not refusal_coverage_complete:
+        failures.append("egress refusal attribution incomplete")
     if not report["game_thread_alive"]:
         failures.append("game thread was not observed alive")
     if expect_startup_narration:
@@ -2659,6 +2947,8 @@ def build_preintegrate_report(
     *,
     stub_call_counts: dict[str, int],
     egress_attempts: list[dict[str, Any]],
+    egress_refusals: Optional[list[dict[str, Any]]] = None,
+    egress_refusal_count: Optional[int] = None,
     registered_modules: list[str],
     detect_new_modules_after: list[str],
     active_combat_encounter_after: Any,
@@ -2688,6 +2978,29 @@ def build_preintegrate_report(
             safe_egress.append(
                 {"host_class": host_class, "port": _safe_port(attempt.get("port"))}
             )
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals if egress_refusals is not None else []
+    )
+    non_loopback_attempt_count = sum(
+        1
+        for attempt in safe_egress
+        if attempt["host_class"] == "non_loopback"
+    )
+    recorded_refusal_count = (
+        _bounded_count(egress_refusal_count)
+        if egress_refusal_count is not None
+        else non_loopback_attempt_count
+    )
+    egress_attempts_valid = (
+        isinstance(egress_attempts, (list, tuple))
+        and len(safe_egress) == min(len(egress_attempts), MAX_RECORDED_EGRESS)
+    )
+    refusal_coverage_complete = bool(
+        egress_attempts_valid
+        and refusal_events_valid
+        and recorded_refusal_count == non_loopback_attempt_count
+        and len(safe_egress_refusals) == recorded_refusal_count
+    )
     safe_registered, registered_names_valid = _safe_report_names(registered_modules)
     safe_detected, detected_names_valid = _safe_report_names(
         detect_new_modules_after
@@ -2727,6 +3040,8 @@ def build_preintegrate_report(
     report: dict[str, Any] = {
         "stub_call_counts": safe_stubs,
         "egress_attempts": safe_egress,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
         "registered_modules": safe_registered,
         "detect_new_modules_after": safe_detected,
         "active_combat_encounter_after": active_value,
@@ -2747,6 +3062,8 @@ def build_preintegrate_report(
     if safe_blocked_reason is not None:
         report["blocked_reason"] = safe_blocked_reason
     failures: list[str] = []
+    if not refusal_coverage_complete:
+        failures.append("egress refusal attribution incomplete")
     if inspection_failure_reason:
         failures.append(_safe_blocked_reason(inspection_failure_reason))
     if not all(safe_checks.values()):
@@ -3290,6 +3607,7 @@ def run_proof(
                 sys.path[:] = original_sys_path
             sys.stdout, sys.stderr, sys.stdin = original_streams
 
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
     report = build_report(
         sandbox_path_class=(
             _history_path_class(sandbox)
@@ -3305,6 +3623,8 @@ def run_proof(
         update_check_calls=update_check_calls,
         egress_attempts=egress_guard.snapshot(),
         egress_attributions=egress_guard.attribution_snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
         initial_narration_request=recorder.initial_request_snapshot(),
         ledger_reservations=ledger_reservations,
         observed_events=event_counts,
@@ -3861,6 +4181,7 @@ def run_startup_diagnostic(
     )
     router_calls, provider_calls, _ = recorder.snapshot()
     network_attempts = egress_guard.attempt_count()
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
     if failure_category == "none" and recorder_failure:
         failure_exception_class = "ProviderCallBlocked"
         failure_category = _startup_failure_category(
@@ -3891,6 +4212,8 @@ def run_startup_diagnostic(
         host_imports_verified=host_imports_verified,
         startup_boundary_guard_active=patches_active,
         egress_attributions=egress_guard.attribution_snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
         failure_exception_class=failure_exception_class,
         failure_category=failure_category,
     )
@@ -4128,9 +4451,12 @@ def run_preintegrate(
             "RuntimeError: module integration did not complete"
         )
 
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
     report = build_preintegrate_report(
         stub_call_counts=recorder.stub_counts_snapshot(),
         egress_attempts=egress_guard.snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
         registered_modules=registered_modules,
         detect_new_modules_after=detected_modules,
         active_combat_encounter_after=active_combat_encounter,
@@ -4359,6 +4685,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                         if not isinstance(report, dict) or report.get("verdict") not in (
                             "PASS",
                             "BLOCKED",
+                        ) or (
+                            report.get("verdict") == "PASS"
+                            and report.get("egress_refusal_coverage_complete") is not True
                         ):
                             raise ProofSetupError("startup diagnostic report is invalid")
         else:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import errno
 import io
 import json
 import os
@@ -514,16 +515,40 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             recorder.block_provider_function()
         self.assertEqual(recorder.snapshot(), (0, 1, 0))
 
-        guard = proof.EgressGuard()
-        with guard:
-            with self.assertRaises(proof.EgressBlocked):
-                guard._connect(FakeSocket(), ("198.51.100.20", 9443), "connect")
-            with self.assertRaises(proof.EgressBlocked):
-                socket.socket.connect_ex(FakeSocket(), ("198.51.100.23", 9446))
-            with self.assertRaises(proof.EgressBlocked):
-                socket.create_connection(("198.51.100.21", 9444))
-            with self.assertRaises(proof.EgressBlocked):
-                socket.getaddrinfo("198.51.100.22", 9445)
+        with (
+            patch.object(socket.socket, "connect") as connect_spy,
+            patch.object(socket.socket, "connect_ex") as connect_ex_spy,
+            patch.object(socket, "create_connection") as create_connection_spy,
+            patch.object(socket, "getaddrinfo") as getaddrinfo_spy,
+            patch.object(socket, "gethostbyname") as gethostbyname_spy,
+        ):
+            guard = proof.EgressGuard()
+            with guard:
+                with self.assertRaises(ConnectionRefusedError) as connect_error:
+                    socket.socket.connect(FakeSocket(), ("198.51.100.20", 9443))
+                self.assertEqual(connect_error.exception.errno, errno.ECONNREFUSED)
+                with self.assertRaises(ConnectionRefusedError):
+                    socket.socket.connect_ex(
+                        FakeSocket(), ("198.51.100.23", 9446)
+                    )
+                with self.assertRaises(ConnectionRefusedError):
+                    socket.create_connection(("198.51.100.21", 9444))
+                with self.assertRaises(socket.gaierror):
+                    socket.getaddrinfo("198.51.100.22", 9445)
+                with self.assertRaises(socket.gaierror):
+                    socket.gethostbyname("denied-name.example")
+                with self.assertRaises(socket.gaierror):
+                    socket.gethostbyname("localhost")
+
+            for network_spy in (
+                connect_spy,
+                connect_ex_spy,
+                create_connection_spy,
+                getaddrinfo_spy,
+                gethostbyname_spy,
+            ):
+                network_spy.assert_not_called()
+
         self.assertEqual(
             guard.snapshot(),
             [
@@ -531,7 +556,68 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 {"host_class": "non_loopback", "port": 9446},
                 {"host_class": "non_loopback", "port": 9444},
                 {"host_class": "non_loopback", "port": 9445},
+                {"host_class": "non_loopback", "port": None},
+                {"host_class": "non_loopback", "port": None},
             ],
+        )
+        refusals, refusal_count = guard.refusal_snapshot()
+        self.assertEqual(refusal_count, 6)
+        self.assertEqual(len(refusals), refusal_count)
+        self.assertEqual(refusals[0]["hostname"], "198.51.100.20")
+        self.assertEqual(refusals[0]["port"], 9443)
+        self.assertEqual(refusals[-1]["hostname"], "localhost")
+        self.assertEqual(refusals[-1]["port"], "unavailable")
+
+    def test_refusal_attribution_is_exact_and_secret_safe(self) -> None:
+        unsafe_url = (
+            "https://private-user:private-password@example.invalid/path?token=private-value"
+        )
+        token_like_host = "sk-" + ("a" * 24) + ".example.invalid"
+        with patch.object(socket, "getaddrinfo") as getaddrinfo_spy:
+            guard = proof.EgressGuard()
+            guard.set_sandbox_root(proof.REPO_ROOT)
+            with guard:
+                with self.assertRaises(socket.gaierror):
+                    socket.getaddrinfo("Exact.Example.invalid.", 9443)
+                with self.assertRaises(socket.gaierror):
+                    socket.getaddrinfo(unsafe_url, 9444)
+                with self.assertRaises(socket.gaierror):
+                    socket.getaddrinfo(token_like_host, 9445)
+            getaddrinfo_spy.assert_not_called()
+
+        refusals, refusal_count = guard.refusal_snapshot()
+        self.assertEqual(refusal_count, 3)
+        self.assertEqual(len(refusals), 3)
+        exact = refusals[0]
+        self.assertEqual(exact["hostname"], "Exact.Example.invalid.")
+        self.assertEqual(exact["port"], 9443)
+        self.assertEqual(exact["thread_id"], proof.threading.get_ident())
+        self.assertEqual(exact["thread_class"], "main")
+        self.assertRegex(
+            exact["call_site"],
+            r"^scripts/test_n3_start_game_offline_proof.py:[1-9][0-9]*$",
+        )
+        self.assertEqual(refusals[1]["hostname"], "unavailable")
+        self.assertEqual(refusals[2]["hostname"], "unavailable")
+        serialized = json.dumps(refusals, ensure_ascii=True, sort_keys=True)
+        for secret in (
+            "private-user",
+            "private-password",
+            "private-value",
+            token_like_host,
+            "https://",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertEqual(
+            set(exact),
+            {
+                "hostname",
+                "port",
+                "thread_id",
+                "thread_class",
+                "call_site",
+                "sequence",
+            },
         )
 
     def test_startup_diagnostic_stubs_ordered_tasks_and_records_nested_call_sites(self) -> None:
@@ -634,13 +720,15 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 socket.socket.sendto(FakeSocket(), b"x", ("127.0.0.1", 8360))
             with self.assertRaises(proof.EgressBlocked):
                 socket.socket.send(FakeSocket(), b"x")
-            with self.assertRaises(proof.EgressBlocked):
+            with self.assertRaises(socket.gaierror):
                 socket.gethostbyname("example.invalid")
+            with self.assertRaises(socket.gaierror):
+                socket.getaddrinfo("127.0.0.1", 8360)
             with self.assertRaises(proof.EgressBlocked):
                 socket.socket.bind(FakeSocket(), ("127.0.0.1", 8360))
             with self.assertRaises(proof.EgressBlocked):
                 socket.socket.listen(FakeSocket(), 1)
-        self.assertEqual(guard.attempt_count(), 6)
+        self.assertEqual(guard.attempt_count(), 7)
 
     def test_startup_worker_environment_drops_ambient_credentials_and_path(self) -> None:
         with patch.dict(
@@ -777,13 +865,16 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
 
         self.assertEqual(report["verdict"], "BLOCKED")
         self.assertEqual(report["network_attempt_count"], 1)
-        self.assertEqual(report["failure_exception_class"], "EgressBlocked")
+        self.assertEqual(report["failure_exception_class"], "gaierror")
         self.assertEqual(
             report["failure_category"], "host_import_egress_blocked"
         )
+        self.assertEqual(
+            report["egress_refusals"][0]["hostname"],
+            "diagnostic-private.invalid",
+        )
+        self.assertTrue(report["egress_refusal_coverage_complete"])
         serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
-        self.assertNotIn("diagnostic-private.invalid", serialized)
-        self.assertNotIn("network destination refused", serialized)
         self.assertNotIn("private-value", serialized)
 
     def test_startup_report_includes_only_sanitized_network_attribution(self) -> None:
@@ -816,8 +907,17 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         self.assertTrue(
             all(not frame.startswith("/") for frame in project_frames)
         )
+        refusals = report["egress_refusals"]
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(refusals[0]["hostname"], "startup-private.example.invalid")
+        self.assertEqual(refusals[0]["port"], 443)
+        self.assertTrue(refusals[0]["thread_id"])
+        self.assertTrue(
+            refusals[0]["call_site"].startswith(
+                "scripts/test_n3_start_game_offline_proof.py:"
+            )
+        )
         serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
-        self.assertNotIn("startup-private.example.invalid", serialized)
         self.assertNotIn(str(proof.REPO_ROOT), serialized)
         self.assertNotIn("private-prompt-value", serialized)
 
@@ -904,13 +1004,14 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 side_effect=["background", "background", "main"],
             ),
         ):
-            for host in (
-                "api.openrouter.ai",
-                "api.openrouter.ai",
-                "github.com",
-            ):
-                with self.assertRaises(proof.EgressBlocked):
-                    guard._record(host, 443, record_loopback=False)
+            with guard:
+                for host in (
+                    "api.openrouter.ai",
+                    "api.openrouter.ai",
+                    "github.com",
+                ):
+                    with self.assertRaises(ConnectionRefusedError):
+                        socket.create_connection((host, 443))
 
         attributions = proof._safe_egress_attributions(
             guard.attribution_snapshot()
@@ -1089,8 +1190,11 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         self.assertEqual(attribution["hostname_class"], "openrouter")
         self.assertEqual(attribution["thread_classes"], ["main"])
         self.assertEqual(attribution["count"], 1)
+        self.assertTrue(report["egress_refusal_coverage_complete"])
+        self.assertEqual(
+            report["egress_refusals"][0]["hostname"], "api.openrouter.ai"
+        )
         serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
-        self.assertNotIn("api.openrouter.ai", serialized)
         self.assertNotIn("/Users/", serialized)
 
     def test_self_test_proves_both_tripwires(self) -> None:
@@ -1256,6 +1360,8 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 "provider_function_calls",
                 "egress_attempts",
                 "egress_attributions",
+                "egress_refusals",
+                "egress_refusal_coverage_complete",
                 "known_product_contacts",
                 "initial_narration_request",
                 "route_pin",
@@ -1340,6 +1446,17 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             "router_calls": 1,
             "provider_function_calls": 0,
             "egress_attempts": [{"host_class": "non_loopback", "port": 443}],
+            "egress_refusals": [
+                {
+                    "hostname": "api.exchange.example",
+                    "port": 443,
+                    "thread_id": 123,
+                    "thread_class": "background",
+                    "call_site": "utils/llm_usage_tracker.py:42",
+                    "sequence": 1,
+                }
+            ],
+            "egress_refusal_count": 1,
             "egress_attributions": [known_origin],
             "ledger_reservations": 0,
             "observed_events": {},
@@ -1352,6 +1469,7 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
 
         accepted = proof.build_report(**base)
         self.assertEqual(accepted["verdict"], "PASS")
+        self.assertTrue(accepted["egress_refusal_coverage_complete"])
         self.assertEqual(
             accepted["known_product_contacts"],
             [{"name": proof.KNOWN_EXCHANGE_RATE_ORIGIN, "count": 1}],
@@ -1363,11 +1481,31 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             written["known_product_contacts"], accepted["known_product_contacts"]
         )
 
+        unavailable = dict(base)
+        unavailable["egress_refusals"] = [
+            dict(base["egress_refusals"][0], hostname="unavailable")
+        ]
+        unavailable_report = proof.build_report(**unavailable)
+        self.assertEqual(unavailable_report["verdict"], "FAIL")
+        self.assertFalse(unavailable_report["egress_refusal_coverage_complete"])
+
         mixed = dict(base)
         mixed["egress_attempts"] = [
             {"host_class": "non_loopback", "port": 443},
             {"host_class": "non_loopback", "port": 443},
         ]
+        mixed["egress_refusals"] = [
+            dict(base["egress_refusals"][0]),
+            {
+                "hostname": "github.com",
+                "port": 443,
+                "thread_id": 123,
+                "thread_class": "background",
+                "call_site": "utils/llm_router.py:88",
+                "sequence": 2,
+            },
+        ]
+        mixed["egress_refusal_count"] = 2
         mixed["egress_attributions"] = [
             known_origin,
             {
@@ -1395,13 +1533,21 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         ]
         unattributed_report = proof.build_report(**unattributed)
         self.assertEqual(unattributed_report["verdict"], "FAIL")
-        self.assertEqual(unattributed_report["reason"], "unexpected egress origin")
+        self.assertIn(
+            "egress refusal attribution incomplete",
+            unattributed_report["reason"],
+        )
+        self.assertIn("unexpected egress origin", unattributed_report["reason"])
 
         orphaned_attribution = dict(base)
         orphaned_attribution["egress_attempts"] = []
         orphaned_report = proof.build_report(**orphaned_attribution)
         self.assertEqual(orphaned_report["verdict"], "FAIL")
-        self.assertEqual(orphaned_report["reason"], "unexpected egress origin")
+        self.assertIn(
+            "egress refusal attribution incomplete",
+            orphaned_report["reason"],
+        )
+        self.assertIn("unexpected egress origin", orphaned_report["reason"])
 
         strict = dict(base)
         strict.pop("expect_startup_narration")
@@ -1422,6 +1568,17 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             router_calls=1,
             provider_function_calls=0,
             egress_attempts=[{"host_class": "non_loopback", "port": 443}],
+            egress_refusals=[
+                {
+                    "hostname": "api.openrouter.ai",
+                    "port": 443,
+                    "thread_id": 123,
+                    "thread_class": "background",
+                    "call_site": "utils/llm_usage_tracker.py:42",
+                    "sequence": 1,
+                }
+            ],
+            egress_refusal_count=1,
             egress_attributions=[
                 {
                     "origin": {
