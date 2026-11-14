@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import io
 import json
 import os
@@ -1179,6 +1180,56 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertEqual(report["preflight_status"], "BLOCKED")
         self.assertFalse(report["booking_eligible"])
         self.assertNotEqual(report["pf_status"], "PASS")
+        self.assertEqual(report["pf_checks"]["PF6"], "PASS")
+        self.assertEqual(
+            [item["scenario"] for item in report["driver_stop_policy"]["scenarios"]],
+            ["attempt_cap", "time_cap", "three_failure_pause"],
+        )
+        self.assertEqual(
+            report["driver_stop_policy"]["recorded_proof_source_sha"],
+            "58ab23336d7dcc521e5ec9d8774c6dae8a002b25",
+        )
+        self.assertEqual(
+            report["driver_stop_policy"]["proof_sha256"],
+            "7253dd8374ac7838341f94125ff5ab5c7d761417136b54af80287bcc44855a64",
+        )
+        self.assertEqual(report["identity"]["source_sha"], self.source_sha)
+        self.assertNotIn(
+            "source_sha", report["driver_stop_policy"]["source_binding"]
+        )
+        self.assertEqual(
+            report["driver_stop_policy"]["source_binding"][
+                "recorded_sha_relation_to_preflight_identity"
+            ],
+            "not_asserted_equal_to_current_preflight_identity_source_sha",
+        )
+        self.assertEqual(
+            report["driver_stop_policy"]["source_binding"][
+                "verified_relevant_source_file_sha256"
+            ],
+            preflight_evidence._DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256,
+        )
+        self.assertEqual(
+            report["driver_stop_policy"]["upstream_provider_requests_observation"],
+            "not_observed_by_this_trace",
+        )
+        self.assertTrue(
+            all(
+                item["status"] == "PASS"
+                and item["observations"]["basis"] == "injected_test_assertions"
+                and item["observations"][
+                    "upstream_provider_requests_observation"
+                ]
+                == "not_observed_by_this_trace"
+                and item["observations"]["injected_test_counters"][
+                    "live_attempts_used"
+                ]
+                == 0
+                and "upstream_provider_requests"
+                not in item["observations"]["injected_test_counters"]
+                for item in report["driver_stop_policy"]["scenarios"]
+            )
+        )
         self.assertTrue(result["identity_match"])
         self.assertFalse(result["eligible"])
         self.assertEqual(result["status"], "BLOCKED")
@@ -1280,6 +1331,168 @@ class TestPreflightEvidence(unittest.TestCase):
             run_id=self.run_id, proposed_identity=self._proposed_identity()
         )
         self.assertEqual(document["execution_provenance"], "unverified")
+        self.assertEqual(document["pf_checks"]["PF6"], "PASS")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_standalone_driver_proof_does_not_satisfy_provider_free_status(self) -> None:
+        row_report = {
+            "report_type": "provider-free-row-preflight",
+            "provider_free": {
+                "upstream_provider_requests_delta": 0,
+                "provider_budget_used_delta": 0,
+                "live_attempts_used_delta": 0,
+                "reserve_activations_delta": 0,
+                "router_stub_calls": 1,
+            },
+        }
+        self._write_report(row_report=row_report)
+
+        document = json.loads(
+            (self.evidence_root / "preflight" / "preflight.json").read_text(
+                encoding="ascii"
+            )
+        )
+        result = preflight_evidence.check_booking_eligibility(
+            run_id=self.run_id, proposed_identity=self._proposed_identity()
+        )
+
+        self.assertEqual(document["driver_stop_policy"]["status"], "PASS")
+        self.assertEqual(
+            document["driver_stop_policy"]["upstream_provider_requests_observation"],
+            "not_observed_by_this_trace",
+        )
+        self.assertEqual(document["pf_checks"]["PF6"], "PASS")
+        self.assertEqual(document["provider_free"]["status"], "MISSING")
+        self.assertNotEqual(document["pf_status"], "PASS")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_untrusted_caller_pf6_summary_cannot_replace_missing_proof(self) -> None:
+        report = self._complete_row_report()
+        report["driver_stop_policy"] = {"status": "PASS", "scenarios": ["fake"]}
+        report["pf_checks"] = {"PF6": "PASS"}
+        with tempfile.TemporaryDirectory(
+            prefix="missing-pf6-proof-", dir=PROJECT_ROOT / "tmp"
+        ) as temporary_root:
+            missing_path = (
+                Path(temporary_root).relative_to(PROJECT_ROOT) / "driver-proof.json"
+            )
+            with mock.patch.object(
+                preflight_evidence, "_DRIVER_STOP_POLICY_PATH", missing_path
+            ):
+                self._write_report(row_report=report)
+                document = json.loads(
+                    (self.evidence_root / "preflight" / "preflight.json").read_text(
+                        encoding="ascii"
+                    )
+                )
+                result = preflight_evidence.check_booking_eligibility(
+                    run_id=self.run_id, proposed_identity=self._proposed_identity()
+                )
+
+        self.assertEqual(document["pf_checks"]["PF6"], "MISSING")
+        self.assertEqual(
+            document["driver_stop_policy"]["failure_code"],
+            "driver_stop_policy_evidence_missing",
+        )
+        self.assertEqual(document["provider_free"]["status"], "MISSING")
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_changed_relevant_source_hash_fails_pf6(self) -> None:
+        original_read = preflight_evidence._read_project_bytes
+
+        def changed_source(relative_path: Path, maximum_bytes: int) -> bytes:
+            if relative_path == Path("scripts/mapping_pilot/row_runner.py"):
+                return b"changed source"
+            return original_read(relative_path, maximum_bytes)
+
+        with mock.patch.object(
+            preflight_evidence, "_read_project_bytes", side_effect=changed_source
+        ):
+            evidence = preflight_evidence._driver_stop_policy_evidence()
+
+        self.assertEqual(evidence["status"], "FAIL")
+        self.assertEqual(
+            evidence["failure_code"], "driver_stop_policy_source_mismatch"
+        )
+
+    def test_tampered_source_bound_driver_proof_fails_pf6(self) -> None:
+        original = (
+            PROJECT_ROOT / preflight_evidence._DRIVER_STOP_POLICY_PATH
+        ).read_bytes()
+        tampered = original.replace(b'"attempt_cap": true', b'"attempt_cap": false')
+        self.assertNotEqual(original, tampered)
+        with tempfile.TemporaryDirectory(
+            prefix="tampered-pf6-proof-", dir=PROJECT_ROOT / "tmp"
+        ) as temporary_root:
+            temporary_directory = Path(temporary_root)
+            tampered_path = temporary_directory / "driver-proof.json"
+            tampered_path.write_bytes(tampered)
+            relative_path = tampered_path.relative_to(PROJECT_ROOT)
+            with mock.patch.object(
+                preflight_evidence, "_DRIVER_STOP_POLICY_PATH", relative_path
+            ):
+                self._write_report()
+                document = json.loads(
+                    (self.evidence_root / "preflight" / "preflight.json").read_text(
+                        encoding="ascii"
+                    )
+                )
+                result = preflight_evidence.check_booking_eligibility(
+                    run_id=self.run_id, proposed_identity=self._proposed_identity()
+                )
+
+        self.assertEqual(document["pf_checks"]["PF6"], "FAIL")
+        self.assertEqual(
+            document["driver_stop_policy"]["failure_code"],
+            "driver_stop_policy_evidence_tampered",
+        )
+        self.assertFalse(document["booking_eligible"])
+        self.assertFalse(result["eligible"])
+
+    def test_unknown_provider_activity_observation_fails_pf6_closed(self) -> None:
+        original = (
+            PROJECT_ROOT / preflight_evidence._DRIVER_STOP_POLICY_PATH
+        ).read_bytes()
+        unknown_observation = original.replace(
+            b'"not_observed_by_this_trace"', b'"unknown"'
+        )
+        self.assertNotEqual(original, unknown_observation)
+        with tempfile.TemporaryDirectory(
+            prefix="unknown-pf6-observation-", dir=PROJECT_ROOT / "tmp"
+        ) as temporary_root:
+            temporary_directory = Path(temporary_root)
+            unknown_path = temporary_directory / "driver-proof.json"
+            unknown_path.write_bytes(unknown_observation)
+            relative_path = unknown_path.relative_to(PROJECT_ROOT)
+            with (
+                mock.patch.object(
+                    preflight_evidence, "_DRIVER_STOP_POLICY_PATH", relative_path
+                ),
+                mock.patch.object(
+                    preflight_evidence,
+                    "_DRIVER_STOP_POLICY_SHA256",
+                    hashlib.sha256(unknown_observation).hexdigest(),
+                ),
+            ):
+                self._write_report()
+                document = json.loads(
+                    (self.evidence_root / "preflight" / "preflight.json").read_text(
+                        encoding="ascii"
+                    )
+                )
+                result = preflight_evidence.check_booking_eligibility(
+                    run_id=self.run_id, proposed_identity=self._proposed_identity()
+                )
+
+        self.assertEqual(document["pf_checks"]["PF6"], "FAIL")
+        self.assertEqual(
+            document["driver_stop_policy"]["failure_code"],
+            "driver_stop_policy_provenance_mismatch",
+        )
+        self.assertEqual(document["provider_free"]["status"], "MISSING")
         self.assertFalse(document["booking_eligible"])
         self.assertFalse(result["eligible"])
 

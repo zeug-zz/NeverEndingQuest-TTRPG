@@ -61,6 +61,42 @@ _TEARDOWN_FIELDS = (
     "port_8370_free",
     "shared_live_window_lock_released",
 )
+_DRIVER_STOP_POLICY_PATH = Path(
+    "tmp/router-rollout/live-gate-preflight/fr11-pf6-driver-proof/"
+    "preflight/driver-proof.json"
+)
+_DRIVER_STOP_POLICY_SHA256 = (
+    "7253dd8374ac7838341f94125ff5ab5c7d761417136b54af80287bcc44855a64"
+)
+_DRIVER_STOP_POLICY_RECORDED_SOURCE_SHA = (
+    "58ab23336d7dcc521e5ec9d8774c6dae8a002b25"
+)
+_DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256 = {
+    "scripts/mapping_pilot/row_runner.py": (
+        "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+    ),
+    "scripts/mapping_pilot/execution.py": (
+        "cb35eb399db48ad39ca94080551fc809a1b04270e27615c86ddca034cd6af62b"
+    ),
+    "scripts/mapping_pilot/scoring.py": (
+        "dd55de958986f482862bd888744b0ca5504fda8fc8886e6f140e0a111b84b103"
+    ),
+}
+_DRIVER_STOP_POLICY_TEST_SOURCE_SHA256 = (
+    "d2954bf1d304eb2c1122e647ac25c60f12e760d96971ee13f1fc1d117ce31218"
+)
+_DRIVER_STOP_POLICY_TEST_SOURCE_START = b"class _InjectedClock:"
+_DRIVER_STOP_POLICY_TEST_SOURCE_END = (
+    b"class TestPreflightControllerContinuation(unittest.TestCase):"
+)
+_DRIVER_STOP_POLICY_TESTS = {
+    "attempt_cap": "test_attempt_and_time_caps_stop_the_actual_row_driver_before_send",
+    "time_cap": "test_attempt_and_time_caps_stop_the_actual_row_driver_before_send",
+    "three_failure_pause": (
+        "test_three_consecutive_infrastructure_failures_pause_before_next_row"
+    ),
+}
+_MAX_DRIVER_STOP_POLICY_BYTES = 16_000
 
 
 class PreflightEvidenceError(ValueError):
@@ -251,6 +287,7 @@ def _build_preflight_document(
         gate=gate,
     )
     provider_free = _provider_free_result(row_report_mapping.get("provider_free"))
+    driver_stop_policy = _driver_stop_policy_evidence()
     identity_fields_valid = (
         selected_source_sha is not None
         and lock_sha256 is not None
@@ -304,7 +341,7 @@ def _build_preflight_document(
         "PF3": _pf_status(fixture_resolution_complete, row_report_mapping.get("row_results")),
         "PF4": _pf_status(lifecycle_profiles_complete, row_report_mapping.get("row_results")),
         "PF5": _pf_status(transport_complete, row_report_mapping.get("row_results")),
-        "PF6": "MISSING",
+        "PF6": driver_stop_policy["status"],
         "PF7": _pf_status(
             row_coverage_complete and len(expected_row_ids) > 1,
             row_report_mapping.get("attempted_row_ids"),
@@ -372,6 +409,7 @@ def _build_preflight_document(
             "row_outcomes": row_outcomes,
         },
         "provider_free": provider_free,
+        "driver_stop_policy": driver_stop_policy,
         "infrastructure_failure_count": infra_count,
         "pf_checks": checks,
         "pf_status": pf_status,
@@ -838,6 +876,7 @@ def _report_is_ready(document: Any, *, gate: str, run_id: str) -> bool:
             "invocation_identity",
             "row_coverage",
             "provider_free",
+            "driver_stop_policy",
             "infrastructure_failure_count",
             "pf_checks",
             "pf_status",
@@ -912,6 +951,10 @@ def _report_is_ready(document: Any, *, gate: str, run_id: str) -> bool:
         or not isinstance(document.get("provider_free"), Mapping)
         or document["provider_free"].get("status") != "PASS"
         or not _provider_free_is_complete(document["provider_free"])
+        or document.get("driver_stop_policy")
+        != _driver_stop_policy_evidence()
+        or not isinstance(document.get("driver_stop_policy"), Mapping)
+        or document["driver_stop_policy"].get("status") != "PASS"
         or not isinstance(document.get("teardown"), Mapping)
         or document["teardown"].get("status") != "PASS"
         or not _teardown_is_complete(document["teardown"])
@@ -946,6 +989,289 @@ def _report_is_ready(document: Any, *, gate: str, run_id: str) -> bool:
             ):
                 return False
     return True
+
+
+def _driver_stop_policy_evidence() -> dict[str, Any]:
+    """Load the fixed, source-bound production-driver fault trace for PF6."""
+    evidence_path = _DRIVER_STOP_POLICY_PATH.as_posix()
+    try:
+        raw = _read_project_bytes(
+            _DRIVER_STOP_POLICY_PATH, _MAX_DRIVER_STOP_POLICY_BYTES
+        )
+    except FileNotFoundError:
+        return {
+            "status": "MISSING",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_evidence_missing",
+        }
+    except PreflightEvidenceError:
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_evidence_invalid",
+        }
+
+    if hashlib.sha256(raw).hexdigest() != _DRIVER_STOP_POLICY_SHA256:
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_evidence_tampered",
+        }
+    try:
+        proof = json.loads(
+            raw.decode("ascii"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_evidence_invalid",
+        }
+    if not _driver_stop_policy_proof_is_valid(proof):
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_provenance_mismatch",
+        }
+
+    try:
+        current_source_hashes = {
+            source_path: hashlib.sha256(
+                _read_project_bytes(Path(source_path), _MAX_REPORT_BYTES)
+            ).hexdigest()
+            for source_path in _DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256
+        }
+        test_source = _read_project_bytes(
+            Path("scripts/test_live_gate_preflight.py"), _MAX_REPORT_BYTES
+        )
+        test_source_hash = _driver_stop_policy_test_source_sha256(test_source)
+    except PreflightEvidenceError:
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_source_unavailable",
+        }
+    if (
+        current_source_hashes != _DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256
+        or test_source_hash != _DRIVER_STOP_POLICY_TEST_SOURCE_SHA256
+    ):
+        return {
+            "status": "FAIL",
+            "evidence_path": evidence_path,
+            "failure_code": "driver_stop_policy_source_mismatch",
+        }
+
+    source_binding = {
+        "recorded_proof_source_sha": proof["source_sha"],
+        "verified_relevant_source_file_sha256": current_source_hashes,
+        "test_source_sha256": test_source_hash,
+        "recorded_sha_relation_to_preflight_identity": (
+            "not_asserted_equal_to_current_preflight_identity_source_sha"
+        ),
+    }
+    common_injected_counters = {
+        "provider_budget_used": 0,
+        "live_attempts_used": 0,
+        "reserve_activations": 0,
+    }
+    return {
+        "status": "PASS",
+        "evidence_path": evidence_path,
+        "proof_sha256": _DRIVER_STOP_POLICY_SHA256,
+        "recorded_proof_source_sha": proof["source_sha"],
+        "upstream_provider_requests_observation": proof[
+            "upstream_provider_requests"
+        ],
+        "proof_scope": "source-bound injected production-driver tests; not a host run",
+        "source_binding": source_binding,
+        "scenarios": [
+            {
+                "scenario": "attempt_cap",
+                "status": "PASS",
+                "test_name": _DRIVER_STOP_POLICY_TESTS["attempt_cap"],
+                "observation_basis": "passed_source_bound_test_assertions",
+                "source_binding": source_binding,
+                "observations": {
+                    "basis": "injected_test_assertions",
+                    "upstream_provider_requests_observation": (
+                        proof["upstream_provider_requests"]
+                    ),
+                    "injected_test_counters": {
+                        "cap_reason": "row_attempt_cap",
+                        "attempt_count_at_stop": 35,
+                        "driver_turns_sent": 0,
+                        **common_injected_counters,
+                    },
+                },
+            },
+            {
+                "scenario": "time_cap",
+                "status": "PASS",
+                "test_name": _DRIVER_STOP_POLICY_TESTS["time_cap"],
+                "observation_basis": "passed_source_bound_test_assertions",
+                "source_binding": source_binding,
+                "observations": {
+                    "basis": "injected_test_assertions",
+                    "upstream_provider_requests_observation": (
+                        proof["upstream_provider_requests"]
+                    ),
+                    "injected_test_counters": {
+                        "cap_reason": "row_wall_time_cap",
+                        "attempt_count_at_stop": 0,
+                        "driver_turns_sent": 0,
+                        **common_injected_counters,
+                    },
+                },
+            },
+            {
+                "scenario": "three_failure_pause",
+                "status": "PASS",
+                "test_name": _DRIVER_STOP_POLICY_TESTS["three_failure_pause"],
+                "observation_basis": "passed_source_bound_test_assertions",
+                "source_binding": source_binding,
+                "observations": {
+                    "basis": "injected_test_assertions",
+                    "upstream_provider_requests_observation": (
+                        proof["upstream_provider_requests"]
+                    ),
+                    "injected_test_counters": {
+                        "triggering_row_ids": ["E03", "E04", "E05"],
+                        "matrix_paused": True,
+                        "next_row_id": "E06",
+                        "next_row_seeded": False,
+                        **common_injected_counters,
+                    },
+                },
+            },
+        ],
+    }
+
+
+def _driver_stop_policy_proof_is_valid(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "booking_eligible",
+        "checks",
+        "executed_lines",
+        "guard_active",
+        "live_gate_pass",
+        "proof_scope",
+        "schema_version",
+        "source_sha",
+        "source_sha256",
+        "test_count",
+        "test_log",
+        "test_pass",
+        "upstream_provider_requests",
+    }:
+        return False
+    source_hashes = value.get("source_sha256")
+    checks = value.get("checks")
+    executed_lines = value.get("executed_lines")
+    test_log = value.get("test_log")
+    if not isinstance(source_hashes, Mapping) or not isinstance(checks, Mapping):
+        return False
+    if not isinstance(executed_lines, Mapping) or not isinstance(test_log, str):
+        return False
+    return (
+        type(value.get("schema_version")) is int
+        and value.get("schema_version") == 1
+        and value.get("source_sha") == _DRIVER_STOP_POLICY_RECORDED_SOURCE_SHA
+        and set(source_hashes)
+        == {
+            "scripts/mapping_pilot/execution.py",
+            "scripts/mapping_pilot/scoring.py",
+        }
+        and dict(source_hashes)
+        == {
+            "scripts/mapping_pilot/execution.py": (
+                _DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256[
+                    "scripts/mapping_pilot/execution.py"
+                ]
+            ),
+            "scripts/mapping_pilot/scoring.py": (
+                _DRIVER_STOP_POLICY_RELEVANT_SOURCE_SHA256[
+                    "scripts/mapping_pilot/scoring.py"
+                ]
+            ),
+        }
+        and dict(checks)
+        == {
+            "attempt_cap": True,
+            "time_cap": True,
+            "three_failure_pause": True,
+        }
+        and dict(executed_lines)
+        == {
+            "scripts/mapping_pilot/execution.py": [709, 710],
+            "scripts/mapping_pilot/scoring.py": [91, 101],
+        }
+        and value.get("proof_scope")
+        == "provider-free injected real driver source; not a host run"
+        and value.get("guard_active") is True
+        and value.get("test_pass") is True
+        and type(value.get("test_count")) is int
+        and value.get("test_count") == 2
+        and value.get("booking_eligible") is False
+        and value.get("live_gate_pass") is False
+        and value.get("upstream_provider_requests")
+        == "not_observed_by_this_trace"
+        and all(
+            test_name in test_log
+            and " ... ok" in test_log
+            for test_name in set(_DRIVER_STOP_POLICY_TESTS.values())
+        )
+        and "Ran 2 tests in " in test_log
+        and test_log.rstrip().endswith("OK")
+    )
+
+
+def _driver_stop_policy_test_source_sha256(source: bytes) -> str:
+    start = source.find(_DRIVER_STOP_POLICY_TEST_SOURCE_START)
+    end = source.find(_DRIVER_STOP_POLICY_TEST_SOURCE_END, start + 1)
+    if start < 0 or end < 0:
+        raise PreflightEvidenceError("driver stop policy test source region is missing")
+    return hashlib.sha256(source[start:end]).hexdigest()
+
+
+def _read_project_bytes(relative: Path, maximum_bytes: int) -> bytes:
+    project = PROJECT_ROOT.resolve(strict=True)
+    _reject_symlink_components(project, relative)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            project / relative, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        metadata = os.fstat(descriptor)
+        get_uid = getattr(os, "getuid", None)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o022
+            or metadata.st_size < 1
+            or metadata.st_size > maximum_bytes
+            or (callable(get_uid) and metadata.st_uid != get_uid())
+        ):
+            raise PreflightEvidenceError("source-bound evidence file is invalid")
+        data = bytearray()
+        while len(data) <= maximum_bytes:
+            chunk = os.read(descriptor, min(64_000, maximum_bytes + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        if len(data) > maximum_bytes:
+            raise PreflightEvidenceError("source-bound evidence file is too large")
+        return bytes(data)
+    except PreflightEvidenceError:
+        raise
+    except OSError as exc:
+        if isinstance(exc, FileNotFoundError):
+            raise
+        raise PreflightEvidenceError("source-bound evidence file cannot be read") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _provider_free_is_complete(value: Mapping[str, Any]) -> bool:
