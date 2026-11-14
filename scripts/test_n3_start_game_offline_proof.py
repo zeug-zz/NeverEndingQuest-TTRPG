@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import queue
 import shutil
 import socket
 import tempfile
@@ -28,6 +29,22 @@ class FakeSocket:
     family = socket.AF_INET
 
 
+class FakeInputQueue:
+    def __init__(self, web_module: Any) -> None:
+        self.web_module = web_module
+        self.values: list[Any] = []
+
+    def put(self, value: Any) -> None:
+        self.values.append(value)
+        self.web_module.alive = False
+
+
+class FakeCompletions:
+    @staticmethod
+    def create(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+
 class FakeClient:
     def __init__(self, web_module: Any) -> None:
         self.web_module = web_module
@@ -41,6 +58,43 @@ class FakeClient:
             self.events.append(
                 {"name": "error", "args": [{"message": "private-handler-error"}]}
             )
+            return
+        if getattr(self.web_module, "startup_diagnostic", False):
+            self.web_module.alive = True
+            try:
+                for task in self.web_module.diagnostic_router_tasks:
+                    self.web_module.router.call(
+                        task=task,
+                        messages=[{"role": "user", "content": "private-prompt-value"}],
+                        model_tier="simple",
+                    )
+                if getattr(self.web_module, "process_launch", False):
+                    proof.subprocess.run(["must-not-run"])
+                if getattr(self.web_module, "diagnostic_provider_call", False):
+                    self.web_module.chat_completions.Completions.create(
+                        model="private-model", prompt="private-sdk-prompt"
+                    )
+                egress_host = getattr(self.web_module, "egress_host", None)
+                if isinstance(egress_host, str):
+                    socket.getaddrinfo(egress_host, 443)
+                self.web_module.game_output_queue.put(
+                    {"type": "narration", "content": "private-startup-output"}
+                )
+                self.web_module.add_to_message_cache(
+                    {"type": "narration", "content": "private-startup-output"}
+                )
+                self.web_module.dm_main.save_conversation_history(
+                    [{"role": "assistant", "content": "private-startup-output"}]
+                )
+                with open("debug/quality_control/model_results.jsonl", "a", encoding="ascii") as stream:
+                    stream.write("private-prompt-value private-startup-output")
+                self.web_module.send_output_to_clients()
+                self.web_module.socketio.emit(
+                    "game_started", {"message": "private-started-message"}
+                )
+            except BaseException:
+                self.web_module.alive = False
+                raise
             return
         egress_host = getattr(self.web_module, "egress_host", None)
         if isinstance(egress_host, str):
@@ -77,6 +131,7 @@ class FakeSocketIO:
         self.web_module = web_module
         self.version_module = version_module
         self.seen_origin: str | None = None
+        self.active_client: FakeClient | None = None
 
     def test_client(self, app: Any, headers: dict[str, str]) -> FakeClient:
         del app
@@ -84,20 +139,27 @@ class FakeSocketIO:
         self.version_module.get_latest_remote_version(
             "fake/repo", "main", silent=True
         )
-        return FakeClient(self.web_module)
+        self.active_client = FakeClient(self.web_module)
+        return self.active_client
+
+    def emit(self, name: str, *args: Any, **kwargs: Any) -> None:
+        payload = args[0] if args else kwargs.get("data")
+        if self.active_client is not None:
+            self.active_client.events.append({"name": name, "args": [payload]})
 
 
 class FakeHostImporter:
     def __init__(self, sandbox: Path, fail_name: str | None = None) -> None:
         self.names: list[str] = []
         self.fail_name = fail_name
+        self.egress_during_web_import = False
         self.ledger_module = SimpleNamespace(
             __file__=str(sandbox / "utils" / "provider_attempt_budget.py"),
             activate_provider_attempt_budget=self.activate_budget
         )
         self.router_module = SimpleNamespace(
             __file__=str(sandbox / "utils" / "llm_router.py"),
-            llm=SimpleNamespace(call=self.unused),
+            llm=SimpleNamespace(call=self.unused, decide=self.unused),
         )
         self.model_config_module = SimpleNamespace(
             __file__=str(sandbox / "model_config.py"),
@@ -122,9 +184,19 @@ class FakeHostImporter:
                 }
             },
         )
+        self.factory_module = SimpleNamespace(
+            __file__=str(sandbox / "utils" / "ai_client_factory.py"),
+            create_chat_client=self.unused,
+            create_image_client=self.unused,
+            create_tts_client=self.unused,
+            create_video_client=self.unused,
+        )
+        self.saved_histories: list[Any] = []
+        self.cached_messages: list[Any] = []
         self.main_module = SimpleNamespace(
             __file__=str(sandbox / "main.py"),
             get_ai_response=self.unused,
+            save_conversation_history=self.save_history,
         )
         self.version_module = SimpleNamespace(
             __file__=str(sandbox / "utils" / "version_checker.py"),
@@ -139,7 +211,17 @@ class FakeHostImporter:
             provider_call_mode=None,
             provider_call_messages=[],
             egress_host=None,
+            startup_diagnostic=False,
+            diagnostic_router_tasks=["action_prediction", "dm_main"],
+            diagnostic_provider_call=False,
+            process_launch=False,
         )
+        self.web_module.user_input_queue = FakeInputQueue(self.web_module)
+        self.web_module.game_output_queue = queue.Queue()
+        self.web_module.send_output_to_clients = self.unused
+        self.web_module.add_to_message_cache = self.cache_message
+        self.chat_completions = SimpleNamespace(Completions=FakeCompletions)
+        self.web_module.chat_completions = self.chat_completions
         self.web_module._player_sharing_runtime_available = (
             lambda: self.web_module.alive
         )
@@ -151,6 +233,12 @@ class FakeHostImporter:
     @staticmethod
     def unused(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
+
+    def save_history(self, value: Any) -> None:
+        self.saved_histories.append(value)
+
+    def cache_message(self, value: Any) -> None:
+        self.cached_messages.append(value)
 
     def activate_budget(self) -> Path:
         path = Path(os.environ["NEQ_PROVIDER_ATTEMPT_LEDGER"])
@@ -166,6 +254,8 @@ class FakeHostImporter:
 
     def __call__(self, name: str) -> Any:
         self.names.append(name)
+        if name == "web.web_interface" and self.egress_during_web_import:
+            socket.getaddrinfo("diagnostic-private.invalid", 443)
         if name == self.fail_name:
             raise RuntimeError(
                 "setup failed at /outside/repo/config.py config API_KEY=private-value"
@@ -173,12 +263,15 @@ class FakeHostImporter:
         modules = {
             "utils.provider_attempt_budget": self.ledger_module,
             "utils.llm_router": self.router_module,
+            "utils.ai_client_factory": self.factory_module,
             "utils.version_checker": self.version_module,
             "model_config": self.model_config_module,
             "web.web_interface": self.web_module,
         }
         if name in modules:
             return modules[name]
+        if name == "openai.resources.chat.completions":
+            return self.chat_completions
         if name.startswith("openai.resources."):
             raise ImportError("optional SDK module is unavailable in fake host")
         raise AssertionError("unexpected import request: " + name)
@@ -341,6 +434,7 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             "main.py",
             "web/web_interface.py",
             "utils/llm_router.py",
+            "utils/ai_client_factory.py",
             "utils/provider_attempt_budget.py",
             "utils/version_checker.py",
             "model_config.py",
@@ -439,6 +533,331 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 {"host_class": "non_loopback", "port": 9445},
             ],
         )
+
+    def test_startup_diagnostic_stubs_ordered_tasks_and_records_nested_call_sites(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        recorder = proof.ProviderCallRecorder(diagnostic_mode=True)
+        frame = SimpleNamespace(
+            f_code=SimpleNamespace(
+                co_filename=str(sandbox / "core" / "nested" / "startup.py")
+            ),
+            f_lineno=73,
+            f_back=None,
+        )
+        responses = []
+        for task in ("action_prediction", "dm_main"):
+            responses.append(
+                recorder.diagnostic_router_call(
+                    (),
+                    {
+                        "task": task,
+                        "messages": [
+                            {"role": "user", "content": "private-prompt-value"}
+                        ],
+                        "model_tier": "simple",
+                    },
+                    model_config=importer.model_config_module,
+                    sandbox_root=sandbox,
+                    caller_frame=frame,
+                )
+            )
+
+        events, stub_counts, failure, overflow = recorder.diagnostic_snapshot()
+        self.assertEqual(responses, [proof.DIAGNOSTIC_STUB_RESPONSES[task] for task in proof.DIAGNOSTIC_TASKS])
+        self.assertEqual([event["task"] for event in events], list(proof.DIAGNOSTIC_TASKS))
+        self.assertEqual([event["sequence"] for event in events], [1, 2])
+        self.assertEqual(
+            [event["call_site"] for event in events],
+            ["core/nested/startup.py:73", "core/nested/startup.py:73"],
+        )
+        self.assertEqual([event["profile"] for event in events], ["proof-profile"] * 2)
+        self.assertEqual(
+            [event["thread_id"] for event in events], [proof.threading.get_ident()] * 2
+        )
+        self.assertEqual([event["thread_class"] for event in events], ["main"] * 2)
+        self.assertEqual(stub_counts, {"action_prediction": 1, "dm_main": 1})
+        self.assertIsNone(failure)
+        self.assertFalse(overflow)
+        serialized = json.dumps(events, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn("private-prompt-value", serialized)
+        self.assertEqual(
+            set(events[0]),
+            {"task", "profile", "call_site", "thread_id", "thread_class", "sequence"},
+        )
+
+    def test_startup_diagnostic_unknown_extra_and_overflow_calls_fail_closed(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+
+        def invoke(recorder: Any, task: str) -> Any:
+            return recorder.diagnostic_router_call(
+                (),
+                {"task": task},
+                model_config=importer.model_config_module,
+                sandbox_root=sandbox,
+                caller_frame=SimpleNamespace(
+                    f_code=SimpleNamespace(
+                        co_filename=str(sandbox / "utils" / "llm_router.py")
+                    ),
+                    f_lineno=42,
+                    f_back=None,
+                ),
+            )
+
+        unknown = proof.ProviderCallRecorder(diagnostic_mode=True)
+        with self.assertRaises(proof.ProviderCallBlocked):
+            invoke(unknown, "unexpected_task")
+        self.assertEqual(unknown.diagnostic_snapshot()[2], "unrecognized startup router task")
+
+        extra = proof.ProviderCallRecorder(diagnostic_mode=True)
+        invoke(extra, "action_prediction")
+        with self.assertRaises(proof.ProviderCallBlocked):
+            invoke(extra, "action_prediction")
+        self.assertEqual(extra.diagnostic_snapshot()[2], "extra startup router call")
+
+        overflow = proof.ProviderCallRecorder(
+            diagnostic_mode=True, diagnostic_call_limit=2
+        )
+        invoke(overflow, "action_prediction")
+        invoke(overflow, "dm_main")
+        with self.assertRaises(proof.ProviderCallBlocked):
+            invoke(overflow, "action_prediction")
+        self.assertEqual(overflow.diagnostic_snapshot()[3], True)
+
+    def test_startup_diagnostic_rejects_loopback_egress(self) -> None:
+        guard = proof.EgressGuard(deny_loopback=True)
+        with guard:
+            with self.assertRaises(proof.EgressBlocked):
+                guard._record("127.0.0.1", 8360, record_loopback=False)
+            with self.assertRaises(proof.EgressBlocked):
+                socket.socket.sendto(FakeSocket(), b"x", ("127.0.0.1", 8360))
+            with self.assertRaises(proof.EgressBlocked):
+                socket.socket.send(FakeSocket(), b"x")
+            with self.assertRaises(proof.EgressBlocked):
+                socket.gethostbyname("example.invalid")
+            with self.assertRaises(proof.EgressBlocked):
+                socket.socket.bind(FakeSocket(), ("127.0.0.1", 8360))
+            with self.assertRaises(proof.EgressBlocked):
+                socket.socket.listen(FakeSocket(), 1)
+        self.assertEqual(guard.attempt_count(), 6)
+
+    def test_startup_worker_environment_drops_ambient_credentials_and_path(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": "/private/tool-path",
+                "LANG": "C",
+                "OPENAI_API_KEY": "test-secret-value",
+                "HTTP_PROXY": "http://proxy.invalid",
+                "NEQ_PROVIDER_ATTEMPT_LEDGER": "private-ledger-path",
+                "PYTHONPATH": "private-python-path",
+            },
+            clear=True,
+        ):
+            environment = proof._startup_diagnostic_worker_environment()
+
+        self.assertEqual(environment["PATH"], "")
+        self.assertEqual(environment["PYTHONPATH"], str(proof.REPO_ROOT))
+        self.assertEqual(environment["NEQ_OPEN_BROWSER"], "0")
+        self.assertNotIn("OPENAI_API_KEY", environment)
+        self.assertNotIn("HTTP_PROXY", environment)
+        self.assertNotIn("NEQ_PROVIDER_ATTEMPT_LEDGER", environment)
+        self.assertNotIn("private-tool-path", json.dumps(environment))
+
+    def test_sensitive_prompt_and_model_log_paths_are_discarded(self) -> None:
+        sandbox = self._fake_sandbox()
+        self.assertTrue(
+            proof._is_sensitive_diagnostic_log_path(
+                sandbox / "debug" / "quality_control" / "model_results.jsonl",
+                sandbox,
+            )
+        )
+        self.assertTrue(
+            proof._is_sensitive_diagnostic_log_path(
+                Path(tempfile.gettempdir()) / "temp_conversation_for_api.json",
+                sandbox,
+            )
+        )
+
+    def test_startup_diagnostic_observes_fake_start_game_without_claiming_real_coverage(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-success",
+            output_dir=self.scratch / "startup-diagnostic-success",
+            startup_timeout=0.5,
+            host_importer=importer,
+        )
+
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertTrue(report["startup_output_delivered"])
+        self.assertTrue(report["game_started"])
+        self.assertTrue(report["startup_thread_stopped"])
+        self.assertFalse(report["coverage_established"])
+        self.assertFalse(report["tripwire_coverage"]["real_host_imports"])
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+        self.assertEqual(
+            report["reason"],
+            "complete real sandbox host imports were not verified",
+        )
+        self.assertTrue(report["tripwire_coverage"]["startup_boundaries"])
+        self.assertEqual(
+            [item["task"] for item in report["call_trace"]],
+            ["action_prediction", "dm_main"],
+        )
+        self.assertEqual([item["sequence"] for item in report["call_trace"]], [1, 2])
+        self.assertTrue(
+            all(item["call_site"].startswith("scripts/test_n3_start_game_offline_proof.py:")
+                for item in report["call_trace"])
+        )
+        self.assertEqual(importer.web_module.user_input_queue.values, ["/quit"])
+        self.assertEqual(importer.saved_histories, [])
+        self.assertEqual(importer.cached_messages, [])
+        self.assertNotIn("config", importer.names)
+        self.assertFalse(
+            (sandbox / "debug" / "quality_control" / "model_results.jsonl").exists()
+        )
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        for private_value in (
+            "private-prompt-value",
+            "private-startup-output",
+            "private-started-message",
+            "private-sdk-prompt",
+            "private-model",
+        ):
+            self.assertNotIn(private_value, serialized)
+        written = json.loads(
+            (
+                self.scratch
+                / "startup-diagnostic-success"
+                / "startup-diagnostic.json"
+            ).read_text(encoding="ascii")
+        )
+        self.assertEqual(written, report)
+
+    def test_early_startup_failure_preserves_individual_tripwire_status(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox, fail_name="web.web_interface")
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-early-failure",
+            output_dir=self.scratch / "startup-diagnostic-early-failure",
+            startup_timeout=0.2,
+            host_importer=importer,
+        )
+
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertFalse(report["coverage_established"])
+        self.assertTrue(report["tripwire_coverage"]["router_call"])
+        self.assertTrue(report["tripwire_coverage"]["router_decide"])
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+        self.assertEqual(report["tripwire_coverage"]["sdk_method_count"], 1)
+        self.assertFalse(report["tripwire_coverage"]["real_host_imports"])
+        self.assertFalse(report["tripwire_coverage"]["startup_boundaries"])
+        self.assertEqual(report["failure_exception_class"], "RuntimeError")
+        self.assertEqual(report["failure_category"], "host_import_failed")
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn("private-value", serialized)
+        self.assertNotIn("/outside/repo/config.py", serialized)
+
+    def test_host_import_egress_reports_class_and_fixed_category_only(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.egress_during_web_import = True
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-import-egress",
+            output_dir=self.scratch / "startup-diagnostic-import-egress",
+            startup_timeout=0.2,
+            host_importer=importer,
+        )
+
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["network_attempt_count"], 1)
+        self.assertEqual(report["failure_exception_class"], "EgressBlocked")
+        self.assertEqual(
+            report["failure_category"], "host_import_egress_blocked"
+        )
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn("diagnostic-private.invalid", serialized)
+        self.assertNotIn("network destination refused", serialized)
+        self.assertNotIn("private-value", serialized)
+
+    def test_startup_report_includes_only_sanitized_network_attribution(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.egress_host = "startup-private.example.invalid"
+        with patch.object(
+            proof,
+            "_collect_egress_origin",
+            return_value=(
+                ["web/web_interface.py:handle_start_game"],
+                [],
+            ),
+        ):
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-egress-attribution",
+                output_dir=self.scratch / "startup-diagnostic-egress-attribution",
+                startup_timeout=0.3,
+                host_importer=importer,
+            )
+
+        self.assertEqual(report["network_attempt_count"], 1)
+        attributions = report["network_attempt_attributions"]
+        self.assertEqual(len(attributions), 1)
+        self.assertEqual(attributions[0]["hostname_class"], "other")
+        self.assertEqual(attributions[0]["thread_classes"], ["background"])
+        project_frames = attributions[0]["origin"]["project_frames"]
+        self.assertTrue(project_frames)
+        self.assertTrue(
+            all(not frame.startswith("/") for frame in project_frames)
+        )
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn("startup-private.example.invalid", serialized)
+        self.assertNotIn(str(proof.REPO_ROOT), serialized)
+        self.assertNotIn("private-prompt-value", serialized)
+
+    def test_startup_diagnostic_blocks_direct_sdk_unknown_router_and_egress(self) -> None:
+        cases = (
+            ("sdk", {"diagnostic_provider_call": True}, 0, 1),
+            ("process", {"process_launch": True}, 0, 0),
+            (
+                "unknown",
+                {"diagnostic_router_tasks": ["action_prediction", "unknown_task"]},
+                0,
+                0,
+            ),
+            ("egress", {"egress_host": "127.0.0.1"}, 1, 0),
+        )
+        for case_name, updates, network_count, provider_count in cases:
+            with self.subTest(case=case_name):
+                sandbox = self._fake_sandbox()
+                importer = FakeHostImporter(sandbox)
+                importer.web_module.startup_diagnostic = True
+                for name, value in updates.items():
+                    setattr(importer.web_module, name, value)
+                report = proof.run_startup_diagnostic(
+                    sandbox_root=sandbox,
+                    run_id="startup-diagnostic-" + case_name,
+                    output_dir=self.scratch / ("startup-diagnostic-" + case_name),
+                    startup_timeout=0.5,
+                    host_importer=importer,
+                )
+                self.assertEqual(report["verdict"], "BLOCKED")
+                self.assertFalse(report["startup_output_delivered"])
+                self.assertEqual(report["network_attempt_count"], network_count)
+                self.assertEqual(report["provider_call_count"], provider_count)
+                serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+                for private_value in (
+                    "private-prompt-value",
+                    "private-sdk-prompt",
+                    "private-model",
+                ):
+                    self.assertNotIn(private_value, serialized)
 
     def test_egress_attribution_is_relative_bounded_and_deduplicated(self) -> None:
         sandbox = self._fake_sandbox()
