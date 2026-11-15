@@ -4180,6 +4180,10 @@ def run_startup_diagnostic(
         egress_guard.install()
         egress_guard.assert_active()
         egress_guard_active = True
+        # urllib3's IPv6 capability probe binds to ::1:0 during import. The
+        # diagnostic needs no IPv6 capability discovery; disable only this
+        # import-time probe while the egress guard remains fully active.
+        patches.set(socket, "has_ipv6", False)
         process_launch_targets = _install_process_launch_tripwires(
             patches, recorder, sandbox
         )

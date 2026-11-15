@@ -590,6 +590,67 @@ class FakeHostImporter:
         raise AssertionError("unexpected import request: " + name)
 
 
+class IPv6ProbeHostImporter(FakeHostImporter):
+    """Exercise an urllib3-style capability probe without real socket binds."""
+
+    def __init__(
+        self,
+        sandbox: Path,
+        *,
+        fail_name: str | None = None,
+        attempt_guarded_operations: bool = False,
+    ) -> None:
+        super().__init__(sandbox, fail_name=fail_name)
+        self.has_ipv6_during_import: list[bool] = []
+        self.probe_socket_created = False
+        self.probe_bind_attempts: list[Any] = []
+        self.attempt_guarded_operations = attempt_guarded_operations
+        self.guarded_bind_error: str | None = None
+        self.guarded_connect_error: str | None = None
+        self.process_launch_blocked = False
+        self._guarded_operations_attempted = False
+
+    def _urllib3_style_ipv6_probe(self) -> None:
+        if not socket.has_ipv6:
+            return
+
+        self.probe_socket_created = True
+
+        class ProbeSocket:
+            def bind(inner_self: Any, address: Any) -> None:
+                del inner_self
+                self.probe_bind_attempts.append(address)
+
+        ProbeSocket().bind(("::1", 0))
+
+    def _attempt_guarded_operations(self) -> None:
+        try:
+            socket.socket.bind(FakeIPv6Socket(), ("::1", 0))
+        except OSError as exc:
+            self.guarded_bind_error = type(exc).__name__
+
+        try:
+            socket.socket.connect(FakeSocket(), ("198.51.100.20", 9443))
+        except ConnectionRefusedError as exc:
+            self.guarded_connect_error = type(exc).__name__
+
+        try:
+            proof.subprocess.run(["must-not-run"])
+        except proof.ProviderCallBlocked:
+            self.process_launch_blocked = True
+
+    def __call__(self, name: str) -> Any:
+        self.has_ipv6_during_import.append(socket.has_ipv6)
+        self._urllib3_style_ipv6_probe()
+        if (
+            self.attempt_guarded_operations
+            and not self._guarded_operations_attempted
+        ):
+            self._guarded_operations_attempted = True
+            self._attempt_guarded_operations()
+        return super().__call__(name)
+
+
 class FakePreintegrateImporter:
     def __init__(
         self,
@@ -1322,6 +1383,97 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             ).read_text(encoding="ascii")
         )
         self.assertEqual(written, report)
+
+    def test_startup_diagnostic_skips_ipv6_capability_bind_probe(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = IPv6ProbeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        original_has_ipv6 = socket.has_ipv6
+
+        with patch.object(socket, "has_ipv6", True):
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-no-ipv6-probe",
+                output_dir=self.scratch / "startup-diagnostic-no-ipv6-probe",
+                startup_timeout=0.5,
+                host_importer=importer,
+            )
+            self.assertIs(socket.has_ipv6, True)
+
+        self.assertIs(socket.has_ipv6, original_has_ipv6)
+        self.assertTrue(importer.has_ipv6_during_import)
+        self.assertTrue(all(value is False for value in importer.has_ipv6_during_import))
+        self.assertFalse(importer.probe_socket_created)
+        self.assertEqual(importer.probe_bind_attempts, [])
+        self.assertEqual(report["network_attempt_count"], 0)
+        self.assertEqual(report["provider_call_count"], 0)
+        self.assertEqual(report["ledger_reservation_count"], 0)
+        self.assertEqual(
+            [event["task"] for event in report["call_trace"]],
+            ["action_prediction", "dm_main"],
+        )
+        self.assertTrue(report["startup_output_delivered"])
+        self.assertTrue(report["game_started"])
+        self.assertNotEqual(report["verdict"], "PASS")
+
+    def test_startup_diagnostic_restores_ipv6_capability_after_import_error(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = IPv6ProbeHostImporter(
+            sandbox, fail_name="utils.provider_attempt_budget"
+        )
+        original_has_ipv6 = socket.has_ipv6
+
+        with patch.object(socket, "has_ipv6", True):
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-ipv6-probe-import-error",
+                output_dir=self.scratch / "startup-diagnostic-ipv6-probe-import-error",
+                startup_timeout=0.2,
+                host_importer=importer,
+            )
+            self.assertIs(socket.has_ipv6, True)
+
+        self.assertIs(socket.has_ipv6, original_has_ipv6)
+        self.assertEqual(importer.has_ipv6_during_import, [False])
+        self.assertFalse(importer.probe_socket_created)
+        self.assertEqual(importer.probe_bind_attempts, [])
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["network_attempt_count"], 0)
+
+    def test_ipv6_probe_suppression_keeps_network_and_process_guards_active(
+        self,
+    ) -> None:
+        sandbox = self._fake_sandbox()
+        importer = IPv6ProbeHostImporter(
+            sandbox, attempt_guarded_operations=True
+        )
+        importer.web_module.startup_diagnostic = True
+        original_has_ipv6 = socket.has_ipv6
+
+        with patch.object(socket, "has_ipv6", True), patch.object(
+            proof.subprocess, "run"
+        ) as underlying_spawn:
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-ipv6-guard-invariants",
+                output_dir=self.scratch / "startup-diagnostic-ipv6-guard-invariants",
+                startup_timeout=0.5,
+                host_importer=importer,
+            )
+            self.assertIs(socket.has_ipv6, True)
+            underlying_spawn.assert_not_called()
+
+        self.assertIs(socket.has_ipv6, original_has_ipv6)
+        self.assertTrue(all(value is False for value in importer.has_ipv6_during_import))
+        self.assertFalse(importer.probe_socket_created)
+        self.assertEqual(importer.probe_bind_attempts, [])
+        self.assertEqual(importer.guarded_bind_error, "PermissionError")
+        self.assertEqual(importer.guarded_connect_error, "ConnectionRefusedError")
+        self.assertTrue(importer.process_launch_blocked)
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["network_attempt_count"], 2)
+        self.assertTrue(report["egress_refusal_coverage_complete"])
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
 
     def test_startup_diagnostic_stubs_git_probe_and_blocks_other_process_launches(
         self,
