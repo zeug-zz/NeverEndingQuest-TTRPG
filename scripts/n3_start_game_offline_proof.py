@@ -23,13 +23,14 @@ import socket
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
 import traceback
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import CodeType, ModuleType, SimpleNamespace, TracebackType
 from typing import Any, Callable, Optional
 
 
@@ -44,6 +45,9 @@ MAX_RECORDED_EGRESS = 100
 MAX_EGRESS_STACK_FRAMES = 64
 MAX_EGRESS_ORIGIN_FRAMES = 3
 MAX_EGRESS_LIBRARY_PACKAGES = 3
+MAX_FAILURE_ORIGIN_FRAMES = 5
+MAX_FAILURE_ORIGIN_TRACEBACK_FRAMES = 64
+MAX_FAILURE_ORIGIN_FILENAME_LENGTH = 4096
 MAX_COUNTER = 1_000_000
 MAX_DIAGNOSTIC_CALLS = 16
 DEFAULT_DIAGNOSTIC_CALL_LIMIT = 8
@@ -117,6 +121,95 @@ SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(?:\.env\b|\b(?:config(?:uration)?|environment|environ|"
     r"api[_ -]?key|secret|token|password|credential|authorization|bearer|"
     r"private[_ -]?key)\b)"
+)
+STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST = {
+    identifier: identifier
+    for identifier in (
+        "main.py",
+        "model_config.py",
+        "web/web_interface.py",
+        "web/shared_state.py",
+        "web/output_markers.py",
+        "web/extensions/live_chat_monitor.py",
+        "web/extensions/streaming_events.py",
+        "web/extensions/tabletop_socket_handlers.py",
+        "web/routes/browser_settings_routes.py",
+        "web/routes/character_sheet_routes.py",
+        "web/routes/memory_routes.py",
+        "web/routes/player_sharing_routes.py",
+        "web/routes/tabletop_party_routes.py",
+        "web/routes/toolkit_homebrew_routes.py",
+        "web/routes/world_narrative_routes.py",
+        "utils/provider_attempt_budget.py",
+        "utils/llm_router.py",
+        "utils/llm_runtime.py",
+        "utils/ai_client_factory.py",
+        "utils/version_checker.py",
+        "utils/media_paths.py",
+        "utils/repo_paths.py",
+        "utils/web_boundary.py",
+        "utils/redirect_debug_output.py",
+        "utils/reset_campaign.py",
+        "utils/pc_manager.py",
+        "utils/npc_identity.py",
+        "utils/module_media_generator_report.py",
+        "utils/image_response_payload.py",
+        "utils/enhanced_logger.py",
+        "utils/toolkit_adaptation_output_safety.py",
+        "utils/character_creation_audit.py",
+        "utils/encoding_utils.py",
+        "utils/session_cleanup.py",
+        "utils/combat_summary_history.py",
+        "utils/combat_latency_trace.py",
+        "utils/player_stats.py",
+        "utils/character_creator.py",
+        "utils/save_roll_contract.py",
+        "utils/location_path_finder.py",
+        "utils/file_operations.py",
+        "utils/module_path_manager.py",
+        "utils/authoritative_state_packet.py",
+        "utils/turn_time_sync.py",
+        "utils/inventory_possession_authority.py",
+        "utils/location_context_hygiene.py",
+        "utils/tracked_transfer_runtime.py",
+        "updates/update_character_info.py",
+        "updates/plot_update.py",
+        "updates/update_world_time.py",
+        "core/toolkit/portrait_service.py",
+        "core/memory/memory_db.py",
+        "core/managers/status_manager.py",
+        "core/managers/combat_manager.py",
+        "core/managers/level_up_manager.py",
+        "core/managers/location_manager.py",
+        "core/managers/campaign_manager.py",
+        "core/ai/conversation_utils.py",
+        "core/ai/incremental_compression.py",
+        "core/ai/action_handler.py",
+        "core/ai/cumulative_summary.py",
+        "core/ai/inventory_context_integration.py",
+    )
+}
+STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST = {
+    identifier: "site-packages/" + identifier
+    for identifier in (
+        "flask/__init__.py",
+        "flask/app.py",
+        "flask_socketio/__init__.py",
+        "socketio/__init__.py",
+        "socketio/server.py",
+        "engineio/__init__.py",
+        "engineio/server.py",
+        "werkzeug/__init__.py",
+        "werkzeug/exceptions.py",
+        "openai/__init__.py",
+        "openai/_client.py",
+        "httpx/__init__.py",
+        "PIL/Image.py",
+    )
+}
+FAILURE_ORIGIN_ALLOWED_IDENTIFIERS = frozenset(
+    set(STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST.values())
+    | set(STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST.values())
 )
 PROOF_ORIGIN = "http://127.0.0.1:8360"
 _MISSING_MODULE = object()
@@ -227,6 +320,227 @@ def _safe_exception_class(value: Any) -> Optional[str]:
     if isinstance(value, str) and EXCEPTION_CLASS_PATTERN.fullmatch(value):
         return value
     return None
+
+
+def _contains_config_source_path(value: str) -> bool:
+    return any(
+        part.lower() == "config.py"
+        for part in re.split(r"[\\/]", value)
+    )
+
+
+def _known_installed_package_roots() -> list[str]:
+    """Return only this interpreter's configured package installation roots."""
+    try:
+        configured_paths = sysconfig.get_paths()
+    except BaseException:
+        return []
+
+    roots: list[str] = []
+    for key in ("purelib", "platlib"):
+        value = configured_paths.get(key) if isinstance(configured_paths, dict) else None
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > MAX_FAILURE_ORIGIN_FILENAME_LENGTH
+            or not value.isascii()
+            or _contains_config_source_path(value)
+        ):
+            continue
+        try:
+            root = os.path.normpath(os.path.abspath(value))
+        except (OSError, TypeError, ValueError):
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _relative_python_source(
+    filename: str, root: str
+) -> Optional[str]:
+    """Return a relative candidate solely for exact fixed-allowlist lookup."""
+    try:
+        candidate = os.path.normpath(os.path.abspath(filename))
+        approved_root = os.path.normpath(os.path.abspath(root))
+        if os.path.commonpath((candidate, approved_root)) != approved_root:
+            return None
+        relative = os.path.relpath(candidate, approved_root).replace(os.sep, "/")
+    except (OSError, TypeError, ValueError):
+        return None
+
+    parts = relative.split("/")
+    if (
+        relative in ("", ".")
+        or not relative.endswith(".py")
+        or any(part in ("", ".", "..") for part in parts)
+        or any(part.lower() == "config.py" for part in parts)
+    ):
+        return None
+    if (
+        len(relative) > 180
+        or not SAFE_ORIGIN_PATH_PATTERN.fullmatch(relative)
+        or MODEL_SECRET_VALUE_PATTERN.search(relative)
+        or SENSITIVE_DIAGNOSTIC_PATTERN.search(relative)
+    ):
+        return None
+    return relative
+
+
+def _safe_exception_source_identifier(
+    filename: Any,
+    sandbox_root: Optional[Path],
+    installed_roots: list[str],
+) -> Optional[str]:
+    """Recognize repository or configured-package Python code without opening it."""
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or len(filename) > MAX_FAILURE_ORIGIN_FILENAME_LENGTH
+        or not filename.isascii()
+        or "\\" in filename
+        or _contains_config_source_path(filename)
+    ):
+        return None
+
+    for root in installed_roots:
+        relative = _relative_python_source(filename, root)
+        if relative is not None:
+            source = STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST.get(relative)
+            if source is not None:
+                return source
+
+    roots: list[tuple[str, str]] = []
+    if sandbox_root is not None:
+        try:
+            roots.append((os.fspath(sandbox_root), ""))
+        except (TypeError, ValueError):
+            pass
+    try:
+        roots.append((os.fspath(REPO_ROOT), ""))
+    except (TypeError, ValueError):
+        pass
+    for root, _prefix in roots:
+        relative = _relative_python_source(filename, root)
+        source = (
+            STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST.get(relative)
+            if relative is not None
+            else None
+        )
+        if source is not None:
+            return source
+    return None
+
+
+def _exception_failure_origin(
+    exc: BaseException, sandbox_root: Optional[Path]
+) -> dict[str, Any]:
+    """Extract bounded file/line origins without reading exception data or source."""
+    unknown = {"status": "unknown", "frames": []}
+    try:
+        traceback_descriptor = BaseException.__dict__["__traceback__"]
+        tb = traceback_descriptor.__get__(exc, type(exc))
+    except BaseException:
+        return unknown
+    if not isinstance(tb, TracebackType):
+        return unknown
+
+    installed_roots = _known_installed_package_roots()
+    frames: list[dict[str, Any]] = []
+    saw_traceback = False
+    rejected_frame = False
+    inspected = 0
+    while tb is not None and inspected < MAX_FAILURE_ORIGIN_TRACEBACK_FRAMES:
+        if not isinstance(tb, TracebackType):
+            rejected_frame = True
+            break
+        saw_traceback = True
+        try:
+            code = tb.tb_frame.f_code
+            filename = code.co_filename if isinstance(code, CodeType) else None
+            line_number = tb.tb_lineno
+            source = _safe_exception_source_identifier(
+                filename, sandbox_root, installed_roots
+            )
+        except BaseException:
+            source = None
+            line_number = None
+        if (
+            source is None
+            or isinstance(line_number, bool)
+            or not isinstance(line_number, int)
+            or not 1 <= line_number <= MAX_COUNTER
+        ):
+            rejected_frame = True
+        else:
+            frame = {"source": source, "line": line_number}
+            if frame not in frames:
+                frames.append(frame)
+                if len(frames) > MAX_FAILURE_ORIGIN_FRAMES:
+                    del frames[0]
+        try:
+            tb = tb.tb_next
+        except BaseException:
+            tb = None
+            rejected_frame = True
+        inspected += 1
+
+    if tb is not None:
+        rejected_frame = True
+    if frames:
+        return {"status": "identified", "frames": frames}
+    return {
+        "status": "redacted" if saw_traceback or rejected_frame else "unknown",
+        "frames": [],
+    }
+
+
+def _safe_failure_origin(value: Any) -> Optional[dict[str, Any]]:
+    """Revalidate the bounded source/line-only report representation."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"status": "redacted", "frames": []}
+
+    status = value.get("status")
+    if status not in ("identified", "redacted", "unknown"):
+        status = "redacted"
+    raw_frames = value.get("frames")
+    frames: list[dict[str, Any]] = []
+    if isinstance(raw_frames, (list, tuple)):
+        for frame in raw_frames[:MAX_FAILURE_ORIGIN_FRAMES]:
+            if not isinstance(frame, dict):
+                continue
+            source = frame.get("source")
+            line_number = frame.get("line")
+            if (
+                not isinstance(source, str)
+                or not source.isascii()
+                or len(source) > 180
+                or not SAFE_ORIGIN_PATH_PATTERN.fullmatch(source)
+                or source not in FAILURE_ORIGIN_ALLOWED_IDENTIFIERS
+                or MODEL_SECRET_VALUE_PATTERN.search(source)
+                or SENSITIVE_DIAGNOSTIC_PATTERN.search(source)
+                or not source.endswith(".py")
+                or source.startswith("/")
+                or "\\" in source
+                or ".." in source.split("/")
+                or any(
+                    part.lower() == "config.py"
+                    for part in source.split("/")
+                )
+                or isinstance(line_number, bool)
+                or not isinstance(line_number, int)
+                or not 1 <= line_number <= MAX_COUNTER
+            ):
+                continue
+            frames.append({"source": source, "line": line_number})
+
+    if frames and status == "unknown":
+        status = "redacted"
+    elif not frames and status == "identified":
+        status = "redacted"
+    return {"status": status, "frames": frames}
 
 
 def _startup_failure_category(
@@ -1018,6 +1332,7 @@ def _startup_diagnostic_report(
     egress_refusal_count: Any = None,
     failure_exception_class: Optional[str] = None,
     failure_category: Optional[str] = None,
+    failure_origin: Any = None,
 ) -> dict[str, Any]:
     """Build a payload-free, bounded report for the actual start_game path."""
     safe_events, event_schema_valid = _safe_diagnostic_call_events(call_events)
@@ -1142,6 +1457,7 @@ def _startup_diagnostic_report(
         ),
         "failure_exception_class": safe_failure_class,
         "failure_category": safe_failure_category,
+        "failure_origin": _safe_failure_origin(failure_origin),
         "ledger_reservation_count": safe_ledger_reservations,
         "ledger_valid": bool(ledger_valid),
         "tripwire_coverage": {
@@ -3747,6 +4063,7 @@ def run_startup_diagnostic(
     blocked_reason: Optional[str] = None
     failure_exception_class: Optional[str] = None
     failure_category = "none"
+    failure_origin: Optional[dict[str, Any]] = None
     diagnostic_stage = "sandbox_setup"
     emit_thread: Optional[threading.Thread] = None
     cleanup_context = True
@@ -4116,6 +4433,8 @@ def run_startup_diagnostic(
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
+        if diagnostic_stage == "host_import":
+            failure_origin = _exception_failure_origin(exc, sandbox)
         name = type(exc).__name__
         safe_name = name if EXCEPTION_CLASS_PATTERN.fullmatch(name) else "Exception"
         failure_exception_class = _safe_exception_class(name)
@@ -4246,6 +4565,7 @@ def run_startup_diagnostic(
         egress_refusal_count=egress_refusal_count,
         failure_exception_class=failure_exception_class,
         failure_category=failure_category,
+        failure_origin=failure_origin,
     )
     if runtime_alive or (new_live_threads and not isolated_worker):
         report["verdict"] = "BLOCKED"
