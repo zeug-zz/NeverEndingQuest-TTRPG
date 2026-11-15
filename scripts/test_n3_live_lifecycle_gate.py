@@ -3687,6 +3687,54 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("usage:", help_output.getvalue())
 
+    def test_diagnostic_stop_parser_only_accepts_l01(self) -> None:
+        run_args = [
+            "run",
+            "--run-id",
+            self.run_id,
+            "--sha",
+            self.sha,
+            "--booking-id",
+            self.booking_id,
+            "--preflight-report",
+            self.report_argument,
+        ]
+        parser = gate._build_parser()
+
+        parsed_default = parser.parse_args(run_args)
+        self.assertIsNone(parsed_default.diagnostic_stop_after_row)
+
+        parsed_diagnostic = parser.parse_args(
+            run_args + ["--diagnostic-stop-after-row", "L01"]
+        )
+        self.assertEqual(parsed_diagnostic.diagnostic_stop_after_row, "L01")
+
+        with patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                parser.parse_args(
+                    run_args + ["--diagnostic-stop-after-row", "L02"]
+                )
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_invalid_diagnostic_stop_row_refuses_before_host_start(self) -> None:
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L02",
+        )
+
+        result = gate.run_live_gate(self.dependencies, arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertIn(
+            "diagnostic_stop_row_invalid", result["infrastructure_failures"]
+        )
+        self.assertEqual(self.host_factory_calls, 0)
+
     def test_capture_creation_failure_returns_blocked_without_launch(self) -> None:
         original_mkdir = Path.mkdir
         capture = self.root / gate.EVIDENCE_BASE / self.run_id / "capture"
@@ -4225,6 +4273,115 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertTrue(run_record["teardown"]["gate_state_root_removed"])
         self.assertTrue(summary_record["teardown_complete"])
 
+    def test_diagnostic_stop_after_l01_blocks_remaining_rows_and_tears_down(self) -> None:
+        executed: list[str] = []
+
+        class RecordingExecutor:
+            def __init__(self, row_id: str) -> None:
+                self.row_id = row_id
+
+            def execute(
+                self, _context: gate.RowContext
+            ) -> gate.RowExecutionResult:
+                executed.append(self.row_id)
+                return gate.RowExecutionResult("PASS", "diagnostic-row-pass")
+
+        registry = {
+            row.row_id: RecordingExecutor(row.row_id) for row in gate.LIVE_ROWS
+        }
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L01",
+        )
+
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), arguments
+        )
+
+        self.assertEqual(executed, ["L01"])
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(result["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(result["rows"][0]["verdict"], "PASS")
+        self.assertEqual(
+            [row["verdict"] for row in result["rows"][1:]],
+            ["BLOCKED"] * (len(gate.LIVE_ROWS) - 1),
+        )
+        self.assertEqual(
+            [row["reason"] for row in result["rows"][1:]],
+            ["diagnostic-stop-after-row"] * (len(gate.LIVE_ROWS) - 1),
+        )
+        self.assertEqual(result["infrastructure_failures"], [])
+        self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
+        evidence = self.root / str(result["evidence_path"])
+        run_record = json.loads((evidence / "run.json").read_text(encoding="utf-8"))
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(run_record["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(summary_record["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(run_record["gate_verdict"], "BLOCKED")
+        self.assertFalse(run_record["is_gate_pass"])
+        self.assertEqual(summary_record["gate_verdict"], "BLOCKED")
+        self.assertFalse(summary_record["is_gate_pass"])
+        self.assertTrue(summary_record["row_coverage_complete"])
+        self.assertTrue(summary_record["teardown_complete"])
+
+    def test_diagnostic_stop_preserves_l01_failure(self) -> None:
+        executed: list[str] = []
+
+        class RecordingExecutor:
+            def __init__(self, row_id: str) -> None:
+                self.row_id = row_id
+
+            def execute(
+                self, _context: gate.RowContext
+            ) -> gate.RowExecutionResult:
+                executed.append(self.row_id)
+                verdict = "FAIL" if self.row_id == "L01" else "PASS"
+                return gate.RowExecutionResult(verdict, "diagnostic-row-result")
+
+        registry = {
+            row.row_id: RecordingExecutor(row.row_id) for row in gate.LIVE_ROWS
+        }
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L01",
+        )
+
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), arguments
+        )
+
+        self.assertEqual(executed, ["L01"])
+        self.assertEqual(result["gate_verdict"], "FAIL")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(result["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(result["rows"][0]["verdict"], "FAIL")
+        self.assertTrue(
+            all(
+                row["reason"] == "diagnostic-stop-after-row"
+                for row in result["rows"][1:]
+            )
+        )
+        evidence = self.root / str(result["evidence_path"])
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary_record["gate_verdict"], "FAIL")
+        self.assertEqual(
+            summary_record["platform_verdicts"]["macos-arm64"]["verdict"],
+            "FAIL",
+        )
+
     def test_full_simulated_run_passes_rows_but_stays_pending_and_redacts(self) -> None:
         secrets = [
             "credential-secret-%s-sentinel" % row.row_id
@@ -4258,6 +4415,7 @@ ACTIVE_PROFILE = "n3-luna"
 
         self.assertEqual(result["gate_verdict"], "PENDING")
         self.assertFalse(result["is_gate_pass"])
+        self.assertNotIn("diagnostic_stop_after_row", result)
         self.assertEqual(
             result["platform_verdicts"]["macos-arm64"]["verdict"], "PASS"
         )
@@ -4271,6 +4429,12 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertEqual([row["verdict"] for row in result["rows"]], ["PASS"] * 10)
         evidence = self.root / result["evidence_path"]
+        run_record = json.loads((evidence / "run.json").read_text(encoding="utf-8"))
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("diagnostic_stop_after_row", run_record)
+        self.assertNotIn("diagnostic_stop_after_row", summary_record)
         for artifact in evidence.iterdir():
             if not artifact.is_file():
                 continue

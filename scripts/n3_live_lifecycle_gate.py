@@ -200,6 +200,7 @@ _DIAGNOSTIC_REASON_CODES = frozenset(
         "companion_long_post_action_invalid",
         "cumulative_narration_cost_cap_reached",
         "degraded",
+        "diagnostic_stop_row_invalid",
         "driver_time_cap_exceeded",
         "executor_exception",
         "fail-fast",
@@ -554,6 +555,7 @@ class RunArguments:
     booking_id: str
     preflight_report: str
     party_size: int = 1
+    diagnostic_stop_after_row: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -7235,6 +7237,11 @@ class LiveGateRunner:
         self._pre_row_gate_step = "row_precheck"
 
     def run(self) -> dict[str, object]:
+        if (
+            self.arguments.diagnostic_stop_after_row is not None
+            and self.arguments.diagnostic_stop_after_row != "L01"
+        ):
+            return self._refusal(GateError("diagnostic_stop_row_invalid"))
         try:
             self._validate_before_side_effects()
         except GateError as exc:
@@ -7789,6 +7796,20 @@ class LiveGateRunner:
                 "companion_counters_cumulative": dict(self.cumulative_counters),
             }
             self.rows.append(record)
+            if self.arguments.diagnostic_stop_after_row == row.row_id:
+                if result.verdict == "FAIL":
+                    self.semantic_failures.append(
+                        "row_assertion_failed:" + row.row_id
+                    )
+                elif result.verdict != "PASS":
+                    self._add_infrastructure(
+                        "required_row_blocked:" + row.row_id
+                    )
+                self._check_provider_ledger_during_run(row.row_id)
+                self._append_blocked_rows(
+                    index + 1, "diagnostic-stop-after-row"
+                )
+                return
             if result.verdict == "FAIL":
                 self.semantic_failures.append("row_assertion_failed:" + row.row_id)
                 self._append_blocked_rows(index + 1, "fail-fast")
@@ -8350,6 +8371,56 @@ class LiveGateRunner:
             infrastructure_failures=self.infrastructure_failures,
             semantic_failures=self.semantic_failures,
         )
+        diagnostic_stop_after_row = self.arguments.diagnostic_stop_after_row
+        diagnostic_gate_verdict: str | None = None
+        diagnostic_platform_reason: str | None = None
+        if diagnostic_stop_after_row is not None:
+            diagnostic_row_verdict = next(
+                (
+                    row.get("verdict")
+                    for row in self.rows
+                    if row.get("row_id") == diagnostic_stop_after_row
+                ),
+                None,
+            )
+            diagnostic_gate_verdict = (
+                "FAIL" if diagnostic_row_verdict == "FAIL" else "BLOCKED"
+            )
+            diagnostic_platform_reason = (
+                "diagnostic-row-failed"
+                if diagnostic_gate_verdict == "FAIL"
+                else "diagnostic-stop-after-row"
+            )
+            selected_platform_verdicts = verdicts["platform_verdicts"]
+            assert isinstance(selected_platform_verdicts, dict)
+            selected_platform_verdicts = dict(selected_platform_verdicts)
+            selected_platform_verdicts["macos-arm64"] = {
+                "verdict": diagnostic_gate_verdict,
+                "reason": diagnostic_platform_reason,
+            }
+            verdicts["platform_verdicts"] = selected_platform_verdicts
+            verdicts["gate_verdict"] = diagnostic_gate_verdict
+            verdicts["is_gate_pass"] = False
+
+        def apply_diagnostic_marker(document: dict[str, object]) -> None:
+            if (
+                diagnostic_stop_after_row is None
+                or diagnostic_gate_verdict is None
+                or diagnostic_platform_reason is None
+            ):
+                return
+            document["diagnostic_stop_after_row"] = diagnostic_stop_after_row
+            document["gate_verdict"] = diagnostic_gate_verdict
+            document["is_gate_pass"] = False
+            platform_verdicts = document.get("platform_verdicts")
+            if isinstance(platform_verdicts, dict):
+                selected_platform_verdicts = dict(platform_verdicts)
+                selected_platform_verdicts["macos-arm64"] = {
+                    "verdict": diagnostic_gate_verdict,
+                    "reason": diagnostic_platform_reason,
+                }
+                document["platform_verdicts"] = selected_platform_verdicts
+
         run_record = {
             "schema_version": 1,
             "manifest_id": MANIFEST_ID,
@@ -8383,6 +8454,7 @@ class LiveGateRunner:
             "teardown": dict(self.teardown),
             **verdicts,
         }
+        apply_diagnostic_marker(run_record)
         summary = {
             "schema_version": 1,
             "manifest_id": MANIFEST_ID,
@@ -8415,6 +8487,7 @@ class LiveGateRunner:
             ),
             **verdicts,
         }
+        apply_diagnostic_marker(summary)
         write_ok = True
         try:
             write_ok = _write_rows_jsonl(
@@ -8439,10 +8512,12 @@ class LiveGateRunner:
             summary["infrastructure_failures"] = list(self.infrastructure_failures)
             summary["semantic_failures"] = list(self.semantic_failures)
             _force_evidence_blocked(summary)
+            apply_diagnostic_marker(summary)
             run_record.update(verdicts)
             run_record["infrastructure_failures"] = list(self.infrastructure_failures)
             run_record["semantic_failures"] = list(self.semantic_failures)
             _force_evidence_blocked(run_record)
+            apply_diagnostic_marker(run_record)
             _write_json_evidence(
                 self.capture_dir / "run.json", run_record, self.secrets
             )
@@ -8467,7 +8542,7 @@ class LiveGateRunner:
             block_unwritable_evidence()
             _write_sha256sums(self.capture_dir)
             write_ok = False
-        return {
+        result = {
             "run_id": self.arguments.run_id,
             "gate_verdict": summary["gate_verdict"],
             "is_gate_pass": False,
@@ -8480,6 +8555,9 @@ class LiveGateRunner:
             ).as_posix(),
             "evidence_written": write_ok,
         }
+        if diagnostic_stop_after_row is not None:
+            result["diagnostic_stop_after_row"] = diagnostic_stop_after_row
+        return result
 
     def _copy_provider_ledger(self) -> bool:
         if self.capture_dir is None:
@@ -8531,9 +8609,10 @@ class LiveGateRunner:
 
     def _refusal(self, error: GateError) -> dict[str, object]:
         safe_reason = _safe_row_gate_error_reason(error.reason)
-        return {
+        is_diagnostic = self.arguments.diagnostic_stop_after_row == "L01"
+        result = {
             "run_id": self.arguments.run_id,
-            "gate_verdict": error.verdict,
+            "gate_verdict": "BLOCKED" if is_diagnostic else error.verdict,
             "is_gate_pass": False,
             "platform_verdicts": {
                 "macos-arm64": {"verdict": "BLOCKED", "reason": safe_reason},
@@ -8546,16 +8625,31 @@ class LiveGateRunner:
             "evidence_path": None,
             "evidence_written": False,
         }
+        if is_diagnostic:
+            result["diagnostic_stop_after_row"] = "L01"
+        return result
 
     def _result_without_evidence(self) -> dict[str, object]:
-        return {
+        diagnostic_row_failed = (
+            self.arguments.diagnostic_stop_after_row == "L01"
+            and any(
+                row.get("row_id") == "L01" and row.get("verdict") == "FAIL"
+                for row in self.rows
+            )
+        )
+        gate_verdict = "FAIL" if diagnostic_row_failed else "BLOCKED"
+        result = {
             "run_id": self.arguments.run_id,
-            "gate_verdict": "BLOCKED",
+            "gate_verdict": gate_verdict,
             "is_gate_pass": False,
             "platform_verdicts": {
                 "macos-arm64": {
-                    "verdict": "BLOCKED",
-                    "reason": "evidence-write-failed",
+                    "verdict": gate_verdict,
+                    "reason": (
+                        "diagnostic-row-failed"
+                        if diagnostic_row_failed
+                        else "evidence-write-failed"
+                    ),
                 },
                 "linux-arm64": {
                     "verdict": "BLOCKED",
@@ -8567,6 +8661,9 @@ class LiveGateRunner:
             "evidence_path": None,
             "evidence_written": False,
         }
+        if self.arguments.diagnostic_stop_after_row == "L01":
+            result["diagnostic_stop_after_row"] = "L01"
+        return result
 
 
 def run_live_gate(
@@ -8894,6 +8991,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--booking-id", required=True)
     run.add_argument("--preflight-report", required=True, metavar="PATH")
     run.add_argument("--party-size", type=int, default=1)
+    run.add_argument(
+        "--diagnostic-stop-after-row",
+        choices=("L01",),
+        default=None,
+    )
     return parser
 
 
@@ -8923,6 +9025,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         booking_id=args.booking_id,
         preflight_report=args.preflight_report,
         party_size=args.party_size,
+        diagnostic_stop_after_row=args.diagnostic_stop_after_row,
     )
     try:
         result = run_live_gate(_default_dependencies(REPO_ROOT), run_arguments)
@@ -8934,6 +9037,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "infrastructure_failures": ["driver_unavailable"],
             "evidence_path": None,
         }
+        if args.diagnostic_stop_after_row is not None:
+            result["diagnostic_stop_after_row"] = args.diagnostic_stop_after_row
     print(json.dumps(result, ensure_ascii=True, sort_keys=True))
     if result.get("gate_verdict") == "FAIL":
         return 1
