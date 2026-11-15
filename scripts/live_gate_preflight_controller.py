@@ -110,6 +110,7 @@ class PreflightLifecycleInvocation:
     row_run_id: str
     intended_identity: Mapping[str, Any]
     resume_checkpoint: Mapping[str, Any] | None = None
+    create_resume_checkpoint: bool = False
 
 
 class _SupervisedPreflightReport(dict[str, Any]):
@@ -182,6 +183,7 @@ def supervised_preflight_interfaces(
             ),
             resume_checkpoint=checkpoint,
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=invocation.create_resume_checkpoint,
         )
 
     def supervise(
@@ -205,6 +207,7 @@ def supervised_preflight_interfaces(
                 else None
             ),
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=invocation.create_resume_checkpoint,
         )
         identity_evidence = compare_invocation_identity(
             expected_identity, invocation.intended_identity
@@ -225,6 +228,7 @@ def supervised_preflight_interfaces(
                 else None
             ),
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=invocation.create_resume_checkpoint,
         )
 
     def cleanup(plan: PreflightRowPlan, seeded: Mapping[str, Any]) -> bool:
@@ -389,6 +393,7 @@ def planned_worker_identity(
     row_run_id: str,
     resume_checkpoint_sha256: str | None = None,
     preflight_run_id: str | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> dict[str, Any]:
     """Build the trusted worker identity from the source-bound row plan."""
     from scripts import live_gate_preflight_sandbox as sandbox
@@ -418,6 +423,7 @@ def planned_worker_identity(
             run_id=row_run_id,
             resume_checkpoint_sha256=resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=create_resume_checkpoint,
         )
     except PreflightControllerError:
         raise
@@ -1215,6 +1221,7 @@ def _run_lifecycle_invocation(
             str(checkpoint_sha256) if checkpoint_sha256 is not None else None
         ),
         preflight_run_id=preflight_run_id,
+        create_resume_checkpoint=invocation.create_resume_checkpoint,
     )
     identity_evidence = compare_invocation_identity(
         expected_identity, invocation.intended_identity

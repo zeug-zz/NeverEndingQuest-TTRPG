@@ -77,6 +77,11 @@ _FIXTURE_IDS = (
     "transition_tower_approach",
     "combat_stage_tavern_zones",
 )
+_CHECKPOINT_TRAVEL_STEPS = {
+    "interior_tavern": ("E4-07", 5),
+    "landscape_village": ("E3-01", 10),
+    "transition_tower_approach": ("E3-03", 10),
+}
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA1_OR_SHA256 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -271,6 +276,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-id")
     parser.add_argument("--resume-checkpoint-sha256")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--create-resume-checkpoint", action="store_true", help=argparse.SUPPRESS
+    )
     parser.add_argument("--planned-row-id", help=argparse.SUPPRESS)
     parser.add_argument("--arm", choices=("A", "B", "D"), help=argparse.SUPPRESS)
     parser.add_argument("--lifecycle-id", help=argparse.SUPPRESS)
@@ -297,9 +305,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             or _SAFE_RUN_ID.fullmatch(args.preflight_run_id) is None
         ):
             parser.error("internal row-preflight identity is invalid")
+        if args.create_resume_checkpoint and (
+            args.lifecycle != "startup"
+            or args.resume_checkpoint_sha256 is not None
+            or args.fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        ):
+            parser.error("internal checkpoint preparation identity is invalid")
         return args
-    if args.preflight_run_id is not None:
-        parser.error("--preflight-run-id is only valid for an internal worker")
+    if (
+        args.preflight_run_id is not None
+        or args.create_resume_checkpoint
+    ):
+        parser.error("internal worker options are not valid for a controller invocation")
     if any(
         value is None
         for value in (args.fixture_id, args.party_size, args.lifecycle, args.source_sha)
@@ -748,13 +765,763 @@ def _reject_json_constant(value: str) -> Any:
     raise ValueError("non_standard_json_value:" + value)
 
 
+def _frozen_location_name_matches_utterance(name: str, utterance: str) -> bool:
+    """Match a frozen destination's full name or an unambiguous two-word alias."""
+    normalized_name = " ".join(name.casefold().split())
+    normalized_utterance = utterance.casefold()
+    if normalized_name and normalized_name in normalized_utterance:
+        return True
+    words = normalized_name.split()
+    return any(
+        " ".join(words[index : index + 2]) in normalized_utterance
+        for index in range(len(words) - 1)
+    )
+
+
+def _resolve_checkpoint_travel_turn(
+    *,
+    script: Mapping[str, Any],
+    fixture_id: str,
+    party_size: int,
+    members: Sequence[str],
+    source_location_id: str,
+) -> dict[str, Any] | None:
+    """Resolve only the authorized frozen travel step and its open-exit target."""
+    selected = _CHECKPOINT_TRAVEL_STEPS.get(fixture_id)
+    if selected is None:
+        return None
+    step_id, time_minutes = selected
+    fixture_ids = script.get("fixture_ids")
+    turns = script.get("turns")
+    if (
+        not isinstance(fixture_ids, list)
+        or fixture_id not in fixture_ids
+        or not isinstance(turns, list)
+    ):
+        raise CharacterizationError("checkpoint_travel_script_identity_invalid")
+    matches = [
+        turn
+        for turn in turns
+        if isinstance(turn, Mapping) and turn.get("id") == step_id
+    ]
+    if len(matches) != 1:
+        raise CharacterizationError("checkpoint_travel_step_missing_or_duplicated")
+    turn = matches[0]
+    actor = turn.get("actor")
+    character = actor.get("party_%d" % party_size) if isinstance(actor, Mapping) else None
+    utterance = turn.get("utterance")
+    if (
+        not isinstance(utterance, str)
+        or not utterance.strip()
+        or not isinstance(character, str)
+        or character not in members
+        or type(time_minutes) is not int
+        or time_minutes < 1
+    ):
+        raise CharacterizationError("checkpoint_travel_turn_invalid")
+
+    try:
+        from scripts.mapping_pilot.fixtures import LOCATION_ID_MAP, load_verified_fixtures
+
+        fixtures, _fixture_hashes = load_verified_fixtures()
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_travel_fixtures_unavailable") from exc
+    source_fixture = fixtures.get(fixture_id)
+    source_ids = source_fixture.get("location_ids") if isinstance(source_fixture, Mapping) else None
+    source_locations = source_fixture.get("locations") if isinstance(source_fixture, Mapping) else None
+    if (
+        not isinstance(source_ids, list)
+        or source_ids != [source_location_id]
+        or not isinstance(source_locations, list)
+    ):
+        raise CharacterizationError("checkpoint_travel_source_fixture_mismatch")
+    source_matches = [
+        location
+        for location in source_locations
+        if isinstance(location, Mapping)
+        and location.get("location_id") == source_location_id
+    ]
+    if len(source_matches) != 1:
+        raise CharacterizationError("checkpoint_travel_source_location_invalid")
+
+    exits = source_matches[0].get("exits")
+    known_destinations = {
+        exit_row.get("known_destination_location_id")
+        for exit_row in exits or []
+        if isinstance(exit_row, Mapping)
+        and exit_row.get("state") == "open"
+        and exit_row.get("destination_knowledge") == "known"
+        and isinstance(exit_row.get("known_destination_location_id"), str)
+    }
+    matching_targets: list[tuple[str, Mapping[str, Any]]] = []
+    for destination in known_destinations:
+        locations = [
+            location
+            for fixture in fixtures.values()
+            if isinstance(fixture, Mapping)
+            for location in fixture.get("locations", [])
+            if isinstance(location, Mapping)
+            and location.get("location_id") == destination
+        ]
+        if (
+            len(locations) == 1
+            and isinstance(locations[0].get("name"), str)
+            and _frozen_location_name_matches_utterance(
+                locations[0]["name"], utterance
+            )
+        ):
+            matching_targets.append((destination, locations[0]))
+    if len(matching_targets) != 1:
+        raise CharacterizationError("checkpoint_travel_open_exit_target_ambiguous")
+    target_source_id, target_location = matching_targets[0]
+    if target_source_id == source_location_id:
+        raise CharacterizationError("checkpoint_travel_target_unchanged")
+    target_name = target_location.get("name")
+    target_runtime_id = LOCATION_ID_MAP.get(target_source_id)
+    if (
+        not isinstance(target_name, str)
+        or not target_name.strip()
+        or not _frozen_location_name_matches_utterance(target_name, utterance)
+        or not isinstance(target_runtime_id, str)
+        or not target_runtime_id.strip()
+    ):
+        raise CharacterizationError("checkpoint_travel_target_not_scripted")
+    return {
+        "step_id": step_id,
+        "utterance": utterance,
+        "character": character,
+        "source_location_id": source_location_id,
+        "target_source_location_id": target_source_id,
+        "target_location_id": target_runtime_id,
+        "target_location_name": target_name,
+        "time_minutes": time_minutes,
+    }
+
+
+def _load_worker_checkpoint_travel_turn(
+    args: argparse.Namespace, sandbox: Path
+) -> dict[str, Any] | None:
+    """Re-resolve the travel response from the worker's own frozen row inputs."""
+    metadata = _read_json(
+        sandbox / "mapping_pilot" / "seed_metadata.json",
+        "checkpoint_travel_seed_metadata",
+    )
+    counterbalance = metadata.get("counterbalance") if isinstance(metadata, Mapping) else None
+    mapping = metadata.get("mapping") if isinstance(metadata, Mapping) else None
+    party = metadata.get("party") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("fixture_id") != args.fixture_id
+        or metadata.get("arm") != args.arm
+        or not isinstance(counterbalance, Mapping)
+        or counterbalance.get("row_id") != args.planned_row_id
+        or counterbalance.get("row_type") != "planned"
+        or not isinstance(mapping, Mapping)
+        or not isinstance(party, Mapping)
+        or party.get("size") != args.party_size
+        or not isinstance(party.get("members"), list)
+        or len(party.get("members", [])) != args.party_size
+        or any(
+            not isinstance(member, str) or not member.strip()
+            for member in party.get("members", [])
+        )
+        or len(set(party.get("members", []))) != len(party.get("members", []))
+        or not isinstance(mapping.get("source_location_id"), str)
+        or not isinstance(counterbalance.get("script"), str)
+        or type(metadata.get("effective_seed")) is not int
+        or counterbalance.get("fixed_seed") != metadata.get("effective_seed")
+    ):
+        raise CharacterizationError("checkpoint_travel_worker_identity_mismatch")
+    frozen_path = _safe_project_file(
+        "plans/v2-mapping-pilot-prereg/counterbalance.json",
+        "checkpoint_travel_counterbalance",
+    )
+    frozen = _read_json(frozen_path, "checkpoint_travel_counterbalance")
+    frozen_rows = frozen.get("rows") if isinstance(frozen, Mapping) else None
+    frozen_matches = [
+        row
+        for row in frozen_rows or []
+        if isinstance(row, Mapping) and row.get("row_id") == args.planned_row_id
+    ]
+    if (
+        len(frozen_matches) != 1
+        or frozen_matches[0].get("row_type") != "planned"
+        or frozen_matches[0].get("arm") != args.arm
+        or frozen_matches[0].get("party") != args.party_size
+        or frozen_matches[0].get("fixed_seed") != metadata["effective_seed"]
+        or frozen_matches[0].get("script") != counterbalance.get("script")
+    ):
+        raise CharacterizationError("checkpoint_travel_worker_row_mismatch")
+    script_path = _safe_project_file(
+        Path("plans/v2-mapping-pilot-prereg") / counterbalance["script"],
+        "checkpoint_travel_script",
+    )
+    script = _read_json(script_path, "checkpoint_travel_script")
+    if not isinstance(script, Mapping):
+        raise CharacterizationError("checkpoint_travel_script_invalid")
+    return _resolve_checkpoint_travel_turn(
+        script=script,
+        fixture_id=args.fixture_id,
+        party_size=args.party_size,
+        members=party["members"],
+        source_location_id=mapping["source_location_id"],
+    )
+
+
+def _checkpoint_travel_response(turn: Mapping[str, Any]) -> str:
+    """Build the bounded action bundle consumed by the ordinary host route."""
+    return json.dumps(
+        {
+            "narration": "The party follows the open route and reaches "
+            + str(turn["target_location_name"])
+            + ".",
+            "actions": [
+                {
+                    "action": "transitionLocation",
+                    "parameters": {"newLocation": turn["target_location_id"]},
+                },
+                {
+                    "action": "updateTime",
+                    "parameters": {"timeEstimate": str(turn["time_minutes"])},
+                },
+            ],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
+def _checkpoint_travel_response_resolver(
+    turn: Mapping[str, Any],
+) -> Any:
+    """Route gameplay, transition approval, and transition narration separately."""
+    from scripts.live_gate_preflight_stub import RouterStubError
+
+    gameplay_response = _checkpoint_travel_response(turn)
+    transition_approval = json.dumps(
+        {
+            "approved": True,
+            "stop_location": None,
+            "stop_location_name": None,
+            "reason": "Frozen preflight travel step follows an authored open exit.",
+            "narrative_guidance": "",
+            "requires_encounter": False,
+            "plot_guidance": None,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    transition_narration = (
+        "The party follows the open route and reaches "
+        + str(turn["target_location_name"])
+        + "."
+    )
+
+    return _CheckpointTravelResponseResolver(
+        turn=turn,
+        gameplay_response=gameplay_response,
+        transition_approval=transition_approval,
+        transition_narration=transition_narration,
+    )
+
+
+def _validate_checkpoint_travel_exchange(
+    result: Mapping[str, Any],
+    *,
+    travel_turn: Mapping[str, Any],
+    driver_exchange: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Require one completed driver turn and the ordered host travel call path."""
+    expected_proof = {
+        "step_id": travel_turn.get("step_id"),
+        "source_location_id": travel_turn.get("source_location_id"),
+        "target_source_location_id": travel_turn.get("target_source_location_id"),
+        "target_location_id": travel_turn.get("target_location_id"),
+        "response_counts": {
+            "travel_action_responses": 1,
+            "gameplay_validation_responses": 1,
+            "transition_validation_responses": 1,
+            "transition_narration_responses": 1,
+        },
+        "complete": True,
+    }
+    proof = result.get("checkpoint_travel")
+    calls = result.get("calls")
+    call_count = result.get("call_count")
+    if (
+        result.get("outcome") != "completed"
+        or result.get("failure_code") is not None
+        or result.get("stub_failure_code") is not None
+        or not isinstance(proof, Mapping)
+        or not isinstance(calls, list)
+        or any(not isinstance(call, Mapping) for call in calls)
+        or type(call_count) is not int
+        or call_count != len(calls)
+    ):
+        raise CharacterizationError("checkpoint_travel_proof_missing")
+    call_pairs = [
+        (call.get("task"), call.get("source_file"))
+        for call in calls
+        if isinstance(call, Mapping)
+    ]
+    expected_path = (
+        ("dm_main", "main.py"),
+        ("dm_validation", "main.py"),
+        ("dm_main", "core/ai/transition_validator.py"),
+        ("dm_main", "core/ai/action_handler.py"),
+    )
+    positions: list[int] = []
+    for pair in expected_path:
+        matches = [index for index, observed in enumerate(call_pairs) if observed == pair]
+        if len(matches) != 1:
+            raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+        positions.append(matches[0])
+    if positions != sorted(positions) or any(
+        left == right for left, right in zip(positions, positions[1:])
+    ):
+        raise CharacterizationError("checkpoint_travel_call_order_mismatch")
+    if dict(proof) != expected_proof:
+        raise CharacterizationError("checkpoint_travel_proof_mismatch")
+    if (
+        not isinstance(driver_exchange, Mapping)
+        or driver_exchange.get("status") != "completed"
+        or driver_exchange.get("step_id") != expected_proof["step_id"]
+        or driver_exchange.get("active_character_set") is not True
+        or driver_exchange.get("turn_completed") is not True
+        or driver_exchange.get("turn_timed_out") is not False
+        or type(driver_exchange.get("game_output_count")) is not int
+        or driver_exchange.get("game_output_count", 0) < 1
+    ):
+        raise CharacterizationError("checkpoint_travel_driver_exchange_invalid")
+    return dict(proof)
+
+
+class _CheckpointTravelResponseResolver:
+    """Return the canned response only along the expected host transition path."""
+
+    def __init__(
+        self,
+        *,
+        turn: Mapping[str, Any],
+        gameplay_response: str,
+        transition_approval: str,
+        transition_narration: str,
+    ) -> None:
+        self.turn = dict(turn)
+        self.gameplay_response = gameplay_response
+        self.transition_approval = transition_approval
+        self.transition_narration = transition_narration
+        self.travel_action_responses = 0
+        self.gameplay_validation_responses = 0
+        self.transition_validation_responses = 0
+        self.transition_narration_responses = 0
+
+    def __call__(
+        self,
+        task: str,
+        source_file: str | None,
+        _args: Sequence[Any],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        from scripts.live_gate_preflight_stub import RouterStubError
+
+        if task == "dm_main" and source_file == "main.py":
+            messages = kwargs.get("messages")
+            utterance = self.turn.get("utterance")
+            last_user_content = None
+            if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+                for message in reversed(messages):
+                    if (
+                        isinstance(message, Mapping)
+                        and message.get("role") == "user"
+                        and isinstance(message.get("content"), str)
+                    ):
+                        last_user_content = message["content"]
+                        break
+            if (
+                isinstance(utterance, str)
+                and isinstance(last_user_content, str)
+                and utterance in last_user_content
+            ):
+                if self.travel_action_responses != 0:
+                    raise RouterStubError("scripted travel response was already consumed")
+                self.travel_action_responses += 1
+                return self.gameplay_response
+            return None
+
+        if task == "dm_validation" and source_file == "main.py":
+            messages = kwargs.get("messages")
+            last_assistant_content = None
+            if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+                for message in reversed(messages):
+                    if (
+                        isinstance(message, Mapping)
+                        and message.get("role") == "assistant"
+                        and isinstance(message.get("content"), str)
+                    ):
+                        last_assistant_content = message["content"]
+                        break
+            try:
+                parsed = json.loads(last_assistant_content or "")
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            expected_actions = json.loads(self.gameplay_response).get("actions")
+            if (
+                not isinstance(parsed, Mapping)
+                or parsed.get("actions") != expected_actions
+            ):
+                return None
+            if (
+                self.travel_action_responses != 1
+                or self.gameplay_validation_responses != 0
+            ):
+                raise RouterStubError("gameplay validation call is out of sequence")
+            self.gameplay_validation_responses += 1
+            return json.dumps(
+                {
+                    "valid": True,
+                    "reason": "Frozen preflight travel action matches the scripted open route.",
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+
+        if task == "dm_main" and source_file == "core/ai/transition_validator.py":
+            messages = kwargs.get("messages")
+            user_contents = [
+                message.get("content")
+                for message in messages
+                if isinstance(message, Mapping)
+                and message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+            ] if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)) else []
+            utterance = self.turn.get("utterance")
+            target_location_id = self.turn.get("target_location_id")
+            if (
+                self.gameplay_validation_responses != 1
+                or self.transition_validation_responses != 0
+                or not isinstance(utterance, str)
+                or not isinstance(target_location_id, str)
+                or not any(
+                    utterance in content and target_location_id in content
+                    for content in user_contents
+                )
+            ):
+                raise RouterStubError("transition validation call is out of sequence")
+            self.transition_validation_responses += 1
+            return self.transition_approval
+
+        if task == "dm_main" and source_file == "core/ai/action_handler.py":
+            if (
+                self.transition_validation_responses != 1
+                or self.transition_narration_responses != 0
+            ):
+                raise RouterStubError("transition narration call is out of sequence")
+            self.transition_narration_responses += 1
+            return self.transition_narration
+        return None
+
+    def proof(self) -> dict[str, Any]:
+        counts = {
+            "travel_action_responses": self.travel_action_responses,
+            "gameplay_validation_responses": self.gameplay_validation_responses,
+            "transition_validation_responses": self.transition_validation_responses,
+            "transition_narration_responses": self.transition_narration_responses,
+        }
+        return {
+            "step_id": self.turn.get("step_id"),
+            "source_location_id": self.turn.get("source_location_id"),
+            "target_source_location_id": self.turn.get("target_source_location_id"),
+            "target_location_id": self.turn.get("target_location_id"),
+            "response_counts": counts,
+            "complete": all(value == 1 for value in counts.values()),
+        }
+
+
+def _retain_moved_resume_checkpoint(
+    *,
+    sandbox: Path,
+    fixture_id: str,
+    party_size: int,
+    planned_row_id: str,
+    arm: str,
+    source_sha: str,
+    run_id: str,
+    travel_turn: Mapping[str, Any],
+    travel_proof: Mapping[str, Any],
+    initial_state_sha256: str,
+    initial_time: str,
+    project_root: Path = PROJECT_ROOT,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Copy and attest persisted canonical state after the guarded host stops."""
+    import shutil
+
+    from scripts import live_gate_preflight_sandbox as sandbox_tools
+    from scripts.mapping_pilot import launcher
+
+    root = project_root.resolve(strict=True)
+    expected_sandbox = root / SANDBOX_RELATIVE
+    if (
+        root != PROJECT_ROOT.resolve(strict=True)
+        or sandbox.resolve(strict=True) != expected_sandbox.resolve(strict=True)
+        or sandbox.is_symlink()
+        or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        or type(party_size) is not int
+        or party_size not in (1, 4)
+        or not isinstance(planned_row_id, str)
+        or _SAFE_RUN_ID.fullmatch(planned_row_id) is None
+        or arm not in ("A", "B", "D")
+        or not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(initial_state_sha256, str)
+        or _SHA256.fullmatch(initial_state_sha256) is None
+        or not isinstance(initial_time, str)
+        or not isinstance(travel_proof, Mapping)
+        or travel_proof.get("complete") is not True
+        or travel_proof.get("response_counts")
+        != {
+            "travel_action_responses": 1,
+            "gameplay_validation_responses": 1,
+            "transition_validation_responses": 1,
+            "transition_narration_responses": 1,
+        }
+        or travel_proof.get("step_id") != travel_turn.get("step_id")
+        or travel_proof.get("source_location_id")
+        != travel_turn.get("source_location_id")
+        or travel_proof.get("target_source_location_id")
+        != travel_turn.get("target_source_location_id")
+        or travel_proof.get("target_location_id")
+        != travel_turn.get("target_location_id")
+    ):
+        raise CharacterizationError("checkpoint_creation_identity_invalid")
+
+    _validate_supervised_planned_row(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        planned_row_id=planned_row_id,
+        arm=arm,
+    )
+    frozen_plan, _profile = sandbox_tools._load_profile_seed_plan(
+        fixture_id, party_size, planned_row_id
+    )
+    metadata = _read_json(
+        sandbox / "mapping_pilot" / "seed_metadata.json",
+        "checkpoint_seed_metadata",
+    )
+    counterbalance = metadata.get("counterbalance") if isinstance(metadata, Mapping) else None
+    party = metadata.get("party") if isinstance(metadata, Mapping) else None
+    mapping = metadata.get("mapping") if isinstance(metadata, Mapping) else None
+    fixed_seed = metadata.get("effective_seed") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("fixture_id") != fixture_id
+        or metadata.get("arm") != arm
+        or not isinstance(counterbalance, Mapping)
+        or counterbalance.get("row_type") != "planned"
+        or counterbalance.get("row_id") != planned_row_id
+        or counterbalance != frozen_plan.get("counterbalance")
+        or type(fixed_seed) is not int
+        or fixed_seed != frozen_plan.get("effective_seed")
+        or fixed_seed != counterbalance.get("fixed_seed")
+        or not isinstance(party, Mapping)
+        or party.get("size") != party_size
+        or not isinstance(party.get("members"), list)
+        or len(party["members"]) != party_size
+        or any(
+            not isinstance(member, str) or not member.strip()
+            for member in party["members"]
+        )
+        or len(set(party["members"])) != party_size
+        or not isinstance(mapping, Mapping)
+        or mapping.get("source_location_id") != travel_turn.get("source_location_id")
+        or mapping.get("source_location_id") != frozen_plan.get("source_location_id")
+    ):
+        raise CharacterizationError("checkpoint_seed_identity_mismatch")
+
+    tracker = _read_json(sandbox / "party_tracker.json", "checkpoint_party_tracker")
+    world = tracker.get("worldConditions") if isinstance(tracker, Mapping) else None
+    if (
+        not isinstance(world, Mapping)
+        or world.get("currentLocationId") != travel_turn.get("target_location_id")
+        or not isinstance(world.get("time"), str)
+        or world.get("time") == initial_time
+    ):
+        raise CharacterizationError("checkpoint_travel_state_not_persisted")
+
+    try:
+        final_state_sha256 = launcher._canonical_state_sha256(sandbox)
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_final_state_hash_unavailable") from exc
+    if (
+        not isinstance(final_state_sha256, str)
+        or _SHA256.fullmatch(final_state_sha256) is None
+        or final_state_sha256 == initial_state_sha256
+    ):
+        raise CharacterizationError("checkpoint_state_hash_unchanged")
+    try:
+        launcher.validate_sandbox(
+            sandbox,
+            arm=arm,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            resume=True,
+            resume_checkpoint_sha256=final_state_sha256,
+            project_root=root,
+        )
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_moved_state_invalid") from exc
+
+    relative_root = (
+        Path("tmp/router-rollout/live-gate-preflight-checkpoints")
+        / run_id
+        / planned_row_id
+        / ("%s-p%d" % (fixture_id, party_size))
+    )
+    cursor = root
+    try:
+        for part in relative_root.parts[:-1]:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise CharacterizationError("checkpoint_path_invalid")
+            if not cursor.exists():
+                cursor.mkdir(mode=0o700)
+            metadata_stat = cursor.lstat()
+            if not stat.S_ISDIR(metadata_stat.st_mode):
+                raise CharacterizationError("checkpoint_path_invalid")
+            if os.name == "posix" and stat.S_IMODE(metadata_stat.st_mode) & 0o022:
+                raise CharacterizationError("checkpoint_path_permissions_invalid")
+        checkpoint_parent = cursor
+        checkpoint_root = checkpoint_parent / relative_root.parts[-1]
+        if checkpoint_root.is_symlink() or checkpoint_root.exists():
+            raise CharacterizationError("checkpoint_already_exists")
+        resolved_checkpoint = checkpoint_root.resolve(strict=False)
+        resolved_tmp = (root / "tmp").resolve(strict=True)
+        resolved_checkpoint.relative_to(resolved_tmp)
+        resolved_sandbox = sandbox.resolve(strict=True)
+        try:
+            resolved_checkpoint.relative_to(resolved_sandbox)
+        except ValueError:
+            pass
+        else:
+            raise CharacterizationError("checkpoint_inside_active_sandbox")
+        try:
+            resolved_sandbox.relative_to(resolved_checkpoint)
+        except ValueError:
+            pass
+        else:
+            raise CharacterizationError("checkpoint_inside_active_sandbox")
+        checkpoint_root.mkdir(mode=0o700, exist_ok=False)
+    except FileExistsError as exc:
+        raise CharacterizationError("checkpoint_already_exists") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, CharacterizationError):
+            raise
+        raise CharacterizationError("checkpoint_directory_unavailable") from exc
+
+    try:
+        state_paths = (
+            ("party_tracker.json", False, True),
+            ("characters", True, True),
+            ("modules/Mapping_Pilot_Arena/areas", True, True),
+            ("modules/Mapping_Pilot_Arena/module_plot.json", False, False),
+            ("modules/encounters", True, False),
+            ("encounters", True, False),
+        )
+        for relative, is_directory, required in state_paths:
+            source = sandbox_tools._assert_no_symlink_path(
+                sandbox, relative, "checkpoint source state"
+            )
+            destination = checkpoint_root / relative
+            if not source.exists():
+                if required:
+                    raise CharacterizationError("checkpoint_state_incomplete")
+                continue
+            if source.is_symlink() or source.is_dir() != is_directory:
+                raise CharacterizationError("checkpoint_state_path_invalid")
+            if not is_directory and not stat.S_ISREG(source.lstat().st_mode):
+                raise CharacterizationError("checkpoint_state_path_invalid")
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if is_directory:
+                sandbox_tools._copy_checkpoint_tree(source, destination)
+            else:
+                shutil.copy2(source, destination)
+
+        seed_metadata_source = sandbox_tools._assert_no_symlink_path(
+            sandbox,
+            "mapping_pilot/seed_metadata.json",
+            "checkpoint seed metadata",
+        )
+        if (
+            not seed_metadata_source.is_file()
+            or not stat.S_ISREG(seed_metadata_source.lstat().st_mode)
+        ):
+            raise CharacterizationError("checkpoint_seed_metadata_unavailable")
+        seed_metadata_destination = checkpoint_root / "mapping_pilot" / "seed_metadata.json"
+        seed_metadata_destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copy2(seed_metadata_source, seed_metadata_destination)
+        copied_state_sha256 = launcher._canonical_state_sha256(checkpoint_root)
+        if copied_state_sha256 != final_state_sha256:
+            raise CharacterizationError("checkpoint_copied_state_hash_mismatch")
+
+        attestation = {
+            "schema_version": 1,
+            "source_sha": source_sha,
+            "run_id": run_id,
+            "row_id": planned_row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": arm,
+            "fixed_seed": fixed_seed,
+            "step_id": travel_turn["step_id"],
+            "source_location_id": travel_turn["source_location_id"],
+            "target_source_location_id": travel_turn["target_source_location_id"],
+            "target_location_id": travel_turn["target_location_id"],
+            "initial_location_id": travel_turn["source_location_id"],
+            "final_location_id": world["currentLocationId"],
+            "initial_state_sha256": initial_state_sha256,
+            "state_sha256": final_state_sha256,
+            "initial_time": initial_time,
+            "final_time": world.get("time"),
+            "travel_proof": dict(travel_proof),
+            "persistence": {
+                "host_stopped_before_checkpoint": True,
+                "canonical_state_hash_verified": True,
+                "resume_state_validation": "passed",
+            },
+            "checkpoint_root": relative_root.as_posix(),
+        }
+        attestation_path = checkpoint_root / "attestation.json"
+        _write_json(attestation_path, attestation)
+        attestation_sha256 = hashlib.sha256(attestation_path.read_bytes()).hexdigest()
+        descriptor = {
+            "checkpoint_root": relative_root.as_posix(),
+            "state_sha256": final_state_sha256,
+            "row_id": planned_row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": arm,
+            "fixed_seed": fixed_seed,
+        }
+        return descriptor, {
+            "path": attestation_path.relative_to(root).as_posix(),
+            "sha256": attestation_sha256,
+        }
+    except BaseException:
+        if not checkpoint_root.is_symlink() and checkpoint_root.exists():
+            shutil.rmtree(checkpoint_root)
+        raise
+
+
 def _validate_prepared_sandbox(
     *,
     fixture_id: str,
     party_size: int,
     lifecycle: str,
     resume_checkpoint_sha256: str | None,
-) -> tuple[Path, str, str, str, dict[str, str], str]:
+    checkpoint_travel: bool = False,
+) -> tuple[Path, str, str, str, dict[str, Any], str]:
     from scripts.live_gate_preflight_profiles import (
         copy_profile_document,
         load_profile_coverage,
@@ -854,21 +1621,43 @@ def _validate_prepared_sandbox(
     script = _read_json(script_path, "frozen_script")
     if fixture_id not in script.get("fixture_ids", []):
         raise CharacterizationError("prepared_sandbox_script_fixture_mismatch")
-    turns = script.get("turns")
-    first_turn = turns[0] if isinstance(turns, list) and turns else None
-    actor = first_turn.get("actor") if isinstance(first_turn, Mapping) else None
-    character = actor.get("party_%d" % party_size) if isinstance(actor, Mapping) else None
-    step_id = first_turn.get("id") if isinstance(first_turn, Mapping) else None
-    utterance = first_turn.get("utterance") if isinstance(first_turn, Mapping) else None
-    if (
-        not isinstance(step_id, str)
-        or not _SAFE_RUN_ID.fullmatch(step_id)
-        or not isinstance(utterance, str)
-        or not utterance.strip()
-        or not isinstance(character, str)
-        or character not in members
-    ):
-        raise CharacterizationError("prepared_sandbox_first_scripted_turn_invalid")
+    if checkpoint_travel:
+        mapping = metadata.get("mapping")
+        source_location_id = (
+            mapping.get("source_location_id") if isinstance(mapping, Mapping) else None
+        )
+        if not isinstance(source_location_id, str):
+            raise CharacterizationError("prepared_sandbox_mapping_identity_invalid")
+        first_turn = _resolve_checkpoint_travel_turn(
+            script=script,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            members=members,
+            source_location_id=source_location_id,
+        )
+        if first_turn is None:
+            raise CharacterizationError("checkpoint_travel_turn_missing")
+    else:
+        turns = script.get("turns")
+        scripted_turn = turns[0] if isinstance(turns, list) and turns else None
+        actor = scripted_turn.get("actor") if isinstance(scripted_turn, Mapping) else None
+        character = actor.get("party_%d" % party_size) if isinstance(actor, Mapping) else None
+        step_id = scripted_turn.get("id") if isinstance(scripted_turn, Mapping) else None
+        utterance = scripted_turn.get("utterance") if isinstance(scripted_turn, Mapping) else None
+        if (
+            not isinstance(step_id, str)
+            or not _SAFE_RUN_ID.fullmatch(step_id)
+            or not isinstance(utterance, str)
+            or not utterance.strip()
+            or not isinstance(character, str)
+            or character not in members
+        ):
+            raise CharacterizationError("prepared_sandbox_first_scripted_turn_invalid")
+        first_turn = {
+            "step_id": step_id,
+            "utterance": utterance,
+            "character": character,
+        }
     if (
         counterbalance.get("fixed_seed") != metadata.get("effective_seed")
         or frozen_row.get("fixed_seed") != metadata.get("effective_seed")
@@ -893,11 +1682,7 @@ def _validate_prepared_sandbox(
         row_id,
         str(metadata["arm"]),
         profile["profile_id"],
-        {
-            "step_id": step_id,
-            "utterance": utterance,
-            "character": character,
-        },
+        dict(first_turn),
         sandbox_provider_key_placeholder,
     )
 
@@ -2442,7 +3227,17 @@ def _host_command(
     lifecycle_id: str,
     resume_checkpoint_sha256: str | None,
     preflight_run_id: str | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> list[str]:
+    if type(create_resume_checkpoint) is not bool or (
+        create_resume_checkpoint
+        and (
+            lifecycle != "startup"
+            or resume_checkpoint_sha256 is not None
+            or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        )
+    ):
+        raise CharacterizationError("checkpoint_preparation_identity_invalid")
     command = [
         _repository_python(),
         "-P",
@@ -2468,6 +3263,8 @@ def _host_command(
     ]
     if resume_checkpoint_sha256 is not None:
         command.extend(("--resume-checkpoint-sha256", resume_checkpoint_sha256))
+    if create_resume_checkpoint:
+        command.append("--create-resume-checkpoint")
     if preflight_run_id is not None:
         if _SAFE_RUN_ID.fullmatch(preflight_run_id) is None:
             raise CharacterizationError("row_preflight_identity_invalid")
@@ -3007,6 +3804,16 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     controller_startup: dict[str, Any] = {}
     guarded_environment: dict[str, str] = {}
     run_directory: Path | None = None
+    create_resume_checkpoint = getattr(args, "create_resume_checkpoint", False)
+    if type(create_resume_checkpoint) is not bool:
+        raise CharacterizationError("checkpoint_request_invalid")
+    checkpoint_before_sha256: str | None = None
+    checkpoint_initial_location_id: str | None = None
+    checkpoint_initial_time: str | None = None
+    checkpoint_travel_turn: dict[str, Any] | None = None
+    checkpoint_attestation: dict[str, Any] | None = None
+    checkpoint_directory: Path | None = None
+    checkpoint_descriptor: dict[str, Any] | None = None
     runner_command: list[str] = []
     command: list[str] = []
     phase = "parent_startup_guard"
@@ -3035,7 +3842,40 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             party_size=args.party_size,
             lifecycle=args.lifecycle,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            checkpoint_travel=create_resume_checkpoint,
         )
+        if create_resume_checkpoint:
+            from scripts.mapping_pilot import launcher
+
+            checkpoint_tracker = _read_json(
+                sandbox / "party_tracker.json", "checkpoint_initial_party_tracker"
+            )
+            checkpoint_world = (
+                checkpoint_tracker.get("worldConditions")
+                if isinstance(checkpoint_tracker, Mapping)
+                else None
+            )
+            checkpoint_initial_location_id = (
+                checkpoint_world.get("currentLocationId")
+                if isinstance(checkpoint_world, Mapping)
+                else None
+            )
+            checkpoint_initial_time = (
+                checkpoint_world.get("time")
+                if isinstance(checkpoint_world, Mapping)
+                else None
+            )
+            if (
+                not isinstance(first_turn.get("source_location_id"), str)
+                or checkpoint_initial_location_id != first_turn["source_location_id"]
+                or not isinstance(checkpoint_initial_time, str)
+            ):
+                raise CharacterizationError("checkpoint_seed_location_mismatch")
+            checkpoint_travel_turn = dict(first_turn)
+            try:
+                checkpoint_before_sha256 = launcher._canonical_state_sha256(sandbox)
+            except Exception as exc:
+                raise CharacterizationError("checkpoint_initial_state_hash_unavailable") from exc
         if preflight_run_id is not None and (
             args.planned_row_id != planned_row_id or args.arm != arm
         ):
@@ -3060,6 +3900,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             lifecycle_id=lifecycle_id,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=create_resume_checkpoint,
         )
         from scripts.live_gate_preflight_safety import (
             CANARY_REPORT_ENV,
@@ -3206,6 +4047,56 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     process_census: dict[str, Any] | None = None
     shutdown_request: dict[str, Any] | None = None
     teardown_port_observations: dict[int, dict[str, Any]] = {}
+    checkpoint_travel_proof: dict[str, Any] | None = None
+    after_teardown_sample: Mapping[str, Any] | None = None
+    after_teardown_sample_complete = False
+
+    def release_live_window_lock() -> bool:
+        if (
+            not server_stopped
+            or not port_free
+            or not after_teardown_sample_complete
+            or not isinstance(after_teardown_sample, Mapping)
+        ):
+            return False
+        evidence_path = (
+            (run_directory / "profile-evidence.json").relative_to(root).as_posix()
+            if run_directory is not None
+            else ""
+        )
+        teardown_evidence_path = (
+            (run_directory / "teardown-evidence.json").relative_to(root).as_posix()
+            if run_directory is not None
+            else ""
+        )
+        try:
+            return lock.release(
+                {
+                    **lock_record,
+                    "event": "released",
+                    "released_at_utc": _format_utc_timestamp(
+                        datetime.now(timezone.utc)
+                    ),
+                    "server_stopped": True,
+                    "ports_free": {
+                        str(port): port_status[port] for port in REQUIRED_PORTS
+                    },
+                    "after_teardown_socket_sample_observed": True,
+                    "after_teardown_socket_pids": after_teardown_sample.get("pids"),
+                    "after_teardown_socket_sample_path": after_teardown_sample.get(
+                        "evidence_path"
+                    ),
+                    "after_teardown_socket_sample_sha256": after_teardown_sample.get(
+                        "evidence_sha256"
+                    ),
+                    "evidence_path": evidence_path,
+                    "teardown_evidence_schema_version": 1,
+                    "teardown_evidence_path": teardown_evidence_path,
+                }
+            )
+        except Exception:
+            return False
+
     try:
         if run_directory is None:
             raise CharacterizationError("profile_evidence_directory_unavailable")
@@ -3306,7 +4197,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = "process_census_host_owner_invalid"
         if not ready:
             failure_code = failure_code or "host_startup_not_ready"
-        elif failure_code is None:
+        if failure_code is None:
             driver_exchange = _drive_profile_exchange(
                 party_size=args.party_size,
                 runtime_root=sandbox,
@@ -3417,6 +4308,17 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         elif driver_exchange is None or driver_exchange.get("status") != "completed":
             failure_code = failure_code or "capture_driver_first_exchange_incomplete"
         if isinstance(result, Mapping):
+            if create_resume_checkpoint and failure_code is None:
+                try:
+                    if not isinstance(checkpoint_travel_turn, Mapping):
+                        raise CharacterizationError("checkpoint_travel_turn_missing")
+                    checkpoint_travel_proof = _validate_checkpoint_travel_exchange(
+                        result,
+                        travel_turn=checkpoint_travel_turn,
+                        driver_exchange=driver_exchange,
+                    )
+                except CharacterizationError as exc:
+                    failure_code = failure_code or exc.code
             try:
                 worker_canary = json.loads(result.get("startup_canary_report", ""))
             except (TypeError, json.JSONDecodeError):
@@ -3523,43 +4425,10 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "host_teardown_unverified"
         if not after_teardown_sample_complete:
             failure_code = failure_code or "process_census_after_teardown_invalid"
-        if server_stopped and port_free and after_teardown_sample_complete:
-            evidence_path = (
-                (run_directory / "profile-evidence.json").relative_to(root).as_posix()
-                if run_directory is not None
-                else ""
-            )
-            teardown_evidence_path = (
-                (run_directory / "teardown-evidence.json").relative_to(root).as_posix()
-                if run_directory is not None
-                else ""
-            )
-            lock_released = lock.release(
-                {
-                    **lock_record,
-                    "event": "released",
-                    "released_at_utc": _format_utc_timestamp(
-                        datetime.now(timezone.utc)
-                    ),
-                    "server_stopped": True,
-                    "ports_free": {
-                        str(port): port_status[port] for port in REQUIRED_PORTS
-                    },
-                    "after_teardown_socket_sample_observed": True,
-                    "after_teardown_socket_pids": after_teardown_sample.get("pids"),
-                    "after_teardown_socket_sample_path": after_teardown_sample.get(
-                        "evidence_path"
-                    ),
-                    "after_teardown_socket_sample_sha256": after_teardown_sample.get(
-                        "evidence_sha256"
-                    ),
-                    "evidence_path": evidence_path,
-                    "teardown_evidence_schema_version": 1,
-                    "teardown_evidence_path": teardown_evidence_path,
-                }
-            )
-        if not lock_released:
-            failure_code = failure_code or "shared_live_window_lock_release_failed"
+        if not create_resume_checkpoint:
+            lock_released = release_live_window_lock()
+            if not lock_released:
+                failure_code = failure_code or "shared_live_window_lock_release_failed"
         _remove_import_guard(config_guard)
         sys.path[:] = previous_sys_path
 
@@ -3581,6 +4450,45 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     )
     if not process_census["complete"]:
         failure_code = failure_code or "process_census_incomplete"
+    if create_resume_checkpoint:
+        if (
+            failure_code is not None
+            or not isinstance(checkpoint_travel_turn, Mapping)
+            or not isinstance(checkpoint_travel_proof, Mapping)
+            or checkpoint_before_sha256 is None
+            or checkpoint_initial_time is None
+        ):
+            failure_code = failure_code or "checkpoint_creation_prerequisites_missing"
+        else:
+            try:
+                checkpoint_descriptor, checkpoint_attestation = (
+                    _retain_moved_resume_checkpoint(
+                        sandbox=sandbox,
+                        fixture_id=args.fixture_id,
+                        party_size=args.party_size,
+                        planned_row_id=planned_row_id,
+                        arm=arm,
+                        source_sha=args.source_sha,
+                        run_id=args.run_id,
+                        travel_turn=checkpoint_travel_turn,
+                        travel_proof=checkpoint_travel_proof,
+                        initial_state_sha256=checkpoint_before_sha256,
+                        initial_time=checkpoint_initial_time,
+                        project_root=root,
+                    )
+                )
+                checkpoint_directory = root / checkpoint_descriptor["checkpoint_root"]
+            except CharacterizationError as exc:
+                failure_code = failure_code or exc.code
+            except Exception as exc:
+                failure_code = failure_code or (
+                    "checkpoint_creation_failed_" + type(exc).__name__
+                )
+
+    if create_resume_checkpoint:
+        lock_released = release_live_window_lock()
+        if not lock_released:
+            failure_code = failure_code or "shared_live_window_lock_release_failed"
 
     if run_directory is not None:
         teardown_evidence_path = run_directory / "teardown-evidence.json"
@@ -3853,6 +4761,10 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             },
             "teardown_evidence": teardown_evidence_descriptor,
         }
+        if create_resume_checkpoint:
+            evidence["checkpoint_travel"] = checkpoint_travel_proof
+            evidence["resume_checkpoint"] = checkpoint_descriptor
+            evidence["checkpoint_attestation"] = checkpoint_attestation
         evidence_path = run_directory / "profile-evidence.json"
         _write_json(evidence_path, evidence)
         evidence_relative = evidence_path.relative_to(root).as_posix()
@@ -3862,6 +4774,13 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         evidence_sha256 = ""
 
     if failure_code is not None or evidence is None:
+        if checkpoint_directory is not None and checkpoint_directory.exists():
+            import shutil
+
+            try:
+                shutil.rmtree(checkpoint_directory)
+            except OSError as exc:
+                raise CharacterizationError("checkpoint_cleanup_failed") from exc
         raise CharacterizationError(failure_code or "profile_not_measured")
     return evidence, evidence_relative, evidence_sha256
 
@@ -3877,6 +4796,7 @@ def supervise_preflight_row(
     preflight_run_id: str,
     lifecycle: str = "startup",
     resume_checkpoint_sha256: str | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> dict[str, Any]:
     """Run one fixture lifecycle through the guarded host and script driver.
 
@@ -3898,6 +4818,15 @@ def supervise_preflight_row(
         or not isinstance(preflight_run_id, str)
         or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
         or lifecycle not in ("startup", "resume")
+        or type(create_resume_checkpoint) is not bool
+        or (
+            create_resume_checkpoint
+            and (
+                lifecycle != "startup"
+                or resume_checkpoint_sha256 is not None
+                or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+            )
+        )
         or (
             lifecycle == "resume"
             and (
@@ -3925,6 +4854,7 @@ def supervise_preflight_row(
         arm=arm,
         lifecycle_id=row_run_id + ("_s" if lifecycle == "startup" else "_r"),
         preflight_run_id=preflight_run_id,
+        create_resume_checkpoint=create_resume_checkpoint,
     )
     evidence, evidence_path, evidence_sha256 = _characterize(args)
     return {
@@ -4139,6 +5069,7 @@ def _worker(args: argparse.Namespace) -> int:
     failure_code: str | None = None
     stub: Any = None
     router_stub_cleanup: Any = None
+    checkpoint_travel_resolver: Any = None
     invocation_identity_evidence: dict[str, Any] | None = None
     sandbox_provider_key_placeholder: str | None = None
     command: list[str] | None = None
@@ -4172,6 +5103,7 @@ def _worker(args: argparse.Namespace) -> int:
             lifecycle_id=args.lifecycle_id,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=args.create_resume_checkpoint,
         )
         expected_pythonpath = os.pathsep.join(
             (
@@ -4274,9 +5206,17 @@ def _worker(args: argparse.Namespace) -> int:
                 raise CharacterizationError(
                     "sandbox_provider_factory_unavailable"
                 )
+            if args.create_resume_checkpoint:
+                travel_turn = _load_worker_checkpoint_travel_turn(args, sandbox)
+                if not isinstance(travel_turn, Mapping):
+                    raise CharacterizationError("checkpoint_travel_turn_missing")
+                checkpoint_travel_resolver = _checkpoint_travel_response_resolver(
+                    travel_turn
+                )
             stub = FailClosedRouterStub(
                 source_sha=args.source_sha,
                 responses=_characterization_stub_responses(args.fixture_id),
+                response_resolver=checkpoint_travel_resolver,
                 command=command,
                 pythonpath=os.environ.get("PYTHONPATH", ""),
                 source_root=sandbox,
@@ -4457,6 +5397,15 @@ def _worker(args: argparse.Namespace) -> int:
     if type(call_count) is not int or call_count < 1:
         if failure_code is None:
             failure_code = "router_call_missing"
+    checkpoint_travel_proof: dict[str, Any] | None = None
+    if args.create_resume_checkpoint:
+        proof_method = getattr(checkpoint_travel_resolver, "proof", None)
+        checkpoint_travel_proof = proof_method() if callable(proof_method) else None
+        if (
+            not isinstance(checkpoint_travel_proof, Mapping)
+            or checkpoint_travel_proof.get("complete") is not True
+        ):
+            failure_code = failure_code or "checkpoint_travel_exchange_incomplete"
     completed = (
         type(server_returned) is bool
         and interrupted
@@ -4509,6 +5458,8 @@ def _worker(args: argparse.Namespace) -> int:
         "call_count": call_count,
         "calls": calls,
     }
+    if args.create_resume_checkpoint:
+        result["checkpoint_travel"] = checkpoint_travel_proof
     try:
         _write_json(
             _worker_result_path_for_run(args.run_id, preflight_run_id),

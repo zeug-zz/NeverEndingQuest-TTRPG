@@ -44,6 +44,12 @@ class FailClosedRouterStub:
         *,
         source_sha: str,
         responses: Mapping[str, Any],
+        response_resolver: (
+            Callable[
+                [str, str | None, Sequence[Any], Mapping[str, Any]], Any
+            ]
+            | None
+        ) = None,
         command: Sequence[str] | None = None,
         pythonpath: str | None = None,
         source_root: str | Path = PROJECT_ROOT,
@@ -56,6 +62,8 @@ class FailClosedRouterStub:
             not isinstance(task, str) or not task for task in responses
         ):
             raise RouterStubError("stub responses must be keyed by non-empty task names")
+        if response_resolver is not None and not callable(response_resolver):
+            raise RouterStubError("stub response resolver is invalid")
         selected_command = list(sys.argv if command is None else command)
         if not selected_command or any(not isinstance(part, str) for part in selected_command):
             raise RouterStubError("command identity is invalid")
@@ -73,6 +81,7 @@ class FailClosedRouterStub:
 
         self.source_sha = source_sha
         self.responses = copy.deepcopy(dict(responses))
+        self.response_resolver = response_resolver
         self.command = _redact_command(selected_command)
         self.pythonpath = selected_pythonpath
         self.source_root = selected_source_root
@@ -86,7 +95,6 @@ class FailClosedRouterStub:
         return self.attempt_count
 
     def __call__(self, task: str, *args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
         _require_network_guard()
         self.attempt_count += 1
         call_site = _caller_location(self.source_root)
@@ -117,6 +125,16 @@ class FailClosedRouterStub:
         if not isinstance(task, str) or not _SAFE_TASK.fullmatch(task) or task not in self.responses:
             self.failure_code = "router_task_has_no_stub_response"
             raise RouterStubError("router task has no explicit stub response")
+        if self.response_resolver is not None:
+            try:
+                resolved_response = self.response_resolver(
+                    task, call_site[0], args, kwargs
+                )
+            except RouterStubError:
+                self.failure_code = "router_response_resolver_rejected_call"
+                raise
+            if resolved_response is not None:
+                return copy.deepcopy(resolved_response)
         return copy.deepcopy(self.responses[task])
 
 

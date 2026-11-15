@@ -4339,10 +4339,12 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 return self.return_code
 
         created_locks: list[object] = []
+        checkpoint_copy_lock_states: list[bool] = []
 
         class FakeLock:
             def __init__(self, _common_directory: Path, record: dict) -> None:
                 self.record = dict(record)
+                self.held = False
                 self.release_record: dict | None = None
                 self.released = False
                 self.release_attempted = False
@@ -4352,11 +4354,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 created_locks.append(self)
 
             def acquire(self) -> bool:
+                self.held = True
                 return True
 
             def release(self, record: dict) -> bool:
                 self.release_record = dict(record)
                 self.released = True
+                self.held = False
                 self.release_attempted = True
                 self.release_succeeded = True
                 self.lock_directory_removed = True
@@ -4375,6 +4379,17 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             sandbox = workspace / "sandbox"
             sandbox.mkdir()
             (sandbox / "config.py").write_text("", encoding="utf-8")
+            (sandbox / "party_tracker.json").write_text(
+                json.dumps(
+                    {
+                        "worldConditions": {
+                            "currentLocationId": "source-runtime",
+                            "time": "Day 1, 08:00",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
             evidence_root = workspace / "evidence"
             evidence_root.mkdir()
             events: list[str] = []
@@ -4439,6 +4454,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 run_id: str,
                 exchange: dict,
                 host_canary_override: object = missing_canary,
+                *,
+                create_checkpoint: bool = False,
+                checkpoint_copy_fails: bool = False,
             ) -> tuple[dict, list[str], list[int]]:
                 run_directory = evidence_root / run_id
                 run_directory.mkdir()
@@ -4583,6 +4601,18 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         }
                     return observations
 
+                def retain_checkpoint(**_kwargs: object) -> tuple[dict, dict]:
+                    checkpoint_copy_lock_states.append(created_locks[-1].held)
+                    if checkpoint_copy_fails:
+                        raise CharacterizationError("checkpoint_copy_failed")
+                    return (
+                        {
+                            "checkpoint_root": "tmp/fake-resume-checkpoint",
+                            "state_sha256": "c" * 64,
+                        },
+                        {"state_sha256": "c" * 64},
+                    )
+
                 with ExitStack() as stack:
                     stack.enter_context(
                         mock.patch.object(
@@ -4610,6 +4640,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                                     "step_id": "E01-01",
                                     "utterance": "Describe the room.",
                                     "character": "PC-One",
+                                    "source_location_id": "source-runtime",
+                                    "target_source_location_id": "destination-source",
+                                    "target_location_id": "target-runtime",
                                 },
                                 SANDBOX_PROVIDER_KEY_PLACEHOLDER,
                             ),
@@ -4624,6 +4657,32 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         ),
                         mock.patch.object(
                             profile_runner, "_ProfileCharacterizationLock", FakeLock
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_validate_checkpoint_travel_exchange",
+                            return_value={
+                                "step_id": "E01-01",
+                                "source_location_id": "source-runtime",
+                                "target_source_location_id": "destination-source",
+                                "target_location_id": "target-runtime",
+                                "response_counts": {
+                                    "travel_action_responses": 1,
+                                    "gameplay_validation_responses": 1,
+                                    "transition_validation_responses": 1,
+                                    "transition_narration_responses": 1,
+                                },
+                                "complete": True,
+                            },
+                        ),
+                        mock.patch.object(
+                            profile_runner,
+                            "_retain_moved_resume_checkpoint",
+                            side_effect=retain_checkpoint,
+                        ),
+                        mock.patch(
+                            "scripts.mapping_pilot.launcher._canonical_state_sha256",
+                            return_value="b" * 64,
                         ),
                         mock.patch.object(
                             profile_runner, "_ensure_run_directory", return_value=run_directory
@@ -4749,6 +4808,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         source_sha="a" * 40,
                         run_id=run_id,
                         resume_checkpoint_sha256=None,
+                        create_resume_checkpoint=create_checkpoint,
+                        planned_row_id="E01",
+                        arm="A",
                     )
                     result = profile_runner._characterize(args)
                     return result[0], list(events), list(checked_ports)
@@ -4806,6 +4868,48 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 CharacterizationError, "capture_driver_first_exchange_incomplete"
             ):
                 run_characterization("negative-flow", failed_exchange)
+
+            checkpoint_evidence, _, _ = run_characterization(
+                "checkpoint-copy-held",
+                driver_success,
+                create_checkpoint=True,
+            )
+            self.assertIs(checkpoint_copy_lock_states[-1], True)
+            self.assertIs(created_locks[-1].held, False)
+            self.assertIs(checkpoint_evidence["teardown"]["lock_released"], True)
+            checkpoint_teardown_path = (
+                PROJECT_ROOT / checkpoint_evidence["teardown_evidence"]["path"]
+            )
+            checkpoint_teardown = json.loads(
+                checkpoint_teardown_path.read_text(encoding="utf-8")
+            )
+            self.assertIs(
+                checkpoint_teardown["shared_lock"]["release_succeeded"], True
+            )
+
+            with self.assertRaisesRegex(
+                CharacterizationError, "checkpoint_copy_failed"
+            ):
+                run_characterization(
+                    "checkpoint-copy-failure",
+                    driver_success,
+                    create_checkpoint=True,
+                    checkpoint_copy_fails=True,
+                )
+            self.assertIs(checkpoint_copy_lock_states[-1], True)
+            self.assertIs(created_locks[-1].held, False)
+            failed_checkpoint_teardown_path = (
+                evidence_root
+                / "checkpoint-copy-failure"
+                / "teardown-evidence.json"
+            )
+            failed_checkpoint_teardown = json.loads(
+                failed_checkpoint_teardown_path.read_text(encoding="utf-8")
+            )
+            self.assertIs(
+                failed_checkpoint_teardown["shared_lock"]["release_succeeded"],
+                True,
+            )
 
             for run_id, invalid_canary in (
                 ("missing-canary", None),
@@ -5353,6 +5457,462 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 CharacterizationError, "already_attempted"
             ):
                 _claim_characterization_attempt(evidence_root, second_run, duplicate)
+
+
+class TestCheckpointTravelPreparation(unittest.TestCase):
+    def test_frozen_travel_turns_are_party_bound_and_combat_has_none(self) -> None:
+        from scripts.seed_combat_capture import _party_names
+
+        expected_steps = {
+            "interior_tavern": "E4-07",
+            "landscape_village": "E3-01",
+            "transition_tower_approach": "E3-03",
+        }
+        for fixture_id, expected_step in expected_steps.items():
+            for party_size in (1, 4):
+                with self.subTest(fixture_id=fixture_id, party_size=party_size):
+                    plan, _profile = sandbox_preparation._load_profile_seed_plan(
+                        fixture_id, party_size, None
+                    )
+                    script_path = (
+                        PROJECT_ROOT
+                        / "plans"
+                        / "v2-mapping-pilot-prereg"
+                        / str(plan["counterbalance"]["script"])
+                    )
+                    script = json.loads(script_path.read_text(encoding="utf-8"))
+                    turn = profile_runner._resolve_checkpoint_travel_turn(
+                        script=script,
+                        fixture_id=fixture_id,
+                        party_size=party_size,
+                        members=_party_names(party_size),
+                        source_location_id=plan["source_location_id"],
+                    )
+                    self.assertIsNotNone(turn)
+                    self.assertEqual(turn["step_id"], expected_step)
+
+        combat_plan, _profile = sandbox_preparation._load_profile_seed_plan(
+            "combat_stage_tavern_zones", 1, None
+        )
+        combat_script_path = (
+            PROJECT_ROOT
+            / "plans"
+            / "v2-mapping-pilot-prereg"
+            / str(combat_plan["counterbalance"]["script"])
+        )
+        combat_script = json.loads(
+            combat_script_path.read_text(encoding="utf-8")
+        )
+        self.assertIsNone(
+            profile_runner._resolve_checkpoint_travel_turn(
+                script=combat_script,
+                fixture_id="combat_stage_tavern_zones",
+                party_size=1,
+                members=_party_names(1),
+                source_location_id=combat_plan["source_location_id"],
+            )
+        )
+
+    def test_public_supervised_row_path_explicitly_requests_one_checkpoint(self) -> None:
+        characterized: list[argparse.Namespace] = []
+
+        def characterize(args: argparse.Namespace) -> tuple[dict, str, str]:
+            characterized.append(args)
+            return {"outcome": "completed"}, "tmp/evidence.json", "a" * 64
+
+        with mock.patch.object(
+            profile_runner, "_characterize", side_effect=characterize
+        ):
+            result = profile_runner.supervise_preflight_row(
+                fixture_id="interior_tavern",
+                party_size=1,
+                planned_row_id="E01",
+                arm="A",
+                source_sha="b" * 40,
+                row_run_id="checkpoint-primary-run",
+                preflight_run_id="checkpoint-primary",
+                create_resume_checkpoint=True,
+            )
+        self.assertEqual(result["evidence"]["outcome"], "completed")
+        self.assertEqual(len(characterized), 1)
+        self.assertIs(characterized[0].create_resume_checkpoint, True)
+
+        with mock.patch.object(profile_runner, "_characterize") as characterize_mock:
+            with self.assertRaisesRegex(
+                CharacterizationError, "row_preflight_identity_invalid"
+            ):
+                profile_runner.supervise_preflight_row(
+                    fixture_id="combat_stage_tavern_zones",
+                    party_size=1,
+                    planned_row_id="C01",
+                    arm="A",
+                    source_sha="b" * 40,
+                    row_run_id="checkpoint-combat-run",
+                    preflight_run_id="checkpoint-primary",
+                    create_resume_checkpoint=True,
+                )
+        characterize_mock.assert_not_called()
+
+    def _make_checkpoint_sandbox(self, parent: Path) -> dict[str, Any]:
+        from scripts.mapping_pilot import launcher
+
+        project_root = parent / "isolated-project"
+        (project_root / "tmp").mkdir(parents=True)
+        sandbox_root = project_root / profile_runner.SANDBOX_RELATIVE
+        sandbox_root.mkdir()
+        plan, _profile = sandbox_preparation._load_profile_seed_plan(
+            "interior_tavern", 1, "E01"
+        )
+        module_payloads, expected_payloads = (
+            sandbox_preparation._load_profile_seed_inputs(PROJECT_ROOT)
+        )
+        written = sandbox_preparation._write_fixture_module(
+            sandbox_root, plan, module_payloads, expected_payloads
+        )
+        metadata = sandbox_preparation._write_seed_state(
+            PROJECT_ROOT,
+            sandbox_root,
+            plan,
+            written["module_payloads"],
+            written["mapping"],
+        )
+        (sandbox_root / "config.py").write_text(
+            sandbox_preparation._SYNTHETIC_CONFIG, encoding="ascii"
+        )
+        script_path = (
+            PROJECT_ROOT
+            / "plans"
+            / "v2-mapping-pilot-prereg"
+            / str(plan["counterbalance"]["script"])
+        )
+        script = json.loads(script_path.read_text(encoding="utf-8"))
+        travel_turn = profile_runner._resolve_checkpoint_travel_turn(
+            script=script,
+            fixture_id="interior_tavern",
+            party_size=1,
+            members=metadata["party"]["members"],
+            source_location_id=plan["source_location_id"],
+        )
+        self.assertIsInstance(travel_turn, dict)
+        tracker = json.loads(
+            (sandbox_root / "party_tracker.json").read_text(encoding="utf-8")
+        )
+        initial_time = tracker["worldConditions"]["time"]
+        return {
+            "project_root": project_root,
+            "sandbox_root": sandbox_root,
+            "plan": plan,
+            "metadata": metadata,
+            "module_payloads": written["module_payloads"],
+            "travel_turn": travel_turn,
+            "tracker": tracker,
+            "initial_time": initial_time,
+            "initial_state_sha256": launcher._canonical_state_sha256(sandbox_root),
+            "launcher": launcher,
+        }
+
+    @staticmethod
+    def _travel_proof(turn: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "step_id": turn["step_id"],
+            "source_location_id": turn["source_location_id"],
+            "target_source_location_id": turn["target_source_location_id"],
+            "target_location_id": turn["target_location_id"],
+            "response_counts": {
+                "travel_action_responses": 1,
+                "gameplay_validation_responses": 1,
+                "transition_validation_responses": 1,
+                "transition_narration_responses": 1,
+            },
+            "complete": True,
+        }
+
+    def _move_synthetic_fixture(self, state: dict[str, Any]) -> None:
+        turn = state["travel_turn"]
+        area_id, area_payload, target = sandbox_preparation._runtime_location(
+            state["module_payloads"], turn["target_location_id"]
+        )
+        world = state["tracker"]["worldConditions"]
+        world["currentLocationId"] = turn["target_location_id"]
+        world["currentLocation"] = target["name"]
+        world["currentAreaId"] = area_id
+        world["currentArea"] = area_payload["areaName"]
+        world["time"] = state["initial_time"] + " synthetic travel"
+        profile_runner._write_json(
+            state["sandbox_root"] / "party_tracker.json", state["tracker"]
+        )
+
+    def test_travel_resolver_and_worker_evidence_require_one_ordered_exchange(self) -> None:
+        turn = {
+            "step_id": "E4-07",
+            "utterance": "We leave through the open front entrance into the village green.",
+            "character": "Acheron",
+            "source_location_id": "SRC01",
+            "target_source_location_id": "SRC02",
+            "target_location_id": "MP02",
+            "target_location_name": "Village Green",
+            "time_minutes": 5,
+        }
+        resolver = profile_runner._checkpoint_travel_response_resolver(turn)
+        response = profile_runner._checkpoint_travel_response(turn)
+        self.assertIsNotNone(
+            resolver(
+                "dm_main",
+                "main.py",
+                (),
+                {
+                    "messages": [
+                        {"role": "user", "content": turn["utterance"]}
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(
+            resolver(
+                "dm_validation",
+                "main.py",
+                (),
+                {
+                    "messages": [
+                        {"role": "assistant", "content": response}
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(
+            resolver(
+                "dm_main",
+                "core/ai/transition_validator.py",
+                (),
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": turn["utterance"]
+                            + " "
+                            + turn["target_location_id"],
+                        }
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(
+            resolver("dm_main", "core/ai/action_handler.py", (), {})
+        )
+        calls = [
+            {"task": task, "source_file": source_file}
+            for task, source_file in (
+                ("dm_main", "main.py"),
+                ("dm_validation", "main.py"),
+                ("dm_main", "core/ai/transition_validator.py"),
+                ("dm_main", "core/ai/action_handler.py"),
+            )
+        ]
+        result = {
+            "outcome": "completed",
+            "failure_code": None,
+            "stub_failure_code": None,
+            "call_count": len(calls),
+            "calls": calls,
+            "checkpoint_travel": resolver.proof(),
+        }
+        driver_exchange = {
+            "status": "completed",
+            "step_id": turn["step_id"],
+            "active_character_set": True,
+            "turn_completed": True,
+            "turn_timed_out": False,
+            "game_output_count": 1,
+        }
+        proof = profile_runner._validate_checkpoint_travel_exchange(
+            result, travel_turn=turn, driver_exchange=driver_exchange
+        )
+        self.assertEqual(proof, self._travel_proof(turn))
+
+        result["calls"][2], result["calls"][3] = (
+            result["calls"][3],
+            result["calls"][2],
+        )
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_travel_call_order_mismatch"
+        ):
+            profile_runner._validate_checkpoint_travel_exchange(
+                result, travel_turn=turn, driver_exchange=driver_exchange
+            )
+
+    def test_retained_checkpoint_attests_normalized_moved_state_and_detects_tampering(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="checkpoint-travel-valid-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            state = self._make_checkpoint_sandbox(Path(temp_root))
+            self._move_synthetic_fixture(state)
+            with mock.patch.object(
+                profile_runner, "PROJECT_ROOT", state["project_root"]
+            ):
+                descriptor, attestation_ref = (
+                    profile_runner._retain_moved_resume_checkpoint(
+                        sandbox=state["sandbox_root"],
+                        fixture_id="interior_tavern",
+                        party_size=1,
+                        planned_row_id="E01",
+                        arm="A",
+                        source_sha="a" * 40,
+                        run_id="checkpoint-travel-valid",
+                        travel_turn=state["travel_turn"],
+                        travel_proof=self._travel_proof(state["travel_turn"]),
+                        initial_state_sha256=state["initial_state_sha256"],
+                        initial_time=state["initial_time"],
+                        project_root=state["project_root"],
+                    )
+                )
+            checkpoint_root = state["project_root"] / descriptor["checkpoint_root"]
+            self.assertNotEqual(checkpoint_root.resolve(), state["sandbox_root"].resolve())
+            self.assertEqual(
+                state["launcher"]._canonical_state_sha256(checkpoint_root),
+                descriptor["state_sha256"],
+            )
+            attestation_path = state["project_root"] / attestation_ref["path"]
+            self.assertEqual(
+                hashlib.sha256(attestation_path.read_bytes()).hexdigest(),
+                attestation_ref["sha256"],
+            )
+            attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+            self.assertEqual(attestation["row_id"], "E01")
+            self.assertEqual(attestation["fixture_id"], "interior_tavern")
+            self.assertEqual(attestation["party_size"], 1)
+            self.assertEqual(attestation["arm"], "A")
+            self.assertEqual(attestation["fixed_seed"], 5101)
+            self.assertEqual(
+                attestation["final_location_id"],
+                state["travel_turn"]["target_location_id"],
+            )
+            self.assertTrue(
+                attestation["persistence"]["canonical_state_hash_verified"]
+            )
+
+            tracker_path = checkpoint_root / "party_tracker.json"
+            tracker = json.loads(tracker_path.read_text(encoding="utf-8"))
+            tracker["synthetic_tamper_marker"] = True
+            profile_runner._write_json(tracker_path, tracker)
+            with self.assertRaisesRegex(
+                sandbox_preparation.SandboxPreparationError,
+                "resume checkpoint state hash differs",
+            ):
+                sandbox_preparation._install_row_resume_checkpoint(
+                    state["project_root"],
+                    state["sandbox_root"],
+                    state["plan"],
+                    descriptor,
+                    expected_sha256=descriptor["state_sha256"],
+                )
+
+    def test_checkpoint_retention_fails_closed_for_unchanged_or_wrong_location(
+        self,
+    ) -> None:
+        for mode in ("unchanged", "wrong-location", "unchanged-hash"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                prefix="checkpoint-travel-invalid-", dir=PROJECT_ROOT / "tmp"
+            ) as temp_root:
+                state = self._make_checkpoint_sandbox(Path(temp_root))
+                if mode != "unchanged":
+                    self._move_synthetic_fixture(state)
+                if mode == "wrong-location":
+                    state["tracker"]["worldConditions"]["currentLocationId"] = (
+                        "MP999"
+                    )
+                    profile_runner._write_json(
+                        state["sandbox_root"] / "party_tracker.json",
+                        state["tracker"],
+                    )
+                with mock.patch.object(
+                    profile_runner, "PROJECT_ROOT", state["project_root"]
+                ):
+                    if mode == "unchanged-hash":
+                        from scripts.mapping_pilot import launcher
+
+                        patcher = mock.patch.object(
+                            launcher,
+                            "_canonical_state_sha256",
+                            return_value=state["initial_state_sha256"],
+                        )
+                    else:
+                        patcher = nullcontext()
+                    with patcher:
+                        with self.assertRaises(CharacterizationError) as raised:
+                            profile_runner._retain_moved_resume_checkpoint(
+                                sandbox=state["sandbox_root"],
+                                fixture_id="interior_tavern",
+                                party_size=1,
+                                planned_row_id="E01",
+                                arm="A",
+                                source_sha="a" * 40,
+                                run_id="checkpoint-travel-invalid-" + mode,
+                                travel_turn=state["travel_turn"],
+                                travel_proof=self._travel_proof(
+                                    state["travel_turn"]
+                                ),
+                                initial_state_sha256=state[
+                                    "initial_state_sha256"
+                                ],
+                                initial_time=state["initial_time"],
+                                project_root=state["project_root"],
+                            )
+                expected_code = (
+                    "checkpoint_state_hash_unchanged"
+                    if mode == "unchanged-hash"
+                    else "checkpoint_travel_state_not_persisted"
+                )
+                self.assertEqual(raised.exception.code, expected_code)
+
+    def test_checkpoint_creation_rejects_missing_guard_and_reserve_rows(self) -> None:
+        from scripts.live_gate_preflight_controller import _load_frozen_row_ids
+
+        args = argparse.Namespace(
+            fixture_id="interior_tavern",
+            party_size=1,
+            lifecycle="startup",
+            source_sha="a" * 40,
+            run_id="checkpoint-guard-test",
+            resume_checkpoint_sha256=None,
+            planned_row_id="E01",
+            arm="A",
+            lifecycle_id="checkpoint-guard-test_s",
+            preflight_run_id=None,
+            create_resume_checkpoint=True,
+        )
+        unguarded_environment = {
+            "NEQ_PREFLIGHT_STARTUP_GUARD_REQUIRED": "",
+            "NEQ_PREFLIGHT_NETWORK_GUARD": "",
+            "NEQ_PREFLIGHT_STARTUP_GUARD_ACTIVE": "",
+            "NEQ_PREFLIGHT_NETWORK_GUARD_ACTIVE": "",
+            "NEQ_PREFLIGHT_ENV_SANITIZED": "",
+            "NEQ_PREFLIGHT_CONNECT_CANARY_DENIED": "",
+            "NEQ_PREFLIGHT_SUBPROCESS_CANARY_DENIED": "",
+        }
+        with mock.patch.object(
+            profile_runner, "_require_safe_project_root", return_value=PROJECT_ROOT
+        ), mock.patch.dict(os.environ, unguarded_environment):
+            with self.assertRaisesRegex(
+                CharacterizationError, "parent_startup_guard_inactive"
+            ):
+                profile_runner._characterize(args)
+
+        _planned, reserve_rows = _load_frozen_row_ids(None)
+        with self.assertRaisesRegex(
+            CharacterizationError, "row_preflight_identity_invalid"
+        ):
+            profile_runner.supervise_preflight_row(
+                fixture_id="interior_tavern",
+                party_size=1,
+                planned_row_id=reserve_rows[0],
+                arm="A",
+                source_sha="a" * 40,
+                row_run_id="checkpoint-reserve-row",
+                preflight_run_id="checkpoint-reserve-preflight",
+                create_resume_checkpoint=True,
+            )
 
 
 class TestProfileSandboxPreparation(unittest.TestCase):
@@ -6048,6 +6608,7 @@ def _run_profile_worker_probe(
             + ("_r" if lifecycle == "resume" else "_s")
         ),
         resume_checkpoint_sha256=resume_checkpoint,
+        create_resume_checkpoint=False,
     )
     try:
         exit_code = runner_module._worker(args)

@@ -697,6 +697,7 @@ def _planned_worker_invocation(
     run_id: str,
     resume_checkpoint_sha256: str | None,
     preflight_run_id: str | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> PlannedWorkerInvocation:
     """Build the worker identity through the same controller command factory."""
     if lifecycle not in ("startup", "resume"):
@@ -713,10 +714,21 @@ def _planned_worker_invocation(
             raise SandboxPreparationError("resume checkpoint identity is invalid")
     elif resume_checkpoint_sha256 is not None:
         raise SandboxPreparationError("startup checkpoint identity is invalid")
-
     fixture_id = plan.get("fixture_id")
     party_size = plan.get("party_size")
     row = plan.get("counterbalance")
+    if type(create_resume_checkpoint) is not bool or (
+        create_resume_checkpoint
+        and (
+            lifecycle != "startup"
+            or fixture_id not in (
+                "interior_tavern",
+                "landscape_village",
+                "transition_tower_approach",
+            )
+        )
+    ):
+        raise SandboxPreparationError("checkpoint preparation identity is invalid")
     if (
         fixture_id not in _FIXTURE_IDS
         or type(party_size) is not int
@@ -750,6 +762,7 @@ def _planned_worker_invocation(
             lifecycle_id=lifecycle_id,
             resume_checkpoint_sha256=resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=create_resume_checkpoint,
         )
     except CharacterizationError as exc:
         raise SandboxPreparationError(
@@ -787,6 +800,7 @@ def prepare_profile_sandbox(
     resume_checkpoint_sha256: str | None = None,
     resume_checkpoint: Mapping[str, Any] | None = None,
     preflight_run_id: str | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> dict[str, Any]:
     """Seed only after intent matches the internally planned worker launch."""
     _require_preparation_startup_guard()
@@ -802,6 +816,7 @@ def prepare_profile_sandbox(
         run_id=run_id,
         resume_checkpoint_sha256=resume_checkpoint_sha256,
         preflight_run_id=preflight_run_id,
+        create_resume_checkpoint=create_resume_checkpoint,
     )
     if lifecycle == "resume":
         if (
@@ -811,6 +826,10 @@ def prepare_profile_sandbox(
             raise SandboxPreparationError("row-bound resume checkpoint is unavailable")
     elif resume_checkpoint is not None:
         raise SandboxPreparationError("startup cannot consume a resume checkpoint")
+    if create_resume_checkpoint and (
+        lifecycle != "startup" or resume_checkpoint is not None
+    ):
+        raise SandboxPreparationError("checkpoint preparation cannot use resume state")
     module_payloads, expected_payloads = _load_profile_seed_inputs(root)
     prepared, identity_evidence = run_after_invocation_identity(
         worker_plan.identity(),
