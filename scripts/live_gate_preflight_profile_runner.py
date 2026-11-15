@@ -778,6 +778,36 @@ def _frozen_location_name_matches_utterance(name: str, utterance: str) -> bool:
     )
 
 
+def _checkpoint_runtime_location_id(source_location_id: Any) -> str | None:
+    """Resolve a frozen source location through the canonical runtime ID map."""
+    from scripts.mapping_pilot.fixtures import LOCATION_ID_MAP
+
+    if not isinstance(source_location_id, str) or not source_location_id.strip():
+        return None
+    runtime_location_id = LOCATION_ID_MAP.get(source_location_id)
+    if not isinstance(runtime_location_id, str) or not runtime_location_id.strip():
+        return None
+    return runtime_location_id
+
+
+def _validate_checkpoint_seed_location(
+    current_location_id: Any, travel_turn: Mapping[str, Any]
+) -> str:
+    """Require the seeded tracker to use the mapped runtime, not source, ID."""
+    source_location_id = travel_turn.get("source_location_id")
+    source_runtime_location_id = _checkpoint_runtime_location_id(
+        source_location_id
+    )
+    if (
+        source_runtime_location_id is None
+        or travel_turn.get("source_runtime_location_id")
+        != source_runtime_location_id
+        or current_location_id != source_runtime_location_id
+    ):
+        raise CharacterizationError("checkpoint_seed_location_mismatch")
+    return source_runtime_location_id
+
+
 def _resolve_checkpoint_travel_turn(
     *,
     script: Mapping[str, Any],
@@ -821,7 +851,7 @@ def _resolve_checkpoint_travel_turn(
         raise CharacterizationError("checkpoint_travel_turn_invalid")
 
     try:
-        from scripts.mapping_pilot.fixtures import LOCATION_ID_MAP, load_verified_fixtures
+        from scripts.mapping_pilot.fixtures import load_verified_fixtures
 
         fixtures, _fixture_hashes = load_verified_fixtures()
     except Exception as exc:
@@ -842,6 +872,9 @@ def _resolve_checkpoint_travel_turn(
         and location.get("location_id") == source_location_id
     ]
     if len(source_matches) != 1:
+        raise CharacterizationError("checkpoint_travel_source_location_invalid")
+    source_runtime_id = _checkpoint_runtime_location_id(source_location_id)
+    if source_runtime_id is None:
         raise CharacterizationError("checkpoint_travel_source_location_invalid")
 
     exits = source_matches[0].get("exits")
@@ -877,7 +910,7 @@ def _resolve_checkpoint_travel_turn(
     if target_source_id == source_location_id:
         raise CharacterizationError("checkpoint_travel_target_unchanged")
     target_name = target_location.get("name")
-    target_runtime_id = LOCATION_ID_MAP.get(target_source_id)
+    target_runtime_id = _checkpoint_runtime_location_id(target_source_id)
     if (
         not isinstance(target_name, str)
         or not target_name.strip()
@@ -891,6 +924,7 @@ def _resolve_checkpoint_travel_turn(
         "utterance": utterance,
         "character": character,
         "source_location_id": source_location_id,
+        "source_runtime_location_id": source_runtime_id,
         "target_source_location_id": target_source_id,
         "target_location_id": target_runtime_id,
         "target_location_name": target_name,
@@ -927,6 +961,8 @@ def _load_worker_checkpoint_travel_turn(
         )
         or len(set(party.get("members", []))) != len(party.get("members", []))
         or not isinstance(mapping.get("source_location_id"), str)
+        or mapping.get("runtime_location_id")
+        != _checkpoint_runtime_location_id(mapping.get("source_location_id"))
         or not isinstance(counterbalance.get("script"), str)
         or type(metadata.get("effective_seed")) is not int
         or counterbalance.get("fixed_seed") != metadata.get("effective_seed")
@@ -1035,6 +1071,9 @@ def _validate_checkpoint_travel_exchange(
     expected_proof = {
         "step_id": travel_turn.get("step_id"),
         "source_location_id": travel_turn.get("source_location_id"),
+        "source_runtime_location_id": travel_turn.get(
+            "source_runtime_location_id"
+        ),
         "target_source_location_id": travel_turn.get("target_source_location_id"),
         "target_location_id": travel_turn.get("target_location_id"),
         "response_counts": {
@@ -1045,6 +1084,15 @@ def _validate_checkpoint_travel_exchange(
         },
         "complete": True,
     }
+    if (
+        _checkpoint_runtime_location_id(travel_turn.get("source_location_id"))
+        != travel_turn.get("source_runtime_location_id")
+        or _checkpoint_runtime_location_id(
+            travel_turn.get("target_source_location_id")
+        )
+        != travel_turn.get("target_location_id")
+    ):
+        raise CharacterizationError("checkpoint_travel_proof_mismatch")
     proof = result.get("checkpoint_travel")
     calls = result.get("calls")
     call_count = result.get("call_count")
@@ -1231,6 +1279,9 @@ class _CheckpointTravelResponseResolver:
         return {
             "step_id": self.turn.get("step_id"),
             "source_location_id": self.turn.get("source_location_id"),
+            "source_runtime_location_id": self.turn.get(
+                "source_runtime_location_id"
+            ),
             "target_source_location_id": self.turn.get("target_source_location_id"),
             "target_location_id": self.turn.get("target_location_id"),
             "response_counts": counts,
@@ -1259,6 +1310,12 @@ def _retain_moved_resume_checkpoint(
     from scripts import live_gate_preflight_sandbox as sandbox_tools
     from scripts.mapping_pilot import launcher
 
+    source_runtime_location_id = _checkpoint_runtime_location_id(
+        travel_turn.get("source_location_id")
+    )
+    target_runtime_location_id = _checkpoint_runtime_location_id(
+        travel_turn.get("target_source_location_id")
+    )
     root = project_root.resolve(strict=True)
     expected_sandbox = root / SANDBOX_RELATIVE
     if (
@@ -1290,10 +1347,17 @@ def _retain_moved_resume_checkpoint(
         or travel_proof.get("step_id") != travel_turn.get("step_id")
         or travel_proof.get("source_location_id")
         != travel_turn.get("source_location_id")
+        or travel_proof.get("source_runtime_location_id")
+        != travel_turn.get("source_runtime_location_id")
         or travel_proof.get("target_source_location_id")
         != travel_turn.get("target_source_location_id")
         or travel_proof.get("target_location_id")
         != travel_turn.get("target_location_id")
+        or source_runtime_location_id is None
+        or travel_turn.get("source_runtime_location_id")
+        != source_runtime_location_id
+        or target_runtime_location_id is None
+        or travel_turn.get("target_location_id") != target_runtime_location_id
     ):
         raise CharacterizationError("checkpoint_creation_identity_invalid")
 
@@ -1337,6 +1401,7 @@ def _retain_moved_resume_checkpoint(
         or not isinstance(mapping, Mapping)
         or mapping.get("source_location_id") != travel_turn.get("source_location_id")
         or mapping.get("source_location_id") != frozen_plan.get("source_location_id")
+        or mapping.get("runtime_location_id") != source_runtime_location_id
     ):
         raise CharacterizationError("checkpoint_seed_identity_mismatch")
 
@@ -1476,9 +1541,10 @@ def _retain_moved_resume_checkpoint(
             "fixed_seed": fixed_seed,
             "step_id": travel_turn["step_id"],
             "source_location_id": travel_turn["source_location_id"],
+            "source_runtime_location_id": source_runtime_location_id,
             "target_source_location_id": travel_turn["target_source_location_id"],
             "target_location_id": travel_turn["target_location_id"],
-            "initial_location_id": travel_turn["source_location_id"],
+            "initial_location_id": source_runtime_location_id,
             "final_location_id": world["currentLocationId"],
             "initial_state_sha256": initial_state_sha256,
             "state_sha256": final_state_sha256,
@@ -3865,12 +3931,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 if isinstance(checkpoint_world, Mapping)
                 else None
             )
-            if (
-                not isinstance(first_turn.get("source_location_id"), str)
-                or checkpoint_initial_location_id != first_turn["source_location_id"]
-                or not isinstance(checkpoint_initial_time, str)
-            ):
+            if not isinstance(checkpoint_initial_time, str):
                 raise CharacterizationError("checkpoint_seed_location_mismatch")
+            _validate_checkpoint_seed_location(
+                checkpoint_initial_location_id, first_turn
+            )
             checkpoint_travel_turn = dict(first_turn)
             try:
                 checkpoint_before_sha256 = launcher._canonical_state_sha256(sandbox)

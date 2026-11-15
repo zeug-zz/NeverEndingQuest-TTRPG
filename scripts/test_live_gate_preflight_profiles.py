@@ -4383,7 +4383,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 json.dumps(
                     {
                         "worldConditions": {
-                            "currentLocationId": "source-runtime",
+                            "currentLocationId": "MP01",
                             "time": "Day 1, 08:00",
                         }
                     }
@@ -4640,9 +4640,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                                     "step_id": "E01-01",
                                     "utterance": "Describe the room.",
                                     "character": "PC-One",
-                                    "source_location_id": "source-runtime",
-                                    "target_source_location_id": "destination-source",
-                                    "target_location_id": "target-runtime",
+                                    "source_location_id": "MPV2_LOC_TAVERN",
+                                    "source_runtime_location_id": "MP01",
+                                    "target_source_location_id": "MPV2_LOC_VILLAGE_GREEN",
+                                    "target_location_id": "MP02",
                                 },
                                 SANDBOX_PROVIDER_KEY_PLACEHOLDER,
                             ),
@@ -4663,9 +4664,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             "_validate_checkpoint_travel_exchange",
                             return_value={
                                 "step_id": "E01-01",
-                                "source_location_id": "source-runtime",
-                                "target_source_location_id": "destination-source",
-                                "target_location_id": "target-runtime",
+                                "source_location_id": "MPV2_LOC_TAVERN",
+                                "source_runtime_location_id": "MP01",
+                                "target_source_location_id": "MPV2_LOC_VILLAGE_GREEN",
+                                "target_location_id": "MP02",
                                 "response_counts": {
                                     "travel_action_responses": 1,
                                     "gameplay_validation_responses": 1,
@@ -5490,6 +5492,14 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                     )
                     self.assertIsNotNone(turn)
                     self.assertEqual(turn["step_id"], expected_step)
+                    self.assertEqual(
+                        turn["source_runtime_location_id"],
+                        LOCATION_ID_MAP[plan["source_location_id"]],
+                    )
+                    self.assertNotEqual(
+                        turn["source_location_id"],
+                        turn["source_runtime_location_id"],
+                    )
 
         combat_plan, _profile = sandbox_preparation._load_profile_seed_plan(
             "combat_stage_tavern_zones", 1, None
@@ -5512,6 +5522,59 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                 source_location_id=combat_plan["source_location_id"],
             )
         )
+
+    def test_checkpoint_seed_location_uses_canonical_runtime_mapping(self) -> None:
+        from scripts.seed_combat_capture import _party_names
+
+        plan, _profile = sandbox_preparation._load_profile_seed_plan(
+            "interior_tavern", 1, "E01"
+        )
+        script_path = (
+            PROJECT_ROOT
+            / "plans"
+            / "v2-mapping-pilot-prereg"
+            / str(plan["counterbalance"]["script"])
+        )
+        script = json.loads(script_path.read_text(encoding="utf-8"))
+        turn = profile_runner._resolve_checkpoint_travel_turn(
+            script=script,
+            fixture_id="interior_tavern",
+            party_size=1,
+            members=_party_names(1),
+            source_location_id=plan["source_location_id"],
+        )
+        self.assertIsInstance(turn, dict)
+        source_runtime_id = LOCATION_ID_MAP[plan["source_location_id"]]
+        self.assertNotEqual(plan["source_location_id"], source_runtime_id)
+        self.assertEqual(
+            profile_runner._validate_checkpoint_seed_location(
+                source_runtime_id, turn
+            ),
+            source_runtime_id,
+        )
+
+        for current_location_id in (
+            plan["source_location_id"],
+            "MP999",
+        ):
+            with self.subTest(current_location_id=current_location_id):
+                with self.assertRaisesRegex(
+                    CharacterizationError, "checkpoint_seed_location_mismatch"
+                ):
+                    profile_runner._validate_checkpoint_seed_location(
+                        current_location_id, turn
+                    )
+
+        mismapped_turn = {
+            **turn,
+            "source_runtime_location_id": "MP999",
+        }
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_seed_location_mismatch"
+        ):
+            profile_runner._validate_checkpoint_seed_location(
+                source_runtime_id, mismapped_turn
+            )
 
     def test_public_supervised_row_path_explicitly_requests_one_checkpoint(self) -> None:
         characterized: list[argparse.Namespace] = []
@@ -5616,6 +5679,7 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         return {
             "step_id": turn["step_id"],
             "source_location_id": turn["source_location_id"],
+            "source_runtime_location_id": turn["source_runtime_location_id"],
             "target_source_location_id": turn["target_source_location_id"],
             "target_location_id": turn["target_location_id"],
             "response_counts": {
@@ -5647,8 +5711,9 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             "step_id": "E4-07",
             "utterance": "We leave through the open front entrance into the village green.",
             "character": "Acheron",
-            "source_location_id": "SRC01",
-            "target_source_location_id": "SRC02",
+            "source_location_id": "MPV2_LOC_TAVERN",
+            "source_runtime_location_id": "MP01",
+            "target_source_location_id": "MPV2_LOC_VILLAGE_GREEN",
             "target_location_id": "MP02",
             "target_location_name": "Village Green",
             "time_minutes": 5,
@@ -5785,6 +5850,18 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             self.assertEqual(attestation["arm"], "A")
             self.assertEqual(attestation["fixed_seed"], 5101)
             self.assertEqual(
+                attestation["source_runtime_location_id"],
+                LOCATION_ID_MAP[state["travel_turn"]["source_location_id"]],
+            )
+            self.assertNotEqual(
+                attestation["source_location_id"],
+                attestation["initial_location_id"],
+            )
+            self.assertEqual(
+                attestation["initial_location_id"],
+                state["travel_turn"]["source_runtime_location_id"],
+            )
+            self.assertEqual(
                 attestation["final_location_id"],
                 state["travel_turn"]["target_location_id"],
             )
@@ -5811,7 +5888,13 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
     def test_checkpoint_retention_fails_closed_for_unchanged_or_wrong_location(
         self,
     ) -> None:
-        for mode in ("unchanged", "wrong-location", "unchanged-hash"):
+        for mode in (
+            "unchanged",
+            "wrong-location",
+            "wrong-source-runtime-mapping",
+            "wrong-source-identity",
+            "unchanged-hash",
+        ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(
                 prefix="checkpoint-travel-invalid-", dir=PROJECT_ROOT / "tmp"
             ) as temp_root:
@@ -5825,6 +5908,16 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                     profile_runner._write_json(
                         state["sandbox_root"] / "party_tracker.json",
                         state["tracker"],
+                    )
+                elif mode == "wrong-source-runtime-mapping":
+                    state["travel_turn"]["source_runtime_location_id"] = "MP999"
+                elif mode == "wrong-source-identity":
+                    state["metadata"]["mapping"]["source_location_id"] = (
+                        "MPV2_LOC_VILLAGE_GREEN"
+                    )
+                    profile_runner._write_json(
+                        state["sandbox_root"] / "mapping_pilot" / "seed_metadata.json",
+                        state["metadata"],
                     )
                 with mock.patch.object(
                     profile_runner, "PROJECT_ROOT", state["project_root"]
@@ -5862,7 +5955,15 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                 expected_code = (
                     "checkpoint_state_hash_unchanged"
                     if mode == "unchanged-hash"
-                    else "checkpoint_travel_state_not_persisted"
+                    else (
+                        "checkpoint_creation_identity_invalid"
+                        if mode == "wrong-source-runtime-mapping"
+                        else (
+                            "checkpoint_seed_identity_mismatch"
+                            if mode == "wrong-source-identity"
+                            else "checkpoint_travel_state_not_persisted"
+                        )
+                    )
                 )
                 self.assertEqual(raised.exception.code, expected_code)
 
