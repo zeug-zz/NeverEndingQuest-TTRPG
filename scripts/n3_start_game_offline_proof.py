@@ -1198,6 +1198,8 @@ def _offline_diagnostic_config_module() -> ModuleType:
         "WEB_HOST": "127.0.0.1",
         "WEB_CORS_ALLOWED_ORIGINS": [PROOF_ORIGIN],
         "DM_MAIN_MODEL": "offline-diagnostic",
+        "COMBAT_MAIN_MODEL": "offline-diagnostic",
+        "COMBAT_DIALOGUE_SUMMARY_MODEL": "offline-diagnostic",
         "DM_SUMMARIZATION_MODEL": "offline-diagnostic",
         "DM_VALIDATION_MODEL": "offline-diagnostic",
         "DM_MINI_MODEL": "offline-diagnostic",

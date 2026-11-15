@@ -749,6 +749,25 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         finally:
             shutil.rmtree(self.scratch, ignore_errors=True)
 
+    def test_offline_diagnostic_config_has_inert_combat_model_defaults(self) -> None:
+        config = proof._offline_diagnostic_config_module()
+
+        self.assertEqual(config.OPENAI_API_KEY, "")
+        self.assertEqual(config.OPENROUTER_API_KEY, "")
+        for name in (
+            "DM_MAIN_MODEL",
+            "COMBAT_MAIN_MODEL",
+            "COMBAT_DIALOGUE_SUMMARY_MODEL",
+            "DM_SUMMARIZATION_MODEL",
+            "DM_VALIDATION_MODEL",
+            "DM_MINI_MODEL",
+            "DM_FULL_MODEL",
+            "GPT5_MINI_MODEL",
+            "GPT5_FULL_MODEL",
+        ):
+            with self.subTest(model=name):
+                self.assertEqual(getattr(config, name), "offline-diagnostic")
+
     def _fake_sandbox(self) -> Path:
         sandbox = self.scratch / "combat_capture"
         for relative in (
