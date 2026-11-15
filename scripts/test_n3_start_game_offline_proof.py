@@ -441,11 +441,12 @@ class FakeSocketIO:
         self.version_module = version_module
         self.seen_origin: str | None = None
         self.active_client: FakeClient | None = None
+        self.latest_version_result: Any = None
 
     def test_client(self, app: Any, headers: dict[str, str]) -> FakeClient:
         del app
         self.seen_origin = headers.get("Origin")
-        self.version_module.get_latest_remote_version(
+        self.latest_version_result = self.version_module.get_latest_remote_version(
             "fake/repo", "main", silent=True
         )
         self.active_client = FakeClient(self.web_module)
@@ -509,6 +510,7 @@ class FakeHostImporter:
         )
         self.version_module = SimpleNamespace(
             __file__=str(sandbox / "utils" / "version_checker.py"),
+            _run_git_command=self.unused,
             get_latest_remote_version=self.unused,
         )
         self.web_module = SimpleNamespace(
@@ -1320,6 +1322,75 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             ).read_text(encoding="ascii")
         )
         self.assertEqual(written, report)
+
+    def test_startup_diagnostic_stubs_git_probe_and_blocks_other_process_launches(
+        self,
+    ) -> None:
+        from utils import version_checker
+
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        importer.web_module.process_launch = True
+        importer.version_module = version_checker
+        socketio = importer.web_module.socketio
+        socketio.version_module = version_checker
+        original_test_client = socketio.test_client
+        original_git_probe = version_checker._run_git_command
+        original_latest_version = version_checker.get_latest_remote_version
+        original_subprocess_run = proof.subprocess.run
+
+        def check_for_updates_before_connect(
+            app: Any, headers: dict[str, str]
+        ) -> FakeClient:
+            socketio.check_for_updates_result = version_checker.check_for_updates(
+                silent=True
+            )
+            return original_test_client(app, headers)
+
+        with (
+            patch.object(
+                version_checker,
+                "__file__",
+                str(sandbox / "utils" / "version_checker.py"),
+            ),
+            patch.object(
+                socketio,
+                "test_client",
+                side_effect=check_for_updates_before_connect,
+            ),
+            patch.object(proof.subprocess, "run") as underlying_spawn,
+        ):
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-git-probe-refusal",
+                output_dir=self.scratch / "startup-diagnostic-git-probe-refusal",
+                startup_timeout=0.5,
+                host_importer=importer,
+            )
+
+            underlying_spawn.assert_not_called()
+            self.assertIs(proof.subprocess.run, underlying_spawn)
+            self.assertIs(version_checker._run_git_command, original_git_probe)
+            self.assertIs(
+                version_checker.get_latest_remote_version, original_latest_version
+            )
+
+        self.assertIs(proof.subprocess.run, original_subprocess_run)
+        self.assertEqual(
+            socketio.check_for_updates_result[:3],
+            ("unknown", "0.0.0", None),
+        )
+        self.assertIn(
+            "Could not resolve fork update source",
+            socketio.check_for_updates_result[3],
+        )
+        self.assertIsNone(socketio.latest_version_result)
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["failure_category"], "process_launch_blocked")
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+        self.assertEqual(report["process_launch_refusal"]["status"], "redacted")
+        self.assertIs(socketio.test_client.__func__, FakeSocketIO.test_client)
 
     def test_host_import_failure_reports_safe_source_and_line_only(self) -> None:
         sandbox = self._fake_sandbox()
