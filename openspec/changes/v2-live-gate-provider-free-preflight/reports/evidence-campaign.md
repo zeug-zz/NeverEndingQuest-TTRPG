@@ -124,3 +124,31 @@ This does not supply the required comparative execution evidence.
 
 The 26-row census above remains MISSING. These rulings do not infer profile
 evidence and do not establish booking eligibility or a live-gate PASS.
+
+## Ruling `neq-w1-retained-evidence-20261116`
+
+Correction `bc0f70ea` was committed and pushed. The primary independently ran
+113 profile, 30 integration, and 24 boundary checks, all PASS; the real-child
+test validates retained bytes after sandbox cleanup. ASCII, diff, and hooks
+checks also PASS. These results establish no host, live-gate, or booking PASS,
+and do not satisfy full 26-row acceptance.
+
+The primary directly reran `_validate_profile_evidence` on the eight previously
+accepted startup receipts below, using each receipt's recorded SHA and call
+data. Every run rejected the receipt with
+`profile evidence summary child proof is missing`:
+
+- `fr11-campaign-c01-start-02`
+- `fr11-campaign-c05-start-01`
+- `fr11-campaign-e01-start-01`
+- `fr11-campaign-e04-start-01`
+- `fr11-campaign-e07-start-02`
+- `fr11-campaign-e13-start-01`
+- `fr11-campaign-tower1-start-01`
+- `fr11-campaign-tower4-start-01`
+
+These historical startup receipts are currently **UNREVALIDATABLE** by the
+current validator, not PASS. Earlier overseer acceptance and source attribution
+are preserved as historical only; they do not authorize resuming or replacing
+missing evidence. E01/P1 and E07/P4 remain MISSING, and comparison remains
+MISSING. No old file was modified or reclassified as a live gate.
