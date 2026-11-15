@@ -159,6 +159,7 @@ def write_preflight_evidence(
     row_report: Any,
     dependency_lock_path: str | Path | None = None,
     entrypoint_failure_code: str | None = None,
+    comparison_identity: Mapping[str, Any] | None = None,
     gate: str = EVIDENCE_GATE,
 ) -> str:
     """Write one immutable, preflight-only report below the required evidence root.
@@ -178,6 +179,7 @@ def write_preflight_evidence(
         observed_invocation=observed_invocation,
         row_report=row_report,
         entrypoint_failure_code=entrypoint_failure_code,
+        comparison_identity=comparison_identity,
     )
     payload = _canonical_json(document) + b"\n"
     if len(payload) > _MAX_REPORT_BYTES:
@@ -261,6 +263,7 @@ def _build_preflight_document(
     observed_invocation: Any,
     row_report: Any,
     entrypoint_failure_code: str | None,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_source_sha = source_sha if _valid_sha(source_sha, _SOURCE_SHA) else None
     try:
@@ -374,7 +377,7 @@ def _build_preflight_document(
         and transport_complete
         and entrypoint_failure_code is None
     )
-    return {
+    document = {
         "schema_version": 1,
         "report_type": "provider-free-live-gate-preflight",
         "preflight_only": True,
@@ -420,6 +423,22 @@ def _build_preflight_document(
         "live_gate_pass": False,
         "pilot_evidence_written": False,
     }
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            document["comparison_identity"] = validate_comparison_identity(
+                comparison_identity,
+                expected_application_sha=selected_source_sha,
+            )
+        except ComparisonIdentityError as exc:
+            raise PreflightEvidenceError(
+                "comparison-only source identity is invalid"
+            ) from exc
+    return document
 
 
 def _row_outcomes(

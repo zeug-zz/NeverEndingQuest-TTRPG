@@ -110,6 +110,7 @@ _SECRET_ENV_NAME = re.compile(
 _PROXY_ENV_NAME = re.compile(r"(?:^|_)PROXY$", re.IGNORECASE)
 _SOURCE_BOUND_FILES = (
     "scripts/live_gate_preflight_profile_runner.py",
+    "scripts/live_gate_preflight_comparison_identity.py",
     "scripts/live_gate_preflight_sandbox.py",
     "scripts/live_gate_preflight_profiles.py",
     "scripts/live_gate_preflight_profiles.json",
@@ -283,10 +284,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--arm", choices=("A", "B", "D"), help=argparse.SUPPRESS)
     parser.add_argument("--lifecycle-id", help=argparse.SUPPRESS)
     parser.add_argument("--preflight-run-id", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--comparison-identity-json",
+        type=_parse_comparison_identity_json,
+        help=argparse.SUPPRESS,
+    )
     if argv is None and len(sys.argv) > 1 and sys.argv[1] == "--worker":
         args = parser.parse_args(sys.argv[1:])
     else:
         args = parser.parse_args(argv)
+    if args.comparison_identity_json is not None:
+        try:
+            from scripts.live_gate_preflight_comparison_identity import (
+                validate_comparison_identity,
+            )
+
+            args.comparison_identity_json = validate_comparison_identity(
+                args.comparison_identity_json,
+                expected_application_sha=args.source_sha,
+            )
+        except (ImportError, ValueError) as exc:
+            parser.error("comparison-only source identity is invalid: %s" % exc)
     if args.worker:
         required = (
             args.fixture_id,
@@ -332,6 +350,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     elif args.resume_checkpoint_sha256 is not None:
         parser.error("--resume-checkpoint-sha256 is only valid for --lifecycle resume")
     return args
+
+
+def _parse_comparison_identity_json(value: str) -> Mapping[str, Any]:
+    try:
+        identity = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise argparse.ArgumentTypeError(
+            "comparison-only identity must be JSON"
+        ) from exc
+    if not isinstance(identity, Mapping):
+        raise argparse.ArgumentTypeError(
+            "comparison-only identity must be an object"
+        )
+    return identity
 
 
 def _require_safe_project_root() -> Path:
@@ -700,6 +732,32 @@ def _verify_source_identity(source_sha: str) -> None:
         if committed.returncode != 0 or committed.stdout != current_bytes:
             raise CharacterizationError("source_file_differs_from_declared_sha")
     _require_repository_venv()
+
+
+def _verify_bound_source_identity(
+    source_sha: str, comparison_identity: Mapping[str, Any] | None
+) -> None:
+    """Verify the normal same-SHA identity or an explicit comparison-only split."""
+    if comparison_identity is None:
+        _verify_source_identity(source_sha)
+        return
+    from scripts.live_gate_preflight_comparison_identity import (
+        ComparisonIdentityError,
+        validate_comparison_identity,
+        verify_application_worktree,
+        verify_tool_tree,
+    )
+
+    try:
+        identity = validate_comparison_identity(
+            comparison_identity, expected_application_sha=source_sha
+        )
+        tool = identity["tool"]
+        _verify_source_identity(tool["sha"])
+        verify_tool_tree(tool["sha"], tool["tree"], project_root=PROJECT_ROOT)
+        verify_application_worktree(identity)
+    except ComparisonIdentityError as exc:
+        raise CharacterizationError(exc.args[0]) from exc
 
 
 def _safe_project_file(relative: str | Path, label: str) -> Path:
@@ -3297,6 +3355,7 @@ def _host_command(
     resume_checkpoint_sha256: str | None,
     preflight_run_id: str | None = None,
     create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> list[str]:
     if type(create_resume_checkpoint) is not bool or (
         create_resume_checkpoint
@@ -3338,6 +3397,26 @@ def _host_command(
         if _SAFE_RUN_ID.fullmatch(preflight_run_id) is None:
             raise CharacterizationError("row_preflight_identity_invalid")
         command.extend(("--preflight-run-id", preflight_run_id))
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            validate_comparison_identity,
+        )
+
+        identity = validate_comparison_identity(
+            comparison_identity, expected_application_sha=source_sha
+        )
+        command.extend(
+            (
+                "--comparison-identity-json",
+                json.dumps(
+                    identity,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ),
+            )
+        )
     return command
 
 
@@ -3897,7 +3976,9 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         _configure_sandbox_import_paths(root, sandbox)
         config_guard = _install_sandbox_config_guard(sandbox)
         phase = "source_identity"
-        _verify_source_identity(args.source_sha)
+        _verify_bound_source_identity(
+            args.source_sha, getattr(args, "comparison_identity_json", None)
+        )
         phase = "prepared_sandbox_validation"
         (
             sandbox,
@@ -3969,6 +4050,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=create_resume_checkpoint,
+            comparison_identity=getattr(args, "comparison_identity_json", None),
         )
         from scripts.live_gate_preflight_safety import (
             CANARY_REPORT_ENV,
@@ -4690,6 +4772,9 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             },
             "shared_lock": lock_release_evidence,
         }
+        comparison_identity = getattr(args, "comparison_identity_json", None)
+        if comparison_identity is not None:
+            teardown_sidecar["comparison_identity"] = dict(comparison_identity)
         teardown_evidence_descriptor: dict[str, Any] | None = None
         try:
             _write_json(teardown_evidence_path, teardown_sidecar)
@@ -4865,6 +4950,7 @@ def supervise_preflight_row(
     lifecycle: str = "startup",
     resume_checkpoint_sha256: str | None = None,
     create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one fixture lifecycle through the guarded host and script driver.
 
@@ -4911,6 +4997,18 @@ def supervise_preflight_row(
         planned_row_id=planned_row_id,
         arm=arm,
     )
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            comparison_identity = validate_comparison_identity(
+                comparison_identity, expected_application_sha=source_sha
+            )
+        except ComparisonIdentityError as exc:
+            raise CharacterizationError(exc.args[0]) from exc
     args = argparse.Namespace(
         fixture_id=fixture_id,
         party_size=party_size,
@@ -4923,13 +5021,19 @@ def supervise_preflight_row(
         lifecycle_id=row_run_id + ("_s" if lifecycle == "startup" else "_r"),
         preflight_run_id=preflight_run_id,
         create_resume_checkpoint=create_resume_checkpoint,
+        comparison_identity_json=(
+            dict(comparison_identity) if comparison_identity is not None else None
+        ),
     )
     evidence, evidence_path, evidence_sha256 = _characterize(args)
-    return {
+    result = {
         "evidence": evidence,
         "evidence_path": evidence_path,
         "evidence_sha256": evidence_sha256,
     }
+    if comparison_identity is not None:
+        result["comparison_identity"] = dict(comparison_identity)
+    return result
 
 
 def _validate_supervised_planned_row(
@@ -5226,7 +5330,9 @@ def _worker(args: argparse.Namespace) -> int:
         startup_guard_from_sitecustomize = True
         config_guard = _install_sandbox_config_guard(sandbox)
         sandbox_config_origin_guard_active = config_guard in sys.meta_path
-        _verify_source_identity(args.source_sha)
+        _verify_bound_source_identity(
+            args.source_sha, getattr(args, "comparison_identity_json", None)
+        )
         _lock_holder_for_worker(args)
         from scripts.mapping_pilot import server
 
@@ -5526,6 +5632,9 @@ def _worker(args: argparse.Namespace) -> int:
         "call_count": call_count,
         "calls": calls,
     }
+    comparison_identity = getattr(args, "comparison_identity_json", None)
+    if comparison_identity is not None:
+        result["comparison_identity"] = dict(comparison_identity)
     if args.create_resume_checkpoint:
         result["checkpoint_travel"] = checkpoint_travel_proof
     try:

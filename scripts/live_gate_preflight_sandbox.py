@@ -548,8 +548,11 @@ def _prepare_new_sandbox(
     plan: Mapping[str, Any],
     module_payloads: Mapping[str, Mapping[str, Any]],
     expected_payloads: Mapping[str, Mapping[str, Any]],
+    *,
+    runtime_source_root: str | Path | None = None,
 ) -> dict[str, Any]:
     root, sandbox = _target_path(project_root)
+    runtime_root = _project_root(runtime_source_root or root)
     if (
         plan.get("fixture_id") not in _FIXTURE_IDS
         or type(plan.get("party_size")) is not int
@@ -564,7 +567,7 @@ def _prepare_new_sandbox(
 
     sandbox.mkdir(mode=0o700, parents=False, exist_ok=False)
     try:
-        _copy_runtime(root, sandbox)
+        _copy_runtime(runtime_root, sandbox)
         _write_file(sandbox, "config.py", _SYNTHETIC_CONFIG.encode("ascii"))
         written_module = _write_fixture_module(
             sandbox, plan, module_payloads, expected_payloads
@@ -698,6 +701,7 @@ def _planned_worker_invocation(
     resume_checkpoint_sha256: str | None,
     preflight_run_id: str | None = None,
     create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> PlannedWorkerInvocation:
     """Build the worker identity through the same controller command factory."""
     if lifecycle not in ("startup", "resume"):
@@ -763,6 +767,7 @@ def _planned_worker_invocation(
             resume_checkpoint_sha256=resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=create_resume_checkpoint,
+            comparison_identity=comparison_identity,
         )
     except CharacterizationError as exc:
         raise SandboxPreparationError(
@@ -801,10 +806,42 @@ def prepare_profile_sandbox(
     resume_checkpoint: Mapping[str, Any] | None = None,
     preflight_run_id: str | None = None,
     create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Seed only after intent matches the internally planned worker launch."""
     _require_preparation_startup_guard()
     root = _project_root(PROJECT_ROOT)
+    runtime_root = root
+    normalized_comparison_identity: dict[str, Any] | None = None
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+            verify_application_worktree,
+            verify_tool_tree,
+        )
+        from scripts import live_gate_preflight_profile_runner as profile_runner
+
+        try:
+            normalized_comparison_identity = validate_comparison_identity(
+                comparison_identity,
+                expected_application_sha=source_sha,
+            )
+            tool_identity = normalized_comparison_identity["tool"]
+            profile_runner._verify_source_identity(tool_identity["sha"])
+            verify_tool_tree(
+                tool_identity["sha"], tool_identity["tree"], project_root=root
+            )
+            runtime_root = verify_application_worktree(
+                normalized_comparison_identity
+            )
+        except (
+            ComparisonIdentityError,
+            profile_runner.CharacterizationError,
+        ) as exc:
+            raise SandboxPreparationError(
+                "comparison_source_identity_invalid"
+            ) from exc
     plan, _pair_profile = _load_profile_seed_plan(
         fixture_id, party_size, planned_row_id
     )
@@ -817,6 +854,7 @@ def prepare_profile_sandbox(
         resume_checkpoint_sha256=resume_checkpoint_sha256,
         preflight_run_id=preflight_run_id,
         create_resume_checkpoint=create_resume_checkpoint,
+        comparison_identity=normalized_comparison_identity,
     )
     if lifecycle == "resume":
         if (
@@ -835,7 +873,11 @@ def prepare_profile_sandbox(
         worker_plan.identity(),
         intended_host_identity,
         lambda: _prepare_new_sandbox(
-            root, plan, module_payloads, expected_payloads
+            root,
+            plan,
+            module_payloads,
+            expected_payloads,
+            runtime_source_root=runtime_root,
         ),
     )
     if lifecycle == "resume":
@@ -1138,6 +1180,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--resume-checkpoint-sha256")
     parser.add_argument("--preflight-run-id")
+    parser.add_argument("--comparison-identity-json", type=_parse_identity_json)
     parser.add_argument(
         "--intended-host-identity-json", type=_parse_identity_json, required=True
     )
@@ -1157,6 +1200,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             intended_host_identity=args.intended_host_identity_json,
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=args.preflight_run_id,
+            comparison_identity=args.comparison_identity_json,
         )
     except InvocationIdentityMismatch as exc:
         print(

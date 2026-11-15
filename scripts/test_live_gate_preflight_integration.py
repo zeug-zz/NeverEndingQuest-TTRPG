@@ -257,6 +257,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         observed_call_sites: list[dict[str, Any]] | None = None,
         server_returned: bool = True,
     ) -> tuple[dict[str, Any], str, str]:
+        comparison_identity = getattr(args, "comparison_identity_json", None)
         command = profile_runner._host_command(
             fixture_id=args.fixture_id,
             party_size=args.party_size,
@@ -268,6 +269,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             lifecycle_id=args.run_id + ("_s" if args.lifecycle == "startup" else "_r"),
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=args.preflight_run_id,
+            comparison_identity=comparison_identity,
         )
         rows, _reserves = _load_frozen_row_ids(None)
         frozen_row = next(row for row in rows if row["row_id"] == args.planned_row_id)
@@ -655,6 +657,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
             "call_count": call_count,
             "calls": calls,
         }
+        if comparison_identity is not None:
+            worker_result["comparison_identity"] = dict(comparison_identity)
         (evidence_directory / "worker-result.json").write_text(
             json.dumps(worker_result, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             encoding="ascii",
@@ -771,6 +775,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "durable_record": durable_record,
             },
         }
+        if comparison_identity is not None:
+            teardown_sidecar["comparison_identity"] = dict(comparison_identity)
         teardown_file = evidence_directory / "teardown-evidence.json"
         teardown_file.write_text(
             json.dumps(
@@ -852,7 +858,11 @@ class TestPreflightRowIntegration(unittest.TestCase):
         )
 
     def _retained_case(
-        self, *, server_returned: bool = True
+        self,
+        *,
+        server_returned: bool = True,
+        source_sha: str = SOURCE_SHA,
+        comparison_identity: dict[str, Any] | None = None,
     ) -> tuple[controller.PreflightRowPlan, str, dict[str, Any], dict[str, Any]]:
         rows, _reserves = _load_frozen_row_ids(None)
         profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
@@ -865,12 +875,15 @@ class TestPreflightRowIntegration(unittest.TestCase):
             fixture_id=plan.fixture_id,
             party_size=plan.party_size,
             lifecycle="startup",
-            source_sha=SOURCE_SHA,
+            source_sha=source_sha,
             run_id=row_run_id,
             planned_row_id=plan.row_id,
             arm=plan.arm,
             resume_checkpoint_sha256=None,
             preflight_run_id=RUN_ID,
+            comparison_identity_json=(
+                dict(comparison_identity) if comparison_identity is not None else None
+            ),
         )
         evidence, evidence_path, evidence_sha256 = self._fake_characterization(
             args, server_returned=server_returned
@@ -879,16 +892,19 @@ class TestPreflightRowIntegration(unittest.TestCase):
             plan,
             fixture_id=plan.fixture_id,
             lifecycle="startup",
-            source_sha=SOURCE_SHA,
+            source_sha=source_sha,
             row_run_id=row_run_id,
             resume_checkpoint_sha256=None,
             preflight_run_id=RUN_ID,
+            comparison_identity=comparison_identity,
         )
         result = {
             "evidence": evidence,
             "evidence_path": evidence_path,
             "evidence_sha256": evidence_sha256,
         }
+        if comparison_identity is not None:
+            result["comparison_identity"] = dict(comparison_identity)
         return plan, row_run_id, intended_identity, result
 
     @staticmethod
@@ -940,6 +956,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         row_run_id: str,
         intended_identity: dict[str, Any],
         result: dict[str, Any],
+        comparison_identity: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return retained.validate_retained_supervised_evidence(
             result,
@@ -947,9 +964,14 @@ class TestPreflightRowIntegration(unittest.TestCase):
             fixture_id=plan.fixture_id,
             lifecycle="startup",
             intended_identity=intended_identity,
-            source_sha=SOURCE_SHA,
+            source_sha=(
+                comparison_identity["application"]["sha"]
+                if comparison_identity is not None
+                else SOURCE_SHA
+            ),
             row_run_id=row_run_id,
             preflight_run_id=RUN_ID,
+            comparison_identity=comparison_identity,
         )
 
     def _run_prelaunch_characterization_failure(
@@ -1609,6 +1631,45 @@ class TestPreflightRowIntegration(unittest.TestCase):
                         for port in ("8360", "8370")
                     )
                 )
+
+    def test_comparison_identity_is_reconciled_from_retained_worker_and_teardown(self) -> None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            APPLICATION_B_SHA,
+            APPLICATION_B_TREE,
+            build_comparison_identity,
+        )
+
+        identity = build_comparison_identity(
+            tool_sha="a" * 40,
+            tool_tree="b" * 40,
+            application_sha=APPLICATION_B_SHA,
+            application_tree=APPLICATION_B_TREE,
+        )
+        plan, row_run_id, intended, result = self._retained_case(
+            source_sha=APPLICATION_B_SHA,
+            comparison_identity=identity,
+        )
+        summary = self._validate_retained_case(
+            plan,
+            row_run_id,
+            intended,
+            result,
+            comparison_identity=identity,
+        )
+        self.assertEqual(summary["comparison_identity"], identity)
+
+        sidecar_path = PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["comparison_identity"]["tool"]["sha"] = "c" * 40
+        self._rewrite_teardown_sidecar(result, sidecar)
+        with self.assertRaises(retained.RetainedEvidenceError):
+            self._validate_retained_case(
+                plan,
+                row_run_id,
+                intended,
+                result,
+                comparison_identity=identity,
+            )
 
     def test_prelaunch_guard_and_lock_contention_preserve_failure_evidence(self) -> None:
         with tempfile.TemporaryDirectory(

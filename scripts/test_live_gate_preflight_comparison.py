@@ -11,9 +11,11 @@ import argparse
 import http.client
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import unittest
 import urllib.request
 from contextlib import redirect_stdout
@@ -27,9 +29,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import live_gate_preflight_comparison as comparison
+from scripts import live_gate_preflight_comparison_identity as comparison_identity
 
 
-MAIN_SHA = "a" * 40
+MAIN_SHA = comparison.APPLICATION_A_SHA
+TOOL_SHA = "a" * 40
+TOOL_TREE = "b" * 40
 EXPECTED_NAMEERRORS = set(comparison.EXPECTED_NAMEERROR_ROWS)
 
 
@@ -48,6 +53,16 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
     ) -> dict[str, Any]:
         nameerrors = nameerrors or set()
         other_errors = other_errors or {}
+        if source_sha == comparison.OLD_CONTROL_SHA:
+            application_tree = comparison.APPLICATION_B_TREE
+        else:
+            application_tree = comparison.APPLICATION_A_TREE
+        identity = comparison.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=source_sha,
+            application_tree=application_tree,
+        )
         rows = []
         for row_id in self.row_source.planned_row_ids:
             exception_type = (
@@ -77,6 +92,8 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             "snapshot_type": comparison.SNAPSHOT_TYPE,
             "snapshot_role": role,
             "source_sha": source_sha,
+            "application_tree": application_tree,
+            "comparison_identity": identity,
             "row_source_sha256": self.row_source.counterbalance_sha256,
             "planned_row_ids": list(self.row_source.planned_row_ids),
             "replacement_only_row_ids": list(self.row_source.reserve_row_ids),
@@ -103,7 +120,13 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
         missing_commit_sha: str | None = None,
         missing_sha: str | None = None,
     ) -> tuple[dict[str, int], dict[str, Any]]:
-        counts = {"rows": 0, "profiles": 0, "commits": 0, "snapshots": 0}
+        counts = {
+            "rows": 0,
+            "profiles": 0,
+            "commits": 0,
+            "trees": 0,
+            "snapshots": 0,
+        }
         coverage = profile_coverage if profile_coverage is not None else {
             "structural_row_coverage_complete": True,
             "planned_row_count": 26,
@@ -143,6 +166,14 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             counts["commits"] += 1
             return source_sha != missing_commit_sha
 
+        def load_tree(source_sha: str) -> str:
+            counts["trees"] += 1
+            return {
+                TOOL_SHA: TOOL_TREE,
+                comparison.OLD_CONTROL_SHA: comparison.APPLICATION_B_TREE,
+                MAIN_SHA: comparison.APPLICATION_A_TREE,
+            }[source_sha]
+
         def read_snapshot(source_sha: str) -> bytes:
             counts["snapshots"] += 1
             if source_sha == missing_sha or source_sha not in documents:
@@ -153,11 +184,14 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             "row_source_loader": load_rows,
             "profile_coverage_loader": load_profiles,
             "commit_availability_loader": check_commit,
+            "commit_tree_loader": load_tree,
             "snapshot_reader": read_snapshot,
         }
 
     def _compare(self, boundaries: dict[str, Any]) -> dict[str, Any]:
-        return comparison.compare_local_snapshots(MAIN_SHA, **boundaries)
+        return comparison.compare_local_snapshots(
+            MAIN_SHA, tool_sha=TOOL_SHA, tool_tree=TOOL_TREE, **boundaries
+        )
 
     def test_authoritative_source_is_exactly_26_planned_and_four_reserves(self) -> None:
         self.assertEqual(len(self.row_source.planned_row_ids), 26)
@@ -209,7 +243,14 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             report = self._compare(boundaries)
 
         self.assertEqual(
-            counts, {"rows": 1, "profiles": 1, "commits": 2, "snapshots": 2}
+            counts,
+            {
+                "rows": 1,
+                "profiles": 1,
+                "commits": 3,
+                "trees": 3,
+                "snapshots": 2,
+            },
         )
         self.assertEqual(forbidden_effects, dict.fromkeys(forbidden_effects, 0))
         self.assertEqual(report["status"], "BLOCKED")
@@ -226,6 +267,22 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
         )
         self.assertEqual(report["old_control_source_sha"], comparison.OLD_CONTROL_SHA)
         self.assertEqual(report["frozen_origin_main_sha"], MAIN_SHA)
+        self.assertEqual(
+            report["comparison_identities"],
+            {
+                "tool": {"sha": TOOL_SHA, "tree": TOOL_TREE},
+                "application_a": {
+                    "role": comparison.APPLICATION_A_ROLE,
+                    "sha": comparison.APPLICATION_A_SHA,
+                    "tree": comparison.APPLICATION_A_TREE,
+                },
+                "application_b": {
+                    "role": comparison.APPLICATION_B_ROLE,
+                    "sha": comparison.APPLICATION_B_SHA,
+                    "tree": comparison.APPLICATION_B_TREE,
+                },
+            },
+        )
         self.assertEqual(
             report["snapshot_diagnostics"][
                 "claimed_old_control_nameerror_rows"
@@ -262,7 +319,14 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             self._compare(boundaries)
         self.assertEqual(caught.exception.code, "lifecycle_profile_measurements_missing")
         self.assertEqual(
-            counts, {"rows": 1, "profiles": 1, "commits": 0, "snapshots": 0}
+            counts,
+            {
+                "rows": 1,
+                "profiles": 1,
+                "commits": 0,
+                "trees": 0,
+                "snapshots": 0,
+            },
         )
 
     def test_missing_local_source_snapshot_blocks(self) -> None:
@@ -278,7 +342,14 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             self._compare(boundaries)
         self.assertEqual(caught.exception.code, "source_commit_unavailable_locally")
         self.assertEqual(
-            counts, {"rows": 1, "profiles": 1, "commits": 2, "snapshots": 0}
+            counts,
+            {
+                "rows": 1,
+                "profiles": 1,
+                "commits": 3,
+                "trees": 2,
+                "snapshots": 0,
+            },
         )
 
     def test_default_commit_check_uses_local_cat_file_with_lazy_fetch_disabled(self) -> None:
@@ -295,6 +366,20 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
         self.assertNotIn("GIT_DIR", kwargs["env"])
         self.assertNotIn("GIT_CONFIG_COUNT", kwargs["env"])
         self.assertEqual(kwargs["timeout"], 10.0)
+
+    def test_default_tree_check_uses_local_git_with_lazy_fetch_disabled(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout=TOOL_TREE + "\n")
+        with mock.patch.object(
+            comparison.subprocess, "run", return_value=completed
+        ) as run:
+            self.assertEqual(comparison._local_commit_tree(TOOL_SHA), TOOL_TREE)
+        args, kwargs = run.call_args
+        self.assertEqual(
+            args[0], ["git", "rev-parse", "--verify", TOOL_SHA + "^{tree}"]
+        )
+        self.assertEqual(kwargs["cwd"], comparison.PROJECT_ROOT)
+        self.assertEqual(kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
+        self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
 
     def test_missing_expected_old_nameerror_fails_closed(self) -> None:
         old = self._snapshot(
@@ -330,10 +415,21 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             with self.subTest(invalid_sha=invalid_sha):
                 counts, boundaries = self._boundaries()
                 with self.assertRaises(comparison.ComparisonError):
-                    comparison.compare_local_snapshots(invalid_sha, **boundaries)
+                    comparison.compare_local_snapshots(
+                        invalid_sha,
+                        tool_sha=TOOL_SHA,
+                        tool_tree=TOOL_TREE,
+                        **boundaries,
+                    )
                 self.assertEqual(
                     counts,
-                    {"rows": 0, "profiles": 0, "commits": 0, "snapshots": 0},
+                    {
+                        "rows": 0,
+                        "profiles": 0,
+                        "commits": 0,
+                        "trees": 0,
+                        "snapshots": 0,
+                    },
                 )
 
     def test_tampered_row_outcome_digest_is_rejected(self) -> None:
@@ -427,11 +523,29 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             ),
             mock.patch.object(comparison, "_local_commit_available", return_value=True),
             mock.patch.object(
+                comparison,
+                "_local_commit_tree",
+                side_effect={
+                    TOOL_SHA: TOOL_TREE,
+                    comparison.OLD_CONTROL_SHA: comparison.APPLICATION_B_TREE,
+                    MAIN_SHA: comparison.APPLICATION_A_TREE,
+                }.__getitem__,
+            ),
+            mock.patch.object(
                 comparison, "_local_snapshot_reader", side_effect=fake_snapshot_reader
             ),
             redirect_stdout(output),
         ):
-            exit_code = comparison.main(["--main-sha", MAIN_SHA])
+            exit_code = comparison.main(
+                [
+                    "--main-sha",
+                    MAIN_SHA,
+                    "--tool-sha",
+                    TOOL_SHA,
+                    "--tool-tree",
+                    TOOL_TREE,
+                ]
+            )
 
         cli_document = json.loads(output.getvalue())
         self.assertEqual(exit_code, 2)
@@ -444,6 +558,25 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
             "retained_source_execution_verification_missing",
         )
         self.assertNotIn("COMPARISON_VERIFIED", output.getvalue())
+
+    def test_comparison_cli_help_works_without_pythonpath(self) -> None:
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "live_gate_preflight_comparison.py"),
+                "--help",
+            ],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+        self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+        self.assertIn("--main-sha", completed.stdout)
 
     def test_unexpected_nameerror_outside_target_rows_fails_closed(self) -> None:
         old = self._snapshot(
@@ -477,6 +610,316 @@ class LiveGatePreflightComparisonTests(unittest.TestCase):
         with self.assertRaises(comparison.ComparisonError) as caught:
             self._compare(boundaries)
         self.assertEqual(caught.exception.code, "source_snapshot_identity_or_coverage_invalid")
+
+    def test_snapshot_application_source_must_match_frozen_role(self) -> None:
+        old = self._snapshot(
+            comparison.OLD_CONTROL_SHA,
+            role="pre-105-control",
+            nameerrors=EXPECTED_NAMEERRORS,
+        )
+        old["source_sha"] = MAIN_SHA
+        _counts, boundaries = self._boundaries(old_snapshot=old)
+        with self.assertRaises(comparison.ComparisonError) as caught:
+            self._compare(boundaries)
+        self.assertEqual(
+            caught.exception.code, "source_snapshot_identity_or_coverage_invalid"
+        )
+
+    def test_snapshot_tool_sha_and_tree_must_match_for_both_executions(self) -> None:
+        for field, bad_value in (("sha", "c" * 40), ("tree", "d" * 40)):
+            with self.subTest(field=field):
+                old = self._snapshot(
+                    comparison.OLD_CONTROL_SHA,
+                    role="pre-105-control",
+                    nameerrors=EXPECTED_NAMEERRORS,
+                )
+                old["comparison_identity"]["tool"][field] = bad_value
+                _counts, boundaries = self._boundaries(old_snapshot=old)
+                with self.assertRaises(comparison.ComparisonError) as caught:
+                    self._compare(boundaries)
+                self.assertEqual(
+                    caught.exception.code,
+                    "source_snapshot_identity_or_coverage_invalid",
+                )
+
+    def test_application_commit_and_tree_must_match_frozen_binding(self) -> None:
+        for field, bad_value, expected_code in (
+            ("sha", "c" * 40, "comparison_application_commit_mismatch"),
+            ("tree", "d" * 40, "comparison_application_tree_mismatch"),
+        ):
+            with self.subTest(field=field):
+                identity = comparison.build_comparison_identity(
+                    tool_sha=TOOL_SHA,
+                    tool_tree=TOOL_TREE,
+                    application_sha=comparison.APPLICATION_B_SHA,
+                    application_tree=comparison.APPLICATION_B_TREE,
+                )
+                identity["application"][field] = bad_value
+                with self.assertRaises(
+                    comparison_identity.ComparisonIdentityError
+                ) as caught:
+                    comparison_identity.validate_comparison_identity(identity)
+                self.assertEqual(caught.exception.args[0], expected_code)
+
+    def test_application_identity_rejects_wrong_source_tree_pair(self) -> None:
+        with self.assertRaises(comparison.ComparisonIdentityError) as caught:
+            comparison.build_comparison_identity(
+                tool_sha=TOOL_SHA,
+                tool_tree=TOOL_TREE,
+                application_sha=comparison.APPLICATION_B_SHA,
+                application_tree=comparison.APPLICATION_A_TREE,
+            )
+        self.assertEqual(
+            caught.exception.args[0], "comparison_application_tree_mismatch"
+        )
+
+    def test_application_identity_rejects_mismatched_expected_source(self) -> None:
+        identity = comparison.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=comparison.APPLICATION_A_SHA,
+            application_tree=comparison.APPLICATION_A_TREE,
+        )
+        with self.assertRaises(comparison_identity.ComparisonIdentityError) as caught:
+            comparison_identity.validate_comparison_identity(
+                identity, expected_application_sha=comparison.APPLICATION_B_SHA
+            )
+        self.assertEqual(
+            caught.exception.args[0], "comparison_source_sha_mismatch"
+        )
+
+    def test_tool_checkout_commit_tree_and_clean_state_are_bound(self) -> None:
+        identity_module = comparison_identity
+        with mock.patch.object(
+            identity_module,
+            "_git_output",
+            side_effect=(TOOL_SHA, TOOL_TREE, ""),
+        ) as git_output:
+            identity_module.verify_tool_tree(
+                TOOL_SHA, TOOL_TREE, project_root=PROJECT_ROOT
+            )
+        self.assertEqual(git_output.call_count, 3)
+
+        unrelated_status = "".join(
+            "?? " + path + "\0"
+            for path in sorted(identity_module._SAFE_UNTRACKED_TOOL_PATHS)
+        )
+        with mock.patch.object(
+            identity_module,
+            "_git_output",
+            side_effect=(TOOL_SHA, TOOL_TREE, unrelated_status),
+        ) as git_output:
+            identity_module.verify_tool_tree(
+                TOOL_SHA, TOOL_TREE, project_root=PROJECT_ROOT
+            )
+        self.assertEqual(git_output.call_count, 3)
+
+        for outputs, expected_code in (
+            (
+                ("c" * 40, TOOL_TREE, ""),
+                "comparison_tool_commit_mismatch",
+            ),
+            (
+                (TOOL_SHA, "d" * 40, ""),
+                "comparison_tool_tree_mismatch",
+            ),
+            (
+                (TOOL_SHA, TOOL_TREE, " M scripts/tool.py"),
+                "comparison_tool_worktree_dirty",
+            ),
+        ):
+            with self.subTest(expected_code=expected_code):
+                with mock.patch.object(
+                    identity_module, "_git_output", side_effect=outputs
+                ):
+                    with self.assertRaises(
+                        identity_module.ComparisonIdentityError
+                    ) as caught:
+                        identity_module.verify_tool_tree(
+                            TOOL_SHA, TOOL_TREE, project_root=PROJECT_ROOT
+                        )
+                self.assertEqual(caught.exception.args[0], expected_code)
+
+    def test_tool_checkout_rejects_untracked_tool_and_runtime_paths(self) -> None:
+        for path in (
+            "scripts/live_gate_preflight_comparison_identity.py",
+            "scripts/unreviewed_tool.py",
+            "core/ai/unreviewed_runtime.py",
+            "plans/v2-mapping-pilot-prereg/counterbalance.json",
+        ):
+            with self.subTest(path=path):
+                with mock.patch.object(
+                    comparison_identity,
+                    "_git_output",
+                    side_effect=(TOOL_SHA, TOOL_TREE, "?? " + path + "\0"),
+                ):
+                    with self.assertRaises(
+                        comparison_identity.ComparisonIdentityError
+                    ) as caught:
+                        comparison_identity.verify_tool_tree(
+                            TOOL_SHA, TOOL_TREE, project_root=PROJECT_ROOT
+                        )
+                self.assertEqual(
+                    caught.exception.args[0], "comparison_tool_worktree_dirty"
+                )
+
+    def test_application_worktree_commit_tree_and_clean_state_are_bound(self) -> None:
+        identity = comparison_identity.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=comparison.APPLICATION_B_SHA,
+            application_tree=comparison.APPLICATION_B_TREE,
+        )
+        application_root = PROJECT_ROOT
+        checks = (
+            (
+                (
+                    str(application_root),
+                    comparison.APPLICATION_B_SHA,
+                    comparison.APPLICATION_B_TREE,
+                    "",
+                ),
+                None,
+            ),
+            (
+                (
+                    str(application_root),
+                    "c" * 40,
+                    comparison.APPLICATION_B_TREE,
+                    "",
+                ),
+                "comparison_application_commit_mismatch",
+            ),
+            (
+                (
+                    str(application_root),
+                    comparison.APPLICATION_B_SHA,
+                    "d" * 40,
+                    "",
+                ),
+                "comparison_application_tree_mismatch",
+            ),
+            (
+                (
+                    str(application_root),
+                    comparison.APPLICATION_B_SHA,
+                    comparison.APPLICATION_B_TREE,
+                    " M scripts/application.py",
+                ),
+                "comparison_application_worktree_dirty",
+            ),
+        )
+        for git_results, expected_code in checks:
+            with self.subTest(expected_code=expected_code):
+                with (
+                    mock.patch.object(
+                        comparison_identity,
+                        "application_snapshot_path",
+                        return_value=application_root,
+                    ),
+                    mock.patch.object(
+                        comparison_identity, "_verify_worktree_admin_path"
+                    ),
+                    mock.patch.object(
+                        comparison_identity, "_git_output", side_effect=git_results
+                    ),
+                ):
+                    if expected_code is None:
+                        self.assertEqual(
+                            comparison_identity.verify_application_worktree(identity),
+                            application_root,
+                        )
+                    else:
+                        with self.assertRaises(
+                            comparison_identity.ComparisonIdentityError
+                        ) as caught:
+                            comparison_identity.verify_application_worktree(identity)
+                        self.assertEqual(caught.exception.args[0], expected_code)
+
+    def test_application_worktree_path_rejects_symlink_escape(self) -> None:
+        identity = comparison_identity.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=comparison.APPLICATION_A_SHA,
+            application_tree=comparison.APPLICATION_A_TREE,
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="fr11-comparison-identity-", dir=PROJECT_ROOT / "tmp"
+        ) as temporary_root:
+            temporary = Path(temporary_root)
+            target = temporary / "target"
+            target.mkdir()
+            link = temporary / "link"
+            link.symlink_to(target, target_is_directory=True)
+            with mock.patch.dict(
+                comparison_identity._APPLICATION_WORKTREES,
+                {
+                    comparison.APPLICATION_A_ROLE: link.relative_to(
+                        PROJECT_ROOT
+                    )
+                },
+            ):
+                with self.assertRaises(
+                    comparison_identity.ComparisonIdentityError
+                ) as caught:
+                    comparison_identity.application_snapshot_path(identity)
+            self.assertEqual(
+                caught.exception.args[0], "comparison_application_path_unsafe"
+            )
+
+    def test_comparison_identity_is_retained_in_report_only_evidence(self) -> None:
+        from scripts import live_gate_preflight_evidence as preflight_evidence
+
+        identity = comparison.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=comparison.APPLICATION_A_SHA,
+            application_tree=comparison.APPLICATION_A_TREE,
+        )
+        invocation = {
+            "command": ["python", "guarded-host"],
+            "working_directory": "tmp/combat_capture",
+            "pythonpath": "guard:root",
+        }
+        document = preflight_evidence._build_preflight_document(
+            gate="live-gate-preflight",
+            run_id="comparison-identity-test",
+            source_sha=comparison.APPLICATION_A_SHA,
+            dependency_lock_path=None,
+            routing_identity={"provider": "stub"},
+            intended_invocation=invocation,
+            observed_invocation=invocation,
+            row_report=None,
+            entrypoint_failure_code="comparison_only_not_booking_eligible",
+            comparison_identity=identity,
+        )
+        self.assertEqual(document["comparison_identity"], identity)
+        self.assertFalse(document["booking_eligible"])
+
+    def test_normal_booking_identity_rejects_comparison_binding(self) -> None:
+        from scripts.live_gate_preflight_evidence import _candidate_identity
+
+        identity = comparison.build_comparison_identity(
+            tool_sha=TOOL_SHA,
+            tool_tree=TOOL_TREE,
+            application_sha=comparison.APPLICATION_A_SHA,
+            application_tree=comparison.APPLICATION_A_TREE,
+        )
+        candidate, invalid = _candidate_identity(
+            {
+                "source_sha": comparison.APPLICATION_A_SHA,
+                "dependency_lock_sha256": "e" * 64,
+                "routing_identity": {"provider": "stub"},
+                "invocation_identity": {
+                    "command": ["python"],
+                    "working_directory": "tmp",
+                    "pythonpath": "guard:root",
+                },
+                "comparison_identity": identity,
+            }
+        )
+        self.assertIsNone(candidate)
+        self.assertTrue(invalid)
 
 
 if __name__ == "__main__":

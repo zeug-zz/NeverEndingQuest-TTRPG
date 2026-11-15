@@ -37,6 +37,7 @@ def validate_retained_supervised_evidence(
     source_sha: str,
     row_run_id: str,
     preflight_run_id: str,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate retained sidecars and return a summary derived from disk."""
     from scripts import live_gate_preflight_profile_runner as runner
@@ -53,8 +54,25 @@ def validate_retained_supervised_evidence(
     )
     evidence_path = (evidence_directory / "profile-evidence.json").as_posix()
     digest = result.get("evidence_sha256")
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            comparison_identity = validate_comparison_identity(
+                comparison_identity, expected_application_sha=source_sha
+            )
+        except ComparisonIdentityError as exc:
+            raise RetainedEvidenceError(
+                "comparison-only source identity is invalid"
+            ) from exc
+    expected_result_fields = {"evidence", "evidence_path", "evidence_sha256"}
+    if comparison_identity is not None:
+        expected_result_fields.add("comparison_identity")
     if (
-        set(result) != {"evidence", "evidence_path", "evidence_sha256"}
+        set(result) != expected_result_fields
         or result.get("evidence_path") != evidence_path
         or not isinstance(digest, str)
         or _SHA256.fullmatch(digest) is None
@@ -125,6 +143,7 @@ def validate_retained_supervised_evidence(
         calls=evidence["calls"],
         profiles=profiles,
         runner=runner,
+        comparison_identity=comparison_identity,
     )
     teardown_proof = _read_and_validate_teardown(
         evidence,
@@ -137,6 +156,7 @@ def validate_retained_supervised_evidence(
         worker_pid=worker_pid,
         worker_stop_proof=worker_stop_proof,
         runner=runner,
+        comparison_identity=comparison_identity,
     )
 
     return {
@@ -158,6 +178,11 @@ def validate_retained_supervised_evidence(
             "call_count": call_count,
             "teardown_evidence_sha256": teardown_proof["sha256"],
         },
+        **(
+            {"comparison_identity": dict(comparison_identity)}
+            if comparison_identity is not None
+            else {}
+        ),
     }
 
 
@@ -175,6 +200,7 @@ def _read_and_validate_worker_shutdown(
     calls: list[Any],
     profiles: Any,
     runner: Any,
+    comparison_identity: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     worker_path = (evidence_directory / "worker-result.json").as_posix()
     request_path = (evidence_directory / "shutdown-request.json").as_posix()
@@ -208,12 +234,20 @@ def _read_and_validate_worker_shutdown(
         "call_count",
         "calls",
     }
+    if comparison_identity is not None:
+        worker_fields.add("comparison_identity")
     if (
         set(worker) != worker_fields
         or type(worker.get("schema_version")) is not int
         or worker.get("schema_version") != 1
         or worker.get("run_id") != run_id
         or worker.get("source_sha") != source_sha
+        or (
+            comparison_identity is not None
+            and not _strict_json_equal(
+                worker.get("comparison_identity"), dict(comparison_identity)
+            )
+        )
         or not _strict_json_equal(worker.get("command"), command)
         or worker.get("pythonpath") != pythonpath
         or not _strict_json_equal(
@@ -318,6 +352,7 @@ def _read_and_validate_teardown(
     worker_pid: int,
     worker_stop_proof: Mapping[str, Any],
     runner: Any,
+    comparison_identity: Mapping[str, Any] | None,
 ) -> dict[str, str]:
     descriptor = evidence.get("teardown_evidence")
     expected_path = (evidence_directory / "teardown-evidence.json").as_posix()
@@ -345,6 +380,8 @@ def _read_and_validate_teardown(
         "socket_census",
         "shared_lock",
     }
+    if comparison_identity is not None:
+        expected_fields.add("comparison_identity")
     runner_source_sha256 = hashlib.sha256(
         (PROJECT_ROOT / "scripts" / "live_gate_preflight_profile_runner.py").read_bytes()
     ).hexdigest()
@@ -355,6 +392,12 @@ def _read_and_validate_teardown(
         or sidecar.get("run_id") != row_run_id
         or sidecar.get("preflight_run_id") != preflight_run_id
         or sidecar.get("source_sha") != source_sha
+        or (
+            comparison_identity is not None
+            and not _strict_json_equal(
+                sidecar.get("comparison_identity"), dict(comparison_identity)
+            )
+        )
         or sidecar.get("runner_source_sha256") != runner_source_sha256
         or sidecar.get("controller_pid") != controller_pid
         or not isinstance(sidecar.get("booking_id"), str)

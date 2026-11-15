@@ -35,10 +35,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.live_gate_preflight_comparison_identity import (
+    APPLICATION_A_ROLE,
+    APPLICATION_A_SHA,
+    APPLICATION_A_TREE,
+    APPLICATION_B_ROLE,
+    APPLICATION_B_SHA,
+    APPLICATION_B_TREE,
+    ComparisonIdentityError,
+    build_comparison_identity,
+)
+
+
 OLD_CONTROL_SHA = "5999af374ded4f56b21b25d68fc10f9520444b51"
 PLANNING_BASE_SHA = "8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624"
 EXPECTED_NAMEERROR_ROWS = ("E06", "E13", "E14", "E15", "E16", "E17", "E18")
@@ -194,9 +206,12 @@ def load_lifecycle_profile_coverage(main_sha: str) -> Mapping[str, Any]:
 def compare_local_snapshots(
     main_sha: str,
     *,
+    tool_sha: str,
+    tool_tree: str,
     row_source_loader: Callable[[], FrozenRowSource] | None = None,
     profile_coverage_loader: Callable[[str], Mapping[str, Any]] | None = None,
     commit_availability_loader: Callable[[str], bool] | None = None,
+    commit_tree_loader: Callable[[str], str] | None = None,
     snapshot_reader: Callable[[str], bytes] | None = None,
 ) -> dict[str, Any]:
     """Validate offline snapshot diagnostics without attesting host execution.
@@ -208,9 +223,19 @@ def compare_local_snapshots(
     function can return diagnostics but cannot return a verified comparison.
     """
     _validate_main_sha(main_sha)
+    try:
+        tool_identity = build_comparison_identity(
+            tool_sha=tool_sha,
+            tool_tree=tool_tree,
+            application_sha=APPLICATION_A_SHA,
+            application_tree=APPLICATION_A_TREE,
+        )["tool"]
+    except ComparisonIdentityError as exc:
+        raise ComparisonError(exc.args[0]) from exc
     load_rows = row_source_loader or load_frozen_row_source
     load_profiles = profile_coverage_loader or load_lifecycle_profile_coverage
     check_commit = commit_availability_loader or _local_commit_available
+    load_tree = commit_tree_loader or _local_commit_tree
     read_snapshot = snapshot_reader or _local_snapshot_reader
 
     try:
@@ -227,17 +252,34 @@ def compare_local_snapshots(
         raise ComparisonError("lifecycle_profile_coverage_unavailable") from exc
     _require_complete_profiles(profile_coverage, row_source)
 
-    for source_sha in (OLD_CONTROL_SHA, main_sha):
+    expected_trees = {
+        tool_sha: tool_tree,
+        OLD_CONTROL_SHA: APPLICATION_B_TREE,
+        main_sha: APPLICATION_A_TREE,
+    }
+    for source_sha, expected_tree in expected_trees.items():
         try:
             locally_available = check_commit(source_sha)
         except Exception as exc:
             raise ComparisonError("source_commit_unavailable_locally") from exc
         if locally_available is not True:
             raise ComparisonError("source_commit_unavailable_locally")
+        try:
+            observed_tree = load_tree(source_sha)
+        except Exception as exc:
+            raise ComparisonError("source_commit_tree_unavailable_locally") from exc
+        if observed_tree != expected_tree:
+            raise ComparisonError("source_commit_tree_identity_mismatch")
 
     old_document, old_snapshot_sha = _read_and_validate_snapshot(
         OLD_CONTROL_SHA,
         expected_role="pre-105-control",
+        expected_identity=build_comparison_identity(
+            tool_sha=tool_identity["sha"],
+            tool_tree=tool_identity["tree"],
+            application_sha=APPLICATION_B_SHA,
+            application_tree=APPLICATION_B_TREE,
+        ),
         row_source=row_source,
         expected_row_ids=row_source.planned_row_ids,
         snapshot_reader=read_snapshot,
@@ -245,6 +287,12 @@ def compare_local_snapshots(
     main_document, main_snapshot_sha = _read_and_validate_snapshot(
         main_sha,
         expected_role="frozen-origin-main",
+        expected_identity=build_comparison_identity(
+            tool_sha=tool_identity["sha"],
+            tool_tree=tool_identity["tree"],
+            application_sha=APPLICATION_A_SHA,
+            application_tree=APPLICATION_A_TREE,
+        ),
         row_source=row_source,
         expected_row_ids=row_source.planned_row_ids,
         snapshot_reader=read_snapshot,
@@ -301,6 +349,19 @@ def compare_local_snapshots(
         "error_code": "retained_source_execution_verification_missing",
         "old_control_source_sha": OLD_CONTROL_SHA,
         "frozen_origin_main_sha": main_sha,
+        "comparison_identities": {
+            "tool": dict(tool_identity),
+            "application_a": {
+                "role": APPLICATION_A_ROLE,
+                "sha": APPLICATION_A_SHA,
+                "tree": APPLICATION_A_TREE,
+            },
+            "application_b": {
+                "role": APPLICATION_B_ROLE,
+                "sha": APPLICATION_B_SHA,
+                "tree": APPLICATION_B_TREE,
+            },
+        },
         "row_source_sha256": row_source.counterbalance_sha256,
         "planned_row_count": 26,
         "replacement_only_row_ids": list(row_source.reserve_row_ids),
@@ -354,10 +415,43 @@ def _local_commit_available(source_sha: str) -> bool:
     return completed.returncode == 0
 
 
+def _local_commit_tree(source_sha: str) -> str:
+    """Resolve a local commit's tree without allowing lazy fetches."""
+    if _SHA1.fullmatch(source_sha) is None:
+        raise ComparisonError("source_commit_sha_invalid")
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", source_sha + "^{tree}"],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ComparisonError("source_commit_tree_unavailable_locally") from exc
+    tree_sha = completed.stdout.strip()
+    if completed.returncode != 0 or _SHA1.fullmatch(tree_sha) is None:
+        raise ComparisonError("source_commit_tree_unavailable_locally")
+    return tree_sha
+
+
 def _validate_main_sha(main_sha: Any) -> None:
     if not isinstance(main_sha, str) or _SHA1.fullmatch(main_sha) is None:
         raise ComparisonError("frozen_origin_main_sha_must_be_full_sha1")
-    if main_sha in (OLD_CONTROL_SHA, PLANNING_BASE_SHA):
+    if (
+        main_sha != APPLICATION_A_SHA
+        or main_sha in (OLD_CONTROL_SHA, PLANNING_BASE_SHA)
+    ):
         raise ComparisonError("comparison_target_is_not_frozen_origin_main")
 
 
@@ -405,6 +499,7 @@ def _read_and_validate_snapshot(
     source_sha: str,
     *,
     expected_role: str,
+    expected_identity: Mapping[str, Any],
     row_source: FrozenRowSource,
     expected_row_ids: tuple[str, ...],
     snapshot_reader: Callable[[str], bytes],
@@ -435,6 +530,9 @@ def _read_and_validate_snapshot(
         or document.get("snapshot_type") != SNAPSHOT_TYPE
         or document.get("snapshot_role") != expected_role
         or document.get("source_sha") != source_sha
+        or document.get("application_tree")
+        != expected_identity.get("application", {}).get("tree")
+        or document.get("comparison_identity") != expected_identity
         or document.get("row_source_sha256") != row_source.counterbalance_sha256
         or document.get("planned_row_ids") != list(expected_row_ids)
         or document.get("replacement_only_row_ids")
@@ -594,9 +692,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=True,
         help="full origin/main SHA frozen by separate, immediate preparation",
     )
+    parser.add_argument(
+        "--tool-sha",
+        required=True,
+        help="full feature-tool SHA used by both frozen application executions",
+    )
+    parser.add_argument(
+        "--tool-tree",
+        required=True,
+        help="full feature-tool Git tree SHA used by both executions",
+    )
     args = parser.parse_args(argv)
     try:
-        report = compare_local_snapshots(args.main_sha)
+        report = compare_local_snapshots(
+            args.main_sha,
+            tool_sha=args.tool_sha,
+            tool_tree=args.tool_tree,
+        )
     except ComparisonError as exc:
         report = _blocked_report(exc)
     print(json.dumps(report, ensure_ascii=True, sort_keys=True, separators=(",", ":")))

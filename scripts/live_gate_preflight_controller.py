@@ -151,6 +151,7 @@ def supervised_preflight_interfaces(
     *,
     run_id: str,
     safety_counters: Callable[[], Mapping[str, Any]],
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> PreflightInterfaces:
     """Bind row orchestration to the guarded sandbox and profile-runner APIs."""
     from scripts import live_gate_preflight_profile_runner as profile_runner
@@ -158,6 +159,21 @@ def supervised_preflight_interfaces(
 
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
         raise PreflightControllerError("preflight run ID is invalid")
+    normalized_comparison_identity: dict[str, Any] | None = None
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            normalized_comparison_identity = validate_comparison_identity(
+                comparison_identity
+            )
+        except ComparisonIdentityError as exc:
+            raise PreflightControllerError(
+                "comparison-only source identity is invalid"
+            ) from exc
 
     def prepare(
         plan: PreflightRowPlan,
@@ -184,6 +200,7 @@ def supervised_preflight_interfaces(
             resume_checkpoint=checkpoint,
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=invocation.create_resume_checkpoint,
+            comparison_identity=normalized_comparison_identity,
         )
 
     def supervise(
@@ -208,6 +225,7 @@ def supervised_preflight_interfaces(
             ),
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=invocation.create_resume_checkpoint,
+            comparison_identity=normalized_comparison_identity,
         )
         identity_evidence = compare_invocation_identity(
             expected_identity, invocation.intended_identity
@@ -269,6 +287,7 @@ def run_preflight_rows_supervised(
     | None = None,
     prereg_root: str | Path | None = None,
     resume_checkpoints: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run supervised rows and always persist their report-only evidence.
 
@@ -290,6 +309,18 @@ def run_preflight_rows_supervised(
 
     if not isinstance(source_sha, str) or _SOURCE_SHA.fullmatch(source_sha) is None:
         failures.append("source_sha_missing_or_invalid")
+    normalized_comparison_identity: dict[str, Any] | None = None
+    if comparison_identity is not None:
+        try:
+            from scripts.live_gate_preflight_comparison_identity import (
+                validate_comparison_identity,
+            )
+
+            normalized_comparison_identity = validate_comparison_identity(
+                comparison_identity, expected_application_sha=source_sha
+            )
+        except (ImportError, ValueError):
+            failures.append("comparison_identity_invalid")
     try:
         lock_sha256 = dependency_lock_sha256(dependency_lock_path)
     except PreflightEvidenceError:
@@ -321,10 +352,16 @@ def run_preflight_rows_supervised(
                 interfaces=supervised_preflight_interfaces(
                     run_id=run_id,
                     safety_counters=safety_counters,
+                    comparison_identity=normalized_comparison_identity,
                 ),
                 prereg_root=prereg_root,
                 resume_checkpoints=resume_checkpoints,
+                comparison_identity=normalized_comparison_identity,
             )
+            if normalized_comparison_identity is not None:
+                raw_report["comparison_identity"] = dict(
+                    normalized_comparison_identity
+                )
             raw_report["execution_provenance"] = "supervised-retained-evidence"
             row_report = _SupervisedPreflightReport(
                 raw_report, token=_SUPERVISED_REPORT_TOKEN
@@ -339,6 +376,8 @@ def run_preflight_rows_supervised(
         if failures
         else None
     )
+    if normalized_comparison_identity is not None and failure_code is None:
+        failure_code = "comparison_only_not_booking_eligible"
     evidence_path = write_preflight_evidence(
         run_id=run_id,
         source_sha=source_sha,
@@ -348,6 +387,7 @@ def run_preflight_rows_supervised(
         observed_invocation=observed_invocation,
         row_report=row_report,
         entrypoint_failure_code=failure_code,
+        comparison_identity=normalized_comparison_identity,
     )
     candidate_identity = {
         "source_sha": source_sha,
@@ -381,6 +421,8 @@ def run_preflight_rows_supervised(
     )
     if failure_code is not None:
         result["preflight_failure_code"] = failure_code
+    if normalized_comparison_identity is not None:
+        result["comparison_identity"] = dict(normalized_comparison_identity)
     return result
 
 
@@ -394,6 +436,7 @@ def planned_worker_identity(
     resume_checkpoint_sha256: str | None = None,
     preflight_run_id: str | None = None,
     create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the trusted worker identity from the source-bound row plan."""
     from scripts import live_gate_preflight_sandbox as sandbox
@@ -424,6 +467,7 @@ def planned_worker_identity(
             resume_checkpoint_sha256=resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=create_resume_checkpoint,
+            comparison_identity=comparison_identity,
         )
     except PreflightControllerError:
         raise
@@ -444,6 +488,7 @@ def run_preflight_rows(
     | None = None,
     prereg_root: str | Path | None = None,
     resume_checkpoints: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Exercise frozen row transport and every supplied, declared lifecycle.
 
@@ -458,6 +503,21 @@ def run_preflight_rows(
         raise PreflightControllerError("source SHA is invalid")
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
         raise PreflightControllerError("preflight run ID is invalid")
+    normalized_comparison_identity: dict[str, Any] | None = None
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            normalized_comparison_identity = validate_comparison_identity(
+                comparison_identity, expected_application_sha=source_sha
+            )
+        except ComparisonIdentityError as exc:
+            raise PreflightControllerError(
+                "comparison-only source identity is invalid"
+            ) from exc
 
     planned_rows, reserve_row_ids = _load_frozen_row_ids(prereg_root)
     expected_ids = [row["row_id"] for row in planned_rows]
@@ -489,6 +549,10 @@ def run_preflight_rows(
             "booking_eligible": False,
             "failure_code": None,
         }
+        if normalized_comparison_identity is not None:
+            row_result["comparison_identity"] = dict(
+                normalized_comparison_identity
+            )
         plan: PreflightRowPlan | None = None
         profile_checks: dict[str, dict[str, Any]] = {}
         try:
@@ -513,6 +577,7 @@ def run_preflight_rows(
                 source_sha=source_sha,
                 row_run_id=row_run_id,
                 preflight_run_id=run_id,
+                comparison_identity=normalized_comparison_identity,
             )
             identity_evidence = compare_invocation_identity(
                 expected_identity, intended_identity
@@ -593,6 +658,7 @@ def run_preflight_rows(
                         source_sha=source_sha,
                         preflight_run_id=run_id,
                         interfaces=interfaces,
+                        comparison_identity=normalized_comparison_identity,
                     )
                     startup_check = _compare_lifecycle_profile(
                         profile,
@@ -708,6 +774,7 @@ def run_preflight_rows(
                         source_sha=source_sha,
                         preflight_run_id=run_id,
                         interfaces=interfaces,
+                        comparison_identity=normalized_comparison_identity,
                     )
                     resume_check = _compare_lifecycle_profile(
                         profile,
@@ -864,6 +931,11 @@ def run_preflight_rows(
                 and isinstance(lifecycle.get("worker_teardown"), Mapping)
             ),
         },
+        **(
+            {"comparison_identity": dict(normalized_comparison_identity)}
+            if normalized_comparison_identity is not None
+            else {}
+        ),
         "pilot_evidence_written": False,
         "booking_eligible": False,
         "live_gate_pass": False,
@@ -1170,6 +1242,7 @@ def _validate_supervised_result(
     source_sha: str,
     row_run_id: str,
     preflight_run_id: str,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(result, Mapping):
         raise PreflightControllerError("guarded row evidence is unavailable")
@@ -1188,6 +1261,7 @@ def _validate_supervised_result(
             source_sha=source_sha,
             row_run_id=row_run_id,
             preflight_run_id=preflight_run_id,
+            comparison_identity=comparison_identity,
         )
         validated["retained_evidence_path"] = result["evidence_path"]
         validated["retained_evidence_sha256"] = result["evidence_sha256"]
@@ -1205,6 +1279,7 @@ def _run_lifecycle_invocation(
     source_sha: str,
     preflight_run_id: str,
     interfaces: PreflightInterfaces,
+    comparison_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Prepare, validate, supervise, and clean one guarded lifecycle run."""
     checkpoint = invocation.resume_checkpoint
@@ -1222,6 +1297,7 @@ def _run_lifecycle_invocation(
         ),
         preflight_run_id=preflight_run_id,
         create_resume_checkpoint=invocation.create_resume_checkpoint,
+        comparison_identity=comparison_identity,
     )
     identity_evidence = compare_invocation_identity(
         expected_identity, invocation.intended_identity
@@ -1298,6 +1374,7 @@ def _run_lifecycle_invocation(
             source_sha=source_sha,
             row_run_id=invocation.row_run_id,
             preflight_run_id=preflight_run_id,
+            comparison_identity=comparison_identity,
         )
     finally:
         if isinstance(seeded, Mapping):
