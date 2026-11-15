@@ -4273,14 +4273,21 @@ def run_startup_diagnostic(
         diagnostic_stage = "version_check_setup"
         version_module = importer("utils.version_checker")
         _assert_module_from_sandbox(version_module, sandbox)
+        if not callable(getattr(version_module, "_run_git_command", None)):
+            raise ProofSetupError("version git metadata probe entry point is unavailable")
         if not callable(getattr(version_module, "get_latest_remote_version", None)):
             raise ProofSetupError("version update check entry point is unavailable")
+
+        def git_metadata_probe_stub(*args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+            return None
 
         def update_check_stub(*args: Any, **kwargs: Any) -> None:
             del args, kwargs
             recorder.record_update_check()
             return None
 
+        patches.set(version_module, "_run_git_command", git_metadata_probe_stub)
         patches.set(version_module, "get_latest_remote_version", update_check_stub)
 
         diagnostic_stage = "host_import"
