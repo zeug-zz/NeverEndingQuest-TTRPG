@@ -749,13 +749,34 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         finally:
             shutil.rmtree(self.scratch, ignore_errors=True)
 
-    def test_offline_diagnostic_config_has_inert_combat_model_defaults(self) -> None:
-        config = proof._offline_diagnostic_config_module()
+    def test_offline_diagnostic_config_has_explicit_inert_defaults(self) -> None:
+        imported_config_names: list[str] = []
+        original_import = builtins.__import__
 
+        def reject_real_config_import(
+            name: str, *args: Any, **kwargs: Any
+        ) -> Any:
+            if name == "config" or name.startswith("config."):
+                imported_config_names.append(name)
+                raise AssertionError("offline defaults must not import config.py")
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(
+            builtins, "__import__", side_effect=reject_real_config_import
+        ):
+            config = proof._offline_diagnostic_config_module()
+
+        self.assertEqual(imported_config_names, [])
+        self.assertEqual(config.__file__, "<offline-diagnostic-config>")
+        self.assertNotIn("__getattr__", config.__dict__)
+        with self.assertRaises(AttributeError):
+            getattr(config, "UNDECLARED_OFFLINE_SETTING")
         self.assertEqual(config.OPENAI_API_KEY, "")
         self.assertEqual(config.OPENROUTER_API_KEY, "")
         for name in (
             "DM_MAIN_MODEL",
+            "PLAYER_INFO_UPDATE_MODEL",
+            "NPC_INFO_UPDATE_MODEL",
             "COMBAT_MAIN_MODEL",
             "COMBAT_DIALOGUE_SUMMARY_MODEL",
             "DM_SUMMARIZATION_MODEL",
@@ -764,9 +785,14 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             "DM_FULL_MODEL",
             "GPT5_MINI_MODEL",
             "GPT5_FULL_MODEL",
+            "LEVEL_UP_MODEL",
         ):
             with self.subTest(model=name):
                 self.assertEqual(getattr(config, name), "offline-diagnostic")
+        self.assertFalse(config.ENABLE_INTELLIGENT_ROUTING)
+        self.assertFalse(config.USE_GPT5_MODELS)
+        self.assertFalse(config.GPT5_USE_HIGH_REASONING_ON_RETRY)
+        self.assertFalse(config.MULTIPLAYER_MODE)
 
     def _fake_sandbox(self) -> Path:
         sandbox = self.scratch / "combat_capture"
