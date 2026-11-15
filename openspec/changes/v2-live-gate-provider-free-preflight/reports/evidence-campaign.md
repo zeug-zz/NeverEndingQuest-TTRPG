@@ -63,22 +63,42 @@ scripted host path was not run.
 
 ## Driver proof and comparison
 
-`fr11-pf6-driver-proof/preflight/driver-proof.json` reports two passing
-fault-injection tests against guarded actual driver source lines
+`fr11-pf6-driver-proof/preflight/driver-proof.json` reports the accepted
+guarded production-driver trace, including attempt-cap, time-cap, and
+three-consecutive-infrastructure-failure stops at actual driver source lines
 `scripts/mapping_pilot/execution.py:709-710` and
 `scripts/mapping_pilot/scoring.py:91,101`, at source
-`58ab23336d7dcc521e5ec9d8774c6dae8a002b25`. It proves injected attempt/time
-caps and three-failure pause only. Its scope says “not a host run”; upstream
-provider request count is explicitly `not_observed_by_this_trace`. This is not
-PF6 integration PASS.
+`58ab23336d7dcc521e5ec9d8774c6dae8a002b25`. Per rulings
+`neq-w1-fr11-campaign-decisions-20261114` and
+`neq-w1-comparison-tool-sha-20261114`, PF6 is ACCEPTED/satisfied. The trace
+scope says “not a host run”; upstream provider request count is explicitly
+`not_observed_by_this_trace`. Task 3.1 remains unchecked overall.
 
 `fr11-comparison-attempt-01/preflight/comparator-output.json` is BLOCKED:
 comparison is unverified, host execution and guarded per-source reconciliation
 are MISSING, with `lifecycle_profile_measurements_missing`. It records no
-pilot evidence. The old checkout identity is clean
-`5999af374ded4f56b21b25d68fc10f9520444b51`; frozen main is
-`f4f49b9ddece4adea10b7bdb4db9a1358b208b0d`. There were no real per-source
-executions. The app/tooling dual-identity boundary remains unresolved.
+pilot evidence. Comparison mode is approved for three separate frozen
+identities: one tool feature-commit SHA/tree shared by both executions,
+application A `f4f49b9ddece4adea10b7bdb4db9a1358b208b0d`, and application B
+`5999af374ded4f56b21b25d68fc10f9520444b51`, with respective application tree
+hashes recorded in each comparison record. The comparison mode remains
+unimplemented and the real comparison is MISSING. The normal same-SHA booking
+rule is unchanged.
+
+## Subsequent campaign attempts
+
+E01/P1 checkpoint attempt 03 at source
+`7d7c0c6b755b035bc09cb5373a2c217b872f5a83` FAILED. Retained evidence is under
+`tmp/router-rollout/live-gate-preflight/fr11-checkpoint-e01-p1-03/preflight/rows/pf-fr11-checkpoint-e01-p1-03-E01/`.
+Travel was incomplete because of transition order; the census was complete and
+the lock was released. No checkpoint was produced.
+
+The second correction was committed as
+`4fb69e08ee7896a8bec4ae4eda0855954062a051`. Attempts 04 and 05 failed before
+host startup during source-identity `git show` timeout; neither produced a
+checkpoint. There is no evidence of a post-fix travel pass.
+
+All 26 rows remain MISSING. There is no booking and no live PASS.
 
 Accordingly, all booking eligibility is **unverified/MISSING**. This report
 records neither FR11 completion nor authorization to book or run a live gate.
