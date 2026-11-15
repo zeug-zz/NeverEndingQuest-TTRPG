@@ -10,6 +10,8 @@ from __future__ import annotations
 import builtins
 import contextlib
 import errno
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -791,6 +793,37 @@ class FakePreintegrateImporter:
         raise AssertionError("unexpected import request: " + name)
 
 
+class _TemporarySnippetLoader(importlib.machinery.SourceFileLoader):
+    """Load source from a test temp file with a controlled traceback filename."""
+
+    def __init__(
+        self, fullname: str, snippet_path: Path, frame_filename: str
+    ) -> None:
+        super().__init__(fullname, os.fspath(snippet_path))
+        self._snippet_path = snippet_path
+        self._frame_filename = frame_filename
+
+    def get_filename(self, fullname: str) -> str:
+        del fullname
+        return self._frame_filename
+
+    def get_data(self, path: str) -> bytes:
+        if os.fspath(path) != self._frame_filename:
+            raise OSError("temporary snippet bytecode is unavailable")
+        return self._snippet_path.read_bytes()
+
+    def path_stats(self, path: str) -> dict[str, int]:
+        if os.fspath(path) != self._frame_filename:
+            raise OSError("temporary snippet source is unavailable")
+        stat = self._snippet_path.stat()
+        return {"mtime": int(stat.st_mtime), "size": stat.st_size}
+
+    def set_data(
+        self, path: str, data: bytes, *, _mode: int = 0o666
+    ) -> None:
+        del path, data, _mode
+
+
 class N3StartGameOfflineProofTests(unittest.TestCase):
     def setUp(self) -> None:
         _OFFLINE_DNS_FENCE.assert_active()
@@ -803,6 +836,34 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         self.scratch = Path(
             tempfile.mkdtemp(prefix="n3-start-game-proof-tests-", dir=self.scratch_parent)
         )
+        self._snippet_index = 0
+
+    def _load_temporary_snippet(
+        self,
+        source: str,
+        *,
+        frame_filename: str,
+        initial_globals: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._snippet_index += 1
+        snippet_dir = self.scratch / "snippets"
+        snippet_dir.mkdir(parents=True, exist_ok=True)
+        snippet_path = snippet_dir / ("snippet-%d.py" % self._snippet_index)
+        snippet_path.write_text(source, encoding="utf-8")
+        module_name = "_n3_offline_snippet_%d" % self._snippet_index
+        loader = _TemporarySnippetLoader(
+            module_name, snippet_path, frame_filename
+        )
+        spec = importlib.util.spec_from_file_location(
+            module_name, snippet_path, loader=loader
+        )
+        if spec is None or spec.loader is not loader:
+            raise AssertionError("temporary snippet loader setup failed")
+        module = importlib.util.module_from_spec(spec)
+        if initial_globals is not None:
+            module.__dict__.update(initial_globals)
+        loader.exec_module(module)
+        return module.__dict__
 
     def tearDown(self) -> None:
         try:
@@ -1557,14 +1618,10 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
 
         def host_importer(name: str) -> Any:
             if name == "web.web_interface":
-                code = compile(
-                    "raise HostileImportError(secret)",
-                    str(sandbox / "web" / "web_interface.py"),
-                    "exec",
-                )
-                exec(
-                    code,
-                    {
+                self._load_temporary_snippet(
+                    "raise HostileImportError(secret)\n",
+                    frame_filename=str(sandbox / "web" / "web_interface.py"),
+                    initial_globals={
                         "HostileImportError": HostileImportError,
                         "secret": sentinel_secret,
                     },
@@ -1600,13 +1657,10 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
 
         def origin_for_only_frame(filename: str) -> dict[str, Any]:
             try:
-                exec(
-                    compile(
-                        "raise ImportError(secret)",
-                        filename,
-                        "exec",
-                    ),
-                    {"secret": sentinel_secret},
+                self._load_temporary_snippet(
+                    "raise ImportError(secret)\n",
+                    frame_filename=filename,
+                    initial_globals={"secret": sentinel_secret},
                 )
             except ImportError as exc:
                 tb = exc.__traceback__
@@ -1715,13 +1769,13 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             if next_frame is not None:
                 namespace["next_frame"] = next_frame
                 statement = "next_frame()"
-            code = compile(
-                "def frame():\n    " + statement + "\n",
-                str(source_path),
-                "exec",
+            source = "def frame():\n    " + statement + "\n"
+            loaded = self._load_temporary_snippet(
+                source,
+                frame_filename=str(source_path),
+                initial_globals=namespace,
             )
-            exec(code, namespace)
-            next_frame = namespace["frame"]
+            next_frame = loaded["frame"]
 
         try:
             next_frame()
@@ -1763,9 +1817,9 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             Path(installed_roots[0]) / "flask" / "app.py"
         )
         try:
-            exec(
-                compile("raise ImportError('synthetic')", package_filename, "exec"),
-                {},
+            self._load_temporary_snippet(
+                "raise ImportError('synthetic')\n",
+                frame_filename=package_filename,
             )
         except ImportError as exc:
             tb = exc.__traceback__
@@ -2009,15 +2063,13 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         with patch.object(proof.subprocess, "run", spawn_spy):
             proof._install_process_launch_tripwires(patches, recorder, sandbox)
             try:
-                code = compile(
-                    "subprocess.run(command, cwd=working_directory, env=environment)\n",
-                    str(sandbox / "web" / "web_interface.py"),
-                    "exec",
-                )
                 with self.assertRaises(proof.ProviderCallBlocked):
-                    exec(
-                        code,
-                        {
+                    self._load_temporary_snippet(
+                        "subprocess.run(command, cwd=working_directory, env=environment)\n",
+                        frame_filename=str(
+                            sandbox / "web" / "web_interface.py"
+                        ),
+                        initial_globals={
                             "subprocess": proof.subprocess,
                             "command": command,
                             "working_directory": "/N3_PATH_SECRET_SENTINEL",
