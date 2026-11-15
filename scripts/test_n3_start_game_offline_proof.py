@@ -1348,6 +1348,26 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         self.assertNotIn("/untrusted", serialized_redacted)
         self.assertNotIn("config.py", serialized_redacted)
 
+        for identifier in (
+            "core/combat/__init__.py",
+            "core/combat/combat_manager.py",
+        ):
+            identified = origin_for_only_frame(identifier)
+            self.assertEqual(
+                identified,
+                {
+                    "status": "identified",
+                    "frames": [{"source": identifier, "line": 1}],
+                },
+            )
+
+        unknown_alphanumeric = origin_for_only_frame(
+            "UnknownOrigin731.py"
+        )
+        self.assertEqual(
+            unknown_alphanumeric, {"status": "redacted", "frames": []}
+        )
+
         sandbox_filename_sentinel = "N3OpaqueOrigin731"
         sandbox_origin = origin_for_only_frame(
             str(sandbox / (sandbox_filename_sentinel + ".py"))

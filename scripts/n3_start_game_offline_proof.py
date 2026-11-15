@@ -179,6 +179,8 @@ STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST = {
         "core/memory/memory_db.py",
         "core/managers/status_manager.py",
         "core/managers/combat_manager.py",
+        "core/combat/__init__.py",
+        "core/combat/combat_manager.py",
         "core/managers/level_up_manager.py",
         "core/managers/location_manager.py",
         "core/managers/campaign_manager.py",
