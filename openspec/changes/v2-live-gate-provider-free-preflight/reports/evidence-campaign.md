@@ -102,3 +102,25 @@ All 26 rows remain MISSING. There is no booking and no live PASS.
 
 Accordingly, all booking eligibility is **unverified/MISSING**. This report
 records neither FR11 completion nor authorization to book or run a live gate.
+
+## Subsequent factual rulings
+
+Attempts 04-06 and 10-11 were ruled environmental; this does not establish row
+coverage or profile evidence. Run 10 produced restart-recovery evidence at
+`tmp/router-rollout/live-gate-preflight/fr11-checkpoint-e01-p1-10/preflight/rows/pf-fr11-checkpoint-e01-p1-10-E01/post-interruption-recovery.json`.
+The lock was released, but no PASS was recorded. Run 11's prelaunch canary
+timed out due to the environment, per ruling
+`neq-w1-overload-gate-20261115`. The new host-load gate requires 1m load below
+10 and 5m load below 20.
+
+Run 12 was blocked before host startup because observed loads were 496.325 and
+470.774. Evidence is
+`tmp/router-rollout/live-gate-preflight/fr11-checkpoint-e01-p1-12/pre-host-load.json`;
+the sandbox and lock were absent.
+
+Comparison-mode plumbing was committed as `47a36b1f`; its independent tests
+passed. Execution verification and comparative acceptance remain MISSING.
+This does not supply the required comparative execution evidence.
+
+The 26-row census above remains MISSING. These rulings do not infer profile
+evidence and do not establish booking eligibility or a live-gate PASS.
