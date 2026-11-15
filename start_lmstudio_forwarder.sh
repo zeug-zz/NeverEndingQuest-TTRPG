@@ -26,7 +26,7 @@ if ! command -v mitmdump &> /dev/null; then
     echo "[ERROR] mitmproxy is not installed!"
     echo ""
     echo "Please install mitmproxy first:"
-    echo "  pip install mitmproxy"
+    echo "  pip install -r requirements-forwarder.txt"
     echo ""
     echo "Or visit: https://mitmproxy.org/"
     echo ""
