@@ -579,7 +579,7 @@ def _validate_profile_evidence(
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise ProfileValidationError("profile evidence is not valid JSON") from exc
 
-    evidence_fields = {
+    base_evidence_fields = {
         "schema_version",
         "authorization_ruling_id",
         "profile_id",
@@ -619,19 +619,43 @@ def _validate_profile_evidence(
         "failure_code",
         "teardown",
     }
-    legacy_evidence_fields = evidence_fields - {"invocation_identity"}
+    evidence_fields = base_evidence_fields | {"adv_summary_child"}
+    evidence_with_retained_artifacts_fields = evidence_fields | {
+        "summary_child_artifacts"
+    }
+    legacy_evidence_fields = base_evidence_fields - {"invocation_identity"}
     retained_evidence_fields = evidence_fields | {"teardown_evidence"}
+    retained_with_artifacts_fields = (
+        evidence_with_retained_artifacts_fields | {"teardown_evidence"}
+    )
     legacy_retained_evidence_fields = retained_evidence_fields - {
         "invocation_identity"
     }
+    legacy_retained_with_artifacts_fields = (
+        retained_with_artifacts_fields - {"invocation_identity"}
+    )
+    historic_retained_evidence_fields = (
+        base_evidence_fields | {"teardown_evidence"}
+    )
+    historic_legacy_retained_evidence_fields = (
+        historic_retained_evidence_fields - {"invocation_identity"}
+    )
     if not isinstance(evidence, Mapping) or set(evidence) not in (
         evidence_fields,
+        evidence_with_retained_artifacts_fields,
         legacy_evidence_fields,
         retained_evidence_fields,
+        retained_with_artifacts_fields,
         legacy_retained_evidence_fields,
+        legacy_retained_with_artifacts_fields,
+        base_evidence_fields,
+        historic_retained_evidence_fields,
+        historic_legacy_retained_evidence_fields,
     ):
         raise ProfileValidationError("profile evidence fields are malformed")
     historic_identity_unavailable = "invocation_identity" not in evidence
+    if "adv_summary_child" not in evidence and not historic_identity_unavailable:
+        raise ProfileValidationError("profile evidence summary child proof is missing")
     if historic_identity_unavailable and not _is_exact_historic_profile_evidence(
         evidence,
         evidence_path=evidence_path,
@@ -1078,6 +1102,935 @@ def _validate_profile_evidence(
         or call_sites != normalized_sites
     ):
         raise ProfileValidationError("profile evidence call-site summary differs")
+    if "adv_summary_child" in evidence:
+        _validate_adv_summary_child_evidence(
+            project_root,
+            evidence.get("adv_summary_child"),
+            run_id=evidence["run_id"],
+            source_sha=source_sha,
+            pythonpath=pythonpath,
+            worker_pid=host_worker_pid,
+            worker_interpreter=evidence.get("worker_interpreter"),
+            guard_events=guard_events,
+            evidence_directory=path.parent,
+            retained_artifacts=evidence.get("summary_child_artifacts"),
+        )
+
+
+def _validate_adv_summary_child_evidence(
+    project_root: Path,
+    value: Any,
+    *,
+    run_id: str,
+    source_sha: str,
+    pythonpath: str,
+    worker_pid: int,
+    worker_interpreter: Any,
+    guard_events: list[dict[str, Any]],
+    evidence_directory: Path | None,
+    retained_artifacts: Any = None,
+) -> None:
+    child_fields = {
+        "schema_version",
+        "adapter_installed",
+        "launch_count",
+        "launches",
+        "calls",
+        "failure_code",
+        "evidence_path",
+        "evidence_sha256",
+        "record_count",
+    }
+    _require_keys(value, child_fields, "summary child evidence")
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / "adv-summary-child.jsonl").as_posix()
+    digest = value.get("evidence_sha256")
+    launch_count = value.get("launch_count")
+    record_count = value.get("record_count")
+    launches = value.get("launches")
+    calls = value.get("calls")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("adapter_installed") is not True
+        or value.get("failure_code") is not None
+        or value.get("evidence_path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(launch_count) is not int
+        or launch_count < 0
+        or launch_count > 8
+        or type(record_count) is not int
+        or record_count != launch_count
+        or not isinstance(launches, list)
+        or len(launches) != launch_count
+        or not isinstance(calls, list)
+        or len(calls) != 2 * launch_count
+        or type(worker_pid) is not int
+        or worker_pid <= 0
+        or not isinstance(worker_interpreter, Mapping)
+    ):
+        raise ProfileValidationError("summary child evidence identity differs")
+
+    path = _safe_source_path(project_root, expected_path, "summary child evidence")
+    raw = _read_bounded_evidence(path, allow_empty=True)
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ProfileValidationError("summary child evidence hash differs")
+    if raw and not raw.endswith(b"\n"):
+        raise ProfileValidationError("summary child evidence is incomplete")
+    try:
+        records: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line:
+                raise ValueError("blank summary child evidence line")
+            record = json.loads(
+                line.decode("ascii"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            if not isinstance(record, Mapping):
+                raise ValueError("summary child evidence row is not an object")
+            records.append(dict(record))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("summary child evidence is malformed") from exc
+    if len(records) != record_count:
+        raise ProfileValidationError("summary child evidence record count differs")
+    if launch_count == 0:
+        if retained_artifacts is not None:
+            raise ProfileValidationError(
+                "summary child empty launch has retained artifacts"
+            )
+        return
+
+    retained = _load_retained_summary_artifacts(
+        project_root,
+        retained_artifacts,
+        run_id=run_id,
+        evidence_directory=evidence_directory,
+    )
+    from scripts import live_gate_preflight_profile_runner as profile_runner
+
+    try:
+        source_at_sha = profile_runner._git_source_bytes_at_sha(
+            source_sha, "core/ai/adv_summary.py"
+        )
+    except profile_runner.CharacterizationError as exc:
+        raise ProfileValidationError(
+            "trusted summary child source identity is unavailable"
+        ) from exc
+    retained_script_source = retained.get("script_source")
+    if not isinstance(retained_script_source, bytes):
+        raise ProfileValidationError("retained summary child source is missing")
+    if retained_script_source != source_at_sha:
+        raise ProfileValidationError(
+            "retained summary child source differs from declared source SHA"
+        )
+    script_hash = hashlib.sha256(retained_script_source).hexdigest()
+    try:
+        tracker = json.loads(
+            retained["party_tracker"].decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "retained summary child party tracker is malformed"
+        ) from exc
+    module_name = tracker.get("module") if isinstance(tracker, Mapping) else None
+    if not isinstance(module_name, str) or not module_name.strip():
+        raise ProfileValidationError("retained summary child module identity differs")
+    module_name = module_name.replace(" ", "_")
+    if (
+        module_name in (".", "..")
+        or "/" in module_name
+        or "\\" in module_name
+        or "\x00" in module_name
+    ):
+        raise ProfileValidationError("retained summary child module identity differs")
+    final_outputs = retained["final_outputs"]
+    global_latest_writes: dict[str, dict[str, Any]] = {}
+    retained_write_paths: set[str] = set()
+
+    launch_fields = {
+        "sequence",
+        "command_sha256",
+        "script_sha256",
+        "working_directory",
+        "parent_pid",
+        "parent_process_group_id",
+        "prelaunch_canary_pid",
+        "prelaunch_startup_observed_at_ns",
+        "child_pid",
+        "child_process_group_id",
+        "environment_sha256",
+        "interpreter",
+        "returncode",
+        "call_evidence_count",
+        "summary_child_succeeded",
+    }
+    record_fields = {
+        "schema_version",
+        "run_id",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "command_sha256",
+        "environment_sha256",
+        "startup_observed_at_ns",
+        "interpreter",
+        "source_sha",
+        "pythonpath",
+        "script_sha256",
+        "working_directory",
+        "area_id",
+        "leaving_location_name",
+        "router_call_count",
+        "calls",
+        "stub_failure_code",
+        "provider_request_attempted",
+        "summary_output_persisted",
+        "canonical_writes",
+        "discarded_json_writes",
+    }
+    call_fields = {
+        "sequence",
+        "task",
+        "source_file",
+        "source_line",
+        "source_file_sha256",
+        "source_sha",
+        "command_sha256",
+        "environment_sha256",
+        "process_id",
+        "process_role",
+        "response_kind",
+        "response_sha256",
+    }
+    child_call_fields = {
+        "sequence",
+        "task",
+        "source_file",
+        "source_line",
+        "source_file_sha256",
+        "response_kind",
+        "response_sha256",
+        "response_value_sha256",
+        "failure_code",
+    }
+    write_fields = {
+        "sequence",
+        "source_file",
+        "source_line",
+        "path",
+        "sha256",
+        "size_bytes",
+        "retained_artifact",
+    }
+    script_relative = "tmp/combat_capture/core/ai/adv_summary.py"
+    expected_children_by_hash: dict[str, list[int]] = {}
+    for index, (launch, record) in enumerate(zip(launches, records), start=1):
+        _require_keys(launch, launch_fields, "summary child launch")
+        _require_keys(record, record_fields, "summary child record")
+        command_hash = launch.get("command_sha256")
+        environment_hash = launch.get("environment_sha256")
+        prelaunch_pid = launch.get("prelaunch_canary_pid")
+        child_pid = record.get("pid")
+        prelaunch_timestamp = launch.get("prelaunch_startup_observed_at_ns")
+        if (
+            type(launch.get("sequence")) is not int
+            or launch.get("sequence") != index
+            or not isinstance(command_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", command_hash) is None
+            or not isinstance(launch.get("script_sha256"), str)
+            or launch.get("script_sha256") != script_hash
+            or launch.get("working_directory")
+            != str(project_root / "tmp" / "combat_capture")
+            or launch.get("parent_pid") != worker_pid
+            or launch.get("parent_process_group_id") != worker_pid
+            or type(prelaunch_pid) is not int
+            or prelaunch_pid <= 0
+            or type(prelaunch_timestamp) is not int
+            or prelaunch_timestamp <= 0
+            or type(child_pid) is not int
+            or child_pid <= 0
+            or child_pid == prelaunch_pid
+            or launch.get("child_pid") != child_pid
+            or launch.get("child_process_group_id") != worker_pid
+            or launch.get("environment_sha256") != environment_hash
+            or not isinstance(environment_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", environment_hash) is None
+            or launch.get("interpreter") != worker_interpreter
+            or type(launch.get("returncode")) is not int
+            or launch.get("returncode") != 0
+            or type(launch.get("call_evidence_count")) is not int
+            or launch.get("call_evidence_count") != 2
+            or launch.get("summary_child_succeeded") is not True
+        ):
+            raise ProfileValidationError("summary child launch identity differs")
+
+        internal_calls = record.get("calls")
+        writes = record.get("canonical_writes")
+        area_id = record.get("area_id")
+        leaving_name = record.get("leaving_location_name")
+        if (
+            not isinstance(area_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", area_id) is None
+            or not isinstance(leaving_name, str)
+            or not leaving_name
+            or len(leaving_name) > 512
+        ):
+            raise ProfileValidationError("summary child location identity differs")
+        preferred_area = (
+            PurePosixPath("tmp/combat_capture")
+            / "modules"
+            / module_name
+            / "areas"
+            / (area_id + ".json")
+        )
+        legacy_area = (
+            PurePosixPath("tmp/combat_capture")
+            / "modules"
+            / module_name
+            / (area_id + ".json")
+        )
+        if preferred_area.as_posix() in final_outputs:
+            expected_area = preferred_area
+        elif legacy_area.as_posix() in final_outputs:
+            expected_area = legacy_area
+        else:
+            raise ProfileValidationError(
+                "retained summary child area artifact is unavailable"
+            )
+        expected_write_counts = {
+            "summary_dump.json": 1,
+            "trimmed_summary_dump.json": 1,
+            "dialogue_summary.json": 1,
+            "journal.json": 1,
+            expected_area.as_posix().removeprefix("tmp/combat_capture/"): 2,
+        }
+        if not isinstance(internal_calls, list) or len(internal_calls) != 2:
+            raise ProfileValidationError("summary child router call evidence differs")
+        if (
+            type(record.get("schema_version")) is not int
+            or record.get("schema_version") != 1
+            or record.get("run_id") != run_id
+            or record.get("pid") != child_pid
+            or type(record.get("process_group_id")) is not int
+            or record.get("process_group_id") != worker_pid
+            or record.get("process_role") != "host"
+            or record.get("command_sha256") != command_hash
+            or record.get("environment_sha256") != environment_hash
+            or type(record.get("startup_observed_at_ns")) is not int
+            or record.get("startup_observed_at_ns") <= 0
+            or record.get("interpreter") != worker_interpreter
+            or record.get("source_sha") != source_sha
+            or record.get("pythonpath") != pythonpath
+            or record.get("script_sha256") != script_hash
+            or record.get("working_directory") != launch.get("working_directory")
+            or record.get("area_id") != area_id
+            or record.get("leaving_location_name") != leaving_name
+            or type(record.get("router_call_count")) is not int
+            or record.get("router_call_count") != 2
+            or record.get("stub_failure_code") is not None
+            or record.get("provider_request_attempted") is not False
+            or record.get("summary_output_persisted") is not True
+            or not isinstance(writes, list)
+            or len(writes) != 6
+            or any(
+                not isinstance(item, Mapping) or set(item) != write_fields
+                for item in writes
+            )
+            or record.get("discarded_json_writes") != []
+        ):
+            raise ProfileValidationError("summary child router or persistence evidence differs")
+
+        observed_write_counts: dict[str, int] = {}
+        latest_writes: dict[str, Mapping[str, Any]] = {}
+        latest_write_bytes: dict[str, bytes] = {}
+        for write_index, write in enumerate(writes, start=1):
+            write_path = write.get("path")
+            write_digest = write.get("sha256")
+            size_bytes = write.get("size_bytes")
+            retained_descriptor = write.get("retained_artifact")
+            if (
+                type(write.get("sequence")) is not int
+                or write.get("sequence") != write_index
+                or write.get("source_file") != script_relative
+                or type(write.get("source_line")) is not int
+                or write.get("source_line", 0) <= 0
+                or not isinstance(write_path, str)
+                or not isinstance(write_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", write_digest) is None
+                or type(size_bytes) is not int
+                or size_bytes <= 0
+                or not isinstance(retained_descriptor, Mapping)
+            ):
+                raise ProfileValidationError("summary child canonical write differs")
+            observed_write_counts[write_path] = (
+                observed_write_counts.get(write_path, 0) + 1
+            )
+            latest_writes[write_path] = write
+            retained_source_path = "tmp/combat_capture/" + write_path
+            retained_write_raw = _read_retained_child_write(
+                project_root,
+                retained_descriptor,
+                evidence_directory=evidence_directory,
+                run_id=run_id,
+                source_sha=source_sha,
+                command_sha256=command_hash,
+                process_id=child_pid,
+                write_sequence=write_index,
+                source_path=retained_source_path,
+                expected_sha256=write_digest,
+                expected_size_bytes=size_bytes,
+            )
+            retained_path = retained_descriptor.get("path")
+            if not isinstance(retained_path, str):
+                raise ProfileValidationError(
+                    "summary child retained write path is malformed"
+                )
+            if retained_path in retained_write_paths:
+                raise ProfileValidationError(
+                    "summary child retained write path is duplicated"
+                )
+            retained_write_paths.add(retained_path)
+            latest_write_bytes[write_path] = retained_write_raw
+            global_latest_writes[retained_source_path] = {
+                "process_id": child_pid,
+                "sequence": write_index,
+                "sha256": write_digest,
+                "size_bytes": size_bytes,
+            }
+        if observed_write_counts != expected_write_counts:
+            raise ProfileValidationError("summary child canonical write set differs")
+
+        for write_path, write in latest_writes.items():
+            raw_output = latest_write_bytes[write_path]
+            if write_path in {
+                "summary_dump.json",
+                "trimmed_summary_dump.json",
+                "dialogue_summary.json",
+            }:
+                try:
+                    parsed_output = json.loads(
+                        raw_output.decode("utf-8"),
+                        object_pairs_hook=_unique_object,
+                        parse_constant=_reject_json_constant,
+                    )
+                except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                    raise ProfileValidationError(
+                        "summary child summary artifact is malformed"
+                    ) from exc
+                if not isinstance(parsed_output, list):
+                    raise ProfileValidationError(
+                        "summary child summary artifact is not a list"
+                    )
+
+        expected_call_kinds = ("summary_text", "location_json")
+        for call_index, (internal_call, response_kind) in enumerate(
+            zip(internal_calls, expected_call_kinds), start=1
+        ):
+            if (
+                not isinstance(internal_call, Mapping)
+                or set(internal_call) != child_call_fields
+                or type(internal_call.get("sequence")) is not int
+                or internal_call.get("sequence") != call_index
+                or internal_call.get("task") != "adventure_summary"
+                or internal_call.get("source_file") != script_relative
+                or type(internal_call.get("source_line")) is not int
+                or internal_call.get("source_line", 0) <= 0
+                or internal_call.get("source_file_sha256") != script_hash
+                or internal_call.get("response_kind") != response_kind
+                or not isinstance(internal_call.get("response_sha256"), str)
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", internal_call["response_sha256"]
+                )
+                is None
+                or not isinstance(
+                    internal_call.get("response_value_sha256"), str
+                )
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", internal_call["response_value_sha256"]
+                )
+                is None
+                or internal_call.get("failure_code") is not None
+                or (
+                    response_kind == "summary_text"
+                    and internal_call.get("response_sha256")
+                    != internal_call.get("response_value_sha256")
+                )
+            ):
+                raise ProfileValidationError(
+                    "summary child router response evidence differs"
+                )
+            call = calls[(index - 1) * 2 + call_index - 1]
+            _require_keys(call, call_fields, "summary child router call")
+            if (
+                type(call.get("sequence")) is not int
+                or call.get("sequence") != (index - 1) * 2 + call_index
+                or call.get("task") != internal_call.get("task")
+                or call.get("source_file") != internal_call.get("source_file")
+                or call.get("source_line") != internal_call.get("source_line")
+                or call.get("source_file_sha256")
+                != internal_call.get("source_file_sha256")
+                or call.get("source_sha") != source_sha
+                or call.get("command_sha256") != command_hash
+                or call.get("environment_sha256") != environment_hash
+                or call.get("process_id") != child_pid
+                or call.get("process_role") != "adv_summary_child"
+                or call.get("response_kind") != response_kind
+                or call.get("response_sha256")
+                != internal_call.get("response_sha256")
+            ):
+                raise ProfileValidationError("summary child router call differs")
+
+        summary_digest = internal_calls[0].get("response_sha256")
+        try:
+            journal = json.loads(
+                latest_write_bytes["journal.json"].decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            journal_entries = (
+                journal.get("entries") if isinstance(journal, Mapping) else None
+            )
+            normalized_name = re.sub(
+                r"^Room\s+\d+\s*:\s*",
+                "",
+                leaving_name.strip(),
+                flags=re.IGNORECASE,
+            )
+            latest_journal_entry = (
+                journal_entries[-1]
+                if isinstance(journal_entries, list) and journal_entries
+                else None
+            )
+            if (
+                not isinstance(latest_journal_entry, Mapping)
+                or latest_journal_entry.get("location") != normalized_name
+                or not isinstance(latest_journal_entry.get("summary"), str)
+                or hashlib.sha256(
+                    latest_journal_entry["summary"].encode("utf-8")
+                ).hexdigest()
+                != summary_digest
+            ):
+                raise ProfileValidationError(
+                    "summary child journal does not contain the stub response"
+                )
+            area = json.loads(
+                latest_write_bytes[expected_area.as_posix().removeprefix(
+                    "tmp/combat_capture/"
+                )].decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            area_locations = (
+                area.get("locations") if isinstance(area, Mapping) else None
+            )
+            matching_locations = [
+                location
+                for location in area_locations or []
+                if isinstance(location, Mapping)
+                and (
+                    location.get("name") == normalized_name
+                    or (
+                        isinstance(location.get("name"), str)
+                        and re.sub(
+                            r"^Room\s+\d+\s*:\s*",
+                            "",
+                            location["name"].strip(),
+                            flags=re.IGNORECASE,
+                        )
+                        == normalized_name
+                    )
+                    or location.get("source_room_title") == normalized_name
+                )
+            ]
+            if (
+                len(matching_locations) != 1
+                or not isinstance(
+                    matching_locations[0].get("adventureSummary"), str
+                )
+                or hashlib.sha256(
+                    matching_locations[0]["adventureSummary"].encode("utf-8")
+                ).hexdigest()
+                != summary_digest
+            ):
+                raise ProfileValidationError(
+                    "summary child area does not contain the stub response"
+                )
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ProfileValidationError(
+                "summary child persisted state is malformed"
+            ) from exc
+
+        for process_pid, process_group_id, observed_at_ns in (
+            (prelaunch_pid, prelaunch_pid, prelaunch_timestamp),
+            (
+                child_pid,
+                worker_pid,
+                record.get("startup_observed_at_ns"),
+            ),
+        ):
+            process_events = [
+                event for event in guard_events if event.get("pid") == process_pid
+            ]
+            if not validate_guard_event_records(
+                process_events,
+                expected_run_id=run_id,
+                expected_pid=process_pid,
+                require_startup_canaries=True,
+            ):
+                raise ProfileValidationError(
+                    "summary child process guard canaries are incomplete"
+                )
+            startup = process_events[0]
+            if (
+                startup.get("event_type") != "guard_startup"
+                or startup.get("process_role") != "host"
+                or startup.get("process_group_id") != process_group_id
+                or startup.get("command_sha256") != command_hash
+                or startup.get("interpreter") != worker_interpreter
+                or startup.get("working_directory")
+                != launch.get("working_directory")
+                or type(observed_at_ns) is not int
+                or observed_at_ns <= startup.get("observed_at_ns", 0)
+            ):
+                raise ProfileValidationError(
+                    "summary child process guard identity differs"
+                )
+            starts = [
+                event
+                for event in guard_events
+                if event.get("event_type") == "subprocess_started"
+                and event.get("pid") == worker_pid
+                and event.get("child_pid") == process_pid
+            ]
+            if (
+                len(starts) != 1
+                or starts[0].get("process_role") != "host"
+                or starts[0].get("process_group_id") != worker_pid
+                or starts[0].get("command_sha256") != command_hash
+                or starts[0].get("child_is_python") is not True
+            ):
+                raise ProfileValidationError(
+                    "summary child process launch is not reconciled"
+                )
+            expected_children_by_hash.setdefault(command_hash, []).append(process_pid)
+
+    if set(final_outputs) != set(global_latest_writes):
+        raise ProfileValidationError(
+            "retained summary child final output set differs from writes"
+        )
+    for source_path, write in global_latest_writes.items():
+        artifact = final_outputs[source_path]
+        if artifact.get("last_write") != write:
+            raise ProfileValidationError(
+                "retained summary child final output provenance differs"
+            )
+
+    _validate_summary_child_subprocess_authorization(
+        guard_events,
+        worker_pid=worker_pid,
+        expected_children_by_hash=expected_children_by_hash,
+    )
+
+
+def _validate_summary_child_subprocess_authorization(
+    guard_events: list[dict[str, Any]],
+    *,
+    worker_pid: int,
+    expected_children_by_hash: Mapping[str, list[int]],
+) -> None:
+    """Reconcile every expected summary-child launch and its startup canary."""
+    parent_events = [
+        event for event in guard_events if event.get("pid") == worker_pid
+    ]
+    for command_hash, expected_pids in expected_children_by_hash.items():
+        if (
+            not isinstance(command_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", command_hash) is None
+            or not isinstance(expected_pids, list)
+            or any(type(pid) is not int or pid <= 0 for pid in expected_pids)
+        ):
+            raise ProfileValidationError(
+                "summary child subprocess authorization is not reconciled"
+            )
+        started_pids = [
+            event.get("child_pid")
+            for event in parent_events
+            if event.get("event_type") == "subprocess_started"
+            and event.get("command_sha256") == command_hash
+        ]
+        allowed_attempts = [
+            event
+            for event in parent_events
+            if event.get("event_type") == "subprocess_attempt"
+            and event.get("decision") == "allowed"
+            and event.get("command_sha256") == command_hash
+        ]
+        if (
+            any(type(pid) is not int or pid <= 0 for pid in started_pids)
+            or sorted(started_pids) != sorted(expected_pids)
+            or len(allowed_attempts) != len(expected_pids)
+        ):
+            raise ProfileValidationError(
+                "summary child subprocess authorization is not reconciled"
+            )
+
+
+def _load_retained_summary_artifacts(
+    project_root: Path,
+    value: Any,
+    *,
+    run_id: str,
+    evidence_directory: Path | None,
+) -> dict[str, Any]:
+    manifest_fields = {
+        "schema_version",
+        "run_id",
+        "capture_phase",
+        "artifacts",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != manifest_fields
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("run_id") != run_id
+        or value.get("capture_phase") != "after_child_before_cleanup"
+        or not isinstance(value.get("artifacts"), list)
+        or evidence_directory is None
+    ):
+        raise ProfileValidationError(
+            "summary child retained artifact manifest is missing or malformed"
+        )
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    party_tracker: bytes | None = None
+    script_source: bytes | None = None
+    final_outputs: dict[str, dict[str, Any]] = {}
+    retained_paths: set[str] = set()
+    for artifact in value["artifacts"]:
+        if not isinstance(artifact, Mapping):
+            raise ProfileValidationError(
+                "summary child retained artifact descriptor is malformed"
+            )
+        role = artifact.get("role")
+        common_fields = {
+            "role",
+            "source_path",
+            "path",
+            "sha256",
+            "size_bytes",
+            "run_id",
+            "provenance",
+        }
+        if role == "party_tracker":
+            expected_fields = common_fields
+            expected_source = "tmp/combat_capture/party_tracker.json"
+            expected_path = (
+                directory / "retained" / "summary-child" / "party-tracker.json"
+            ).as_posix()
+            expected_provenance = "sandbox_state_after_child_before_cleanup"
+        elif role == "script_source":
+            expected_fields = common_fields
+            expected_source = "tmp/combat_capture/core/ai/adv_summary.py"
+            expected_path = (
+                directory
+                / "retained"
+                / "summary-child"
+                / "source"
+                / "adv_summary.py"
+            ).as_posix()
+            expected_provenance = "sandbox_executed_source_before_cleanup"
+        elif role == "final_output":
+            expected_fields = common_fields | {"last_write"}
+            source_path = artifact.get("source_path")
+            if not isinstance(source_path, str):
+                raise ProfileValidationError(
+                    "summary child retained output source is malformed"
+                )
+            source = PurePosixPath(source_path)
+            if (
+                source.is_absolute()
+                or ".." in source.parts
+                or "\\" in source_path
+                or not source_path.startswith("tmp/combat_capture/")
+                or len(source.parts) < 3
+            ):
+                raise ProfileValidationError(
+                    "summary child retained output source is unsafe"
+                )
+            expected_source = source_path
+            expected_path = (
+                directory
+                / "retained"
+                / "summary-child"
+                / "final"
+                / (
+                    hashlib.sha256(source_path.encode("ascii")).hexdigest()[:16]
+                    + "-"
+                    + source.name
+                )
+            ).as_posix()
+            expected_provenance = (
+                "canonical_json_write_final_state_before_cleanup"
+            )
+        else:
+            raise ProfileValidationError(
+                "summary child retained artifact role is invalid"
+            )
+        digest = artifact.get("sha256")
+        size_bytes = artifact.get("size_bytes")
+        artifact_path = artifact.get("path")
+        if (
+            set(artifact) != expected_fields
+            or artifact.get("source_path") != expected_source
+            or artifact_path != expected_path
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or type(size_bytes) is not int
+            or size_bytes < 1
+            or size_bytes > _PROFILE_EVIDENCE_MAX_BYTES
+            or artifact.get("run_id") != run_id
+            or artifact.get("provenance") != expected_provenance
+            or artifact_path in retained_paths
+        ):
+            raise ProfileValidationError(
+                "summary child retained artifact provenance differs"
+            )
+        path = _safe_source_path(
+            project_root, expected_path, "summary child retained artifact"
+        )
+        raw = _read_bounded_evidence(path)
+        if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != digest:
+            raise ProfileValidationError(
+                "summary child retained artifact hash differs"
+            )
+        retained_paths.add(expected_path)
+        if role == "script_source":
+            if script_source is not None:
+                raise ProfileValidationError(
+                    "summary child retained source is duplicated"
+                )
+            script_source = raw
+            continue
+        if role == "party_tracker":
+            if party_tracker is not None:
+                raise ProfileValidationError(
+                    "summary child retained party tracker is duplicated"
+                )
+            party_tracker = raw
+            continue
+
+        last_write = artifact.get("last_write")
+        if (
+            not isinstance(last_write, Mapping)
+            or set(last_write)
+            != {"process_id", "sequence", "sha256", "size_bytes"}
+            or type(last_write.get("process_id")) is not int
+            or last_write.get("process_id") <= 0
+            or type(last_write.get("sequence")) is not int
+            or last_write.get("sequence") <= 0
+            or last_write.get("sha256") != digest
+            or type(last_write.get("size_bytes")) is not int
+            or last_write.get("size_bytes") != size_bytes
+        ):
+            raise ProfileValidationError(
+                "summary child retained final output write provenance differs"
+            )
+        source_path = artifact["source_path"]
+        if source_path in final_outputs:
+            raise ProfileValidationError(
+                "summary child retained output source is duplicated"
+            )
+        final_outputs[source_path] = {
+            **dict(artifact),
+            "_raw": raw,
+        }
+    if party_tracker is None or script_source is None or not final_outputs:
+        raise ProfileValidationError(
+            "summary child retained artifacts are incomplete"
+        )
+    return {
+        "party_tracker": party_tracker,
+        "script_source": script_source,
+        "final_outputs": final_outputs,
+    }
+
+
+def _read_retained_child_write(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    evidence_directory: Path | None,
+    run_id: str,
+    source_sha: str,
+    command_sha256: str,
+    process_id: int,
+    write_sequence: int,
+    source_path: str,
+    expected_sha256: str,
+    expected_size_bytes: int,
+) -> bytes:
+    fields = {
+        "path",
+        "source_path",
+        "sha256",
+        "size_bytes",
+        "run_id",
+        "source_sha",
+        "command_sha256",
+        "process_id",
+        "process_role",
+        "write_sequence",
+        "provenance",
+    }
+    if evidence_directory is None:
+        raise ProfileValidationError(
+            "summary child retained write directory is unavailable"
+        )
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (
+        directory
+        / ("adv-summary-write-%d-%d.json" % (process_id, write_sequence))
+    ).as_posix()
+    if (
+        set(value) != fields
+        or value.get("path") != expected_path
+        or value.get("source_path") != source_path
+        or value.get("sha256") != expected_sha256
+        or type(value.get("size_bytes")) is not int
+        or value.get("size_bytes") != expected_size_bytes
+        or value.get("run_id") != run_id
+        or value.get("source_sha") != source_sha
+        or value.get("command_sha256") != command_sha256
+        or value.get("process_id") != process_id
+        or value.get("process_role") != "host"
+        or value.get("write_sequence") != write_sequence
+        or value.get("provenance") != "guarded_canonical_json_writer"
+    ):
+        raise ProfileValidationError(
+            "summary child retained write provenance differs"
+        )
+    path = _safe_source_path(
+        project_root, expected_path, "summary child retained write snapshot"
+    )
+    raw = _read_bounded_evidence(path)
+    if (
+        len(raw) != expected_size_bytes
+        or hashlib.sha256(raw).hexdigest() != expected_sha256
+    ):
+        raise ProfileValidationError(
+            "summary child retained write snapshot hash differs"
+        )
+    return raw
 
 
 def _validate_worker_shutdown_evidence(
@@ -1942,7 +2895,7 @@ def _valid_interpreter_identity(value: Any, project_root: Path) -> bool:
     )
 
 
-def _read_bounded_evidence(path: Path) -> bytes:
+def _read_bounded_evidence(path: Path, *, allow_empty: bool = False) -> bytes:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
     try:
@@ -1950,7 +2903,7 @@ def _read_bounded_evidence(path: Path) -> bytes:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_size < 1
+            or metadata.st_size < (0 if allow_empty else 1)
             or metadata.st_size > _PROFILE_EVIDENCE_MAX_BYTES
         ):
             raise ProfileValidationError("profile evidence is not a bounded regular file")
@@ -1963,7 +2916,7 @@ def _read_bounded_evidence(path: Path) -> bytes:
             chunks.append(chunk)
             remaining -= len(chunk)
         raw = b"".join(chunks)
-        if len(raw) > _PROFILE_EVIDENCE_MAX_BYTES:
+        if len(raw) > _PROFILE_EVIDENCE_MAX_BYTES or (not allow_empty and not raw):
             raise ProfileValidationError("profile evidence exceeds the size limit")
         return raw
     except OSError as exc:

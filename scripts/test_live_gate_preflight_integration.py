@@ -311,6 +311,21 @@ class TestPreflightRowIntegration(unittest.TestCase):
             / args.run_id
         )
         evidence_directory.mkdir(parents=True, exist_ok=True)
+        child_evidence_path = evidence_directory / "adv-summary-child.jsonl"
+        child_evidence_path.write_bytes(b"")
+        child_summary = {
+            "schema_version": 1,
+            "adapter_installed": True,
+            "launch_count": 0,
+            "launches": [],
+            "calls": [],
+            "failure_code": None,
+            "evidence_path": child_evidence_path.relative_to(
+                PROJECT_ROOT
+            ).as_posix(),
+            "evidence_sha256": hashlib.sha256(b"").hexdigest(),
+            "record_count": 0,
+        }
         controller_pid, host_prelaunch_pid, host_worker_pid = 101, 102, 103
         interpreter = profile_runner._interpreter_identity()
         host_cwd = str(PROJECT_ROOT / "tmp" / "combat_capture")
@@ -656,6 +671,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             "stub_failure_code": None,
             "call_count": call_count,
             "calls": calls,
+            "adv_summary_child": child_summary,
         }
         if comparison_identity is not None:
             worker_result["comparison_identity"] = dict(comparison_identity)
@@ -830,6 +846,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             "sandbox_config_origin_guard_active": True,
             "driver_exchange": exchange,
             "calls": calls,
+            "adv_summary_child": child_summary,
             "call_count": call_count,
             "call_sites": call_sites,
             "host_command": command,

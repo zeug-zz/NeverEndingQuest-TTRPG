@@ -46,6 +46,13 @@ EXPECTED_PYTHON_ENV = "NEQ_PREFLIGHT_EXPECTED_PYTHON"
 EXPECTED_PREFIX_ENV = "NEQ_PREFLIGHT_EXPECTED_PREFIX"
 GUARD_EVENTS_PATH_ENV = "NEQ_PREFLIGHT_GUARD_EVENTS_PATH"
 RUN_ID_ENV = "NEQ_PREFLIGHT_RUN_ID"
+ADV_SUMMARY_CHILD_MODE_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_MODE"
+ADV_SUMMARY_CHILD_SOURCE_SHA_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_SOURCE_SHA"
+ADV_SUMMARY_CHILD_SOURCE_ROOT_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_SOURCE_ROOT"
+ADV_SUMMARY_CHILD_COMMAND_SHA_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_COMMAND_SHA256"
+ADV_SUMMARY_CHILD_CWD_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_CWD"
+ADV_SUMMARY_CHILD_EVIDENCE_ENV = "NEQ_PREFLIGHT_ADV_SUMMARY_CHILD_EVIDENCE"
+ADV_SUMMARY_CHILD_MODE = "fail-summary-call-and-discard-json-v1"
 CANARY_SIGNAL_FD = 198
 CANARY_REPORT_FD = 199
 CANARY_SIGNAL = b"NEQ_PREFLIGHT_SITE_STARTUP_CANARY_V1\n"
@@ -750,6 +757,7 @@ def activate_preflight_safety() -> None:
     if _GUARD_INSTALLED:
         require_guard_active()
         install_subprocess_deny_guard()
+        _activate_adv_summary_child_mode()
         return
     os.environ.pop(ACTIVE_GUARD_ENV, None)
     os.environ.pop(SANITIZED_ENV, None)
@@ -757,6 +765,26 @@ def activate_preflight_safety() -> None:
     install_network_deny_guard()
     install_subprocess_deny_guard()
     _bind_guard_event_sink_from_environment()
+    _activate_adv_summary_child_mode()
+
+
+def _activate_adv_summary_child_mode() -> None:
+    """Install the one guarded child adapter when its exact opt-in is present."""
+    mode = os.environ.get(ADV_SUMMARY_CHILD_MODE_ENV)
+    if mode is None:
+        return
+    if mode != ADV_SUMMARY_CHILD_MODE:
+        raise SafetyConfigurationError("preflight child mode is unsupported")
+    try:
+        from scripts.live_gate_preflight_stub import (
+            install_adv_summary_preflight_child_hooks,
+        )
+
+        install_adv_summary_preflight_child_hooks()
+    except Exception as exc:
+        raise SafetyConfigurationError(
+            "preflight child router and write guards could not be installed"
+        ) from exc
 
 
 def validate_sandbox_config_location(

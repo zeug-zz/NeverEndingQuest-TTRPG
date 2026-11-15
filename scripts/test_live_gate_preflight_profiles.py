@@ -39,6 +39,8 @@ from scripts.mapping_pilot.fixtures import (
     build_fixture_payloads,
     load_verified_fixtures,
 )
+from scripts import live_gate_preflight_profiles as preflight_profiles
+from scripts import live_gate_preflight_retained as retained_evidence
 from scripts.live_gate_preflight_profiles import (
     AUTHORIZATION_RULING_ID,
     FIXTURE_IDS,
@@ -82,6 +84,7 @@ from scripts.live_gate_preflight_safety import (
     _validate_canary_launch,
 )
 from scripts.live_gate_preflight_stub import FailClosedRouterStub, RouterStubError
+from scripts import live_gate_preflight_stub as preflight_stub
 from scripts.live_gate_preflight_profile_runner import (
     CharacterizationError,
     _ProfileCharacterizationLock,
@@ -495,6 +498,24 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 validate_profile_document(document)
 
             del evidence_path
+
+    def test_summary_child_sidecar_hash_is_reconciled_with_profile_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-child-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._measured_document(Path(evidence_directory))
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            child = evidence["adv_summary_child"]
+            child_sidecar = PROJECT_ROOT / child["evidence_path"]
+            self.assertEqual(child_sidecar.read_bytes(), b"")
+            validate_profile_document(document, expected_source_sha="a" * 40)
+
+            child["evidence_sha256"] = "0" * 64
+            self._persist_profile_evidence(document, evidence_path, evidence)
+            with self.assertRaisesRegex(
+                ProfileValidationError, "summary child evidence hash differs"
+            ):
+                validate_profile_document(document, expected_source_sha="a" * 40)
 
     def test_historic_identity_exception_is_exactly_pinned_and_tamper_resistant(
         self,
@@ -1495,6 +1516,19 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         }
         evidence_path = evidence_directory / "profile-evidence.json"
         evidence_relative = evidence_path.relative_to(PROJECT_ROOT).as_posix()
+        child_evidence_path = evidence_directory / "adv-summary-child.jsonl"
+        child_evidence_path.write_bytes(b"")
+        child_evidence = {
+            "schema_version": 1,
+            "adapter_installed": True,
+            "launch_count": 0,
+            "launches": [],
+            "calls": [],
+            "failure_code": None,
+            "evidence_path": child_evidence_path.relative_to(PROJECT_ROOT).as_posix(),
+            "evidence_sha256": hashlib.sha256(b"").hexdigest(),
+            "record_count": 0,
+        }
         controller_cwd = str(evidence_directory.resolve())
         host_cwd = str(PROJECT_ROOT / "tmp" / "combat_capture")
         worker_identity = {
@@ -1843,6 +1877,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "calls": [call],
             "call_count": 1,
             "call_sites": [call_site],
+            "adv_summary_child": child_evidence,
             "host_command": host_command,
             "runner_command": command,
             "failure_code": None,
@@ -2514,6 +2549,1470 @@ class TestPreflightStubAndSafety(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("guard-required", completed.stdout)
+
+    def _summary_child_adapter_fixture(
+        self, sandbox: Path, run_id: str
+    ) -> tuple[Path, Path, dict[str, str], list[str]]:
+        script = sandbox / "core" / "ai" / "adv_summary.py"
+        script.parent.mkdir(parents=True)
+        shutil.copyfile(PROJECT_ROOT / "core" / "ai" / "adv_summary.py", script)
+        evidence_directory = (
+            PROJECT_ROOT / profile_runner.PROFILE_EVIDENCE_ROOT / run_id
+        )
+        evidence_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, evidence_directory, ignore_errors=True)
+        guard_events_path = evidence_directory / "guard-events.jsonl"
+        guard_events_path.write_bytes(b"")
+        evidence_path = evidence_directory / "adv-summary-child.jsonl"
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": expected_guarded_pythonpath(PROJECT_ROOT),
+            preflight_stub.RUN_ID_ENV: run_id,
+            preflight_stub.GUARD_EVENTS_PATH_ENV: str(guard_events_path),
+            preflight_stub.PROCESS_ROLE_ENV: "host",
+            preflight_stub.ENABLE_GUARD_ENV: "1",
+            preflight_stub.REQUIRE_STARTUP_GUARD_ENV: "1",
+            preflight_stub.ACTIVE_GUARD_ENV: "1",
+            preflight_stub.EXPECTED_PYTHON_ENV: _repository_python(),
+            preflight_stub.EXPECTED_PREFIX_ENV: str(PROJECT_ROOT / ".venv"),
+        }
+        command = [
+            _repository_python(),
+            str(script),
+            "modules/conversation_history/conversation_history.json",
+            "current_location.json",
+            "A quiet moment",
+            "area_01",
+        ]
+        return script, evidence_path, environment, command
+
+    def _prepare_real_adv_summary_sandbox(self) -> tuple[Path, str, str]:
+        sandbox = PROJECT_ROOT / "tmp" / "combat_capture"
+        if sandbox.exists() or sandbox.is_symlink():
+            self.skipTest("tmp/combat_capture already exists; refusing to replace it")
+        sandbox.mkdir()
+        self.addCleanup(shutil.rmtree, sandbox, ignore_errors=True)
+        shutil.copytree(PROJECT_ROOT / "utils", sandbox / "utils")
+        for relative in (
+            "core/__init__.py",
+            "core/ai/__init__.py",
+            "core/ai/adv_summary.py",
+            "core/managers/__init__.py",
+            "core/managers/status_manager.py",
+            "schemas/loca_schema.json",
+            "schemas/journal_schema.json",
+            "modules/Capture_Arena/areas/CTR001.json",
+        ):
+            source = PROJECT_ROOT / relative
+            destination = sandbox / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+
+        area_path = sandbox / "modules" / "Capture_Arena" / "areas" / "CTR001.json"
+        area = json.loads(area_path.read_text(encoding="utf-8"))
+        location_name = "Waystone Gate"
+        if not any(
+            isinstance(location, dict) and location.get("name") == location_name
+            for location in area.get("locations", [])
+        ):
+            self.fail("Capture_Arena Waystone Gate fixture is unavailable")
+
+        (sandbox / "party_tracker.json").write_text(
+            json.dumps(
+                {
+                    "module": "Capture_Arena",
+                    "worldConditions": {
+                        "year": "1",
+                        "month": "Hammer",
+                        "day": "1",
+                        "time": "09:00",
+                    },
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        (sandbox / "current_location.json").write_text(
+            json.dumps({"name": location_name}, ensure_ascii=True),
+            encoding="utf-8",
+        )
+        (sandbox / "journal.json").write_text(
+            json.dumps({"entries": []}, ensure_ascii=True),
+            encoding="utf-8",
+        )
+        history_path = (
+            sandbox
+            / "modules"
+            / "conversation_history"
+            / "conversation_history.json"
+        )
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "role": "assistant",
+                        "content": "The party entered the Waystone Gate.",
+                    },
+                    {"role": "user", "content": "We look around the yard."},
+                ],
+                ensure_ascii=True,
+            ),
+            encoding="utf-8",
+        )
+        return sandbox, location_name, str(area.get("areaId") or "CTR001")
+
+    def test_real_guarded_adv_summary_child_returns_and_persists(self) -> None:
+        sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
+        run_id = "summary-child-real-" + uuid.uuid4().hex[:12]
+        evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
+        evidence_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, evidence_directory, ignore_errors=True)
+        guard_events_path = evidence_directory / "guard-events.jsonl"
+        guard_events_path.write_bytes(b"")
+        child_evidence_path = evidence_directory / "adv-summary-child.jsonl"
+        child_command = [
+            _repository_python(),
+            str(sandbox / "core" / "ai" / "adv_summary.py"),
+            "modules/conversation_history/conversation_history.json",
+            "current_location.json",
+            location_name,
+            area_id,
+        ]
+        source_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+
+        def run_git_for_test(
+            command: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[Any]:
+            self.assertEqual(command[:2], ["git", "show"])
+            return subprocess.run(command, **kwargs)
+
+        git_guard_patch = mock.patch(
+            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+            side_effect=run_git_for_test,
+        )
+        git_guard_patch.start()
+        self.addCleanup(git_guard_patch.stop)
+        environment = build_guarded_environment(
+            {"PATH": os.environ.get("PATH", "")},
+            project_root=PROJECT_ROOT,
+            process_role="host",
+            run_id=run_id,
+            guard_events_path=guard_events_path,
+        )
+        wrapper_code = (
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "from scripts.live_gate_preflight_stub import "
+            "install_adv_summary_preflight_host_interceptor\n"
+            "sandbox = Path.cwd()\n"
+            "interceptor = install_adv_summary_preflight_host_interceptor(\n"
+            f"    source_sha={source_sha!r}, sandbox_root=sandbox,\n"
+            "    evidence_path=Path(sys.argv[2])\n"
+            ")\n"
+            "try:\n"
+            "    results = []\n"
+            "    for _ in range(2):\n"
+            "        result = interceptor._run_adv_summary(\n"
+            "            json.loads(sys.argv[1]), check=True, capture_output=True, text=True\n"
+            "        )\n"
+            "        results.append(result.returncode)\n"
+            "    print(json.dumps({\n"
+            "        'pid': os.getpid(), 'launches': interceptor.launches,\n"
+            "        'calls': interceptor.calls, 'failure_code': interceptor.failure_code,\n"
+            "        'returncodes': results,\n"
+            "    }, sort_keys=True, separators=(',', ':')))\n"
+            "finally:\n"
+            "    interceptor.cleanup()\n"
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-driver-", dir=PROJECT_ROOT / "tmp"
+        ) as driver_directory:
+            driver_path = Path(driver_directory) / "driver.py"
+            driver_path.write_text(wrapper_code, encoding="ascii")
+            process = subprocess.Popen(
+                [
+                    _repository_python(),
+                    str(driver_path),
+                    json.dumps(child_command),
+                    str(child_evidence_path),
+                ],
+                cwd=sandbox,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+                self.fail(
+                    "real guarded summary child timed out; "
+                    + (stderr[-2000:] if stderr else "")
+                )
+        self.assertEqual(process.returncode, 0, stderr[-4000:])
+        wrapper_result = json.loads(stdout.strip().splitlines()[-1])
+        self.assertIsNone(wrapper_result["failure_code"])
+        self.assertEqual(wrapper_result["returncodes"], [0, 0])
+        self.assertEqual(len(wrapper_result["launches"]), 2)
+        self.assertTrue(
+            all(
+                launch["summary_child_succeeded"]
+                for launch in wrapper_result["launches"]
+            )
+        )
+        self.assertEqual(
+            [
+                launch["call_evidence_count"]
+                for launch in wrapper_result["launches"]
+            ],
+            [2, 2],
+        )
+        self.assertEqual(
+            [call["response_kind"] for call in wrapper_result["calls"]],
+            ["summary_text", "location_json", "summary_text", "location_json"],
+        )
+
+        child_records = preflight_stub._read_adv_summary_child_records(
+            child_evidence_path
+        )
+        self.assertEqual(len(child_records), 2)
+        self.assertEqual(len({record["pid"] for record in child_records}), 2)
+        for record in child_records:
+            self.assertTrue(record["summary_output_persisted"])
+            self.assertFalse(record["provider_request_attempted"])
+            self.assertEqual(record["router_call_count"], 2)
+            self.assertEqual(record["discarded_json_writes"], [])
+            self.assertEqual(len(record["canonical_writes"]), 6)
+            self.assertEqual(
+                [write["sequence"] for write in record["canonical_writes"]],
+                [1, 2, 3, 4, 5, 6],
+            )
+            self.assertEqual(
+                {write["path"] for write in record["canonical_writes"]},
+                {
+                    "summary_dump.json",
+                    "trimmed_summary_dump.json",
+                    "dialogue_summary.json",
+                    "journal.json",
+                    "modules/Capture_Arena/areas/%s.json" % area_id,
+                },
+            )
+            self.assertEqual(
+                len(
+                    {
+                        write["retained_artifact"]["path"]
+                        for write in record["canonical_writes"]
+                    }
+                ),
+                6,
+            )
+        record = child_records[-1]
+        validator_args = {
+            "run_id": run_id,
+            "command_sha256": wrapper_result["launches"][0]["command_sha256"],
+            "environment_sha256": wrapper_result["launches"][0][
+            "environment_sha256"
+            ],
+            "source_sha": source_sha,
+            "pythonpath": environment["PYTHONPATH"],
+            "script_sha256": hashlib.sha256(
+                (sandbox / "core" / "ai" / "adv_summary.py").read_bytes()
+            ).hexdigest(),
+            "working_directory": str(sandbox),
+            "interpreter": wrapper_result["launches"][0]["interpreter"],
+        }
+        self.assertTrue(
+            preflight_stub._validate_adv_summary_child_record(record, **validator_args)
+        )
+
+        blocked = dict(record)
+        blocked["stub_failure_code"] = "router_task_has_no_stub_response"
+        self.assertFalse(
+            preflight_stub._validate_adv_summary_child_record(blocked, **validator_args)
+        )
+        failed = dict(wrapper_result["launches"][0])
+        failed["returncode"] = 1
+        self.assertNotEqual(failed["returncode"], 0)
+        discarded = dict(record)
+        discarded["canonical_writes"] = []
+        discarded["summary_output_persisted"] = False
+        self.assertFalse(
+            preflight_stub._validate_adv_summary_child_record(
+                discarded, **validator_args
+            )
+        )
+
+        launch = wrapper_result["launches"][0]
+        raw_evidence = child_evidence_path.read_bytes()
+        guard_events = [
+            json.loads(line)
+            for line in guard_events_path.read_text(encoding="ascii").splitlines()
+            if line
+        ]
+        profile_child_evidence = {
+            "schema_version": 1,
+            "adapter_installed": True,
+            "launch_count": len(wrapper_result["launches"]),
+            "launches": wrapper_result["launches"],
+            "calls": wrapper_result["calls"],
+            "failure_code": None,
+            "evidence_path": child_evidence_path.relative_to(
+                PROJECT_ROOT
+            ).as_posix(),
+            "evidence_sha256": hashlib.sha256(raw_evidence).hexdigest(),
+            "record_count": len(child_records),
+        }
+        retained_artifacts = retained_evidence.retain_summary_child_artifacts(
+            sandbox,
+            evidence_directory,
+            run_id=run_id,
+            summary_child=profile_child_evidence,
+        )
+        self.assertIsInstance(retained_artifacts, dict)
+        profile_validator_args = {
+            "run_id": run_id,
+            "source_sha": source_sha,
+            "pythonpath": environment["PYTHONPATH"],
+            "worker_pid": wrapper_result["pid"],
+            "worker_interpreter": launch["interpreter"],
+            "guard_events": guard_events,
+            "evidence_directory": evidence_directory,
+            "retained_artifacts": retained_artifacts,
+        }
+        expected_parent_launch_pids = sorted(
+            process_pid
+            for launch_record in wrapper_result["launches"]
+            for process_pid in (
+                launch_record["prelaunch_canary_pid"],
+                launch_record["child_pid"],
+            )
+        )
+        command_hash = wrapper_result["launches"][0]["command_sha256"]
+        parent_events = [
+            event for event in guard_events if event["pid"] == wrapper_result["pid"]
+        ]
+        self.assertEqual(
+            sorted(
+                event["child_pid"]
+                for event in parent_events
+                if event["event_type"] == "subprocess_started"
+                and event["command_sha256"] == command_hash
+            ),
+            expected_parent_launch_pids,
+        )
+        self.assertEqual(
+            sum(
+                event["event_type"] == "subprocess_attempt"
+                and event["decision"] == "allowed"
+                and event["command_sha256"] == command_hash
+                for event in parent_events
+            ),
+            len(expected_parent_launch_pids),
+        )
+        shutil.rmtree(sandbox)
+        self.assertFalse(sandbox.exists())
+        original_safe_source_path = preflight_profiles._safe_source_path
+        changed_source_path = evidence_directory / "changed-adv_summary.py"
+        changed_source_path.write_bytes(b"# changed live source\n")
+
+        def reject_live_source(
+            root: Path, relative: str | Path, label: str
+        ) -> Path:
+            if Path(relative).as_posix() == "core/ai/adv_summary.py":
+                raise ProfileValidationError("live source is unavailable")
+            return original_safe_source_path(root, relative, label)
+
+        def return_changed_live_source(
+            root: Path, relative: str | Path, label: str
+        ) -> Path:
+            if Path(relative).as_posix() == "core/ai/adv_summary.py":
+                return changed_source_path
+            return original_safe_source_path(root, relative, label)
+
+        for source_state, resolver in (
+            ("unavailable", reject_live_source),
+            ("changed", return_changed_live_source),
+        ):
+            with self.subTest(live_source=source_state), mock.patch.object(
+                preflight_profiles,
+                "_safe_source_path",
+                side_effect=resolver,
+            ):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    profile_child_evidence,
+                    **profile_validator_args,
+                )
+
+        failed_profile_evidence = json.loads(
+            json.dumps(profile_child_evidence, ensure_ascii=True)
+        )
+        failed_profile_evidence["launches"][0]["returncode"] = 1
+        with self.assertRaisesRegex(
+            ProfileValidationError, "summary child launch identity differs"
+        ):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                failed_profile_evidence,
+                **profile_validator_args,
+            )
+
+        source_artifact = next(
+            item
+            for item in retained_artifacts["artifacts"]
+            if item["role"] == "script_source"
+        )
+        source_artifact_path = PROJECT_ROOT / source_artifact["path"]
+        original_source_artifact = source_artifact_path.read_bytes()
+        tampered_source_artifact = original_source_artifact + b"\n# tampered\n"
+        missing_source_manifest = json.loads(
+            json.dumps(retained_artifacts, ensure_ascii=True)
+        )
+        missing_source_manifest["artifacts"] = [
+            item
+            for item in missing_source_manifest["artifacts"]
+            if item["role"] != "script_source"
+        ]
+        with self.assertRaisesRegex(
+            ProfileValidationError, "summary child retained artifacts are incomplete"
+        ):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **{
+                    **profile_validator_args,
+                    "retained_artifacts": missing_source_manifest,
+                },
+            )
+        try:
+            source_artifact_path.write_bytes(tampered_source_artifact)
+            with self.assertRaisesRegex(
+                ProfileValidationError, "summary child retained artifact hash differs"
+            ):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    profile_child_evidence,
+                    **profile_validator_args,
+                )
+
+            tampered_manifest = json.loads(
+                json.dumps(retained_artifacts, ensure_ascii=True)
+            )
+            tampered_descriptor = next(
+                item
+                for item in tampered_manifest["artifacts"]
+                if item["role"] == "script_source"
+            )
+            tampered_descriptor["sha256"] = hashlib.sha256(
+                tampered_source_artifact
+            ).hexdigest()
+            tampered_descriptor["size_bytes"] = len(tampered_source_artifact)
+            tampered_validator_args = {
+                **profile_validator_args,
+                "retained_artifacts": tampered_manifest,
+            }
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "retained summary child source differs from declared source SHA",
+            ):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    profile_child_evidence,
+                    **tampered_validator_args,
+                )
+        finally:
+            source_artifact_path.write_bytes(original_source_artifact)
+
+        wrong_source_args = {
+            **profile_validator_args,
+            "source_sha": "a" * 40,
+        }
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            "trusted summary child source identity is unavailable",
+        ):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **wrong_source_args,
+            )
+
+        final_artifact = next(
+            item
+            for item in retained_artifacts["artifacts"]
+            if item["role"] == "final_output"
+        )
+        final_path = PROJECT_ROOT / final_artifact["path"]
+        original_final = final_path.read_bytes()
+        final_path.unlink()
+        with self.assertRaisesRegex(ProfileValidationError, "missing or escapes"):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **profile_validator_args,
+            )
+        final_path.write_bytes(original_final)
+
+        first_snapshot = (
+            PROJECT_ROOT
+            / child_records[0]["canonical_writes"][0]["retained_artifact"]["path"]
+        )
+        original_snapshot = first_snapshot.read_bytes()
+        first_snapshot.write_bytes(original_snapshot + b" ")
+        with self.assertRaisesRegex(ProfileValidationError, "hash differs"):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **profile_validator_args,
+            )
+        first_snapshot.write_bytes(original_snapshot)
+
+        replacement = evidence_directory / "replacement-artifact.json"
+        replacement.write_bytes(original_final)
+        final_path.unlink()
+        final_path.symlink_to(replacement)
+        with self.assertRaisesRegex(ProfileValidationError, "symlink"):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **profile_validator_args,
+            )
+        final_path.unlink()
+        final_path.write_bytes(original_final)
+        replacement.unlink()
+
+        traversed_profile_evidence = json.loads(
+            json.dumps(profile_child_evidence, ensure_ascii=True)
+        )
+        traversed_record = dict(child_records[0])
+        traversed_record["canonical_writes"] = [
+            dict(write) for write in traversed_record["canonical_writes"]
+        ]
+        traversed_record["canonical_writes"][0]["retained_artifact"] = dict(
+            traversed_record["canonical_writes"][0]["retained_artifact"]
+        )
+        traversed_record["canonical_writes"][0]["retained_artifact"]["path"] = (
+            evidence_directory.relative_to(PROJECT_ROOT).as_posix()
+            + "/../../outside.json"
+        )
+        traversed_raw = b"".join(
+            json.dumps(
+                record_value,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+            + b"\n"
+            for record_value in (traversed_record, child_records[1])
+        )
+        original_records_raw = child_evidence_path.read_bytes()
+        child_evidence_path.write_bytes(traversed_raw)
+        traversed_profile_evidence["evidence_sha256"] = hashlib.sha256(
+            traversed_raw
+        ).hexdigest()
+        with self.assertRaisesRegex(
+            ProfileValidationError, "retained write provenance differs"
+        ):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                traversed_profile_evidence,
+                **profile_validator_args,
+            )
+        child_evidence_path.write_bytes(original_records_raw)
+
+        for rejected_record in (blocked, discarded):
+            rejected_raw = (
+                json.dumps(
+                    rejected_record,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+                + b"\n"
+            )
+            child_evidence_path.write_bytes(rejected_raw)
+            rejected_profile_evidence = dict(profile_child_evidence)
+            rejected_profile_evidence["evidence_sha256"] = hashlib.sha256(
+                rejected_raw
+            ).hexdigest()
+            with self.assertRaises(ProfileValidationError):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    rejected_profile_evidence,
+                    **profile_validator_args,
+                )
+        child_evidence_path.write_bytes(raw_evidence)
+
+    def test_summary_child_subprocess_reconciliation_counts_canary_and_child(
+        self,
+    ) -> None:
+        worker_pid = 51001
+        canary_pid = 51002
+        child_pid = 51003
+        command_hash = "a" * 64
+        expected = {command_hash: [canary_pid, child_pid]}
+
+        def launch_events(pids: list[int]) -> list[dict[str, Any]]:
+            events: list[dict[str, Any]] = []
+            sequence = 1
+            for pid in pids:
+                events.extend(
+                    (
+                        {
+                            "pid": worker_pid,
+                            "sequence": sequence,
+                            "event_type": "subprocess_attempt",
+                            "decision": "allowed",
+                            "command_sha256": command_hash,
+                        },
+                        {
+                            "pid": worker_pid,
+                            "sequence": sequence + 1,
+                            "event_type": "subprocess_started",
+                            "command_sha256": command_hash,
+                            "child_pid": pid,
+                        },
+                    )
+                )
+                sequence += 2
+            return events
+
+        preflight_profiles._validate_summary_child_subprocess_authorization(
+            launch_events([canary_pid, child_pid]),
+            worker_pid=worker_pid,
+            expected_children_by_hash=expected,
+        )
+
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            "summary child subprocess authorization is not reconciled",
+        ):
+            preflight_profiles._validate_summary_child_subprocess_authorization(
+                launch_events([child_pid]),
+                worker_pid=worker_pid,
+                expected_children_by_hash=expected,
+            )
+
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            "summary child subprocess authorization is not reconciled",
+        ):
+            preflight_profiles._validate_summary_child_subprocess_authorization(
+                launch_events([canary_pid, child_pid, child_pid + 1]),
+                worker_pid=worker_pid,
+                expected_children_by_hash=expected,
+            )
+
+    def test_summary_child_source_hash_is_checked_before_module_execution(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-source-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            sandbox_source = sandbox / "utils" / "llm_router.py"
+            sandbox_source.parent.mkdir()
+            trusted_source = PROJECT_ROOT / "utils" / "llm_router.py"
+            shutil.copyfile(trusted_source, sandbox_source)
+            identity = {
+                "working_directory": str(sandbox),
+                "source_root": str(PROJECT_ROOT),
+            }
+            hook = preflight_stub._AdvSummaryChildImportHook()
+            verified = hook._verified_module_source(
+                "utils.llm_router", str(sandbox_source), identity
+            )
+            hook.verified_sources["utils.llm_router"] = verified
+            with mock.patch.object(
+                preflight_stub, "_ADV_SUMMARY_CHILD_RECEIPT", identity
+            ):
+                hook.verify_source_before_execution(
+                    "utils.llm_router", str(sandbox_source)
+                )
+
+            sandbox_source.write_text(
+                sandbox_source.read_text(encoding="utf-8") + "\n# altered\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ImportError, "hash differs"):
+                hook._verified_module_source(
+                    "utils.llm_router", str(sandbox_source), identity
+                )
+
+    def test_summary_child_interceptor_rejects_altered_script_and_command(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-launch-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            interceptor: Any = None
+            try:
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    try:
+                        script.write_text(
+                            script.read_text(encoding="utf-8") + "\n# altered\n",
+                            encoding="utf-8",
+                        )
+                        with mock.patch.object(
+                            preflight_stub,
+                            "run_startup_process_canary",
+                        ) as canary:
+                            with self.assertRaisesRegex(
+                                RouterStubError, "script differs"
+                            ):
+                                interceptor._run_adv_summary(
+                                    command,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                            canary.assert_not_called()
+                        self.assertEqual(
+                            interceptor.failure_code,
+                            "summary_child_script_identity_mismatch",
+                        )
+                    finally:
+                        interceptor.cleanup()
+            finally:
+                os.chdir(original_cwd)
+
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-command-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            _script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            interceptor: Any = None
+            try:
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    try:
+                        altered = list(command)
+                        altered[2] = "other-history.json"
+                        with mock.patch.object(
+                            preflight_stub,
+                            "run_startup_process_canary",
+                        ) as canary:
+                            with self.assertRaisesRegex(
+                                RouterStubError, "command identity differs"
+                            ):
+                                interceptor._run_adv_summary(
+                                    altered,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                            canary.assert_not_called()
+                        self.assertEqual(
+                            interceptor.failure_code,
+                            "summary_child_command_identity_mismatch",
+                        )
+                    finally:
+                        interceptor.cleanup()
+            finally:
+                os.chdir(original_cwd)
+
+    def test_summary_child_interceptor_rejects_a_blocked_launch_record(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-authorized-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            interceptor: Any = None
+            original_subprocess_run: Any = None
+            try:
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    original_subprocess_run = interceptor.original_run
+                    canary_pid = 45001
+                    child_pid = 45002
+                    interpreter = {
+                        "executable": command[0],
+                        "prefix": environment[preflight_stub.EXPECTED_PREFIX_ENV],
+                        "base_prefix": sys.base_prefix,
+                    }
+                    canary = {
+                        "command": command,
+                        "command_sha256": preflight_stub._command_sha256(command),
+                        "working_directory": str(sandbox),
+                        "process_role": "host",
+                        "pid": canary_pid,
+                        "startup_observed_at_ns": 123456,
+                        "guard_active": True,
+                        "non_loopback_connect_denied": True,
+                        "subprocess_launch_denied": True,
+                        "environment_sha256": "e" * 64,
+                        "interpreter": interpreter,
+                    }
+                    script_sha256 = hashlib.sha256(script.read_bytes()).hexdigest()
+                    child_record = {
+                        "schema_version": 1,
+                        "run_id": run_id,
+                        "pid": child_pid,
+                        "process_group_id": os.getpgrp(),
+                        "process_role": "host",
+                        "command_sha256": canary["command_sha256"],
+                        "environment_sha256": canary["environment_sha256"],
+                        "startup_observed_at_ns": 234567,
+                        "interpreter": interpreter,
+                        "source_sha": "a" * 40,
+                        "pythonpath": environment["PYTHONPATH"],
+                        "script_sha256": script_sha256,
+                        "working_directory": str(sandbox),
+                        "router_call_count": 1,
+                        "task": "adventure_summary",
+                        "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+                        "source_line": 42,
+                        "source_file_sha256": script_sha256,
+                        "stub_failure_code": "router_task_has_no_stub_response",
+                        "expected_summary_call_blocked": True,
+                        "provider_request_attempted": False,
+                        "summary_output_persisted": False,
+                        "discarded_json_writes": [
+                            {
+                                "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+                                "basename": name,
+                            }
+                            for name in (
+                                "summary_dump.json",
+                                "trimmed_summary_dump.json",
+                                "dialogue_summary.json",
+                            )
+                        ],
+                    }
+
+                    def fail_after_record(*_args: Any, **_kwargs: Any) -> None:
+                        evidence_path.write_bytes(
+                            json.dumps(
+                                child_record,
+                                ensure_ascii=True,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("ascii")
+                            + b"\n"
+                        )
+                        raise subprocess.CalledProcessError(1, command)
+
+                    original_run = mock.Mock(side_effect=fail_after_record)
+                    interceptor.original_run = original_run
+                    authorization = mock.MagicMock()
+                    with mock.patch.object(
+                        preflight_stub,
+                        "run_startup_process_canary",
+                        return_value=canary,
+                    ), mock.patch.object(
+                        preflight_stub,
+                        "authorize_subprocess_launch",
+                        return_value=authorization,
+                    ) as authorize:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            interceptor._run_adv_summary(
+                                command,
+                                check=True,
+                                capture_output=True,
+                                text=True,
+                            )
+
+                    authorize.assert_called_once()
+                    authorized_command = authorize.call_args.args[0]
+                    authorized_options = authorize.call_args.kwargs
+                    self.assertEqual(authorized_command, command)
+                    self.assertEqual(authorized_options["cwd"], str(sandbox))
+                    self.assertEqual(
+                        authorized_options["env"][preflight_stub.ADV_SUMMARY_CHILD_MODE_ENV],
+                        preflight_stub.ADV_SUMMARY_CHILD_MODE,
+                    )
+                    original_run.assert_called_once()
+                    self.assertEqual(
+                        interceptor.failure_code, "summary_child_process_failed"
+                    )
+                    self.assertEqual(interceptor.launches[0]["child_pid"], child_pid)
+                    self.assertFalse(
+                        interceptor.launches[0]["summary_child_succeeded"]
+                    )
+                    self.assertEqual(interceptor.launches[0]["returncode"], 1)
+                    self.assertEqual(len(interceptor.calls), 0)
+                    self.assertEqual(
+                        preflight_stub._read_adv_summary_child_records(evidence_path),
+                        [child_record],
+                    )
+            finally:
+                if interceptor is not None:
+                    if original_subprocess_run is not None:
+                        interceptor.original_run = original_subprocess_run
+                    interceptor.cleanup()
+                os.chdir(original_cwd)
+
+    def test_summary_child_interceptor_does_not_launch_without_authorization(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-unauthorized-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            _script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            interceptor: Any = None
+            original_subprocess_run: Any = None
+            try:
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    original_subprocess_run = interceptor.original_run
+                    canary = {
+                        "command": command,
+                        "command_sha256": preflight_stub._command_sha256(command),
+                        "working_directory": str(sandbox),
+                        "process_role": "host",
+                        "pid": 46001,
+                        "startup_observed_at_ns": 123456,
+                        "guard_active": True,
+                        "non_loopback_connect_denied": True,
+                        "subprocess_launch_denied": True,
+                        "environment_sha256": "f" * 64,
+                        "interpreter": {
+                            "executable": command[0],
+                            "prefix": environment[preflight_stub.EXPECTED_PREFIX_ENV],
+                            "base_prefix": sys.base_prefix,
+                        },
+                    }
+                    original_run = mock.Mock()
+                    interceptor.original_run = original_run
+                    with mock.patch.object(
+                        preflight_stub,
+                        "run_startup_process_canary",
+                        return_value=canary,
+                    ), mock.patch.object(
+                        preflight_stub,
+                        "authorize_subprocess_launch",
+                        side_effect=NetworkGuardError("one-use authorization absent"),
+                    ) as authorize:
+                        with self.assertRaisesRegex(
+                            NetworkGuardError, "one-use authorization absent"
+                        ):
+                            interceptor._run_adv_summary(
+                                command,
+                                check=True,
+                                capture_output=True,
+                                text=True,
+                            )
+                    authorize.assert_called_once()
+                    original_run.assert_not_called()
+                    self.assertEqual(
+                        interceptor.failure_code,
+                        "summary_child_launch_failed_NetworkGuardError",
+                    )
+                    self.assertIsNone(
+                        interceptor.launches[0]["child_pid"]
+                    )
+            finally:
+                if interceptor is not None:
+                    if original_subprocess_run is not None:
+                        interceptor.original_run = original_subprocess_run
+                    interceptor.cleanup()
+                os.chdir(original_cwd)
+
+    def test_summary_child_hooks_refuse_missing_network_guard(self) -> None:
+        meta_path_before = list(sys.meta_path)
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            preflight_stub, "_ADV_SUMMARY_CHILD_HOOK", None
+        ):
+            with self.assertRaisesRegex(
+                RouterStubError, "active sanitized network guard"
+            ):
+                preflight_stub.install_adv_summary_preflight_child_hooks()
+        self.assertEqual(sys.meta_path, meta_path_before)
+
+    def test_summary_child_interceptor_rejects_secrets_and_bad_canary(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-guards-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            _script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            try:
+                with mock.patch.dict(
+                    os.environ,
+                    {**environment, "SYNTHETIC_API_KEY": "do-not-leak"},
+                    clear=True,
+                ), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    try:
+                        with mock.patch.object(
+                            preflight_stub, "run_startup_process_canary"
+                        ) as canary:
+                            with self.assertRaisesRegex(
+                                RouterStubError, "not secret-free"
+                            ) as raised:
+                                interceptor._run_adv_summary(
+                                    command,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                            canary.assert_not_called()
+                            self.assertNotIn("do-not-leak", str(raised.exception))
+                        self.assertEqual(
+                            interceptor.failure_code,
+                            "summary_child_environment_contains_secret",
+                        )
+                    finally:
+                        interceptor.cleanup()
+            finally:
+                os.chdir(original_cwd)
+
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-canary-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            sandbox = Path(temp_root)
+            run_id = "summary-child-test-" + uuid.uuid4().hex[:12]
+            _script, evidence_path, environment, command = (
+                self._summary_child_adapter_fixture(sandbox, run_id)
+            )
+            original_cwd = Path.cwd()
+            os.chdir(sandbox)
+            try:
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(preflight_stub, "_require_network_guard"), \
+                    mock.patch.object(preflight_stub, "require_startup_guard_active"), \
+                    mock.patch.object(preflight_stub, "require_current_invocation_matches_startup"), \
+                    mock.patch.object(preflight_stub, "require_sanitized_environment"):
+                    interceptor = (
+                        preflight_stub.install_adv_summary_preflight_host_interceptor(
+                            source_sha="a" * 40,
+                            sandbox_root=sandbox,
+                            evidence_path=evidence_path,
+                        )
+                    )
+                    canary_record = {
+                        "command": command,
+                        "command_sha256": "0" * 64,
+                        "working_directory": str(sandbox),
+                        "process_role": "host",
+                        "pid": 12345,
+                        "startup_observed_at_ns": 123456,
+                        "guard_active": True,
+                        "non_loopback_connect_denied": True,
+                        "subprocess_launch_denied": True,
+                        "environment_sha256": "e" * 64,
+                        "interpreter": {
+                            "executable": command[0],
+                            "prefix": environment[preflight_stub.EXPECTED_PREFIX_ENV],
+                            "base_prefix": sys.base_prefix,
+                        },
+                    }
+                    try:
+                        with mock.patch.object(
+                            preflight_stub,
+                            "run_startup_process_canary",
+                            return_value=canary_record,
+                        ), mock.patch.object(
+                            preflight_stub,
+                            "authorize_subprocess_launch",
+                            side_effect=AssertionError("unauthorized launch reached Popen"),
+                        ):
+                            with self.assertRaisesRegex(
+                                RouterStubError, "startup canary did not reconcile"
+                            ):
+                                interceptor._run_adv_summary(
+                                    command,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                        self.assertIsNone(
+                            interceptor.launches[0]["prelaunch_canary_pid"]
+                        )
+                        self.assertEqual(
+                            interceptor.failure_code,
+                            "summary_child_launch_failed_RouterStubError",
+                        )
+                    finally:
+                        interceptor.cleanup()
+            finally:
+                os.chdir(original_cwd)
+
+    def test_summary_child_record_rejects_legacy_blocked_evidence(
+        self,
+    ) -> None:
+        run_id = "summary-child-record-" + uuid.uuid4().hex[:12]
+        command_sha256 = "a" * 64
+        environment_sha256 = "b" * 64
+        script_sha256 = "c" * 64
+        interpreter = {
+            "executable": _repository_python(),
+            "prefix": str(PROJECT_ROOT / ".venv"),
+            "base_prefix": sys.base_prefix,
+        }
+        record = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "pid": 12345,
+            "process_group_id": 12300,
+            "process_role": "host",
+            "command_sha256": command_sha256,
+            "environment_sha256": environment_sha256,
+            "startup_observed_at_ns": 123456,
+            "interpreter": interpreter,
+            "source_sha": "d" * 40,
+            "pythonpath": expected_guarded_pythonpath(PROJECT_ROOT),
+            "script_sha256": script_sha256,
+            "working_directory": str(PROJECT_ROOT / "tmp" / "combat_capture"),
+            "router_call_count": 1,
+            "task": "adventure_summary",
+            "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+            "source_line": 42,
+            "source_file_sha256": script_sha256,
+            "stub_failure_code": "router_task_has_no_stub_response",
+            "expected_summary_call_blocked": True,
+            "provider_request_attempted": False,
+            "summary_output_persisted": False,
+            "discarded_json_writes": [
+                {
+                    "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+                    "basename": name,
+                }
+                for name in (
+                    "summary_dump.json",
+                    "trimmed_summary_dump.json",
+                    "dialogue_summary.json",
+                )
+            ],
+        }
+        validator = preflight_stub._validate_adv_summary_child_record
+        validation = {
+            "run_id": run_id,
+            "command_sha256": command_sha256,
+            "environment_sha256": environment_sha256,
+            "source_sha": "d" * 40,
+            "pythonpath": expected_guarded_pythonpath(PROJECT_ROOT),
+            "script_sha256": script_sha256,
+            "working_directory": record["working_directory"],
+            "interpreter": interpreter,
+        }
+        self.assertFalse(validator(record, **validation))
+
+        bad_canary = dict(record)
+        bad_canary["startup_observed_at_ns"] = 0
+        self.assertFalse(validator(bad_canary, **validation))
+        bad_interpreter = dict(record)
+        bad_interpreter["interpreter"] = {**interpreter, "prefix": "/wrong"}
+        self.assertFalse(validator(bad_interpreter, **validation))
+        bad_writes = dict(record)
+        bad_writes["discarded_json_writes"] = record["discarded_json_writes"][:2]
+        self.assertFalse(validator(bad_writes, **validation))
+
+    def test_summary_child_validator_rejects_blocked_unpersisted_evidence(self) -> None:
+        run_id = "summary-child-reconcile-" + uuid.uuid4().hex[:12]
+        worker_pid = 12300
+        prelaunch_pid = 12344
+        child_pid = 12345
+        command_sha256 = "a" * 64
+        environment_sha256 = "b" * 64
+        source_sha = "d" * 40
+        working_directory = str(PROJECT_ROOT / "tmp" / "combat_capture")
+        pythonpath = expected_guarded_pythonpath(PROJECT_ROOT)
+        script_sha256 = hashlib.sha256(
+            (PROJECT_ROOT / "core" / "ai" / "adv_summary.py").read_bytes()
+        ).hexdigest()
+        interpreter = {
+            "executable": _repository_python(),
+            "prefix": str(PROJECT_ROOT / ".venv"),
+            "base_prefix": sys.base_prefix,
+        }
+
+        def event(
+            pid: int,
+            sequence: int,
+            event_type: str,
+            *,
+            command_hash: str | None = None,
+            child: int | None = None,
+            child_is_python: bool | None = None,
+            decision: str | None = None,
+        ) -> dict[str, Any]:
+            value: dict[str, Any] = {
+                "schema_version": 1,
+                "sequence": sequence,
+                "event_type": event_type,
+                "pid": pid,
+                "process_group_id": worker_pid,
+                "process_role": "host",
+                "run_id": run_id,
+                "observed_at_ns": 10_000 + pid + sequence,
+                "operation": None,
+                "decision": None,
+                "target_host": None,
+                "target_port": None,
+                "target_host_sha256": None,
+                "command_sha256": None,
+                "child_pid": None,
+                "child_is_python": None,
+                "guard_active": None,
+                "interpreter": None,
+                "working_directory": None,
+            }
+            if event_type == "guard_startup":
+                value.update(
+                    {
+                        "command_sha256": command_sha256,
+                        "guard_active": True,
+                        "interpreter": interpreter,
+                        "working_directory": working_directory,
+                    }
+                )
+            elif event_type == "network_attempt":
+                value.update(
+                    {
+                        "operation": "connect",
+                        "decision": "denied",
+                        "target_host": "192.0.2.1",
+                        "target_port": 8360,
+                    }
+                )
+            elif event_type == "subprocess_attempt":
+                value.update(
+                    {
+                        "operation": "Popen",
+                        "decision": decision or "denied",
+                        "command_sha256": command_hash or "f" * 64,
+                    }
+                )
+            elif event_type == "subprocess_started":
+                value.update(
+                    {
+                        "operation": "Popen",
+                        "decision": "started",
+                        "command_sha256": command_hash,
+                        "child_pid": child,
+                        "child_is_python": child_is_python,
+                    }
+                )
+            return value
+
+        guard_events: list[dict[str, Any]] = []
+        worker_events = [
+            event(worker_pid, 1, "guard_startup"),
+            event(worker_pid, 2, "network_attempt"),
+            event(worker_pid, 3, "subprocess_attempt"),
+        ]
+        for child_index, child in enumerate((prelaunch_pid, child_pid)):
+            sequence = 4 + child_index * 2
+            worker_events.extend(
+                (
+                    event(
+                        worker_pid,
+                        sequence,
+                        "subprocess_attempt",
+                        command_hash=command_sha256,
+                        decision="allowed",
+                    ),
+                    event(
+                        worker_pid,
+                        sequence + 1,
+                        "subprocess_started",
+                        command_hash=command_sha256,
+                        child=child,
+                        child_is_python=True,
+                    ),
+                )
+            )
+        guard_events.extend(worker_events)
+        guard_events.extend(
+            event(pid, sequence, event_type)
+            for pid in (prelaunch_pid, child_pid)
+            for sequence, event_type in enumerate(
+                ("guard_startup", "network_attempt", "subprocess_attempt"), start=1
+            )
+        )
+
+        record = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "pid": child_pid,
+            "process_group_id": worker_pid,
+            "process_role": "host",
+            "command_sha256": command_sha256,
+            "environment_sha256": environment_sha256,
+            "startup_observed_at_ns": 40_000,
+            "interpreter": interpreter,
+            "source_sha": source_sha,
+            "pythonpath": pythonpath,
+            "script_sha256": script_sha256,
+            "working_directory": working_directory,
+            "router_call_count": 1,
+            "task": "adventure_summary",
+            "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+            "source_line": 42,
+            "source_file_sha256": script_sha256,
+            "stub_failure_code": "router_task_has_no_stub_response",
+            "expected_summary_call_blocked": True,
+            "provider_request_attempted": False,
+            "summary_output_persisted": False,
+            "discarded_json_writes": [
+                {
+                    "source_file": "tmp/combat_capture/core/ai/adv_summary.py",
+                    "basename": name,
+                }
+                for name in (
+                    "summary_dump.json",
+                    "trimmed_summary_dump.json",
+                    "dialogue_summary.json",
+                )
+            ],
+        }
+        launch = {
+            "sequence": 1,
+            "command_sha256": command_sha256,
+            "script_sha256": script_sha256,
+            "working_directory": working_directory,
+            "parent_pid": worker_pid,
+            "parent_process_group_id": worker_pid,
+            "prelaunch_canary_pid": prelaunch_pid,
+            "prelaunch_startup_observed_at_ns": 30_000,
+            "child_pid": child_pid,
+            "child_process_group_id": worker_pid,
+            "environment_sha256": environment_sha256,
+            "interpreter": interpreter,
+            "returncode": 1,
+            "call_evidence_count": 1,
+            "expected_blocked_summary_call": True,
+        }
+        call = {
+            "sequence": 1,
+            "task": "adventure_summary",
+            "source_file": record["source_file"],
+            "source_line": record["source_line"],
+            "source_file_sha256": script_sha256,
+            "source_sha": source_sha,
+            "command_sha256": command_sha256,
+            "environment_sha256": environment_sha256,
+            "process_id": child_pid,
+            "process_role": "adv_summary_child",
+        }
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            evidence_directory = Path(temp_root)
+            sidecar = evidence_directory / "adv-summary-child.jsonl"
+            raw = (
+                json.dumps(
+                    record,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+                + b"\n"
+            )
+            sidecar.write_bytes(raw)
+            evidence = {
+                "schema_version": 1,
+                "adapter_installed": True,
+                "launch_count": 1,
+                "launches": [launch],
+                "calls": [call],
+                "failure_code": None,
+                "evidence_path": sidecar.relative_to(PROJECT_ROOT).as_posix(),
+                "evidence_sha256": hashlib.sha256(raw).hexdigest(),
+                "record_count": 1,
+            }
+            with self.assertRaises(ProfileValidationError):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    evidence,
+                    run_id=run_id,
+                    source_sha=source_sha,
+                    pythonpath=pythonpath,
+                    worker_pid=worker_pid,
+                    worker_interpreter=interpreter,
+                    guard_events=guard_events,
+                    evidence_directory=evidence_directory,
+                )
 
     def _run_guarded_test_child(self, mode: str) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="preflight-test-child-", dir="tmp") as temp_root:
@@ -4063,7 +5562,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
 
     def test_sandbox_preparer_is_bound_to_the_declared_source_sha(self) -> None:
         relative = "scripts/live_gate_preflight_sandbox.py"
+        summary_source_relative = "core/ai/adv_summary.py"
         self.assertIn(relative, profile_runner._SOURCE_BOUND_FILES)
+        self.assertIn(summary_source_relative, profile_runner._SOURCE_BOUND_FILES)
         source_sha = "a" * 40
 
         with tempfile.TemporaryDirectory(
@@ -4106,6 +5607,23 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     profile_runner._verify_source_identity(source_sha)
 
             self.assertIn(source_sha + ":" + relative, shown_sources)
+
+            (project / relative).write_bytes(committed[relative])
+            (project / summary_source_relative).write_bytes(b"changed summary source")
+            shown_sources.clear()
+            with mock.patch.object(profile_runner, "PROJECT_ROOT", project), mock.patch.object(
+                profile_runner, "_git_output", return_value=source_sha
+            ), mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=fake_git,
+            ), self.assertRaisesRegex(
+                CharacterizationError, "source_file_differs_from_declared_sha"
+            ):
+                profile_runner._verify_source_identity(source_sha)
+            self.assertIn(
+                source_sha + ":" + summary_source_relative,
+                shown_sources,
+            )
 
     def test_tampered_synthetic_config_blocks_before_worker_launch(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -5068,12 +6586,6 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            environment = build_guarded_sandbox_environment(
-                relative_sandbox,
-                project_root=PROJECT_ROOT,
-                source_environment={"PATH": os.environ.get("PATH", "")},
-                process_role="host",
-            )
             for lifecycle in ("startup", "resume"):
                 for outcome in (
                     "caught",
@@ -5083,6 +6595,29 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     "wrong_request",
                 ):
                     with self.subTest(lifecycle=lifecycle, outcome=outcome):
+                        run_id = (
+                            "profile-worker-"
+                            + sandbox.name.rsplit("-", 1)[-1]
+                            + "-"
+                            + lifecycle
+                            + "-"
+                            + outcome
+                        )
+                        run_directory = (
+                            PROJECT_ROOT / profile_runner.PROFILE_EVIDENCE_ROOT / run_id
+                        )
+                        run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+                        self.addCleanup(shutil.rmtree, run_directory, ignore_errors=True)
+                        guard_events_path = run_directory / "guard-events.jsonl"
+                        guard_events_path.write_bytes(b"")
+                        environment = build_guarded_sandbox_environment(
+                            relative_sandbox,
+                            project_root=PROJECT_ROOT,
+                            source_environment={"PATH": os.environ.get("PATH", "")},
+                            process_role="host",
+                            run_id=run_id,
+                            guard_events_path=guard_events_path,
+                        )
                         completed = subprocess.run(
                             [
                                 _repository_python(),
@@ -5110,6 +6645,17 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                             completed.stdout + completed.stderr,
                         )
                         result = payload["worker_result"]
+                        child_evidence = result["adv_summary_child"]
+                        child_sidecar = PROJECT_ROOT / child_evidence["evidence_path"]
+                        self.assertTrue(child_evidence["adapter_installed"])
+                        self.assertIsNone(child_evidence["failure_code"])
+                        self.assertEqual(child_evidence["launch_count"], 0)
+                        self.assertEqual(child_evidence["calls"], [])
+                        self.assertEqual(child_sidecar.read_bytes(), b"")
+                        self.assertEqual(
+                            child_evidence["evidence_sha256"],
+                            hashlib.sha256(b"").hexdigest(),
+                        )
                         self.assertTrue(payload["startup_sitecustomize_verified"])
                         self.assertEqual(payload["entrypoint"]["lifecycle"], lifecycle)
                         self.assertEqual(result["startup_guard_from_sitecustomize"], True)
@@ -6784,7 +8330,14 @@ def _run_profile_worker_probe(
         party_size=1,
         lifecycle=lifecycle,
         source_sha="a" * 40,
-        run_id="profile-worker-" + lifecycle + "-" + outcome,
+        run_id=(
+            "profile-worker-"
+            + sandbox.name.rsplit("-", 1)[-1]
+            + "-"
+            + lifecycle
+            + "-"
+            + outcome
+        ),
         planned_row_id="E01",
         arm="A",
         lifecycle_id=(

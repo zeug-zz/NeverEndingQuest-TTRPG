@@ -119,6 +119,7 @@ _SOURCE_BOUND_FILES = (
     "scripts/live_gate_preflight_stub.py",
     "scripts/sitecustomize.py",
     "scripts/live_gate_preflight_guard/sitecustomize.py",
+    "core/ai/adv_summary.py",
 )
 
 
@@ -695,6 +696,31 @@ def _git_output(arguments: Sequence[str], *, timeout: float = 10.0) -> str:
     if completed.returncode != 0:
         raise CharacterizationError("git_identity_unavailable")
     return completed.stdout.strip()
+
+
+def _git_source_bytes_at_sha(source_sha: str, relative_path: str) -> bytes:
+    """Read one allowlisted source file from the exact declared Git commit."""
+    if (
+        not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or relative_path not in _SOURCE_BOUND_FILES
+    ):
+        raise CharacterizationError("source_file_identity_unavailable")
+    from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+    try:
+        completed = run_guarded_subprocess(
+            ["git", "show", "%s:%s" % (source_sha, relative_path)],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CharacterizationError("source_file_identity_unavailable") from exc
+    if completed.returncode != 0 or not isinstance(completed.stdout, bytes):
+        raise CharacterizationError("source_file_identity_unavailable")
+    return completed.stdout
 
 
 def _verify_source_identity(source_sha: str) -> None:
@@ -4033,6 +4059,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             args.run_id, preflight_run_id=preflight_run_id
         )
         guard_events_path = run_directory / "guard-events.jsonl"
+        child_evidence_path = run_directory / "adv-summary-child.jsonl"
         from scripts.live_gate_preflight_safety import configure_guard_event_sink
 
         configure_guard_event_sink(guard_events_path, run_id=args.run_id)
@@ -4200,6 +4227,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     checkpoint_travel_proof: dict[str, Any] | None = None
     after_teardown_sample: Mapping[str, Any] | None = None
     after_teardown_sample_complete = False
+    adv_summary_child_evidence: dict[str, Any] | None = None
 
     def release_live_window_lock() -> bool:
         if (
@@ -4796,6 +4824,27 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         if type(call_count) is not int or call_count < 0:
             call_count = len(calls)
         command_sites = _make_evidence_sites(calls)
+        summary_child_artifacts: dict[str, Any] | None = None
+        summary_child = (
+            result.get("adv_summary_child")
+            if isinstance(result, Mapping)
+            else None
+        )
+        if isinstance(summary_child, Mapping) and run_directory is not None:
+            try:
+                from scripts.live_gate_preflight_retained import (
+                    RetainedEvidenceError,
+                    retain_summary_child_artifacts,
+                )
+
+                summary_child_artifacts = retain_summary_child_artifacts(
+                    sandbox,
+                    run_directory,
+                    run_id=args.run_id,
+                    summary_child=summary_child,
+                )
+            except RetainedEvidenceError as exc:
+                failure_code = failure_code or "summary_child_artifact_retention_failed"
         evidence = {
             "schema_version": 1,
             "authorization_ruling_id": AUTHORIZATION_RULING_ID,
@@ -4903,6 +4952,11 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             "calls": calls,
             "call_count": call_count,
             "call_sites": command_sites,
+            "adv_summary_child": (
+                result.get("adv_summary_child")
+                if isinstance(result, Mapping)
+                else None
+            ),
             "host_command": command,
             "runner_command": runner_command,
             "failure_code": failure_code,
@@ -4914,6 +4968,8 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             },
             "teardown_evidence": teardown_evidence_descriptor,
         }
+        if summary_child_artifacts is not None:
+            evidence["summary_child_artifacts"] = summary_child_artifacts
         if create_resume_checkpoint:
             evidence["checkpoint_travel"] = checkpoint_travel_proof
             evidence["resume_checkpoint"] = checkpoint_descriptor
@@ -5245,14 +5301,20 @@ def _worker(args: argparse.Namespace) -> int:
     invocation_identity_evidence: dict[str, Any] | None = None
     sandbox_provider_key_placeholder: str | None = None
     command: list[str] | None = None
+    adv_summary_child_adapter: Any = None
+    child_evidence_path: Path | None = None
     startup_guard_from_sitecustomize = False
     sandbox_config_origin_guard_active = False
     config_guard: _SandboxConfigOriginGuard | None = None
     previous_sys_path = list(sys.path)
     try:
         from scripts.live_gate_preflight_safety import (
+            GUARD_EVENTS_PATH_ENV,
             InvocationIdentityMismatch,
             NetworkGuardError,
+            RUN_ID_ENV,
+            SafetyConfigurationError,
+            _validate_guard_event_path,
             current_invocation_identity,
             compare_invocation_identity,
             require_guard_active,
@@ -5261,6 +5323,9 @@ def _worker(args: argparse.Namespace) -> int:
         )
         from scripts.live_gate_preflight_stub import (
             FailClosedRouterStub,
+            RouterStubError,
+            _read_adv_summary_child_records,
+            install_adv_summary_preflight_host_interceptor,
             install_fail_closed_router_stub,
         )
 
@@ -5440,6 +5505,29 @@ def _worker(args: argparse.Namespace) -> int:
                 signal.signal(signal.SIGINT, handle_shutdown_signal)
                 signal_handler_installed = True
                 try:
+                    guard_events_text = os.environ.get(GUARD_EVENTS_PATH_ENV)
+                    if os.environ.get(RUN_ID_ENV) != args.run_id or not guard_events_text:
+                        raise CharacterizationError(
+                            "summary_child_guard_event_identity_missing"
+                        )
+                    try:
+                        validated_guard_path = _validate_guard_event_path(
+                            guard_events_text, args.run_id
+                        )
+                    except SafetyConfigurationError as exc:
+                        raise CharacterizationError(
+                            "summary_child_guard_event_identity_invalid"
+                        ) from exc
+                    child_evidence_path = validated_guard_path.with_name(
+                        "adv-summary-child.jsonl"
+                    )
+                    adv_summary_child_adapter = (
+                        install_adv_summary_preflight_host_interceptor(
+                            source_sha=args.source_sha,
+                            sandbox_root=sandbox,
+                            evidence_path=child_evidence_path,
+                        )
+                    )
                     server.launch_worker(
                         arm=args.arm,
                         fixture_id=args.fixture_id,
@@ -5490,6 +5578,13 @@ def _worker(args: argparse.Namespace) -> int:
                     failure_code = "host_exception_" + type(exc).__name__
             finally:
                 try:
+                    if adv_summary_child_adapter is not None:
+                        try:
+                            adv_summary_child_adapter.cleanup()
+                        except Exception:
+                            failure_code = (
+                                failure_code or "summary_child_interceptor_cleanup_failed"
+                            )
                     if signal_handler_installed:
                         signal.signal(signal.SIGINT, previous_sigint_handler)
                 finally:
@@ -5566,11 +5661,66 @@ def _worker(args: argparse.Namespace) -> int:
     elif failure_code is None:
         failure_code = "sandbox_provider_key_placeholder_invalid"
     stub_failure_code = getattr(stub, "failure_code", None)
-    calls = list(getattr(stub, "calls", []))
-    call_count = getattr(stub, "call_count", len(calls))
-    if type(call_count) is not int or call_count < 1:
+    host_calls = list(getattr(stub, "calls", []))
+    child_calls = list(
+        getattr(adv_summary_child_adapter, "calls", [])
+        if adv_summary_child_adapter is not None
+        else []
+    )
+    calls = host_calls
+    host_call_count = getattr(stub, "call_count", len(host_calls))
+    child_failure_code = getattr(
+        adv_summary_child_adapter, "failure_code", None
+    )
+    child_launches = list(
+        getattr(adv_summary_child_adapter, "launches", [])
+        if adv_summary_child_adapter is not None
+        else []
+    )
+    if adv_summary_child_adapter is None:
+        child_failure_code = child_failure_code or "summary_child_adapter_not_installed"
+    child_evidence_sha256: str | None = None
+    child_record_count = 0
+    if child_evidence_path is None:
+        child_evidence_path = _worker_result_path_for_run(
+            args.run_id, preflight_run_id
+        ).with_name("adv-summary-child.jsonl")
+    try:
+        child_evidence_raw = child_evidence_path.read_bytes()
+        child_records = _read_adv_summary_child_records(child_evidence_path)
+        child_evidence_sha256 = hashlib.sha256(child_evidence_raw).hexdigest()
+        child_record_count = len(child_records)
+    except (OSError, RouterStubError, ValueError, UnicodeError, NameError):
+        child_failure_code = child_failure_code or "summary_child_evidence_unavailable"
+        failure_code = failure_code or "summary_child_evidence_unavailable"
+        child_records = []
+    if (
+        len(child_records) != len(child_launches)
+        or len(child_calls) != 2 * len(child_launches)
+    ):
+        child_failure_code = child_failure_code or "summary_child_evidence_count_mismatch"
+        failure_code = failure_code or "summary_child_evidence_count_mismatch"
+    adv_summary_child_evidence = {
+        "schema_version": 1,
+        "adapter_installed": adv_summary_child_adapter is not None,
+        "launch_count": len(child_launches),
+        "launches": child_launches,
+        "calls": child_calls,
+        "failure_code": child_failure_code,
+        "evidence_path": child_evidence_path.relative_to(PROJECT_ROOT).as_posix(),
+        "evidence_sha256": child_evidence_sha256,
+        "record_count": child_record_count,
+    }
+    call_count = host_call_count
+    if (
+        type(host_call_count) is not int
+        or host_call_count < 1
+        or host_call_count != len(host_calls)
+    ):
         if failure_code is None:
-            failure_code = "router_call_missing"
+            failure_code = "host_router_call_count_invalid"
+    if child_failure_code is not None and failure_code is None:
+        failure_code = str(child_failure_code)
     checkpoint_travel_proof: dict[str, Any] | None = None
     if args.create_resume_checkpoint:
         proof_method = getattr(checkpoint_travel_resolver, "proof", None)
@@ -5601,6 +5751,7 @@ def _worker(args: argparse.Namespace) -> int:
         and call_count >= 1
         and call_count == len(calls)
         and stub_failure_code is None
+        and child_failure_code is None
     )
     result = {
         "schema_version": 1,
@@ -5631,6 +5782,7 @@ def _worker(args: argparse.Namespace) -> int:
         "stub_failure_code": stub_failure_code,
         "call_count": call_count,
         "calls": calls,
+        "adv_summary_child": adv_summary_child_evidence,
     }
     comparison_identity = getattr(args, "comparison_identity_json", None)
     if comparison_identity is not None:
