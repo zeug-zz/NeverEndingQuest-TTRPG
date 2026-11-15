@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import http.client
+import importlib.util
 import io
 import json
 import math
@@ -1929,6 +1930,54 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             unavailable_public_observation.reason,
             "public_exposure_observation_unavailable",
         )
+        self.assertEqual(
+            unavailable_public_observation.observed["failure_diagnostic"][
+                "http_status"
+            ],
+            503,
+        )
+        self.assertEqual(
+            unavailable_public_observation.observed["failure_diagnostic"][
+                "reason_code"
+            ],
+            "service_unavailable",
+        )
+        secret_reason = execute_public_probe(
+            gate.HostApiResponse(
+                503,
+                {"ok": False, "reason": "row-payload-secret-sentinel"},
+            )
+        )
+        self.assertEqual(
+            secret_reason.observed["failure_diagnostic"]["reason_code"],
+            "unclassified_reason",
+        )
+        self.assertNotIn(
+            "row-payload-secret-sentinel", repr(secret_reason.observed)
+        )
+
+    def test_l01_caught_exception_diagnostic_allowlists_class_and_reason(self) -> None:
+        class RaisingApi:
+            def get_status(self, *, timeout_seconds: float | None = None):
+                raise gate.HostApiError("row-reason-secret-sentinel")
+
+        context = self.make_row_context(api=RaisingApi())
+        result = gate.L01SharingOffExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "l01_observation_unavailable")
+        diagnostic = result.observed["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "HostApiError")
+        self.assertEqual(diagnostic["gate_step"], "l01_status_query")
+        self.assertIsNone(diagnostic["http_status"])
+        self.assertEqual(diagnostic["reason_code"], "unclassified_reason")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        self.assertNotIn("row-reason-secret-sentinel", repr(result.observed))
 
     def test_companion_process_identification_uses_capture_copy_path(self) -> None:
         context = self.make_row_context()
@@ -4759,11 +4808,181 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(
             summary["platform_verdicts"]["macos-arm64"]["verdict"], "BLOCKED"
         )
+        rows = [
+            json.loads(line)
+            for line in (self.root / result["evidence_path"] / "rows.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(len(rows), len(gate.LIVE_ROWS))
+        self.assertTrue(all(row["observed"] for row in rows))
+        self.assertTrue(
+            all(
+                row["observed"]["failure_diagnostic"]["category"] == "no_failure"
+                for row in rows
+            )
+        )
+
+    def test_l02_through_l10_catches_preserve_bounded_exception_diagnostics(self) -> None:
+        class RaisingLifecycleApi:
+            def get_status(self) -> gate.HostApiResponse:
+                raise gate.HostApiError("host_api_transport_error")
+
+        cases = (
+            ("L02", gate.L02IdentityInitExecutor(), "l02_identity_init",
+             "l02_observation_unavailable"),
+            ("L03", gate.L03PublicAccessExecutor(), "l03_public_access",
+             "l03_public_observation_unavailable"),
+            ("L04", gate.L04DuplicateStartExecutor(), "l04_duplicate_start",
+             "l04_observation_unavailable"),
+            ("L05", gate.L05RelayLossRecoveryExecutor(), "l05_relay_recovery",
+             "l05_lifecycle_observation_unavailable"),
+            ("L06", gate.L06CredentialRotationExecutor(),
+             "l06_credential_rotation", "l06_lifecycle_observation_unavailable"),
+            ("L07", gate.L07StopSharingExecutor(), "l07_stop_sharing",
+             "l07_lifecycle_observation_unavailable"),
+            ("L08", gate.L08HostExitRestartExecutor(), "l08_host_exit_restart",
+             "l08_lifecycle_observation_unavailable"),
+            ("L09", gate.L09RevokeAccessExecutor(), "l09_revoke_access",
+             "l09_lifecycle_observation_unavailable"),
+            ("L10", gate.L10CleanTeardownExecutor(), "l10_clean_teardown",
+             "l10_lifecycle_observation_unavailable"),
+        )
+        for row_id, executor, expected_step, expected_reason in cases:
+            with self.subTest(row_id=row_id):
+                context = self.make_row_context(api=RaisingLifecycleApi())
+                if row_id in {"L06", "L07", "L10"}:
+                    context.public_client.bind_invitation(
+                        FakePublicService().accepted_origin
+                    )
+                if row_id in {"L06", "L07"}:
+                    context.public_client._session = gate.PublicPlayerSession(
+                        "cookie", "csrf", "credential", "build", 1
+                    )
+                if row_id == "L03":
+                    with patch.object(
+                        gate,
+                        "_start_local_game_runtime",
+                        side_effect=gate.PublicClientError(
+                            "public_transport_unavailable"
+                        ),
+                    ):
+                        result = executor.execute(context)
+                elif row_id == "L10":
+                    with patch.object(
+                        gate,
+                        "_companion_path",
+                        side_effect=gate.HostApiError(
+                            "host_api_transport_error"
+                        ),
+                    ):
+                        result = executor.execute(context)
+                else:
+                    result = executor.execute(context)
+
+                self.assertEqual(result.verdict, "BLOCKED")
+                self.assertEqual(result.reason, expected_reason)
+                diagnostic = result.observed["failure_diagnostic"]
+                self.assertEqual(diagnostic["category"], "caught_exception")
+                self.assertEqual(diagnostic["exception_class"], (
+                    "PublicClientError" if row_id == "L03" else "HostApiError"
+                ))
+                self.assertEqual(diagnostic["gate_step"], expected_step)
+                self.assertTrue(diagnostic["raising_frame_available"])
+                self.assertRegex(
+                    diagnostic["raising_frame"],
+                    r"^scripts/(?:n3_live_lifecycle_gate|test_n3_live_lifecycle_gate)\.py:[1-9][0-9]*$",
+                )
+
+    def test_row_helper_exception_diagnostic_reaches_persisted_observation(self) -> None:
+        class FailingPortInspector:
+            def inspect(self, _port: int) -> preflight_gate.PortObservation:
+                raise RuntimeError("helper-message-secret-sentinel")
+
+        class HelperFailureExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.port_inspector = FailingPortInspector()
+                gate._inspect_port(context, gate.PLAYER_PORT)
+                return gate._blocked("player_listener_observation_unavailable")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = HelperFailureExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        diagnostic = row_records[0]["observed"]["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "RuntimeError")
+        self.assertEqual(diagnostic["gate_step"], "port_inspection")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        for path in evidence.iterdir():
+            if path.is_file():
+                self.assertNotIn(
+                    "helper-message-secret-sentinel",
+                    path.read_text(encoding="utf-8"),
+                )
+
+    def test_l03_startup_helper_catch_preserves_real_exception_diagnostic(self) -> None:
+        class StartupInputFailure(ValueError):
+            pass
+
+        context = self.make_row_context()
+
+        def fail_startup_input(_sandbox: Path):
+            raise StartupInputFailure("startup-helper-message-secret-sentinel")
+
+        context.startup_input_validator = fail_startup_input
+        result = gate.L03PublicAccessExecutor().execute(context)
+        diagnostic = result.observed["failure_diagnostic"]
+        self.assertEqual(result.reason, "startup_precheck_unavailable")
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "OtherException")
+        self.assertEqual(diagnostic["gate_step"], "startup_precheck")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        self.assertNotIn(
+            "startup-helper-message-secret-sentinel", repr(result.observed)
+        )
 
     def test_executor_exception_fails_fast_and_teardown_is_always_invoked(self) -> None:
+        class ExceptionNameSecretSentinel(RuntimeError):
+            pass
+
+        hostile_module_path = self.root / "ROW-DIAG-PATH-SENTINEL.py"
+        hostile_module_path.write_text(
+            "class ExceptionNameSecretSentinel(RuntimeError):\n"
+            "    pass\n"
+            "\n"
+            "def raise_secret_exception():\n"
+            "    raise ExceptionNameSecretSentinel("
+            "'exception-message-secret-sentinel')\n",
+            encoding="ascii",
+        )
+        spec = importlib.util.spec_from_file_location(
+            "n3_hostile_row_diagnostic", hostile_module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        hostile_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hostile_module)
+
         class ExplodingExecutor:
             def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
-                raise RuntimeError("executor-secret-sentinel")
+                hostile_module.raise_secret_exception()
 
         registry = dict(gate.ROW_EXECUTORS)
         registry["L01"] = ExplodingExecutor()
@@ -4774,12 +4993,76 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertIn("executor_exception:L01", result["infrastructure_failures"])
         self.assertEqual(result["rows"][0]["reason"], "executor_exception")
         self.assertTrue(all(row["reason"] == "fail-fast" for row in result["rows"][1:]))
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        self.assertTrue(all(row["observed"] for row in row_records))
+        diagnostic = row_records[0]["observed"]["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "OtherException")
+        self.assertEqual(diagnostic["gate_step"], "row_executor")
+        self.assertEqual(diagnostic["reason_code"], "executor_exception")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        for row in row_records[1:]:
+            self.assertEqual(
+                row["observed"]["failure_diagnostic"]["category"], "fail_fast"
+            )
         self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
         self.assertIn(("POST", ("stop", {})), self.fake_api.calls)
-        evidence = self.root / result["evidence_path"]
         for path in evidence.iterdir():
             if path.is_file():
-                self.assertNotIn("executor-secret-sentinel", path.read_text(encoding="utf-8"))
+                content = path.read_text(encoding="utf-8")
+                for sentinel in (
+                    "exception-message-secret-sentinel",
+                    "ExceptionNameSecretSentinel",
+                    "ROW-DIAG-PATH-SENTINEL",
+                ):
+                    self.assertNotIn(sentinel, content)
+
+    def test_gate_error_reason_sentinel_is_not_persisted(self) -> None:
+        class ExplodingExecutor:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                raise gate.GateError("gate-reason-secret-sentinel")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = ExplodingExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+
+        self.assertEqual(result["rows"][0]["reason"], "executor_exception")
+        self.assertNotIn(
+            "gate-reason-secret-sentinel", result["infrastructure_failures"]
+        )
+        evidence = self.root / result["evidence_path"]
+        rows = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        self.assertEqual(
+            rows[0]["observed"]["failure_diagnostic"]["exception_class"],
+            "GateError",
+        )
+        self.assertEqual(
+            rows[0]["observed"]["failure_diagnostic"]["reason_code"],
+            "unclassified_reason",
+        )
+        for path in evidence.iterdir():
+            if path.is_file():
+                self.assertNotIn(
+                    "gate-reason-secret-sentinel",
+                    path.read_text(encoding="utf-8"),
+                )
 
     def test_counter_cap_breach_stops_after_one_row(self) -> None:
         class PassingExecutor:
