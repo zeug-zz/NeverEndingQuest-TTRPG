@@ -35,7 +35,16 @@ _PROC_ALL_PIDS = 1
 _PROC_UID_ONLY = 4
 _PROC_PIDTBSDINFO = 3
 _CTL_KERN = 1
+_KERN_PROC = 14
+_KERN_PROC_PID = 1
 _KERN_PROCARGS2 = 49
+
+# macOS SDK sys/proc.h places extern_proc in kinfo_proc; these offsets are
+# trusted only after the exact kinfo_proc size and embedded PID are validated.
+_KINFO_PROC_SIZE = 648
+_KINFO_PROC_P_STAT_OFFSET = 36
+_KINFO_PROC_P_PID_OFFSET = 40
+_SZOMB = 5
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -308,20 +317,30 @@ def _snapshot_darwin(uid: int | None = None) -> tuple[ProcessInfo, ...]:
             raise
         except OSError as exc:
             if exc.errno in {errno.ESRCH, errno.ENOENT}:
-                if _darwin_pid_is_absent(pid):
+                if _darwin_pid_is_absent_or_zombie(pid):
                     continue
                 raise ProcessInfoUnavailable("process_list_incomplete") from None
             raise ProcessInfoUnavailable("process_list_incomplete") from None
         except (OverflowError, TypeError, ValueError):
             raise ProcessInfoUnavailable("process_list_incomplete") from None
         if info is None:
-            if _darwin_pid_is_absent(pid):
+            if _darwin_pid_is_absent_or_zombie(pid):
                 continue
             raise ProcessInfoUnavailable("process_list_incomplete")
         if uid is not None and info.uid != uid:
             raise ProcessInfoUnavailable("process_list_incomplete")
         records.append(info)
     return tuple(records)
+
+
+def _darwin_pid_is_absent_or_zombie(pid: int) -> bool:
+    """Allow only confirmed disappearance or a sysctl-confirmed zombie."""
+    try:
+        if _darwin_pid_is_absent(pid):
+            return True
+        return _darwin_pid_is_zombie(pid)
+    except Exception:
+        return False
 
 
 def _darwin_pid_is_absent(pid: int) -> bool:
@@ -332,6 +351,44 @@ def _darwin_pid_is_absent(pid: int) -> bool:
         return pid not in _darwin_pid_list()
     except (OSError, ProcessInfoUnavailable, OverflowError, TypeError, ValueError):
         return False
+
+
+def _darwin_pid_is_zombie(pid: int) -> bool:
+    """Confirm a listed Darwin PID is defunct using its kinfo_proc record."""
+    try:
+        if (
+            platform.system() != "Darwin"
+            or type(pid) is not int
+            or pid <= 0
+            or pid > MAX_PID
+        ):
+            raise ValueError("darwin_zombie_probe_unavailable")
+        libc = _darwin_libc()
+        mib = (ctypes.c_int * 4)(_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid)
+        buffer = (ctypes.c_ubyte * _KINFO_PROC_SIZE)()
+        actual_size = ctypes.c_size_t(_KINFO_PROC_SIZE)
+        ctypes.set_errno(0)
+        result = libc.sysctl(
+            mib,
+            4,
+            ctypes.byref(buffer),
+            ctypes.byref(actual_size),
+            None,
+            0,
+        )
+        if result != 0 or actual_size.value != _KINFO_PROC_SIZE:
+            raise ValueError("darwin_zombie_probe_incomplete")
+        observed_pid = ctypes.c_int32.from_buffer(
+            buffer, _KINFO_PROC_P_PID_OFFSET
+        ).value
+        if observed_pid != pid:
+            raise ValueError("darwin_zombie_pid_mismatch")
+        is_zombie = buffer[_KINFO_PROC_P_STAT_OFFSET] == _SZOMB
+        # A zombie has no executable, sockets, or ability to run; omitting it
+        # cannot hide a live companion from the census.
+        return is_zombie
+    except Exception:
+        raise ProcessInfoUnavailable("process_list_incomplete") from None
 
 
 def _darwin_pid_list(uid: int | None = None) -> tuple[int, ...]:
