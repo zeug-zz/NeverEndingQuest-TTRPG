@@ -5734,18 +5734,6 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         )
         self.assertIsNotNone(
             resolver(
-                "dm_validation",
-                "main.py",
-                (),
-                {
-                    "messages": [
-                        {"role": "assistant", "content": response}
-                    ]
-                },
-            )
-        )
-        self.assertIsNotNone(
-            resolver(
                 "dm_main",
                 "core/ai/transition_validator.py",
                 (),
@@ -5762,14 +5750,26 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             )
         )
         self.assertIsNotNone(
+            resolver(
+                "dm_validation",
+                "main.py",
+                (),
+                {
+                    "messages": [
+                        {"role": "assistant", "content": response}
+                    ]
+                },
+            )
+        )
+        self.assertIsNotNone(
             resolver("dm_main", "core/ai/action_handler.py", (), {})
         )
         calls = [
             {"task": task, "source_file": source_file}
             for task, source_file in (
                 ("dm_main", "main.py"),
-                ("dm_validation", "main.py"),
                 ("dm_main", "core/ai/transition_validator.py"),
+                ("dm_validation", "main.py"),
                 ("dm_main", "core/ai/action_handler.py"),
             )
         ]
@@ -5794,9 +5794,9 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         )
         self.assertEqual(proof, self._travel_proof(turn))
 
-        result["calls"][2], result["calls"][3] = (
-            result["calls"][3],
+        result["calls"][1], result["calls"][2] = (
             result["calls"][2],
+            result["calls"][1],
         )
         with self.assertRaisesRegex(
             CharacterizationError, "checkpoint_travel_call_order_mismatch"
@@ -5804,6 +5804,92 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             profile_runner._validate_checkpoint_travel_exchange(
                 result, travel_turn=turn, driver_exchange=driver_exchange
             )
+
+    def test_checkpoint_travel_resolver_rejects_out_of_order_and_duplicate_calls(
+        self,
+    ) -> None:
+        turn = {
+            "step_id": "E4-07",
+            "utterance": "We leave through the open front entrance into the village green.",
+            "character": "Acheron",
+            "source_location_id": "MPV2_LOC_TAVERN",
+            "source_runtime_location_id": "MP01",
+            "target_source_location_id": "MPV2_LOC_VILLAGE_GREEN",
+            "target_location_id": "MP02",
+            "target_location_name": "Village Green",
+            "time_minutes": 5,
+        }
+        transition_messages = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": turn["utterance"] + " " + turn["target_location_id"],
+                }
+            ]
+        }
+        validation_messages = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": profile_runner._checkpoint_travel_response(turn),
+                }
+            ]
+        }
+        travel_messages = {"messages": [{"role": "user", "content": turn["utterance"]}]}
+
+        resolver = profile_runner._checkpoint_travel_response_resolver(turn)
+        with self.assertRaisesRegex(
+            RouterStubError, "transition validation call is out of sequence"
+        ):
+            resolver(
+                "dm_main",
+                "core/ai/transition_validator.py",
+                (),
+                transition_messages,
+            )
+        self.assertFalse(resolver.proof()["complete"])
+
+        resolver = profile_runner._checkpoint_travel_response_resolver(turn)
+        self.assertIsNotNone(
+            resolver("dm_main", "main.py", (), travel_messages)
+        )
+        with self.assertRaisesRegex(
+            RouterStubError, "gameplay validation call is out of sequence"
+        ):
+            resolver("dm_validation", "main.py", (), validation_messages)
+        self.assertEqual(
+            resolver.proof()["response_counts"],
+            {
+                "travel_action_responses": 1,
+                "gameplay_validation_responses": 0,
+                "transition_validation_responses": 0,
+                "transition_narration_responses": 0,
+            },
+        )
+
+        resolver = profile_runner._checkpoint_travel_response_resolver(turn)
+        self.assertIsNotNone(
+            resolver("dm_main", "main.py", (), travel_messages)
+        )
+        self.assertIsNotNone(
+            resolver(
+                "dm_main",
+                "core/ai/transition_validator.py",
+                (),
+                transition_messages,
+            )
+        )
+        with self.assertRaisesRegex(
+            RouterStubError, "transition validation call is out of sequence"
+        ):
+            resolver(
+                "dm_main",
+                "core/ai/transition_validator.py",
+                (),
+                transition_messages,
+            )
+        self.assertEqual(resolver.proof()["response_counts"]["transition_validation_responses"], 1)
+        self.assertFalse(resolver.proof()["complete"])
 
     def test_retained_checkpoint_attests_normalized_moved_state_and_detects_tampering(
         self,

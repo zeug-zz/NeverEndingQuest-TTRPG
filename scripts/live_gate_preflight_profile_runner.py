@@ -1114,8 +1114,8 @@ def _validate_checkpoint_travel_exchange(
     ]
     expected_path = (
         ("dm_main", "main.py"),
-        ("dm_validation", "main.py"),
         ("dm_main", "core/ai/transition_validator.py"),
+        ("dm_validation", "main.py"),
         ("dm_main", "core/ai/action_handler.py"),
     )
     positions: list[int] = []
@@ -1221,6 +1221,7 @@ class _CheckpointTravelResponseResolver:
                 return None
             if (
                 self.travel_action_responses != 1
+                or self.transition_validation_responses != 1
                 or self.gameplay_validation_responses != 0
             ):
                 raise RouterStubError("gameplay validation call is out of sequence")
@@ -1246,7 +1247,8 @@ class _CheckpointTravelResponseResolver:
             utterance = self.turn.get("utterance")
             target_location_id = self.turn.get("target_location_id")
             if (
-                self.gameplay_validation_responses != 1
+                self.gameplay_validation_responses != 0
+                or self.travel_action_responses != 1
                 or self.transition_validation_responses != 0
                 or not isinstance(utterance, str)
                 or not isinstance(target_location_id, str)
@@ -1262,6 +1264,7 @@ class _CheckpointTravelResponseResolver:
         if task == "dm_main" and source_file == "core/ai/action_handler.py":
             if (
                 self.transition_validation_responses != 1
+                or self.gameplay_validation_responses != 1
                 or self.transition_narration_responses != 0
             ):
                 raise RouterStubError("transition narration call is out of sequence")
