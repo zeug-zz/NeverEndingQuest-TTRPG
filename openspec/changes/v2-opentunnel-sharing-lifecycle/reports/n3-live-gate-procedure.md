@@ -12,12 +12,14 @@ overall N3 PASS.
 
 The authoritative contract is
 [`n3-live-gate-contract.md`](n3-live-gate-contract.md). The live manifest is
-`n3-live-lifecycle-v3` with SHA-256
-`01750d7e32a8140985a51ad8e0bc8616179c03a1930bcb280f9beb13fdb1acfc`; its rows,
+`n3-live-lifecycle-v4` with SHA-256
+`b754bb6fe3fdd206fb96d68ea972c741fc524f0477db71a523792459772b8ee4`; its rows,
 caps, port rules, state-root policy,
 live-window lock, evidence, and teardown rules are pinned together. Do not
 change them between plan inspection, preflight, booking, and live execution.
 A contract change needs review and a new manifest identity/digest.
+The v4 change requires a fresh exact-SHA OD-6 preflight and a new matching
+booking; do not reuse a v3 preflight or lock record.
 
 The live leg is macOS arm64 only, with party size 1, host port 8360, and player
 port 8370. Linux arm64 remains `BLOCKED` with reason `owner-run-required` until
@@ -41,9 +43,11 @@ facilitator's real OpenTunnel profile.
    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python scripts/n3_live_lifecycle_gate.py plan
    ```
 
-    Confirm manifest ID `n3-live-lifecycle-v3`, digest, row order L01-L10,
-    platform set, caps, ports, the one L03 startup narration allowance, and
-    `is_gate_pass: false`. `plan` has no side effects.
+    Confirm manifest ID `n3-live-lifecycle-v4`, digest, row order L01-L10,
+    platform set, caps, ports, one `start_game` event, exactly two ordered L03
+    tasks (`action_prediction`, then `dm_main`), two provider attempts with no
+    fallback, the USD 0.05 combined per-run cap, and `is_gate_pass: false`.
+    `plan` has no side effects.
 3. Prepare and validate a fresh isolated `Capture_Arena` copy at
    `tmp/combat_capture` using the repository's Capture_Arena preparation
    procedure (`scripts/seed_combat_capture.py --prepare --party 1`). Confirm it
@@ -145,22 +149,27 @@ The live command starts the owned host on `127.0.0.1:8360`, performs the
 contracted public lifecycle observations through the player listener on
 `127.0.0.1:8370`, and can create a real public tunnel. It allows at most 3,600
 seconds total, 300 seconds per row (420 for L05), four companion `serve`
-launches, one `up`, two tunnel creations, at most one provider attempt only
-during the L03 startup narration, and zero automatic retries. L03 must emit
+launches, one `up`, two tunnel creations, exactly two provider attempts only
+during the L03 startup window, and zero automatic retries. L03 must emit
 host-side Socket.IO `start_game` exactly once over polling with Origin
-`http://127.0.0.1:8360`. Its `dm_main` receipt must resolve to
-`openai/gpt-6-luna`; its priced cost must be at most USD 0.05, and cumulative
-narration cost must remain at or below USD 1.00. Missing/unpriced receipts,
-retries, extra or out-of-window attempts, and either cost-cap breach fail the
-gate. The provider-free OD-6 preflight and offline tests still make no provider
-calls. The live command fails fast on the first FAIL or infrastructure BLOCKED
-and attempts teardown. Do not start another run or retry automatically.
+`http://127.0.0.1:8360`. The ordered task receipts must be exactly
+`action_prediction` then `dm_main`, each from profile `n3-luna`, resolving to
+`openai/gpt-6-luna`, with one attempt and no fallback. Both receipts must be
+complete and priced; their combined cost must be at most USD 0.05. Cumulative
+`dm_main` narration cost must remain at or below USD 1.00. Missing, repeated,
+extra, reversed, out-of-list, refused, retried, fallback, unpriced, or
+out-of-window attempts/receipts, and either cost-cap breach fail the gate. The
+provider-free OD-6 preflight and offline tests still make no provider calls.
+The live command fails fast on the first FAIL or infrastructure BLOCKED and
+attempts teardown. Do not start another run or retry automatically.
 
 The process exit status is not a verdict. Read the JSON result and the complete
 evidence at `tmp/router-rollout/v2-network/n3/<run-id>/capture/`. Confirm all ten
 rows are represented, `SHA256SUMS` verifies, the provider ledger contains
-exactly one reservation attributed to the L03 startup window, the receipt
-matches the frozen profile/model/task and cost limits, secrets and raw
+exactly two reservations attributed to the L03 startup window, the two receipts
+match the frozen ordered tasks/profile/model, each has no retry or fallback,
+and their combined cost and cumulative narration cost meet the frozen limits.
+Secrets and raw
 managed-host/narration output are absent, and teardown proves the identity,
 processes, ports, public reachability, and state root were handled as
 contracted. The L03 startup/readiness result must remain recorded even if a
