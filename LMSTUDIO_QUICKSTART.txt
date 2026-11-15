@@ -22,7 +22,7 @@ STEP 3: Start LM Studio Server
 
 STEP 4: Install mitmproxy (ONE TIME ONLY)
   - Open Command Prompt
-  - Run: pip install mitmproxy
+  - Run: pip install -r requirements-forwarder.txt
   - Close Command Prompt
 
 STEP 5: Launch the Game
@@ -51,7 +51,7 @@ TROUBLESHOOTING
 ===============
 
 Problem: "mitmproxy is not installed"
-Fix: pip install mitmproxy
+Fix: pip install -r requirements-forwarder.txt
 
 Problem: "Cannot connect to LM Studio"
 Fix: Make sure LM Studio server is started (click "Start Server" in LM Studio)

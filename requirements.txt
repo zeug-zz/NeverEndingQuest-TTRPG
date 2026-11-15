@@ -29,9 +29,6 @@ tiktoken>=0.5.0
 # Image processing for JPEG compression and thumbnail generation
 Pillow>=13.0.0
 
-# Proxy server for LM Studio mode and API call capture
-mitmproxy>=12.3.0
-
 # PDF form filling
 pypdf>=6.13.3
 

@@ -6,7 +6,7 @@
 [![Dependabot](https://img.shields.io/badge/dependabot-active-blue)](.github/dependabot.yml)
 [![pip-audit](https://img.shields.io/badge/pip--audit-passing-brightgreen)](requirements-lock.txt)
 
-**Last audit:** 2026-06-22 · **Status:** 0 secrets · 0 SAST findings · pip-audit gate passing (msgpack/tornado CVEs accepted via `--ignore-vuln` — capped by `mitmproxy 12.2.3`)
+**Last audit:** 2026-06-22 · **Status:** 0 secrets · 0 SAST findings · pip-audit gate passing with no accepted tornado exceptions; mitmproxy moved to optional `requirements-forwarder.txt`
 
 ---
 
@@ -68,7 +68,7 @@ This policy covers:
 ### Dependencies
 
 - **Pin versions** in `requirements-lock.txt`. Use `pip-audit` before adding new packages.
-- **Keep the lock resolvable.** `requirements-lock.txt` must `pip install --dry-run` cleanly. `mitmproxy` pins hard caps on `aioquic`, `msgpack`, `tornado`, `typing_extensions`, and `urwid` — bumping those above mitmproxy's range makes the lock unresolvable. Reconcile pins to the working installed set or upgrade mitmproxy first.
+- **Keep the lock resolvable.** `requirements-lock.txt` must `pip install --dry-run` cleanly. `mitmproxy` pins hard caps on `aioquic`, `msgpack`, `tornado`, `typing_extensions`, and `urwid` only in `requirements-forwarder.txt` — bumping those above mitmproxy's range makes the forwarder requirements unresolvable. Reconcile pins to the working installed set or upgrade mitmproxy first.
 - **Run `pip install --upgrade -r requirements.txt`** monthly and regenerate the lock file.
 - **Dependabot PRs** are opened weekly on Mondays. Review and merge within 48 hours for CVEs.
 
@@ -124,7 +124,7 @@ Rotation procedure:
 | 2026-05-25 | allow_unsafe_werkzeug=True | MEDIUM   | Required for Flask-SocketIO; local-only app. Review during v2 client hardening.      |
 | 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Historical LAN configuration; current default is loopback. Future network exposure is tracked in `plans/v2-server-client-network.md`. |
 | 2026-05-25 | python-engineio CORS       | LOW      | Flask-SocketIO default; review with v2 CORS hardening.                               |
-| 2026-11-03 | tornado 6.5.10 (CVE-2026-115927/116577/116578) | MEDIUM | `mitmproxy` (12.3.0 and 12.3.1, latest) caps `tornado<=6.5.10`; fix is 6.6. Used only by the local LM Studio forwarder toolkit path. Resolve when mitmproxy lifts the cap. CI gate accepts via `pip-audit --ignore-vuln`. Earlier msgpack and tornado 6.5.5 findings were resolved by upgrading mitmproxy to 12.3.x (lock regenerated 2026-11-03). |
+| 2026-11-03 | tornado 6.5.10 (CVE-2026-115927/116577/116578/126347) | MEDIUM | RESOLVED 2026-11-15: moved mitmproxy to optional `requirements-forwarder.txt`; core install no longer includes tornado. Forwarder installs still carry capped tornado for local-only use. Earlier msgpack and tornado 6.5.5 findings were resolved by upgrading mitmproxy to 12.3.x (lock regenerated 2026-11-03). |
 
 ---
 
