@@ -74,7 +74,7 @@ from web.extensions.player.contracts import PROTOCOL_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_ID = "N3-live"
-MANIFEST_ID = "n3-live-lifecycle-v3"
+MANIFEST_ID = "n3-live-lifecycle-v4"
 EVIDENCE_BASE = Path("tmp/router-rollout/v2-network/n3")
 CAPTURE_RELATIVE = Path("tmp/combat_capture")
 HOST_PORT = 8360
@@ -117,7 +117,10 @@ TEARDOWN_BOOTSTRAP_SETTLE_SECONDS = 180.0
 TEARDOWN_BOOTSTRAP_POLL_SECONDS = 0.5
 TEARDOWN_BOOTSTRAP_MAX_POLLS = 361
 TEARDOWN_STOP_FALLBACK_TIMEOUT_SECONDS = 60.0
-PROVIDER_BUDGET = 1
+STARTUP_TASKS = ("action_prediction", "dm_main")
+STARTUP_PROFILE = "n3-luna"
+STARTUP_MODEL = "openai/gpt-6-luna"
+PROVIDER_BUDGET = len(STARTUP_TASKS)
 PROVIDER_COST_CAP_USD = 0.05
 CUMULATIVE_NARRATION_COST_CAP_USD = 1.00
 PROVIDER_LEDGER_NAME = "provider-attempt-ledger.jsonl"
@@ -153,8 +156,8 @@ LIVE_ROWS = (
     LiveRow(
         "L03", "issue-access-start-auth-entry", 300,
         "Owned host is up; identity initialization has passed; sharing is OFF.",
-        "Precheck the capture seed/profile; connect to the owned host with Socket.IO polling and the local Origin; emit start_game once and wait for bounded local-runtime/startup-narration readiness. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL.",
-        "After fail-closed seed/profile checks, connect to the owned host using Socket.IO polling with Origin http://127.0.0.1:8360 and emit start_game exactly once. Wait within the bounded startup window for game_started, local_runtime readiness, startup narration output, and exactly one priced dm_main receipt from n3-luna resolving to openai/gpt-6-luna. The sole provider reservation must fall inside that window and cost no more than USD 0.05; cumulative narration cost must remain at or below USD 1.00. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
+        "Precheck the capture seed/profile; connect to the owned host with Socket.IO polling and the local Origin; emit start_game once and wait for bounded runtime readiness and the exact ordered startup task receipts. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL.",
+        "After fail-closed seed/profile checks, connect to the owned host using Socket.IO polling with Origin http://127.0.0.1:8360 and emit start_game exactly once. Within the startup window require exactly one n3-luna attempt each for action_prediction then dm_main, in that order, with no retry or fallback, complete priced receipts, and no other task. The two reservations must be in-window; their combined cost must not exceed USD 0.05, and cumulative dm_main narration cost must remain at or below USD 1.00. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
         "The public URL/client path or any required boundary observation cannot be reached or measured safely. Any secret persisted or logged, public host-surface access, rejected valid login, accepted invalid credential/Origin, or missing required cookie/socket property is FAIL.",
     ),
     LiveRow(
@@ -216,8 +219,9 @@ FROZEN_CAPS = MappingProxyType(
         "companion_serve_launches": 4,
         "companion_up_invocations": 1,
         "relay_tunnel_creations": 2,
-        "provider_attempts": 1,
+        "provider_attempts": PROVIDER_BUDGET,
         "startup_narration_calls": 1,
+        "startup_task_receipts": len(STARTUP_TASKS),
         "provider_cost_cap_usd": PROVIDER_COST_CAP_USD,
         "cumulative_narration_cost_cap_usd": CUMULATIVE_NARRATION_COST_CAP_USD,
         "automatic_retries": 0,
@@ -277,20 +281,34 @@ def live_manifest() -> dict[str, object]:
         },
         "caps": dict(FROZEN_CAPS),
         "provider_budget_ceiling": PROVIDER_BUDGET,
+        "startup_tasks": [
+            {
+                "task": task,
+                "profile": STARTUP_PROFILE,
+                "requested_model": STARTUP_MODEL,
+                "resolved_model": STARTUP_MODEL,
+                "max_attempts": 1,
+                "fallbacks_allowed": False,
+            }
+            for task in STARTUP_TASKS
+        ],
         "startup_narration": {
             "socket_event": "start_game",
             "transport": "polling",
             "host_origin": HOST_SOCKET_ORIGIN,
             "max_event_emissions": 1,
+            "max_task_receipts": len(STARTUP_TASKS),
+            "max_provider_attempts": PROVIDER_BUDGET,
+            "max_combined_cost_usd": PROVIDER_COST_CAP_USD,
             "receipt_task": "dm_main",
-            "profile": "n3-luna",
-            "resolved_model": "openai/gpt-6-luna",
+            "profile": STARTUP_PROFILE,
+            "resolved_model": STARTUP_MODEL,
         },
         "verdict_policy": {
             "macos-arm64": {
                 "pass": "all-required-rows-pass",
                 "blocked": "any-required-row-blocked-or-missing",
-                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt-outside-the-single-priced-L03-startup-window-or-cost-cap-breach",
+                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt-outside-the-exact-ordered-two-task-L03-startup-window-or-combined-cost-cap-breach",
             },
             "linux-arm64": {
                 "verdict": "BLOCKED",
@@ -324,7 +342,7 @@ def calculate_manifest_digest() -> str:
 
 
 # Updated only as part of a reviewed frozen-contract revision.
-FROZEN_MANIFEST_SHA256 = "01750d7e32a8140985a51ad8e0bc8616179c03a1930bcb280f9beb13fdb1acfc"
+FROZEN_MANIFEST_SHA256 = "b754bb6fe3fdd206fb96d68ea972c741fc524f0477db71a523792459772b8ee4"
 
 
 def verify_frozen_manifest() -> bool:
@@ -1395,9 +1413,12 @@ class _UsageReceipt:
     retry: bool | None
     fallback: bool | None
     cost_usd: Decimal | None
+    entry_cost_usd: Decimal | None
     cost_provenance: str | None
     cost_complete: bool | None
     cost_source: str | None
+    cost_estimate: bool | None
+    provider_reported_cost_usd: Decimal | None
     error_type: str | None
 
 
@@ -1538,6 +1559,7 @@ def _usage_receipts(raw: bytes) -> tuple[_UsageReceipt, ...]:
                     else None
                 ),
                 cost_usd=context_cost,
+                entry_cost_usd=entry_cost,
                 cost_provenance=(
                     provenance if isinstance(provenance, str) else None
                 ),
@@ -1545,6 +1567,14 @@ def _usage_receipts(raw: bytes) -> tuple[_UsageReceipt, ...]:
                     cost_complete if type(cost_complete) is bool else None
                 ),
                 cost_source=(cost_source if isinstance(cost_source, str) else None),
+                cost_estimate=(
+                    record.get("cost_estimate")
+                    if type(record.get("cost_estimate")) is bool
+                    else None
+                ),
+                provider_reported_cost_usd=_decimal_cost(
+                    context.get("provider_reported_cost_usd")
+                ),
                 error_type=(
                     context.get("error_type")
                     if isinstance(context.get("error_type"), str)
@@ -1749,19 +1779,32 @@ def _context_provider_ledger(
     )
 
 
-def _startup_receipt_is_valid(receipt: _UsageReceipt) -> bool:
+def _startup_receipt_is_valid(
+    receipt: _UsageReceipt, expected_task: str
+) -> bool:
+    expected_cost_source = {
+        "actual": "provider_reported",
+        "estimated": "estimated",
+    }.get(receipt.cost_provenance)
     return bool(
-        receipt.task == "dm_main"
-        and receipt.profile == "n3-luna"
-        and receipt.requested_model == "openai/gpt-6-luna"
-        and receipt.resolved_model == "openai/gpt-6-luna"
+        receipt.task == expected_task
+        and receipt.profile == STARTUP_PROFILE
+        and receipt.requested_model == STARTUP_MODEL
+        and receipt.resolved_model == STARTUP_MODEL
         and receipt.attempt_number == 1
         and receipt.retry is False
         and receipt.fallback is False
         and receipt.error_type is None
         and receipt.cost_usd is not None
+        and receipt.entry_cost_usd == receipt.cost_usd
         and receipt.cost_provenance in {"actual", "estimated"}
         and receipt.cost_complete is True
+        and receipt.cost_source == expected_cost_source
+        and receipt.cost_estimate is (receipt.cost_provenance == "estimated")
+        and (
+            receipt.cost_provenance != "actual"
+            or receipt.provider_reported_cost_usd == receipt.cost_usd
+        )
     )
 
 
@@ -1871,6 +1914,20 @@ def _start_local_game_runtime(
         while True:
             remaining = startup_deadline - context.monotonic()
             if remaining <= 0:
+                with events_lock:
+                    event_state = dict(events)
+                status_checks = (
+                    latest_status.get("checks")
+                    if isinstance(latest_status, Mapping)
+                    else None
+                )
+                if (
+                    event_state["game_started"] is True
+                    and isinstance(status_checks, Mapping)
+                    and status_checks.get("local_runtime") is True
+                    and len(startup_receipts) < len(STARTUP_TASKS)
+                ):
+                    return None, _failed("startup_provider_task_receipt_missing")
                 return None, _blocked("startup_runtime_timeout")
             with events_lock:
                 event_state = dict(events)
@@ -1890,9 +1947,15 @@ def _start_local_game_runtime(
                 )
             except (HostApiError, GateError):
                 return None, _blocked("startup_observation_unavailable")
-            if len(startup_receipts) > 1:
+            if len(startup_receipts) > len(STARTUP_TASKS):
                 return None, _failed("startup_provider_receipt_count_invalid")
-            if startup_receipts and not _startup_receipt_is_valid(startup_receipts[0]):
+            observed_tasks = tuple(receipt.task for receipt in startup_receipts)
+            if observed_tasks != STARTUP_TASKS[: len(observed_tasks)]:
+                return None, _failed("startup_provider_task_sequence_invalid")
+            if any(
+                not _startup_receipt_is_valid(receipt, expected_task)
+                for expected_task, receipt in zip(STARTUP_TASKS, startup_receipts)
+            ):
                 return None, _failed("startup_narration_receipt_invalid")
             status_checks = (
                 latest_status.get("checks")
@@ -1908,11 +1971,17 @@ def _start_local_game_runtime(
                 and event_state["game_started"] is True
                 and event_state["game_output"] >= 1
                 and runtime_ready
-                and len(startup_receipts) == 1
+                and len(startup_receipts) == len(STARTUP_TASKS)
             ):
                 break
             remaining = startup_deadline - context.monotonic()
             if remaining <= 0:
+                if (
+                    event_state["game_started"] is True
+                    and runtime_ready
+                    and len(startup_receipts) < len(STARTUP_TASKS)
+                ):
+                    return None, _failed("startup_provider_task_receipt_missing")
                 return None, _blocked("startup_runtime_timeout")
             context.sleep(min(HOST_RUNTIME_STARTUP_POLL_SECONDS, remaining))
 
@@ -1923,43 +1992,51 @@ def _start_local_game_runtime(
         )
         if (
             ledger_after.get("verdict") != "PASS"
-            or ledger_after.get("attempt_count") != 1
-            or ledger_after.get("reservation_count") != 1
+            or ledger_after.get("attempt_count") != PROVIDER_BUDGET
+            or ledger_after.get("reservation_count") != PROVIDER_BUDGET
             or ledger_after.get("startup_window_verified") is not True
         ):
             return None, _failed("provider_attempt_outside_startup_window")
-        receipt = startup_receipts[0]
-        assert receipt.cost_usd is not None
+        narration_receipt = startup_receipts[STARTUP_TASKS.index("dm_main")]
+        assert narration_receipt.cost_usd is not None
+        combined_cost = sum(
+            (receipt.cost_usd or Decimal("0")) for receipt in startup_receipts
+        )
         cumulative_cost = latest_usage.cumulative_narration_cost_usd
         startup_observed = {
             "startup_seed_checks_passed": seed_checks,
             "host_socket_transport": "polling",
             "host_socket_origin": HOST_SOCKET_ORIGIN,
             "start_game_event_emissions": 1,
+            "startup_task_receipt_count": len(startup_receipts),
+            "startup_task_receipt_order": list(
+                receipt.task for receipt in startup_receipts
+            ),
             "game_started_event_observed": True,
             "local_runtime_ready": True,
             "startup_narration_output_observed": True,
             "startup_narration_receipt_count": 1,
-            "startup_narration_task": receipt.task,
-            "startup_narration_profile": receipt.profile,
-            "startup_narration_requested_model": receipt.requested_model,
-            "startup_narration_model": receipt.resolved_model,
-            "startup_narration_attempt_number": receipt.attempt_number,
-            "startup_narration_retry": receipt.retry,
-            "startup_narration_fallback": receipt.fallback,
-            "startup_narration_cost_provenance": receipt.cost_provenance,
-            "startup_narration_cost_complete": receipt.cost_complete,
-            "startup_narration_cost_source": receipt.cost_source,
-            "startup_narration_cost_usd": float(receipt.cost_usd),
+            "startup_narration_task": narration_receipt.task,
+            "startup_narration_profile": narration_receipt.profile,
+            "startup_narration_requested_model": narration_receipt.requested_model,
+            "startup_narration_model": narration_receipt.resolved_model,
+            "startup_narration_attempt_number": narration_receipt.attempt_number,
+            "startup_narration_retry": narration_receipt.retry,
+            "startup_narration_fallback": narration_receipt.fallback,
+            "startup_narration_cost_provenance": narration_receipt.cost_provenance,
+            "startup_narration_cost_complete": narration_receipt.cost_complete,
+            "startup_narration_cost_source": narration_receipt.cost_source,
+            "startup_narration_cost_usd": float(narration_receipt.cost_usd),
+            "startup_provider_cost_usd": float(combined_cost),
             "cumulative_narration_cost_usd": float(cumulative_cost),
-            "provider_attempts_in_startup_window": 1,
+            "provider_attempts_in_startup_window": PROVIDER_BUDGET,
         }
         context.permitted_provider_attempt_fingerprint = str(
             ledger_after["attempt_fingerprint"]
         )
-        context.startup_narration_cost_usd = receipt.cost_usd
+        context.startup_narration_cost_usd = narration_receipt.cost_usd
         context.cumulative_narration_cost_usd = cumulative_cost
-        if receipt.cost_usd > Decimal(str(PROVIDER_COST_CAP_USD)):
+        if combined_cost > Decimal(str(PROVIDER_COST_CAP_USD)):
             return startup_observed, _failed(
                 "startup_provider_cost_cap_exceeded", observed=startup_observed
             )
@@ -6179,10 +6256,13 @@ def _validate_provider_ledger(
         except (TypeError, ValueError):
             raise GateError("provider_startup_window_invalid") from None
         in_window = (
-            len(reservation_timestamps) == 1
-            and attempts == 1
-            and reservations == 1
-            and window_start <= reservation_timestamps[0] <= window_end
+            len(reservation_timestamps) == PROVIDER_BUDGET
+            and attempts == PROVIDER_BUDGET
+            and reservations == PROVIDER_BUDGET
+            and all(
+                window_start <= timestamp <= window_end
+                for timestamp in reservation_timestamps
+            )
         )
         verdict = "PASS" if in_window else "FAIL"
     return {
@@ -6856,8 +6936,8 @@ class LiveGateRunner:
         if (
             row_id == "L03"
             and (
-                status.get("attempt_count") != 1
-                or status.get("reservation_count") != 1
+                status.get("attempt_count") != PROVIDER_BUDGET
+                or status.get("reservation_count") != PROVIDER_BUDGET
                 or status.get("startup_window_verified") is not True
             )
         ):
@@ -6948,8 +7028,8 @@ class LiveGateRunner:
                 self.context.permitted_provider_attempt_fingerprint
             )
             if (
-                status.get("attempt_count") != 1
-                or status.get("reservation_count") != 1
+                status.get("attempt_count") != PROVIDER_BUDGET
+                or status.get("reservation_count") != PROVIDER_BUDGET
                 or status.get("startup_window_verified") is not True
                 or not isinstance(expected_fingerprint, str)
                 or status.get("attempt_fingerprint") != expected_fingerprint

@@ -834,6 +834,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         cost: float,
         model: str = "openai/gpt-6-luna",
         task: str = "dm_main",
+        fallback: bool = False,
+        cost_complete: bool = True,
+        entry_cost_usd: float | None = None,
     ) -> bytes:
         context = {
             "call_id": call_id,
@@ -844,17 +847,17 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "resolved_model": model,
             "attempt_number": 1,
             "retry": False,
-            "fallback": False,
+            "fallback": fallback,
             "error_type": None,
             "cost_usd": cost,
             "cost_provenance": "actual",
-            "cost_complete": True,
+            "cost_complete": cost_complete,
             "provider_reported_cost_usd": cost,
         }
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "context": context,
-            "cost_usd": cost,
+            "cost_usd": cost if entry_cost_usd is None else entry_cost_usd,
             "cost_source": "provider_reported",
             "cost_estimate": False,
         }
@@ -866,8 +869,12 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         api: LifecycleFakeApi,
         *,
         receipt_cost: float = 0.01,
+        receipt_costs: tuple[float, ...] | None = None,
+        receipt_entry_costs: tuple[float | None, ...] | None = None,
         receipt_model: str = "openai/gpt-6-luna",
-        receipt_count: int = 1,
+        receipt_tasks: tuple[str, ...] = gate.STARTUP_TASKS,
+        receipt_fallback: bool = False,
+        receipt_cost_completes: tuple[bool, ...] | None = None,
         reserve_attempt: bool = True,
         startup_events: bool = True,
         local_runtime_ready: bool = True,
@@ -933,6 +940,10 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 "checks": {"local_runtime": local_runtime_ready},
             },
         ]
+        api.status = {
+            "state": "off",
+            "checks": {"local_runtime": local_runtime_ready},
+        }
         clients: list[FakeHostSocketClient] = []
 
         def on_emit(event: str, client: FakeHostSocketClient) -> None:
@@ -942,25 +953,45 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 timestamp = reservation_timestamp or datetime.now(
                     timezone.utc
                 ).isoformat(timespec="seconds").replace("+00:00", "Z")
-                reservation = {
-                    "event": "reservation",
-                    "schema_version": 1,
-                    "budget": gate.PROVIDER_BUDGET,
-                    "run_id": context.run_id,
-                    "reservation_number": 1,
-                    "pid": context.host.owner_pid,
-                    "timestamp_utc": timestamp,
-                }
                 with ledger_path.open("a", encoding="ascii") as stream:
-                    stream.write(json.dumps(reservation, sort_keys=True) + "\n")
+                    for reservation_number in range(1, gate.PROVIDER_BUDGET + 1):
+                        reservation = {
+                            "event": "reservation",
+                            "schema_version": 1,
+                            "budget": gate.PROVIDER_BUDGET,
+                            "run_id": context.run_id,
+                            "reservation_number": reservation_number,
+                            "pid": context.host.owner_pid,
+                            "timestamp_utc": timestamp,
+                        }
+                        stream.write(json.dumps(reservation, sort_keys=True) + "\n")
             with usage_path.open("ab") as stream:
-                for index in range(receipt_count):
+                for index, task in enumerate(receipt_tasks):
+                    selected_cost = (
+                        receipt_costs[index]
+                        if receipt_costs is not None and index < len(receipt_costs)
+                        else receipt_cost
+                    )
                     stream.write(
                         self._usage_record(
                             call_id="startup-call-%d" % index,
                             attempt_id="startup-attempt-%d" % index,
-                            cost=receipt_cost,
+                            cost=selected_cost,
                             model=receipt_model,
+                            task=task,
+                            fallback=receipt_fallback,
+                            cost_complete=(
+                                receipt_cost_completes[index]
+                                if receipt_cost_completes is not None
+                                and index < len(receipt_cost_completes)
+                                else True
+                            ),
+                            entry_cost_usd=(
+                                receipt_entry_costs[index]
+                                if receipt_entry_costs is not None
+                                and index < len(receipt_entry_costs)
+                                else None
+                            ),
                         )
                     )
             if startup_events:
@@ -1688,7 +1719,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "frozen_caps": {
                 "party_size": 1,
                 "platform": "macos-arm64",
-                "provider_dispatch_attempts": 1,
+                "provider_dispatch_attempts": gate.PROVIDER_BUDGET,
                 "max_tunnel_creations": 2,
                 "max_companion_launches": 4,
                 "window_hours": 1,
@@ -2192,8 +2223,14 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertFalse(clients[0].connect_kwargs["retry"])
         self.assertEqual(clients[0].emitted, ["start_game"])
         self.assertEqual(clients[0].disconnect_calls, 1)
-        self.assertEqual(result.observed["provider_attempts_in_startup_window"], 1)
+        self.assertEqual(result.observed["provider_attempts_in_startup_window"], 2)
+        self.assertEqual(result.observed["startup_task_receipt_count"], 2)
+        self.assertEqual(
+            result.observed["startup_task_receipt_order"],
+            ["action_prediction", "dm_main"],
+        )
         self.assertEqual(result.observed["startup_narration_receipt_count"], 1)
+        self.assertEqual(result.observed["startup_provider_cost_usd"], 0.02)
         self.assertEqual(
             result.observed["startup_narration_requested_model"],
             "openai/gpt-6-luna",
@@ -2410,25 +2447,131 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(result.reason, "startup_runtime_already_running")
         self.assertEqual(runtime_clients, [])
 
+    def test_l03_startup_requires_exact_ordered_task_receipts_without_fallback(self) -> None:
+        missing_api = LifecycleFakeApi()
+        missing_clock = [1000.0]
+        missing_context = self.make_row_context(
+            api=missing_api,
+            monotonic=lambda: missing_clock[0],
+            sleep=lambda seconds: missing_clock.__setitem__(
+                0, missing_clock[0] + seconds
+            ),
+        )
+        missing_clients = self.prepare_l03_startup(
+            missing_context,
+            missing_api,
+            receipt_tasks=("action_prediction",),
+        )
+        with patch.object(gate, "HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS", 1.0):
+            missing = gate.L03PublicAccessExecutor().execute(missing_context)
+        self.assertEqual(missing.verdict, "FAIL")
+        self.assertEqual(
+            missing.reason, "startup_provider_task_receipt_missing"
+        )
+        self.assertEqual(missing_clients[0].emitted, ["start_game"])
+
+        invalid_cases = (
+            (
+                "duplicate",
+                ("action_prediction", "action_prediction"),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "extra",
+                ("action_prediction", "dm_main", "dm_main"),
+                False,
+                "startup_provider_receipt_count_invalid",
+            ),
+            (
+                "reversed",
+                ("dm_main", "action_prediction"),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "outside-list",
+                ("unapproved_task",),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "fallback",
+                gate.STARTUP_TASKS,
+                True,
+                "startup_narration_receipt_invalid",
+            ),
+        )
+        for label, tasks, fallback, expected_reason in invalid_cases:
+            with self.subTest(case=label):
+                api = LifecycleFakeApi()
+                context = self.make_row_context(api=api)
+                clients = self.prepare_l03_startup(
+                    context,
+                    api,
+                    receipt_tasks=tasks,
+                    receipt_fallback=fallback,
+                )
+                result = gate.L03PublicAccessExecutor().execute(context)
+                self.assertEqual(result.verdict, "FAIL")
+                self.assertEqual(result.reason, expected_reason)
+                self.assertEqual(clients[0].emitted, ["start_game"])
+
+        for label, receipt_options in (
+            ("incomplete-cost", {"receipt_cost_completes": (False, True)}),
+            ("inconsistent-priced-cost", {"receipt_entry_costs": (0.02, 0.01)}),
+        ):
+            with self.subTest(case=label):
+                api = LifecycleFakeApi()
+                context = self.make_row_context(api=api)
+                clients = self.prepare_l03_startup(
+                    context, api, **receipt_options
+                )
+                result = gate.L03PublicAccessExecutor().execute(context)
+                self.assertEqual(result.verdict, "FAIL")
+                self.assertEqual(
+                    result.reason, "startup_narration_receipt_invalid"
+                )
+                self.assertEqual(clients[0].emitted, ["start_game"])
+
+        outside_window_api = LifecycleFakeApi()
+        outside_window_context = self.make_row_context(api=outside_window_api)
+        outside_window_clients = self.prepare_l03_startup(
+            outside_window_context,
+            outside_window_api,
+            reservation_timestamp="2000-01-01T00:00:00Z",
+        )
+        outside_window = gate.L03PublicAccessExecutor().execute(
+            outside_window_context
+        )
+        self.assertEqual(outside_window.verdict, "FAIL")
+        self.assertEqual(
+            outside_window.reason, "provider_attempt_outside_startup_window"
+        )
+        self.assertEqual(outside_window_clients[0].emitted, ["start_game"])
+
     def test_l03_startup_cost_failures_preserve_runtime_observations(self) -> None:
         high_cost_api = LifecycleFakeApi()
         high_cost_context = self.make_row_context(api=high_cost_api)
         self.prepare_l03_startup(
-            high_cost_context, high_cost_api, receipt_cost=0.06
+            high_cost_context,
+            high_cost_api,
+            receipt_costs=(0.04, 0.02),
         )
         high_cost = gate.L03PublicAccessExecutor().execute(high_cost_context)
         self.assertEqual(high_cost.verdict, "FAIL")
         self.assertEqual(high_cost.reason, "startup_provider_cost_cap_exceeded")
         self.assertTrue(high_cost.observed["game_started_event_observed"])
         self.assertTrue(high_cost.observed["local_runtime_ready"])
-        self.assertEqual(high_cost.observed["startup_narration_cost_usd"], 0.06)
+        self.assertEqual(high_cost.observed["startup_provider_cost_usd"], 0.06)
+        self.assertEqual(high_cost.observed["startup_narration_cost_usd"], 0.02)
 
         cumulative_api = LifecycleFakeApi()
         cumulative_context = self.make_row_context(api=cumulative_api)
         self.prepare_l03_startup(
             cumulative_context,
             cumulative_api,
-            receipt_cost=0.02,
+            receipt_costs=(0.02, 0.02),
             baseline_cost=0.99,
         )
         cumulative = gate.L03PublicAccessExecutor().execute(cumulative_context)
@@ -2455,7 +2598,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         extra_receipt_api = LifecycleFakeApi()
         extra_receipt_context = self.make_row_context(api=extra_receipt_api)
         extra_receipt_clients = self.prepare_l03_startup(
-            extra_receipt_context, extra_receipt_api, receipt_count=2
+            extra_receipt_context,
+            extra_receipt_api,
+            receipt_tasks=("action_prediction", "dm_main", "dm_main"),
         )
         extra_receipt = gate.L03PublicAccessExecutor().execute(
             extra_receipt_context
@@ -2506,6 +2651,15 @@ ACTIVE_PROFILE = "n3-luna"
             gate._literal_profile_assignment(
                 profile_source.replace(
                     b'"openai/gpt-6-luna"', b'"openai/other-model"', 1
+                )
+            )
+        )
+        self.assertFalse(
+            gate._literal_profile_assignment(
+                profile_source.replace(
+                    b'"allow_fallbacks": False',
+                    b'"allow_fallbacks": True',
+                    1,
                 )
             )
         )
@@ -3424,7 +3578,7 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(gate.FROZEN_CAPS["companion_serve_launches"], 4)
         self.assertEqual(gate.FROZEN_CAPS["companion_up_invocations"], 1)
         self.assertEqual(gate.FROZEN_CAPS["relay_tunnel_creations"], 2)
-        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 1)
+        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 2)
         self.assertEqual(gate.FROZEN_CAPS["automatic_retries"], 0)
         manifest = gate.live_manifest()
         self.assertTrue(
@@ -3434,11 +3588,28 @@ ACTIVE_PROFILE = "n3-luna"
             manifest["verdict_policy"]["linux-arm64"]["reason"],
             "owner-run-required",
         )
-        self.assertEqual(manifest["provider_budget_ceiling"], 1)
-        self.assertEqual(manifest["manifest_id"], "n3-live-lifecycle-v3")
+        self.assertEqual(manifest["provider_budget_ceiling"], 2)
+        self.assertEqual(manifest["manifest_id"], "n3-live-lifecycle-v4")
         self.assertIn("emit start_game once", manifest["rows"][2]["action"])
         self.assertEqual(manifest["startup_narration"]["max_event_emissions"], 1)
         self.assertEqual(manifest["startup_narration"]["resolved_model"], "openai/gpt-6-luna")
+        self.assertEqual(
+            [task["task"] for task in manifest["startup_tasks"]],
+            ["action_prediction", "dm_main"],
+        )
+        self.assertTrue(
+            all(
+                task["requested_model"] == task["resolved_model"]
+                == "openai/gpt-6-luna"
+                for task in manifest["startup_tasks"]
+            )
+        )
+        self.assertTrue(
+            all(task["fallbacks_allowed"] is False for task in manifest["startup_tasks"])
+        )
+        self.assertEqual(manifest["startup_narration"]["max_task_receipts"], 2)
+        self.assertEqual(manifest["startup_narration"]["max_provider_attempts"], 2)
+        self.assertEqual(manifest["startup_narration"]["max_combined_cost_usd"], 0.05)
         self.assertEqual(manifest["caps"]["provider_cost_cap_usd"], 0.05)
         self.assertEqual(manifest["caps"]["cumulative_narration_cost_cap_usd"], 1.0)
 
@@ -4119,7 +4290,10 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(environment["NEQ_OPEN_BROWSER"], "0")
         self.assertEqual(environment["NEQ_N3_GATE_MAX_RECOVERY_ATTEMPTS"], "1")
         self.assertEqual(environment["NEQ_N3_GATE_RUN_ID"], self.run_id)
-        self.assertEqual(environment["NEQ_PROVIDER_ATTEMPT_BUDGET"], "1")
+        self.assertEqual(
+            environment["NEQ_PROVIDER_ATTEMPT_BUDGET"],
+            str(gate.PROVIDER_BUDGET),
+        )
         self.assertEqual(environment["NEQ_PROVIDER_ATTEMPT_RUN_ID"], self.run_id)
         self.assertEqual(environment["PYTHONPATH"], str(sandbox))
         self.assertTrue(environment["XDG_STATE_HOME"].startswith(str(state)))
@@ -5005,7 +5179,7 @@ ACTIVE_PROFILE = "n3-luna"
                 {"companion_launches": 0, "identity_up_invocations": 0}
             )
 
-    def test_provider_ledger_reservation_is_fail(self) -> None:
+    def test_provider_attempt_outside_l03_startup_window_is_fail(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
         ledger = Path(
@@ -5015,11 +5189,11 @@ ACTIVE_PROFILE = "n3-luna"
         )
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text(
-            json.dumps({"event": "header", "schema_version": 1, "budget": 1, "run_id": self.run_id})
+            json.dumps({"event": "header", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id})
             + "\n"
-            + json.dumps({"event": "activated", "schema_version": 1, "budget": 1, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
+            + json.dumps({"event": "activated", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
             + "\n"
-            + json.dumps({"event": "reservation", "schema_version": 1, "budget": 1, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "timestamp_utc": TEST_NOW.isoformat(), "host": "provider-secret.example"})
+            + json.dumps({"event": "reservation", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "timestamp_utc": TEST_NOW.isoformat(), "host": "provider-secret.example"})
             + "\n",
             encoding="ascii",
         )
@@ -5029,7 +5203,7 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(result["verdict"], "FAIL")
         self.assertEqual(result["reservation_count"], 1)
 
-    def test_provider_ledger_accepts_only_one_attempt_in_startup_window(self) -> None:
+    def test_provider_ledger_accepts_exactly_two_attempts_in_startup_window(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
         ledger = Path(
@@ -5062,6 +5236,15 @@ ACTIVE_PROFILE = "n3-luna"
                 "pid": 444,
                 "timestamp_utc": (TEST_NOW + timedelta(seconds=2)).isoformat(),
             },
+            {
+                "event": "reservation",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+                "reservation_number": 2,
+                "pid": 444,
+                "timestamp_utc": (TEST_NOW + timedelta(seconds=3)).isoformat(),
+            },
         ]
         ledger.write_text(
             "".join(json.dumps(item, sort_keys=True) + "\n" for item in records),
@@ -5078,7 +5261,7 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertEqual(accepted["verdict"], "PASS")
         self.assertTrue(accepted["startup_window_verified"])
-        self.assertEqual(accepted["attempt_count"], 1)
+        self.assertEqual(accepted["attempt_count"], 2)
 
         records[-1]["timestamp_utc"] = (
             TEST_NOW - timedelta(seconds=1)
@@ -5127,7 +5310,7 @@ ACTIVE_PROFILE = "n3-luna"
                 TEST_NOW + timedelta(seconds=5),
             ),
         )
-        self.assertEqual(repeated_attempt["attempt_count"], 2)
+        self.assertEqual(repeated_attempt["attempt_count"], 3)
         self.assertEqual(repeated_attempt["verdict"], "FAIL")
         self.assertFalse(repeated_attempt["startup_window_verified"])
 
@@ -5142,7 +5325,7 @@ ACTIVE_PROFILE = "n3-luna"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         record_base = {
             "schema_version": 1,
-            "budget": 1,
+            "budget": gate.PROVIDER_BUDGET,
             "run_id": self.run_id,
         }
         records = [
@@ -5194,9 +5377,9 @@ ACTIVE_PROFILE = "n3-luna"
         )
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text(
-            json.dumps({"event": "header", "schema_version": True, "budget": 1, "run_id": self.run_id})
+            json.dumps({"event": "header", "schema_version": True, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id})
             + "\n"
-            + json.dumps({"event": "activated", "schema_version": 1, "budget": 1, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
+            + json.dumps({"event": "activated", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
             + "\n",
             encoding="ascii",
         )
