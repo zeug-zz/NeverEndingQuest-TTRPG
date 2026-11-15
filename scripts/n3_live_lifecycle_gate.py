@@ -1998,7 +1998,8 @@ def _start_local_game_runtime(
         ):
             return None, _failed("provider_attempt_outside_startup_window")
         narration_receipt = startup_receipts[STARTUP_TASKS.index("dm_main")]
-        assert narration_receipt.cost_usd is not None
+        if narration_receipt.cost_usd is None:
+            raise GateError("narration_receipt_unpriced")
         combined_cost = sum(
             (receipt.cost_usd or Decimal("0")) for receipt in startup_receipts
         )

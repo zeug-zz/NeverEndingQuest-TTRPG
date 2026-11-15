@@ -21,7 +21,7 @@ import queue
 import re
 import socket
 import stat
-import subprocess
+import subprocess  # Bounded worker launch plus guarded host process tripwires.
 import sys
 import sysconfig
 import tempfile
