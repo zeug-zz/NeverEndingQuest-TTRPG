@@ -16,14 +16,312 @@ import os
 import queue
 import shutil
 import socket
+import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest import mock as unittest_mock
 
-from scripts import n3_start_game_offline_proof as proof
+
+_DNS_RESOLVER_NAMES = (
+    "getaddrinfo",
+    "gethostbyname",
+    "gethostbyname_ex",
+    "gethostbyaddr",
+    "getfqdn",
+    "getnameinfo",
+)
+
+
+class _OfflineDnsFence:
+    """Refuse resolver calls before they can reach the system resolver."""
+
+    _AUDIT_EVENTS = {
+        "socket.getaddrinfo",
+        "socket.gethostbyname",
+        "socket.gethostbyaddr",
+        "socket.getnameinfo",
+    }
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._lookup_count = 0
+        self._audit_count = 0
+        self._wrappers: dict[str, Any] = {}
+        self._originals: dict[str, Any] = {}
+        self._last_originals: dict[str, Any] = {}
+        self._audit_hook_installed = False
+        self._active = False
+
+    @staticmethod
+    def _refusal() -> socket.gaierror:
+        return socket.gaierror(
+            getattr(socket, "EAI_NONAME", -2),
+            "offline test resolver refused name lookup",
+        )
+
+    def install(self) -> None:
+        if self._active:
+            return
+        for name in _DNS_RESOLVER_NAMES:
+            if not callable(getattr(socket, name, None)):
+                continue
+            self._originals[name] = getattr(socket, name)
+
+            def refuse(*args: Any, _name: str = name, **kwargs: Any) -> Any:
+                del args, kwargs, _name
+                with self._lock:
+                    self._lookup_count += 1
+                raise self._refusal()
+
+            refuse.__name__ = "offline_test_" + name
+            self._wrappers[name] = refuse
+            setattr(socket, name, refuse)
+        if not self._audit_hook_installed:
+            sys.addaudithook(self._audit)
+            self._audit_hook_installed = True
+        with self._lock:
+            self._active = True
+
+    def _audit(self, event: str, args: tuple[Any, ...]) -> None:
+        del args
+        if event in self._AUDIT_EVENTS:
+            with self._lock:
+                if not self._active:
+                    return
+                self._audit_count += 1
+            raise self._refusal()
+
+    def lookup_count(self) -> int:
+        with self._lock:
+            return self._lookup_count
+
+    def audit_count(self) -> int:
+        with self._lock:
+            return self._audit_count
+
+    def is_active(self) -> bool:
+        with self._lock:
+            active = self._active
+        return active and all(
+            getattr(socket, name, None) is wrapper
+            for name, wrapper in self._wrappers.items()
+        )
+
+    def originals_snapshot(self) -> dict[str, Any]:
+        return dict(self._originals or self._last_originals)
+
+    def forget_restored_originals(self) -> None:
+        self._last_originals = {}
+
+    def restore(self) -> None:
+        with self._lock:
+            self._active = False
+        originals = dict(self._originals)
+        for name, original in reversed(tuple(self._originals.items())):
+            setattr(socket, name, original)
+        self._last_originals = originals
+        self._originals = {}
+
+    def assert_active(self) -> None:
+        if not self.is_active():
+            raise AssertionError("offline DNS resolver fence was replaced")
+
+        before = self.audit_count()
+        try:
+            sys.audit(
+                "socket.getaddrinfo",
+                "offline-fence-probe.example.invalid",
+                443,
+                socket.AF_UNSPEC,
+                socket.SOCK_STREAM,
+                0,
+            )
+        except socket.gaierror:
+            pass
+        else:
+            raise AssertionError("offline DNS audit fence was removed")
+        if self.audit_count() != before + 1:
+            raise AssertionError("offline DNS audit fence did not run")
+
+
+_OFFLINE_DNS_FENCE = _OfflineDnsFence()
+
+
+def _reject_resolver_patch(target: Any, attribute: Any = None) -> None:
+    if (
+        target is socket and attribute in _DNS_RESOLVER_NAMES
+    ) or (
+        isinstance(target, str)
+        and target.rsplit(".", 1)[0] == "socket"
+        and target.rsplit(".", 1)[-1] in _DNS_RESOLVER_NAMES
+    ):
+        raise AssertionError(
+            "DNS resolver entry points cannot be replaced by test mocks"
+        )
+
+
+class _GuardedPatchFactory:
+    """Keep unittest.mock from replacing the resolver fence in nested tests."""
+
+    def __init__(self, patch_factory: Any) -> None:
+        self._patch = patch_factory
+        self._patch_object = patch_factory.object
+        self._patch_dict = patch_factory.dict
+        self._patch_multiple = patch_factory.multiple
+
+    def __call__(self, target: Any, *args: Any, **kwargs: Any) -> Any:
+        _reject_resolver_patch(target)
+        return self._patch(target, *args, **kwargs)
+
+    def object(
+        self, target: Any, attribute: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        _reject_resolver_patch(target, attribute)
+        return self._patch_object(target, attribute, *args, **kwargs)
+
+    def dict(self, in_dict: Any, *args: Any, **kwargs: Any) -> Any:
+        values = args[0] if args else kwargs.get("values", {})
+        if in_dict is socket.__dict__ and any(
+            name in values for name in _DNS_RESOLVER_NAMES
+        ):
+            raise AssertionError(
+                "DNS resolver entry points cannot be replaced by test mocks"
+            )
+        return self._patch_dict(in_dict, *args, **kwargs)
+
+    def multiple(self, target: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(target, str) and target == "socket":
+            if any(name in kwargs for name in _DNS_RESOLVER_NAMES):
+                raise AssertionError(
+                    "DNS resolver entry points cannot be replaced by test mocks"
+                )
+        if target is socket and any(
+            name in kwargs for name in _DNS_RESOLVER_NAMES
+        ):
+            raise AssertionError(
+                "DNS resolver entry points cannot be replaced by test mocks"
+            )
+        return self._patch_multiple(target, *args, **kwargs)
+
+
+_RAW_PATCH_FACTORY = unittest_mock.patch
+_RAW_PATCH_OBJECT = unittest_mock.patch.object
+_MOCK_PATCH_STATE: dict[str, Any] | None = None
+_RESTORED_MOCK_PATCH_STATE: dict[str, Any] | None = None
+
+
+def _guard_nested_patch_enter(patcher: Any) -> Any:
+    _reject_resolver_patch(patcher.getter(), getattr(patcher, "attribute", None))
+    if _MOCK_PATCH_STATE is None:
+        raise AssertionError("nested mock guard is outside the test suite")
+    return _MOCK_PATCH_STATE["patch_enter"](patcher)
+
+
+def _guard_nested_patch_dict_enter(patcher: Any) -> Any:
+    values = getattr(patcher, "values", {})
+    keys = set(values) if isinstance(values, dict) else set()
+    keys.update(getattr(patcher, "kwargs", {}).keys())
+    if (
+        getattr(patcher, "in_dict", None) is socket.__dict__
+        and keys.intersection(_DNS_RESOLVER_NAMES)
+    ):
+        raise AssertionError(
+            "DNS resolver entry points cannot be replaced by test mocks"
+        )
+    if _MOCK_PATCH_STATE is None:
+        raise AssertionError("nested mock guard is outside the test suite")
+    return _MOCK_PATCH_STATE["patch_dict_enter"](patcher)
+
+
+patch = _GuardedPatchFactory(_RAW_PATCH_FACTORY)
+
+
+def _restore_test_harness() -> None:
+    global _MOCK_PATCH_STATE, _RESTORED_MOCK_PATCH_STATE
+    _OFFLINE_DNS_FENCE.restore()
+    if _MOCK_PATCH_STATE is not None:
+        unittest_mock._patch.__enter__ = _MOCK_PATCH_STATE["patch_enter"]
+        unittest_mock._patch_dict.__enter__ = _MOCK_PATCH_STATE[
+            "patch_dict_enter"
+        ]
+        _RESTORED_MOCK_PATCH_STATE = dict(_MOCK_PATCH_STATE)
+        _MOCK_PATCH_STATE = None
+
+
+def _assert_test_harness_restored() -> None:
+    global _RESTORED_MOCK_PATCH_STATE
+    state = _RESTORED_MOCK_PATCH_STATE
+    try:
+        if _OFFLINE_DNS_FENCE.is_active():
+            raise AssertionError("offline DNS fence remained active after the suite")
+        if state is None:
+            raise AssertionError("unittest.mock state snapshot was not retained")
+        for name, original in _OFFLINE_DNS_FENCE.originals_snapshot().items():
+            if getattr(socket, name, None) is not original:
+                raise AssertionError("socket resolver was not restored: " + name)
+        if unittest_mock._patch.__enter__ is not state["patch_enter"]:
+            raise AssertionError("unittest.mock patch entry was not restored")
+        if unittest_mock._patch_dict.__enter__ is not state["patch_dict_enter"]:
+            raise AssertionError("unittest.mock dict patch entry was not restored")
+        if unittest_mock.patch is not state["patch_factory"]:
+            raise AssertionError("unittest.mock.patch was replaced")
+        if unittest_mock.patch.object is not state["patch_object"]:
+            raise AssertionError("unittest.mock.patch.object was replaced")
+
+        marker = SimpleNamespace(value="original")
+        with unittest_mock.patch.object(marker, "value", "patched"):
+            if marker.value != "patched":
+                raise AssertionError("unrelated mock behavior was not restored")
+        if marker.value != "original":
+            raise AssertionError(
+                "unrelated mock behavior did not restore its target"
+            )
+        if socket.inet_aton("127.0.0.1") != bytes((127, 0, 0, 1)):
+            raise AssertionError("unrelated socket behavior changed")
+
+        audit_count = _OFFLINE_DNS_FENCE.audit_count()
+        sys.audit(
+            "socket.getaddrinfo",
+            "post-suite-fence-probe.example.invalid",
+            443,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+            0,
+        )
+        if _OFFLINE_DNS_FENCE.audit_count() != audit_count:
+            raise AssertionError("offline DNS audit hook was not disabled")
+    finally:
+        _OFFLINE_DNS_FENCE.forget_restored_originals()
+        _RESTORED_MOCK_PATCH_STATE = None
+
+
+def setUpModule() -> None:
+    global _MOCK_PATCH_STATE, proof
+    if _MOCK_PATCH_STATE is not None:
+        raise AssertionError("test harness setup is already active")
+    _MOCK_PATCH_STATE = {
+        "patch_factory": unittest_mock.patch,
+        "patch_object": unittest_mock.patch.object,
+        "patch_enter": unittest_mock._patch.__enter__,
+        "patch_dict_enter": unittest_mock._patch_dict.__enter__,
+    }
+    try:
+        _OFFLINE_DNS_FENCE.install()
+        unittest_mock._patch.__enter__ = _guard_nested_patch_enter
+        unittest_mock._patch_dict.__enter__ = _guard_nested_patch_dict_enter
+        from scripts import n3_start_game_offline_proof as proof
+    except BaseException:
+        _restore_test_harness()
+        raise
+
+
+def tearDownModule() -> None:
+    _restore_test_harness()
+    _assert_test_harness_restored()
 
 
 class FakeSocket:
@@ -420,6 +718,11 @@ class FakePreintegrateImporter:
 
 class N3StartGameOfflineProofTests(unittest.TestCase):
     def setUp(self) -> None:
+        _OFFLINE_DNS_FENCE.assert_active()
+        self._audit_count_at_start = _OFFLINE_DNS_FENCE.audit_count()
+        self._lookup_count_at_start = _OFFLINE_DNS_FENCE.lookup_count()
+        self._expected_dns_audit_events = 0
+        self._expected_offline_dns_refusals = 0
         self.scratch_parent = proof.REPO_ROOT / "tmp"
         self.scratch_parent.mkdir(parents=True, exist_ok=True)
         self.scratch = Path(
@@ -427,7 +730,20 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        shutil.rmtree(self.scratch, ignore_errors=True)
+        try:
+            _OFFLINE_DNS_FENCE.assert_active()
+            self.assertEqual(
+                _OFFLINE_DNS_FENCE.audit_count(),
+                self._audit_count_at_start + self._expected_dns_audit_events + 1,
+                "a test path reached the resolver audit boundary",
+            )
+            self.assertEqual(
+                _OFFLINE_DNS_FENCE.lookup_count(),
+                self._lookup_count_at_start + self._expected_offline_dns_refusals,
+                "a guarded test path fell through to the harness resolver fence",
+            )
+        finally:
+            shutil.rmtree(self.scratch, ignore_errors=True)
 
     def _fake_sandbox(self) -> Path:
         sandbox = self.scratch / "combat_capture"
@@ -515,12 +831,12 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             recorder.block_provider_function()
         self.assertEqual(recorder.snapshot(), (0, 1, 0))
 
+        fence_lookup_count = _OFFLINE_DNS_FENCE.lookup_count()
+        fence_audit_count = _OFFLINE_DNS_FENCE.audit_count()
         with (
             patch.object(socket.socket, "connect") as connect_spy,
             patch.object(socket.socket, "connect_ex") as connect_ex_spy,
             patch.object(socket, "create_connection") as create_connection_spy,
-            patch.object(socket, "getaddrinfo") as getaddrinfo_spy,
-            patch.object(socket, "gethostbyname") as gethostbyname_spy,
         ):
             guard = proof.EgressGuard()
             with guard:
@@ -544,10 +860,10 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 connect_spy,
                 connect_ex_spy,
                 create_connection_spy,
-                getaddrinfo_spy,
-                gethostbyname_spy,
             ):
                 network_spy.assert_not_called()
+        self.assertEqual(_OFFLINE_DNS_FENCE.lookup_count(), fence_lookup_count)
+        self.assertEqual(_OFFLINE_DNS_FENCE.audit_count(), fence_audit_count)
 
         self.assertEqual(
             guard.snapshot(),
@@ -573,17 +889,19 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
             "https://private-user:private-password@example.invalid/path?token=private-value"
         )
         token_like_host = "sk-" + ("a" * 24) + ".example.invalid"
-        with patch.object(socket, "getaddrinfo") as getaddrinfo_spy:
-            guard = proof.EgressGuard()
-            guard.set_sandbox_root(proof.REPO_ROOT)
-            with guard:
-                with self.assertRaises(socket.gaierror):
-                    socket.getaddrinfo("Exact.Example.invalid.", 9443)
-                with self.assertRaises(socket.gaierror):
-                    socket.getaddrinfo(unsafe_url, 9444)
-                with self.assertRaises(socket.gaierror):
-                    socket.getaddrinfo(token_like_host, 9445)
-            getaddrinfo_spy.assert_not_called()
+        fence_lookup_count = _OFFLINE_DNS_FENCE.lookup_count()
+        fence_audit_count = _OFFLINE_DNS_FENCE.audit_count()
+        guard = proof.EgressGuard()
+        guard.set_sandbox_root(proof.REPO_ROOT)
+        with guard:
+            with self.assertRaises(socket.gaierror):
+                socket.getaddrinfo("Exact.Example.invalid.", 9443)
+            with self.assertRaises(socket.gaierror):
+                socket.getaddrinfo(unsafe_url, 9444)
+            with self.assertRaises(socket.gaierror):
+                socket.getaddrinfo(token_like_host, 9445)
+        self.assertEqual(_OFFLINE_DNS_FENCE.lookup_count(), fence_lookup_count)
+        self.assertEqual(_OFFLINE_DNS_FENCE.audit_count(), fence_audit_count)
 
         refusals, refusal_count = guard.refusal_snapshot()
         self.assertEqual(refusal_count, 3)
@@ -619,6 +937,59 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 "sequence",
             },
         )
+
+    def test_offline_resolver_fence_refuses_unguarded_lookup_and_nested_mocks(
+        self,
+    ) -> None:
+        host = "api.openrouter.ai"
+        lookups = (
+            ("getaddrinfo", lambda: socket.getaddrinfo(host, 443)),
+            ("gethostbyname", lambda: socket.gethostbyname(host)),
+            ("gethostbyname_ex", lambda: socket.gethostbyname_ex(host)),
+            ("gethostbyaddr", lambda: socket.gethostbyaddr(host)),
+            ("getfqdn", lambda: socket.getfqdn(host)),
+            ("getnameinfo", lambda: socket.getnameinfo((host, 443), 0)),
+        )
+        fence_audit_count = _OFFLINE_DNS_FENCE.audit_count()
+        for resolver_name, lookup in lookups:
+            with self.subTest(resolver=resolver_name):
+                fence_lookup_count = _OFFLINE_DNS_FENCE.lookup_count()
+                continued_after_refusal = False
+                try:
+                    lookup()
+                except socket.gaierror:
+                    continued_after_refusal = True
+
+                self.assertTrue(continued_after_refusal)
+                self.assertEqual(
+                    _OFFLINE_DNS_FENCE.lookup_count(), fence_lookup_count + 1
+                )
+        self.assertEqual(_OFFLINE_DNS_FENCE.audit_count(), fence_audit_count)
+        self._expected_offline_dns_refusals += len(lookups)
+
+        with patch.object(socket, "create_connection"):
+            with self.assertRaisesRegex(AssertionError, "cannot be replaced"):
+                with patch.object(socket, "getaddrinfo"):
+                    pass
+            with self.assertRaisesRegex(AssertionError, "cannot be replaced"):
+                with patch("socket.getaddrinfo"):
+                    pass
+            with self.assertRaisesRegex(AssertionError, "cannot be replaced"):
+                with _RAW_PATCH_OBJECT(socket, "getaddrinfo"):
+                    pass
+
+        audit_count = _OFFLINE_DNS_FENCE.audit_count()
+        with self.assertRaises(socket.gaierror):
+            sys.audit(
+                "socket.getaddrinfo",
+                "api.openrouter.ai",
+                443,
+                socket.AF_UNSPEC,
+                socket.SOCK_STREAM,
+                0,
+            )
+        self.assertEqual(_OFFLINE_DNS_FENCE.audit_count(), audit_count + 1)
+        self._expected_dns_audit_events += 1
 
     def test_startup_diagnostic_stubs_ordered_tasks_and_records_nested_call_sites(self) -> None:
         sandbox = self._fake_sandbox()
