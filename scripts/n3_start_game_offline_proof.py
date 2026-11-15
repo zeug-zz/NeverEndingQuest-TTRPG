@@ -497,6 +497,35 @@ def _exception_failure_origin(
     }
 
 
+def _process_launch_refusal_origin(
+    caller_frame: Any, sandbox_root: Optional[Path]
+) -> dict[str, Any]:
+    """Identify a process-launch caller only through the fixed source allowlist."""
+    try:
+        code = getattr(caller_frame, "f_code", None)
+        filename = code.co_filename if isinstance(code, CodeType) else None
+        line_number = getattr(caller_frame, "f_lineno", None)
+        source = _safe_exception_source_identifier(
+            filename, sandbox_root, _known_installed_package_roots()
+        )
+    except BaseException:
+        source = None
+        line_number = None
+
+    if (
+        source is None
+        or isinstance(line_number, bool)
+        or not isinstance(line_number, int)
+        or not 1 <= line_number <= MAX_COUNTER
+    ):
+        return {"status": "redacted", "frames": []}
+
+    return {
+        "status": "identified",
+        "frames": [{"source": source, "line": line_number}],
+    }
+
+
 def _safe_failure_origin(value: Any) -> Optional[dict[str, Any]]:
     """Revalidate the bounded source/line-only report representation."""
     if value is None:
@@ -611,6 +640,7 @@ class ProviderCallRecorder:
         self._diagnostic_call_events: list[dict[str, Any]] = []
         self._diagnostic_stub_call_counts = {task: 0 for task in DIAGNOSTIC_TASKS}
         self._diagnostic_failure: Optional[str] = None
+        self._process_launch_refusal: Optional[dict[str, Any]] = None
         self._diagnostic_overflow = False
 
     def record_initial_narration_request(
@@ -734,13 +764,35 @@ class ProviderCallRecorder:
         del args
         raise ProviderCallBlocked("provider SDK call blocked by offline diagnostic")
 
-    def block_diagnostic_process_launch(self, *args: Any, **kwargs: Any) -> None:
+    def block_diagnostic_process_launch(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        caller_frame: Any,
+        sandbox_root: Optional[Path],
+    ) -> None:
         """Refuse native child-process creation without retaining arguments."""
         del args, kwargs
+        origin = _process_launch_refusal_origin(caller_frame, sandbox_root)
         with self._lock:
             if self._diagnostic_failure is None:
                 self._diagnostic_failure = "native child-process launch was attempted"
+            if self._process_launch_refusal is None:
+                self._process_launch_refusal = origin
         raise ProviderCallBlocked("native child-process launch blocked")
+
+    def process_launch_refusal_snapshot(self) -> Optional[dict[str, Any]]:
+        with self._lock:
+            if self._process_launch_refusal is None:
+                return None
+            return {
+                "status": self._process_launch_refusal["status"],
+                "frames": [
+                    dict(frame)
+                    for frame in self._process_launch_refusal["frames"]
+                ],
+            }
 
     def diagnostic_snapshot(
         self,
@@ -1341,6 +1393,7 @@ def _startup_diagnostic_report(
     failure_exception_class: Optional[str] = None,
     failure_category: Optional[str] = None,
     failure_origin: Any = None,
+    process_launch_refusal: Any = None,
 ) -> dict[str, Any]:
     """Build a payload-free, bounded report for the actual start_game path."""
     safe_events, event_schema_valid = _safe_diagnostic_call_events(call_events)
@@ -1466,6 +1519,7 @@ def _startup_diagnostic_report(
         "failure_exception_class": safe_failure_class,
         "failure_category": safe_failure_category,
         "failure_origin": _safe_failure_origin(failure_origin),
+        "process_launch_refusal": _safe_failure_origin(process_launch_refusal),
         "ledger_reservation_count": safe_ledger_reservations,
         "ledger_valid": bool(ledger_valid),
         "tripwire_coverage": {
@@ -3502,10 +3556,16 @@ def _install_sdk_tripwires(
 def _install_process_launch_tripwires(
     patches: AttributePatches,
     recorder: ProviderCallRecorder,
+    sandbox_root: Optional[Path],
 ) -> tuple[tuple[Any, str], ...]:
     """Block Python-level child-process and process-replacement APIs."""
     def process_tripwire(*args: Any, **kwargs: Any) -> None:
-        recorder.block_diagnostic_process_launch(*args, **kwargs)
+        recorder.block_diagnostic_process_launch(
+            args,
+            kwargs,
+            caller_frame=sys._getframe(1),
+            sandbox_root=sandbox_root,
+        )
 
     targets: list[tuple[Any, str]] = [
         (subprocess, "Popen"),
@@ -4121,7 +4181,7 @@ def run_startup_diagnostic(
         egress_guard.assert_active()
         egress_guard_active = True
         process_launch_targets = _install_process_launch_tripwires(
-            patches, recorder
+            patches, recorder, sandbox
         )
 
         diagnostic_stage = "provider_budget_setup"
@@ -4574,6 +4634,7 @@ def run_startup_diagnostic(
         failure_exception_class=failure_exception_class,
         failure_category=failure_category,
         failure_origin=failure_origin,
+        process_launch_refusal=recorder.process_launch_refusal_snapshot(),
     )
     if runtime_alive or (new_live_threads and not isolated_worker):
         report["verdict"] = "BLOCKED"

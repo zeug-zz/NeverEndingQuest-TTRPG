@@ -372,7 +372,13 @@ class FakeClient:
                         model_tier="simple",
                     )
                 if getattr(self.web_module, "process_launch", False):
-                    proof.subprocess.run(["must-not-run"])
+                    process_args = getattr(
+                        self.web_module, "process_launch_args", (["must-not-run"],)
+                    )
+                    process_kwargs = getattr(
+                        self.web_module, "process_launch_kwargs", {}
+                    )
+                    proof.subprocess.run(*process_args, **process_kwargs)
                 if getattr(self.web_module, "diagnostic_provider_call", False):
                     self.web_module.chat_completions.Completions.create(
                         model="private-model", prompt="private-sdk-prompt"
@@ -518,6 +524,8 @@ class FakeHostImporter:
             diagnostic_router_tasks=["action_prediction", "dm_main"],
             diagnostic_provider_call=False,
             process_launch=False,
+            process_launch_args=(["must-not-run"],),
+            process_launch_kwargs={},
         )
         self.web_module.user_input_queue = FakeInputQueue(self.web_module)
         self.web_module.game_output_queue = queue.Queue()
@@ -1712,6 +1720,149 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                     "private-model",
                 ):
                     self.assertNotIn(private_value, serialized)
+
+    def test_startup_diagnostic_process_refusal_never_spawns_or_exposes_args(
+        self,
+    ) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        importer.web_module.process_launch = True
+        importer.web_module.process_launch_args = (
+            [
+                "N3_COMMAND_SECRET_SENTINEL",
+                "N3_ARGUMENT_SECRET_SENTINEL",
+            ],
+        )
+        importer.web_module.process_launch_kwargs = {
+            "cwd": "/N3_PATH_SECRET_SENTINEL",
+            "env": {"PRIVATE_KEY": "N3_ENV_SECRET_SENTINEL"},
+        }
+
+        with patch.object(proof.subprocess, "run") as underlying_spawn:
+            report = proof.run_startup_diagnostic(
+                sandbox_root=sandbox,
+                run_id="startup-diagnostic-process-refusal",
+                output_dir=self.scratch / "startup-diagnostic-process-refusal",
+                startup_timeout=0.5,
+                host_importer=importer,
+            )
+            underlying_spawn.assert_not_called()
+
+        self.assertEqual(report["verdict"], "BLOCKED")
+        self.assertEqual(report["failure_category"], "process_launch_blocked")
+        self.assertEqual(
+            report["failure_exception_class"], "ProviderCallBlocked"
+        )
+        self.assertEqual(report["router_call_count"], 2)
+        self.assertEqual(report["provider_call_count"], 0)
+        self.assertEqual(report["network_attempt_count"], 0)
+        self.assertEqual(report["process_launch_refusal"], {
+            "status": "redacted",
+            "frames": [],
+        })
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn(str(sandbox), serialized)
+        for private_value in (
+            "N3_COMMAND_SECRET_SENTINEL",
+            "N3_ARGUMENT_SECRET_SENTINEL",
+            "N3_PATH_SECRET_SENTINEL",
+            "N3_ENV_SECRET_SENTINEL",
+            "PRIVATE_KEY",
+            "native child-process launch blocked",
+        ):
+            self.assertNotIn(private_value, serialized)
+
+    def test_process_launch_tripwire_attributes_only_fixed_allowlisted_source(
+        self,
+    ) -> None:
+        sandbox = self._fake_sandbox()
+        recorder = proof.ProviderCallRecorder(diagnostic_mode=True)
+        patches = proof.AttributePatches()
+        command = ["N3_COMMAND_SECRET_SENTINEL", "N3_ARGUMENT_SECRET_SENTINEL"]
+        spawn_spy = unittest_mock.Mock()
+        with patch.object(proof.subprocess, "run", spawn_spy):
+            proof._install_process_launch_tripwires(patches, recorder, sandbox)
+            try:
+                code = compile(
+                    "subprocess.run(command, cwd=working_directory, env=environment)\n",
+                    str(sandbox / "web" / "web_interface.py"),
+                    "exec",
+                )
+                with self.assertRaises(proof.ProviderCallBlocked):
+                    exec(
+                        code,
+                        {
+                            "subprocess": proof.subprocess,
+                            "command": command,
+                            "working_directory": "/N3_PATH_SECRET_SENTINEL",
+                            "environment": {
+                                "PRIVATE_KEY": "N3_ENV_SECRET_SENTINEL"
+                            },
+                        },
+                    )
+                refusal = recorder.process_launch_refusal_snapshot()
+                self.assertEqual(
+                    refusal,
+                    {
+                        "status": "identified",
+                        "frames": [
+                            {"source": "web/web_interface.py", "line": 1}
+                        ],
+                    },
+                )
+                report = proof._startup_diagnostic_report(
+                    call_events=[],
+                    stub_call_counts={},
+                    router_calls=0,
+                    provider_calls=0,
+                    network_attempts=0,
+                    ledger_reservations=0,
+                    ledger_valid=True,
+                    startup_output_delivered=False,
+                    game_started=False,
+                    startup_thread_stopped=True,
+                    diagnostic_failure=(
+                        "native child-process launch was attempted"
+                    ),
+                    call_overflow=False,
+                    router_call_guard=True,
+                    router_decide_guard=True,
+                    sdk_tripwire_count=1,
+                    egress_guard_active=True,
+                    process_launch_guard=True,
+                    host_imports_verified=True,
+                    startup_boundary_guard_active=True,
+                    egress_refusals=[],
+                    egress_refusal_count=0,
+                    process_launch_refusal=refusal,
+                )
+                self.assertEqual(report["verdict"], "BLOCKED")
+                self.assertEqual(
+                    report["process_launch_refusal"],
+                    {
+                        "status": "identified",
+                        "frames": [
+                            {"source": "web/web_interface.py", "line": 1}
+                        ],
+                    },
+                )
+            finally:
+                patches.restore()
+            spawn_spy.assert_not_called()
+
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn(str(sandbox), serialized)
+        for private_value in (
+            "N3_COMMAND_SECRET_SENTINEL",
+            "N3_ARGUMENT_SECRET_SENTINEL",
+            "N3_PATH_SECRET_SENTINEL",
+            "N3_ENV_SECRET_SENTINEL",
+            "PRIVATE_KEY",
+        ):
+            self.assertNotIn(private_value, serialized)
 
     def test_egress_attribution_is_relative_bounded_and_deduplicated(self) -> None:
         sandbox = self._fake_sandbox()
