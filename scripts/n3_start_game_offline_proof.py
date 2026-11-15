@@ -605,6 +605,29 @@ def _address_parts(address: Any) -> tuple[Any, Any]:
     return address, None
 
 
+def _is_ipv6_loopback_ephemeral_bind(sock: Any, address: Any) -> bool:
+    if getattr(sock, "family", None) != getattr(socket, "AF_INET6", None):
+        return False
+    host, port = _address_parts(address)
+    if _safe_port(port) != 0:
+        return False
+    if isinstance(host, bytes):
+        try:
+            host = host.decode("ascii")
+        except UnicodeDecodeError:
+            return False
+    if not isinstance(host, str):
+        return False
+    try:
+        parsed_host = ipaddress.ip_address(host.strip().strip("[]"))
+    except ValueError:
+        return False
+    return (
+        isinstance(parsed_host, ipaddress.IPv6Address)
+        and parsed_host == ipaddress.IPv6Address("::1")
+    )
+
+
 def _hostname_class(host: Any) -> str:
     if isinstance(host, bytes):
         try:
@@ -1770,7 +1793,14 @@ class EgressGuard:
         original = self._originals[(socket.socket, method_name)]
         if self._deny_loopback:
             host, port = _address_parts(address)
-            host_class = self._record(host, port, record_loopback=True)
+            try:
+                host_class = self._record(host, port, record_loopback=True)
+            except EgressBlocked:
+                if _is_ipv6_loopback_ephemeral_bind(sock, address):
+                    raise PermissionError(
+                        errno.EPERM, "socket bind destination refused"
+                    ) from None
+                raise
             if host_class == "non_loopback":
                 raise EgressBlocked("socket bind destination refused")
         return original(sock, address)

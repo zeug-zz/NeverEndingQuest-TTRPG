@@ -328,6 +328,10 @@ class FakeSocket:
     family = socket.AF_INET
 
 
+class FakeIPv6Socket:
+    family = socket.AF_INET6
+
+
 class FakeInputQueue:
     def __init__(self, web_module: Any) -> None:
         self.web_module = web_module
@@ -1099,7 +1103,74 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
                 socket.socket.bind(FakeSocket(), ("127.0.0.1", 8360))
             with self.assertRaises(proof.EgressBlocked):
                 socket.socket.listen(FakeSocket(), 1)
-        self.assertEqual(guard.attempt_count(), 7)
+            with self.assertRaises(ConnectionRefusedError):
+                socket.socket.connect(FakeSocket(), ("198.51.100.24", 8361))
+        self.assertEqual(guard.attempt_count(), 8)
+
+    def test_ipv6_loopback_bind_probe_raises_oserror_without_binding(self) -> None:
+        guard = proof.EgressGuard(deny_loopback=True)
+        with patch.object(socket.socket, "bind") as bind_spy:
+            with guard:
+                continued_after_refusal = False
+                try:
+                    socket.socket.bind(FakeIPv6Socket(), ("::1", 0))
+                except OSError as exc:
+                    continued_after_refusal = True
+                    self.assertEqual(exc.errno, errno.EPERM)
+
+                self.assertTrue(continued_after_refusal)
+            bind_spy.assert_not_called()
+
+        self.assertEqual(guard.attempt_count(), 1)
+        self.assertEqual(
+            guard.snapshot(),
+            [{"host_class": "loopback", "port": 0}],
+        )
+        refusals, refusal_count = guard.refusal_snapshot()
+        self.assertEqual(refusal_count, 1)
+        self.assertEqual(len(refusals), 1)
+        refusal = refusals[0]
+        self.assertEqual(refusal["hostname"], "::1")
+        self.assertEqual(refusal["port"], 0)
+        self.assertEqual(refusal["thread_id"], proof.threading.get_ident())
+        self.assertEqual(refusal["thread_class"], "main")
+        self.assertRegex(
+            refusal["call_site"],
+            r"^scripts/test_n3_start_game_offline_proof.py:[1-9][0-9]*$",
+        )
+
+        report_args = {
+            "call_events": [],
+            "stub_call_counts": {},
+            "router_calls": 0,
+            "provider_calls": 0,
+            "network_attempts": 1,
+            "ledger_reservations": 0,
+            "ledger_valid": True,
+            "startup_output_delivered": False,
+            "game_started": False,
+            "startup_thread_stopped": True,
+            "diagnostic_failure": None,
+            "call_overflow": False,
+            "router_call_guard": True,
+            "router_decide_guard": True,
+            "sdk_tripwire_count": 1,
+            "egress_guard_active": True,
+            "process_launch_guard": True,
+            "host_imports_verified": True,
+            "startup_boundary_guard_active": True,
+            "egress_refusals": refusals,
+            "egress_refusal_count": refusal_count,
+        }
+        complete_report = proof._startup_diagnostic_report(**report_args)
+        self.assertTrue(complete_report["egress_refusal_coverage_complete"])
+        self.assertTrue(complete_report["coverage_established"])
+
+        incomplete_refusal = dict(refusal, call_site="unavailable")
+        report_args["egress_refusals"] = [incomplete_refusal]
+        incomplete_report = proof._startup_diagnostic_report(**report_args)
+        self.assertFalse(incomplete_report["egress_refusal_coverage_complete"])
+        self.assertFalse(incomplete_report["coverage_established"])
 
     def test_startup_worker_environment_drops_ambient_credentials_and_path(self) -> None:
         with patch.dict(
