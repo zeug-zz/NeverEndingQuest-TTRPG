@@ -1268,6 +1268,253 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         )
         self.assertEqual(written, report)
 
+    def test_host_import_failure_reports_safe_source_and_line_only(self) -> None:
+        sandbox = self._fake_sandbox()
+        base_importer = FakeHostImporter(sandbox)
+        sentinel_secret = "N3-IMPORT-SECRET-SENTINEL"
+        message_reads: list[bool] = []
+
+        class HostileImportError(ImportError):
+            def __str__(self) -> str:
+                message_reads.append(True)
+                return sentinel_secret
+
+        def host_importer(name: str) -> Any:
+            if name == "web.web_interface":
+                code = compile(
+                    "raise HostileImportError(secret)",
+                    str(sandbox / "web" / "web_interface.py"),
+                    "exec",
+                )
+                exec(
+                    code,
+                    {
+                        "HostileImportError": HostileImportError,
+                        "secret": sentinel_secret,
+                    },
+                )
+            return base_importer(name)
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-safe-import-origin",
+            output_dir=self.scratch / "startup-diagnostic-safe-import-origin",
+            startup_timeout=0.2,
+            host_importer=host_importer,
+        )
+
+        self.assertEqual(report["failure_exception_class"], "HostileImportError")
+        self.assertEqual(report["failure_category"], "host_import_failed")
+        origin = report["failure_origin"]
+        self.assertEqual(origin["status"], "identified")
+        self.assertIn(
+            {"source": "web/web_interface.py", "line": 1},
+            origin["frames"],
+        )
+        self.assertLessEqual(len(origin["frames"]), proof.MAX_FAILURE_ORIGIN_FRAMES)
+        self.assertEqual(message_reads, [])
+        serialized = json.dumps(report, ensure_ascii=True, sort_keys=True)
+        self.assertNotIn(sentinel_secret, serialized)
+        self.assertNotIn(str(sandbox), serialized)
+        self.assertNotIn("config.py", serialized)
+
+    def test_exception_origin_redacts_hostile_paths_and_bounds_fallbacks(self) -> None:
+        sandbox = self._fake_sandbox()
+        sentinel_secret = "N3-TRACEBACK-SECRET-SENTINEL"
+
+        def origin_for_only_frame(filename: str) -> dict[str, Any]:
+            try:
+                exec(
+                    compile(
+                        "raise ImportError(secret)",
+                        filename,
+                        "exec",
+                    ),
+                    {"secret": sentinel_secret},
+                )
+            except ImportError as exc:
+                tb = exc.__traceback__
+                while tb is not None and tb.tb_next is not None:
+                    tb = tb.tb_next
+                exc.__traceback__ = tb
+                return proof._exception_failure_origin(exc, sandbox)
+            raise AssertionError("synthetic import error did not occur")
+
+        hostile_path = "/untrusted/" + sentinel_secret + "/config.py"
+        redacted = origin_for_only_frame(hostile_path)
+        self.assertEqual(redacted, {"status": "redacted", "frames": []})
+        serialized_redacted = json.dumps(redacted, ensure_ascii=True)
+        self.assertNotIn(sentinel_secret, serialized_redacted)
+        self.assertNotIn("/untrusted", serialized_redacted)
+        self.assertNotIn("config.py", serialized_redacted)
+
+        sandbox_filename_sentinel = "N3OpaqueOrigin731"
+        sandbox_origin = origin_for_only_frame(
+            str(sandbox / (sandbox_filename_sentinel + ".py"))
+        )
+        self.assertEqual(sandbox_origin, {"status": "redacted", "frames": []})
+
+        installed_roots = proof._known_installed_package_roots()
+        package_origin: dict[str, Any] | None = None
+        if installed_roots:
+            package_origin = origin_for_only_frame(
+                str(Path(installed_roots[0]) / (sandbox_filename_sentinel + ".py"))
+            )
+            self.assertEqual(
+                package_origin, {"status": "redacted", "frames": []}
+            )
+
+        for origin in (sandbox_origin, package_origin):
+            if origin is None:
+                continue
+            serialized_origin = json.dumps(origin, ensure_ascii=True)
+            self.assertNotIn(sandbox_filename_sentinel, serialized_origin)
+            safe_report = proof._startup_diagnostic_report(
+                call_events=[],
+                stub_call_counts={},
+                router_calls=0,
+                provider_calls=0,
+                network_attempts=0,
+                ledger_reservations=0,
+                ledger_valid=True,
+                startup_output_delivered=False,
+                game_started=False,
+                startup_thread_stopped=True,
+                diagnostic_failure=None,
+                call_overflow=False,
+                router_call_guard=True,
+                router_decide_guard=True,
+                sdk_tripwire_count=1,
+                egress_guard_active=True,
+                failure_exception_class="ImportError",
+                failure_category="host_import_failed",
+                failure_origin=origin,
+            )
+            self.assertNotIn(
+                sandbox_filename_sentinel,
+                json.dumps(safe_report, ensure_ascii=True, sort_keys=True),
+            )
+
+        unknown = proof._exception_failure_origin(
+            ImportError(sentinel_secret), sandbox
+        )
+        self.assertEqual(unknown, {"status": "unknown", "frames": []})
+
+        next_frame: Any = None
+        allowed_sources = (
+            "main.py",
+            "web/web_interface.py",
+            "utils/llm_router.py",
+            "utils/ai_client_factory.py",
+            "utils/provider_attempt_budget.py",
+            "utils/version_checker.py",
+            "model_config.py",
+        )
+        frame_count = proof.MAX_FAILURE_ORIGIN_FRAMES + 4
+        for index in range(frame_count):
+            identifier = allowed_sources[index % len(allowed_sources)]
+            source_path = sandbox.joinpath(*identifier.split("/"))
+            namespace: dict[str, Any] = {"secret": sentinel_secret}
+            statement = "raise ImportError(secret)"
+            if next_frame is not None:
+                namespace["next_frame"] = next_frame
+                statement = "next_frame()"
+            code = compile(
+                "def frame():\n    " + statement + "\n",
+                str(source_path),
+                "exec",
+            )
+            exec(code, namespace)
+            next_frame = namespace["frame"]
+
+        try:
+            next_frame()
+        except ImportError as exc:
+            bounded = proof._exception_failure_origin(exc, sandbox)
+        else:
+            raise AssertionError("bounded synthetic import error did not occur")
+        self.assertEqual(bounded["status"], "identified")
+        self.assertEqual(
+            len(bounded["frames"]), proof.MAX_FAILURE_ORIGIN_FRAMES
+        )
+        self.assertTrue(
+            all(
+                not frame["source"].startswith("/")
+                and frame["source"].endswith(".py")
+                for frame in bounded["frames"]
+            )
+        )
+        self.assertLessEqual(len(json.dumps(bounded, ensure_ascii=True)), 1400)
+
+        oversized = proof._safe_failure_origin(
+            {
+                "status": "identified",
+                "frames": [
+                    {"source": "a" * 178 + ".py", "line": 1},
+                    {"source": "safe.py", "line": proof.MAX_COUNTER + 1},
+                ],
+            }
+        )
+        self.assertEqual(oversized, {"status": "redacted", "frames": []})
+
+    def test_exception_origin_accepts_fixed_package_identifiers_only(self) -> None:
+        installed_roots = proof._known_installed_package_roots()
+        if not installed_roots:
+            self.skipTest("interpreter has no configured package installation root")
+
+        sandbox = self._fake_sandbox()
+        package_filename = str(
+            Path(installed_roots[0]) / "flask" / "app.py"
+        )
+        try:
+            exec(
+                compile("raise ImportError('synthetic')", package_filename, "exec"),
+                {},
+            )
+        except ImportError as exc:
+            tb = exc.__traceback__
+            while tb is not None and tb.tb_next is not None:
+                tb = tb.tb_next
+            exc.__traceback__ = tb
+            origin = proof._exception_failure_origin(exc, sandbox)
+        else:
+            raise AssertionError("synthetic package import error did not occur")
+
+        self.assertEqual(origin["status"], "identified")
+        self.assertEqual(
+            origin["frames"],
+            [
+                {
+                    "source": "site-packages/flask/app.py",
+                    "line": 1,
+                }
+            ],
+        )
+        self.assertNotIn(
+            installed_roots[0], json.dumps(origin, ensure_ascii=True)
+        )
+
+    def test_non_import_startup_failure_has_no_exception_origin(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        importer.web_module.diagnostic_router_tasks = [
+            "action_prediction",
+            "unexpected_task",
+        ]
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-non-import-failure",
+            output_dir=self.scratch / "startup-diagnostic-non-import-failure",
+            startup_timeout=0.3,
+            host_importer=importer,
+        )
+
+        self.assertEqual(report["failure_exception_class"], "ProviderCallBlocked")
+        self.assertEqual(report["failure_category"], "router_call_blocked")
+        self.assertIsNone(report["failure_origin"])
+
     def test_early_startup_failure_preserves_individual_tripwire_status(self) -> None:
         sandbox = self._fake_sandbox()
         importer = FakeHostImporter(sandbox, fail_name="web.web_interface")
