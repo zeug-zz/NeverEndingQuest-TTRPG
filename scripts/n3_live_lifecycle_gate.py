@@ -241,6 +241,7 @@ _DIAGNOSTIC_REASON_CODES = frozenset(
         "preflight_infrastructure_failures",
         "preflight_report_invalid",
         "preflight_report_missing",
+        "precheck_unproven",
         "provider_ledger_identity_mismatch",
         "provider_ledger_invalid",
         "provider_ledger_missing_or_invalid",
@@ -1444,6 +1445,7 @@ def _result_with_failure_diagnostic(
     *,
     gate_step: str,
     exception: BaseException | None = None,
+    response: object | None = None,
 ) -> "RowExecutionResult":
     observed = dict(result.observed)
     if _valid_failure_diagnostic(observed.get("failure_diagnostic")):
@@ -1461,6 +1463,7 @@ def _result_with_failure_diagnostic(
         gate_step=gate_step,
         reason=result.reason,
         exception=exception,
+        response=response,
     )
     return RowExecutionResult(
         result.verdict,
@@ -1830,9 +1833,13 @@ class L02IdentityInitExecutor:
                 or type(first_status.get("identity_up_invocations")) is not int
                 or first_status.get("identity_up_invocations") != 1
             ):
-                return _failed(
-                    "identity_initialization_contract_failed",
-                    observed=_host_api_observation(first),
+                return _result_with_failure_diagnostic(
+                    _failed(
+                        "identity_initialization_contract_failed",
+                        observed=_host_api_observation(first),
+                    ),
+                    gate_step="l02_identity_init",
+                    response=first,
                 )
 
             companion_path = _companion_path(context)
@@ -1866,9 +1873,13 @@ class L02IdentityInitExecutor:
                 or type(second_status.get("identity_up_invocations")) is not int
                 or second_status.get("identity_up_invocations") != 1
             ):
-                return _failed(
-                    "identity_initialization_not_idempotent",
-                    observed=_host_api_observation(second),
+                return _result_with_failure_diagnostic(
+                    _failed(
+                        "identity_initialization_not_idempotent",
+                        observed=_host_api_observation(second),
+                    ),
+                    gate_step="l02_identity_init",
+                    response=second,
                 )
             return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
@@ -8222,8 +8233,11 @@ class LiveGateRunner:
                 self.teardown["identity_cleanup_result"] = "postcheck_unavailable"
                 return False
             self.teardown["identity_cleanup_observations"] = postchecks
-            if any(item["state"] != "absent" for item in postchecks):
+            if any(item["state"] == "present" for item in postchecks):
                 self.teardown["identity_cleanup_result"] = "residual_resource_found"
+                return False
+            if any(item["state"] != "absent" for item in postchecks):
+                self.teardown["identity_cleanup_result"] = "postcheck_unavailable"
                 return False
             self.teardown["identity_cleanup_result"] = "verified_absent"
             return True

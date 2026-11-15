@@ -31,6 +31,7 @@ from unittest.mock import patch
 
 import scripts.n3_lifecycle_gate as preflight_gate
 import scripts.n3_live_lifecycle_gate as gate
+from web.extensions.opentunnel_sharing import identity_bootstrap
 import web.extensions.opentunnel_sharing.profile_state as profile_state_module
 from web.extensions.opentunnel_sharing.cleanup import (
     OwnedProcessRecord,
@@ -2143,7 +2144,15 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 "status_state",
                 "identity_initialized",
                 "identity_up_invocations",
+                "failure_diagnostic",
             },
+        )
+        self.assertEqual(
+            result.observed["failure_diagnostic"]["reason_code"],
+            "identity_bootstrap_failed",
+        )
+        self.assertEqual(
+            result.observed["failure_diagnostic"]["http_status"], 503
         )
         self.assertNotIn(secret, repr(result.observed))
 
@@ -5058,6 +5067,116 @@ ACTIVE_PROFILE = "n3-luna"
                     r"^scripts/(?:n3_live_lifecycle_gate|test_n3_live_lifecycle_gate)\.py:[1-9][0-9]*$",
                 )
 
+    def test_l02_409_response_diagnostic_reaches_persisted_observation(self) -> None:
+        message_secret = "precheck-message-secret-sentinel"
+        payload_secret = "precheck-payload-secret-sentinel"
+
+        class PrecheckUnprovenApi:
+            def get_status(
+                self, *, timeout_seconds: float | None = None
+            ) -> gate.HostApiResponse:
+                return gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "status": {
+                            "state": "off",
+                            "identity_initialized": False,
+                            "identity_up_invocations": 0,
+                            "companion_launches": 0,
+                        },
+                    },
+                )
+
+            def post(
+                self,
+                action: str,
+                payload: Mapping[str, object] | None = None,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> gate.HostApiResponse:
+                if action == "initialize-identity":
+                    return gate.HostApiResponse(
+                        409,
+                        {
+                            "ok": False,
+                            "reason": "precheck_unproven",
+                            "message": message_secret,
+                            "payload": {"private_detail": payload_secret},
+                        },
+                    )
+                return gate.HostApiResponse(
+                    200, {"ok": True, "reason": "stopped"}
+                )
+
+        registry = dict(self.pass_registry)
+        registry["L02"] = gate.L02IdentityInitExecutor()
+        dependencies = self.make_dependencies(
+            executors=registry,
+            api=PrecheckUnprovenApi(),
+        )
+        # This regression covers L02 diagnostics and persistence, not recovery
+        # of an unconfirmed native companion request.
+        with (
+            patch.object(
+                gate.LiveGateRunner,
+                "_wait_for_unconfirmed_companion_post",
+                return_value=True,
+            ),
+            patch.object(
+                gate.LiveGateRunner,
+                "_clean_unconfirmed_companion_identity",
+                return_value=True,
+            ),
+        ):
+            result = gate.run_live_gate(dependencies, self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "FAIL")
+        l02_result = result["rows"][1]
+        self.assertEqual(l02_result["row_id"], "L02")
+        self.assertEqual(l02_result["verdict"], "FAIL")
+        self.assertEqual(
+            l02_result["reason"], "identity_initialization_contract_failed"
+        )
+
+        evidence = self.root / result["evidence_path"]
+        persisted_rows = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        persisted_l02 = persisted_rows[1]
+        self.assertEqual(persisted_l02["row_id"], "L02")
+        self.assertEqual(persisted_l02["verdict"], "FAIL")
+        self.assertEqual(
+            persisted_l02["reason"], "identity_initialization_contract_failed"
+        )
+        observed = persisted_l02["observed"]
+        self.assertEqual(observed["http_status"], 409)
+        self.assertEqual(observed["reason"], "precheck_unproven")
+        diagnostic = observed["failure_diagnostic"]
+        self.assertEqual(diagnostic["reason_code"], "precheck_unproven")
+        self.assertEqual(diagnostic["http_status"], 409)
+        self.assertEqual(diagnostic["category"], "row_assertion")
+        self.assertEqual(
+            set(diagnostic),
+            {
+                "category",
+                "exception_class",
+                "gate_step",
+                "http_status",
+                "reason_code",
+                "raising_frame",
+                "raising_frame_available",
+            },
+        )
+        for artifact in evidence.iterdir():
+            if artifact.is_file():
+                content = artifact.read_text(encoding="utf-8")
+                self.assertNotIn(message_secret, content)
+                self.assertNotIn(payload_secret, content)
+
     def test_row_helper_exception_diagnostic_reaches_persisted_observation(self) -> None:
         class FailingPortInspector:
             def inspect(self, _port: int) -> preflight_gate.PortObservation:
@@ -5496,6 +5615,173 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertTrue(runner.teardown["gate_state_root_removed"])
         self.assertNotIn(secret, repr(runner.teardown))
+
+    def test_unconfirmed_teardown_uses_launchctl_parser_and_fails_closed(self) -> None:
+        unrelated_lines = (
+            "unrelated section line\n"
+            * (identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES + 1)
+        )
+        oversized_unrelated_output = (
+            "gui = {\n"
+            "\tservices = {\n"
+            "\t\t   64868      1 \tcom.apple.example\n"
+            "\t}\n"
+            "\tdisabled services = {\n"
+            "\t}\n"
+            "}\n"
+            + unrelated_lines
+        )
+        self.assertGreater(
+            len(oversized_unrelated_output),
+            identity_bootstrap.MAX_COMMAND_OUTPUT_CHARS,
+        )
+        self.assertGreater(
+            len(oversized_unrelated_output.splitlines()),
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES,
+        )
+        self.assertLess(
+            len(oversized_unrelated_output.encode("utf-8")),
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES,
+        )
+
+        class LaunchctlOutputRunner:
+            def __init__(self, output: str) -> None:
+                self.output = output
+                self.calls: list[
+                    tuple[tuple[str, ...], dict[str, str], float]
+                ] = []
+
+            def __call__(
+                self,
+                argv: tuple[str, ...],
+                environment: Mapping[str, str],
+                timeout: float,
+            ) -> gate.RunResult:
+                self.calls.append((tuple(argv), dict(environment), timeout))
+                return gate.RunResult(0, self.output)
+
+        def run_teardown(output: str):
+            service = FakePublicService()
+            companion_runner = FakeIdentityCommandRunner()
+            context, api, _ports, _table = self.make_owned_lifecycle_context(
+                service, companion_runner=companion_runner
+            )
+            context.public_client.bind_invitation(service.accepted_origin)
+            # Keep the production default factory to exercise actual wiring.
+            context.identity_observer_factory = (
+                self.dependencies.identity_observer_factory
+            )
+            context.companion_start_post_attempted = True
+            context.companion_start_post_unconfirmed = True
+            context.companion_start_post_action = "start"
+            api.status = {
+                "state": "ready",
+                "identity_initialized": True,
+                "identity_up_invocations": 1,
+                "companion_launches": 1,
+            }
+
+            host = context.host
+            original_stop = host.stop
+
+            def stop_host() -> bool:
+                stopped = original_stop()
+                self.ports.host_pid = None
+                return stopped
+
+            host.stop = stop_host
+            self.ports.host_pid = host.owner_pid
+
+            arguments = gate.RunArguments(
+                run_id=context.run_id,
+                sha=self.sha,
+                booking_id=self.booking_id,
+                preflight_report=self.report_argument,
+            )
+            runner = gate.LiveGateRunner(self.dependencies, arguments)
+            runner.host = host
+            runner.api = api
+            runner.context = context
+            runner.host_started = True
+            runner.state_root = host.state_root
+
+            launchctl_runner = LaunchctlOutputRunner(output)
+            original_is_file = Path.is_file
+
+            def is_file(path: Path, *args: object, **kwargs: object) -> bool:
+                if path == Path("/bin/launchctl"):
+                    return True
+                return original_is_file(path, *args, **kwargs)
+
+            with (
+                patch.object(
+                    identity_bootstrap, "DefaultCommandRunner",
+                    return_value=launchctl_runner,
+                ),
+                patch.object(
+                    identity_bootstrap.process_info,
+                    "snapshot_current_user",
+                    return_value=(),
+                ),
+                patch.object(
+                    identity_bootstrap.platform, "system", return_value="Darwin"
+                ),
+                patch.object(Path, "is_file", new=is_file),
+            ):
+                runner._teardown()
+            return runner, context, launchctl_runner
+
+        safe, safe_context, safe_runner = run_teardown(oversized_unrelated_output)
+        self.assertEqual(safe.teardown["identity_cleanup_result"], "verified_absent")
+        self.assertEqual(
+            safe.teardown["identity_cleanup_observations"][0]["state"], "absent"
+        )
+        self.assertTrue(safe.teardown["gate_state_root_removed"])
+        self.assertFalse(safe_context.host.state_root.exists())
+        self.assertEqual(
+            safe_runner.calls,
+            [
+                (
+                    ("/bin/launchctl", "print", "gui/%d" % os.getuid()),
+                    {
+                        "PATH": "",
+                        "HOME": str(
+                            safe_context.host.state_root
+                            / "neq"
+                            / "opentunnel"
+                            / gate.DEFAULT_PROFILE
+                            / "data"
+                        ),
+                        "LANG": "C",
+                        "LC_ALL": "C",
+                    },
+                    10.0,
+                )
+            ],
+        )
+
+        malformed_output = (
+            "gui = {\n"
+            "\tservices = {\n"
+            "\t\t malformed row\n"
+            "\t}\n"
+            "}\n"
+        )
+        blocked, blocked_context, blocked_runner = run_teardown(malformed_output)
+        self.assertEqual(
+            blocked.teardown["identity_cleanup_result"], "postcheck_unavailable"
+        )
+        self.assertEqual(
+            blocked.teardown["identity_cleanup_observations"][0]["state"],
+            "unknown",
+        )
+        self.assertFalse(blocked.teardown["gate_state_root_removed"])
+        self.assertTrue(blocked_context.host.state_root.exists())
+        self.assertIn(
+            "unconfirmed_identity_cleanup_failed",
+            blocked.infrastructure_failures,
+        )
+        self.assertEqual(len(blocked_runner.calls), 1)
 
     def test_unsettled_unconfirmed_post_preserves_state_root_evidence(self) -> None:
         events: list[str] = []
