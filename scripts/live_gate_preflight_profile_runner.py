@@ -5181,7 +5181,7 @@ def _provider_free_client_factory(*_args: Any, **_kwargs: Any) -> None:
 
 
 def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
-    """Return explicit response strings for the observed startup router tasks.
+    """Return explicit response strings for the observed host-path router tasks.
 
     Each payload follows the consumer contract at its call site. The
     ``dm_validation`` payload uses the exact start location declared by the
@@ -5258,6 +5258,12 @@ def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
         "dm_main": (
             '{"narration":"The party pauses and takes in the scene.",'
             '"actions":[]}'
+        ),
+        # cumulative_summary.generate_location_summary calls .strip() on a
+        # plain-text adventure_summary response; it does not consume JSON.
+        "adventure_summary": (
+            "The provider-free response records the scripted conversation. "
+            "It adds no events beyond the supplied history."
         ),
         "dm_validation": json.dumps(
             {

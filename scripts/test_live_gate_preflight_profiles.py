@@ -1941,6 +1941,7 @@ class TestPreflightStubAndSafety(unittest.TestCase):
             "action_prediction",
             "combat_main",
             "dm_main",
+            "adventure_summary",
             "dm_validation",
         }
         self.assertEqual(set(payload["responses"]), expected_tasks)
@@ -1961,10 +1962,19 @@ class TestPreflightStubAndSafety(unittest.TestCase):
             payload["combat_main_repeated_responses"],
             [payload["responses"]["combat_main"]] * 2,
         )
+        adventure_summary = payload["responses"]["adventure_summary"]
+        self.assertIsInstance(adventure_summary, str)
+        self.assertEqual(
+            adventure_summary,
+            "The provider-free response records the scripted conversation. "
+            "It adds no events beyond the supplied history.",
+        )
+        self.assertEqual(adventure_summary, adventure_summary.strip())
 
         responses = {
             task: json.loads(response)
             for task, response in payload["responses"].items()
+            if task != "adventure_summary"
         }
         self.assertEqual(
             set(responses["travel_narration"]), {"travelNarration", "dmGuidance"}
