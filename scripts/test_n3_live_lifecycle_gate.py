@@ -38,8 +38,16 @@ from web.extensions.opentunnel_sharing.cleanup import (
     write_owner_record,
 )
 from web.extensions.opentunnel_sharing.identity_bootstrap import Observation
-from web.extensions.opentunnel_sharing.profile_state import prepare_profile
+from web.extensions.opentunnel_sharing.profile_state import (
+    ProfileState,
+    prepare_profile,
+)
+from web.extensions.opentunnel_sharing.service import (
+    SharingServiceStatus,
+    _initial_snapshot,
+)
 from web.extensions.player.contracts import make_snapshot_envelope
+from web.routes.player_sharing_routes import _status_projection
 
 
 TEST_SHA = "a" * 40
@@ -47,6 +55,11 @@ TEST_RUN_ID = "n3-20261111-test-run"
 TEST_BOOKING = "n3-booking-test"
 TEST_NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
 SCRATCH_ROOT = gate.REPO_ROOT / "tmp" / "n3-live-lifecycle-gate-tests"
+RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "n3_attempt11_startup_telemetry.jsonl"
+)
 
 
 class FakePortInspector:
@@ -865,6 +878,50 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         }
         return (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
 
+    def assert_single_start_game_emission(
+        self, client: FakeHostSocketClient
+    ) -> None:
+        self.assertEqual(client.emitted.count("start_game"), 1)
+        self.assertEqual(client.emitted[0], "start_game")
+        self.assertTrue(
+            all(event == "request_status" for event in client.emitted[1:])
+        )
+
+    def real_player_sharing_status_payload(
+        self, *, identity_initialized: bool = True
+    ) -> dict[str, object]:
+        """Production-recorded /api/player-sharing/status projection while
+        sharing is OFF, derived from the real service's `_initial_snapshot`
+        and the real route serializer, never hand-written to True."""
+        profile = ProfileState(state="ready", reason="ready", layout=None)
+        snapshot = _initial_snapshot(profile, identity_initialized)
+        status = SharingServiceStatus(
+            lifecycle=snapshot,
+            profile_state="ready",
+            identity_initialized=identity_initialized,
+            credential_state="absent",
+        )
+        projection = _status_projection(status)
+        assert projection is not None
+        return projection
+
+    def real_status_response_payload(
+        self,
+        *,
+        game_started: bool,
+        game_starting: bool = False,
+        is_processing: bool = False,
+        message: str = "Ready",
+    ) -> dict[str, object]:
+        """The exact Socket.IO `status_response` payload keys emitted by
+        web/web_interface.py handle_request_status."""
+        return {
+            "message": message,
+            "is_processing": is_processing,
+            "game_started": game_started,
+            "game_starting": game_starting,
+        }
+
     def prepare_l03_startup(
         self,
         context: gate.RowContext,
@@ -882,6 +939,8 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         local_runtime_ready: bool = True,
         baseline_cost: float = 0.0,
         reservation_timestamp: str | None = None,
+        error_event: bool = False,
+        use_recorded_fixture_receipts: bool = False,
     ) -> list[FakeHostSocketClient]:
         self._l03_context_counter += 1
         context.run_id = "%s-startup-%d" % (
@@ -932,23 +991,26 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "provider_free_startup_seed": True,
         }
         context.startup_input_validator = lambda _root: (checks, usage_baseline)
-        api.status_sequence = [
-            {
-                "state": "off",
-                "checks": {"local_runtime": False},
-            },
-            {
-                "state": "off",
-                "checks": {"local_runtime": local_runtime_ready},
-            },
-        ]
-        api.status = {
-            "state": "off",
-            "checks": {"local_runtime": local_runtime_ready},
-        }
+        # Production-recorded: the real /api/player-sharing/status projection
+        # while sharing is OFF never reports local_runtime True (derived from
+        # the real service's _initial_snapshot + the real route serializer;
+        # the startup readiness wait no longer reads this route at all, see
+        # the real status_response payload below).
+        real_status_payload = self.real_player_sharing_status_payload()
+        self.assertFalse(real_status_payload["checks"]["local_runtime"])
+        api.status_sequence = [dict(real_status_payload), dict(real_status_payload)]
+        api.status = dict(real_status_payload)
         clients: list[FakeHostSocketClient] = []
 
         def on_emit(event: str, client: FakeHostSocketClient) -> None:
+            if event == "request_status":
+                client.trigger(
+                    "status_response",
+                    self.real_status_response_payload(
+                        game_started=local_runtime_ready
+                    ),
+                )
+                return
             if event != "start_game":
                 return
             if reserve_attempt:
@@ -967,6 +1029,15 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                             "timestamp_utc": timestamp,
                         }
                         stream.write(json.dumps(reservation, sort_keys=True) + "\n")
+            if use_recorded_fixture_receipts:
+                with usage_path.open("ab") as stream:
+                    stream.write(RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE.read_bytes())
+                if startup_events:
+                    client.trigger("game_started")
+                    client.trigger("game_output", "narration must not be retained")
+                if error_event:
+                    client.trigger("error", {"message": "runtime start rejected"})
+                return
             with usage_path.open("ab") as stream:
                 for index, task in enumerate(receipt_tasks):
                     selected_cost = (
@@ -999,6 +1070,8 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             if startup_events:
                 client.trigger("game_started")
                 client.trigger("game_output", "narration must not be retained")
+            if error_event:
+                client.trigger("error", {"message": "runtime start rejected"})
 
         def factory(**options: object) -> FakeHostSocketClient:
             client = FakeHostSocketClient(on_emit, **options)
@@ -2279,7 +2352,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(clients[0].connect_kwargs["transports"], ["polling"])
         self.assertFalse(clients[0].options["reconnection"])
         self.assertFalse(clients[0].connect_kwargs["retry"])
-        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(clients[0])
         self.assertEqual(clients[0].disconnect_calls, 1)
         self.assertEqual(result.observed["provider_attempts_in_startup_window"], 2)
         self.assertEqual(result.observed["startup_task_receipt_count"], 2)
@@ -2526,7 +2599,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             missing.reason, "startup_provider_task_receipt_missing"
         )
-        self.assertEqual(missing_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(missing_clients[0])
 
         invalid_cases = (
             (
@@ -2573,7 +2646,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 result = gate.L03PublicAccessExecutor().execute(context)
                 self.assertEqual(result.verdict, "FAIL")
                 self.assertEqual(result.reason, expected_reason)
-                self.assertEqual(clients[0].emitted, ["start_game"])
+                self.assert_single_start_game_emission(clients[0])
 
         for label, receipt_options in (
             ("incomplete-cost", {"receipt_cost_completes": (False, True)}),
@@ -2590,7 +2663,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 self.assertEqual(
                     result.reason, "startup_narration_receipt_invalid"
                 )
-                self.assertEqual(clients[0].emitted, ["start_game"])
+                self.assert_single_start_game_emission(clients[0])
 
         outside_window_api = LifecycleFakeApi()
         outside_window_context = self.make_row_context(api=outside_window_api)
@@ -2606,7 +2679,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             outside_window.reason, "provider_attempt_outside_startup_window"
         )
-        self.assertEqual(outside_window_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(outside_window_clients[0])
 
     def test_l03_startup_cost_failures_preserve_runtime_observations(self) -> None:
         high_cost_api = LifecycleFakeApi()
@@ -2651,7 +2724,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         wrong_model = gate.L03PublicAccessExecutor().execute(wrong_model_context)
         self.assertEqual(wrong_model.reason, "startup_narration_receipt_invalid")
-        self.assertEqual(wrong_model_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(wrong_model_clients[0])
 
         extra_receipt_api = LifecycleFakeApi()
         extra_receipt_context = self.make_row_context(api=extra_receipt_api)
@@ -2667,7 +2740,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             extra_receipt.reason, "startup_provider_receipt_count_invalid"
         )
-        self.assertEqual(extra_receipt_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(extra_receipt_clients[0])
 
     def test_l03_startup_readiness_wait_is_bounded(self) -> None:
         clock = [0.0]
@@ -2685,9 +2758,134 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
         self.assertEqual(result.verdict, "BLOCKED")
         self.assertEqual(result.reason, "startup_runtime_timeout")
-        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(clients[0])
         self.assertEqual(clients[0].disconnect_calls, 1)
         self.assertGreaterEqual(clock[0], 1.0)
+        self.assertEqual(
+            result.observed,
+            {
+                "game_started_event": True,
+                "game_output_count": 1,
+                "runtime_alive": False,
+                "receipt_count": 2,
+            },
+        )
+        serialized = json.dumps(result.observed)
+        self.assertTrue(
+            all(isinstance(v, (bool, int)) for v in result.observed.values())
+        )
+        self.assertNotIn("http://", serialized)
+        self.assertNotIn("Bearer", serialized)
+
+    def test_l03_startup_succeeds_while_sharing_status_reports_local_runtime_false(
+        self,
+    ) -> None:
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api)
+        self.assertEqual(api.status["checks"]["local_runtime"], False)
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+    def test_l03_startup_completes_via_real_status_response_though_old_local_runtime_rule_would_time_out(
+        self,
+    ) -> None:
+        """Provider-free, no-companion reproduction of the N3 attempt-11
+        defect: the real /api/player-sharing/status projection (built from
+        the real PlayerSharingService._initial_snapshot plus the real route
+        serializer, never a hand-written True) and the real Socket.IO
+        status_response payload keys from handle_request_status. The startup
+        wait completes using only the status_response `game_started` signal;
+        the retired `checks.local_runtime` source never turns True across the
+        whole window, so the old rule would have blocked on
+        startup_runtime_timeout even though the runtime is alive."""
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api)
+
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+        for _ in range(5):
+            retired_status = gate._host_status(context.host_api.get_status())
+            retired_checks = (
+                retired_status.get("checks")
+                if isinstance(retired_status, Mapping)
+                else None
+            )
+            self.assertIsNotNone(retired_checks)
+            self.assertIsNot(retired_checks.get("local_runtime"), True)
+
+    def test_recorded_attempt11_startup_telemetry_matches_driver_receipt_contract(
+        self,
+    ) -> None:
+        """The telemetry preserved verbatim from live N3 attempt 11 (real
+        provider-reported costs for n3-luna) decodes through the driver's
+        real _read_usage_snapshot/_usage_receipts_after/_startup_receipt_is_valid
+        path into exactly the two ordered, valid, bounded-cost receipts the
+        startup wait requires."""
+        context = self.make_row_context()
+        sandbox = context.sandbox_root
+        usage_path = sandbox / "telemetry_log.jsonl"
+        if usage_path.exists():
+            usage_path.unlink()
+        baseline = gate._read_usage_snapshot(sandbox)
+        usage_path.write_bytes(
+            RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE.read_bytes()
+        )
+        current = gate._read_usage_snapshot(sandbox)
+        receipts = gate._usage_receipts_after(baseline, current)
+
+        self.assertEqual(len(receipts), 2)
+        self.assertEqual(
+            tuple(receipt.task for receipt in receipts), gate.STARTUP_TASKS
+        )
+        self.assertTrue(
+            all(
+                gate._startup_receipt_is_valid(receipt, expected_task)
+                for expected_task, receipt in zip(gate.STARTUP_TASKS, receipts)
+            )
+        )
+        total_cost = sum(
+            (receipt.cost_usd for receipt in receipts), Decimal("0")
+        )
+        self.assertLessEqual(total_cost, Decimal("0.05"))
+        dm_main_receipt = receipts[1]
+        self.assertEqual(dm_main_receipt.task, "dm_main")
+        self.assertEqual(dm_main_receipt.cost_provenance, "actual")
+        self.assertEqual(dm_main_receipt.cost_source, "provider_reported")
+
+    def test_l03_startup_succeeds_with_recorded_attempt11_receipts_fixture(
+        self,
+    ) -> None:
+        """Same startup-wait success path as the other L03 tests, but the
+        receipts come verbatim from the recorded attempt-11 telemetry fixture
+        instead of synthetic per-test _usage_record entries."""
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(
+            context, api, use_recorded_fixture_receipts=True
+        )
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+    def test_l03_startup_error_event_rejects_runtime_start(self) -> None:
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api, error_event=True)
+        result = gate.L03PublicAccessExecutor().execute(context)
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "game_runtime_start_rejected")
+        self.assertEqual(clients[0].emitted, ["start_game"])
 
     def test_startup_profile_and_usage_receipt_parsers_fail_closed(self) -> None:
         profile_source = b'''MODEL_PROFILES["n3-luna"] = {

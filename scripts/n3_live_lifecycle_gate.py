@@ -2309,6 +2309,18 @@ def _startup_receipt_is_valid(
     )
 
 
+def _startup_timeout_observation(
+    event_state: Mapping[str, object],
+    startup_receipts: tuple[_UsageReceipt, ...],
+) -> dict[str, object]:
+    return {
+        "game_started_event": event_state.get("game_started") is True,
+        "game_output_count": int(event_state.get("game_output") or 0),
+        "runtime_alive": event_state.get("runtime_alive") is True,
+        "receipt_count": len(startup_receipts),
+    }
+
+
 def _start_local_game_runtime(
     context: RowContext,
 ) -> tuple[dict[str, object] | None, RowExecutionResult | None]:
@@ -2353,7 +2365,12 @@ def _start_local_game_runtime(
             exception=exc,
         )
 
-    events = {"game_started": False, "error": False, "game_output": 0}
+    events = {
+        "game_started": False,
+        "error": False,
+        "game_output": 0,
+        "runtime_alive": False,
+    }
     events_lock = threading.Lock()
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -2371,6 +2388,13 @@ def _start_local_game_runtime(
         with events_lock:
             events["game_output"] = min(int(events["game_output"]) + 1, 2)
 
+    def mark_status_response(*args: object) -> None:
+        payload = args[0] if args else None
+        with events_lock:
+            events["runtime_alive"] = (
+                isinstance(payload, Mapping) and payload.get("game_started") is True
+            )
+
     try:
         on = getattr(client, "on", None)
         connect = getattr(client, "connect", None)
@@ -2381,6 +2405,7 @@ def _start_local_game_runtime(
         on("game_output", mark_output)
         on("error", mark_error)
         on("connect_error", mark_error)
+        on("status_response", mark_status_response)
         remaining = _row_remaining_seconds(context)
         startup_timeout = HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS
         if remaining is not None:
@@ -2418,43 +2443,35 @@ def _start_local_game_runtime(
         context.provider_attempt_window = (started_at, started_at)
         emit("start_game")
         latest_usage = connected_usage
-        latest_status: Mapping[str, object] | None = None
         startup_receipts: tuple[_UsageReceipt, ...] = ()
         while True:
             remaining = startup_deadline - context.monotonic()
             if remaining <= 0:
                 with events_lock:
                     event_state = dict(events)
-                status_checks = (
-                    latest_status.get("checks")
-                    if isinstance(latest_status, Mapping)
-                    else None
-                )
                 if (
                     event_state["game_started"] is True
-                    and isinstance(status_checks, Mapping)
-                    and status_checks.get("local_runtime") is True
+                    and event_state["runtime_alive"] is True
                     and len(startup_receipts) < len(STARTUP_TASKS)
                 ):
                     return None, _failed("startup_provider_task_receipt_missing")
-                return None, _blocked("startup_runtime_timeout")
+                return None, _blocked(
+                    "startup_runtime_timeout",
+                    observed=_startup_timeout_observation(
+                        event_state, startup_receipts
+                    ),
+                )
             with events_lock:
                 event_state = dict(events)
             if event_state["error"]:
                 return None, _failed("game_runtime_start_rejected")
             try:
-                response = context.host_api.get_status(
-                    timeout_seconds=min(
-                        HOST_API_TIMEOUT_SECONDS,
-                        max(0.05, remaining),
-                    )
-                )
-                latest_status = _host_status(response)
+                emit("request_status")
                 latest_usage = _read_usage_snapshot(context.sandbox_root)
                 startup_receipts = _usage_receipts_after(
                     usage_baseline, latest_usage
                 )
-            except (HostApiError, GateError):
+            except GateError:
                 return None, _blocked("startup_observation_unavailable")
             if len(startup_receipts) > len(STARTUP_TASKS):
                 return None, _failed("startup_provider_receipt_count_invalid")
@@ -2466,15 +2483,9 @@ def _start_local_game_runtime(
                 for expected_task, receipt in zip(STARTUP_TASKS, startup_receipts)
             ):
                 return None, _failed("startup_narration_receipt_invalid")
-            status_checks = (
-                latest_status.get("checks")
-                if isinstance(latest_status, Mapping)
-                else None
-            )
-            runtime_ready = (
-                isinstance(status_checks, Mapping)
-                and status_checks.get("local_runtime") is True
-            )
+            with events_lock:
+                event_state = dict(events)
+            runtime_ready = event_state["runtime_alive"] is True
             if (
                 context.monotonic() < startup_deadline
                 and event_state["game_started"] is True
@@ -2491,7 +2502,12 @@ def _start_local_game_runtime(
                     and len(startup_receipts) < len(STARTUP_TASKS)
                 ):
                     return None, _failed("startup_provider_task_receipt_missing")
-                return None, _blocked("startup_runtime_timeout")
+                return None, _blocked(
+                    "startup_runtime_timeout",
+                    observed=_startup_timeout_observation(
+                        event_state, startup_receipts
+                    ),
+                )
             context.sleep(min(HOST_RUNTIME_STARTUP_POLL_SECONDS, remaining))
 
         ended_at = datetime.now(timezone.utc)
