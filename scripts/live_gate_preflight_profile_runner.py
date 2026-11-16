@@ -1196,22 +1196,76 @@ def _validate_checkpoint_travel_exchange(
         for call in calls
         if isinstance(call, Mapping)
     ]
+    call_sequences = [call.get("sequence") for call in calls]
+    if any(type(sequence) is not int for sequence in call_sequences) or (
+        call_sequences != list(range(1, len(calls) + 1))
+    ):
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+
     expected_path = (
         ("dm_main", "main.py"),
         ("dm_main", "core/ai/transition_validator.py"),
         ("dm_validation", "main.py"),
         ("dm_main", "core/ai/action_handler.py"),
     )
-    positions: list[int] = []
-    for pair in expected_path:
-        matches = [index for index, observed in enumerate(call_pairs) if observed == pair]
-        if len(matches) != 1:
+    path_keys = (
+        "travel_action",
+        "transition_validation",
+        "gameplay_validation",
+        "transition_narration",
+    )
+    # The host performs one startup response/validation pair before the
+    # scripted travel response/validation pair. The repeated call sites are
+    # therefore accepted only in that exact startup-plus-travel shape.
+    expected_site_counts = (2, 1, 2, 1)
+    observed_site_sequences: list[list[int]] = []
+    for pair, expected_count in zip(expected_path, expected_site_counts):
+        matches = [
+            index + 1
+            for index, observed in enumerate(call_pairs)
+            if observed == pair
+        ]
+        if len(matches) != expected_count:
             raise CharacterizationError("checkpoint_travel_call_path_mismatch")
-        positions.append(matches[0])
-    if positions != sorted(positions) or any(
-        left == right for left, right in zip(positions, positions[1:])
+
+        observed_site_sequences.append(matches)
+
+    response_call_sequences = proof.get("response_call_sequences")
+    if (
+        not isinstance(response_call_sequences, Mapping)
+        or set(response_call_sequences) != set(path_keys)
+        or any(
+            type(response_call_sequences.get(key)) is not int
+            or response_call_sequences.get(key) < 1
+            for key in path_keys
+        )
+    ):
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+
+    observed_response_positions = [
+        observed_sequences[-1] for observed_sequences in observed_site_sequences
+    ]
+    if not (
+        observed_site_sequences[0][0]
+        < observed_site_sequences[2][0]
+        < observed_response_positions[0]
     ):
         raise CharacterizationError("checkpoint_travel_call_order_mismatch")
+    if observed_response_positions != sorted(observed_response_positions) or (
+        observed_response_positions
+        != list(
+            range(
+                observed_response_positions[0],
+                observed_response_positions[0] + len(expected_path),
+            )
+        )
+    ):
+        raise CharacterizationError("checkpoint_travel_call_order_mismatch")
+    if [
+        response_call_sequences[key] for key in path_keys
+    ] != observed_response_positions:
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+    expected_proof["response_call_sequences"] = dict(response_call_sequences)
     if dict(proof) != expected_proof:
         raise CharacterizationError("checkpoint_travel_proof_mismatch")
     if (
@@ -1247,6 +1301,13 @@ class _CheckpointTravelResponseResolver:
         self.gameplay_validation_responses = 0
         self.transition_validation_responses = 0
         self.transition_narration_responses = 0
+        self.call_sequence = 0
+        self.response_call_sequences: dict[str, int | None] = {
+            "travel_action": None,
+            "transition_validation": None,
+            "gameplay_validation": None,
+            "transition_narration": None,
+        }
 
     def __call__(
         self,
@@ -1257,6 +1318,8 @@ class _CheckpointTravelResponseResolver:
     ) -> Any:
         from scripts.live_gate_preflight_stub import RouterStubError
 
+        self.call_sequence += 1
+        call_sequence = self.call_sequence
         if task == "dm_main" and source_file == "main.py":
             messages = kwargs.get("messages")
             utterance = self.turn.get("utterance")
@@ -1277,6 +1340,7 @@ class _CheckpointTravelResponseResolver:
             ):
                 if self.travel_action_responses != 0:
                     raise RouterStubError("scripted travel response was already consumed")
+                self.response_call_sequences["travel_action"] = call_sequence
                 self.travel_action_responses += 1
                 return self.gameplay_response
             return None
@@ -1309,6 +1373,7 @@ class _CheckpointTravelResponseResolver:
                 or self.gameplay_validation_responses != 0
             ):
                 raise RouterStubError("gameplay validation call is out of sequence")
+            self.response_call_sequences["gameplay_validation"] = call_sequence
             self.gameplay_validation_responses += 1
             return json.dumps(
                 {
@@ -1342,6 +1407,7 @@ class _CheckpointTravelResponseResolver:
                 )
             ):
                 raise RouterStubError("transition validation call is out of sequence")
+            self.response_call_sequences["transition_validation"] = call_sequence
             self.transition_validation_responses += 1
             return self.transition_approval
 
@@ -1352,6 +1418,7 @@ class _CheckpointTravelResponseResolver:
                 or self.transition_narration_responses != 0
             ):
                 raise RouterStubError("transition narration call is out of sequence")
+            self.response_call_sequences["transition_narration"] = call_sequence
             self.transition_narration_responses += 1
             return self.transition_narration
         return None
@@ -1372,6 +1439,7 @@ class _CheckpointTravelResponseResolver:
             "target_source_location_id": self.turn.get("target_source_location_id"),
             "target_location_id": self.turn.get("target_location_id"),
             "response_counts": counts,
+            "response_call_sequences": dict(self.response_call_sequences),
             "complete": all(value == 1 for value in counts.values()),
         }
 

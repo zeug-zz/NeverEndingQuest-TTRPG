@@ -7244,6 +7244,12 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                 "transition_validation_responses": 1,
                 "transition_narration_responses": 1,
             },
+            "response_call_sequences": {
+                "travel_action": 2,
+                "transition_validation": 3,
+                "gameplay_validation": 4,
+                "transition_narration": 5,
+            },
             "complete": True,
         }
 
@@ -7262,72 +7268,92 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             state["sandbox_root"] / "party_tracker.json", state["tracker"]
         )
 
-    def test_travel_resolver_and_worker_evidence_require_one_ordered_exchange(self) -> None:
+    def test_travel_resolver_binds_actual_startup_and_travel_call_sequences(self) -> None:
         turn = {
-            "step_id": "E4-07",
-            "utterance": "We leave through the open front entrance into the village green.",
+            "step_id": "E3-01",
+            "utterance": "We follow the detour into the Old Watchtower Approach. What is around us in this second area?",
             "character": "Acheron",
-            "source_location_id": "MPV2_LOC_TAVERN",
-            "source_runtime_location_id": "MP01",
-            "target_source_location_id": "MPV2_LOC_VILLAGE_GREEN",
-            "target_location_id": "MP02",
-            "target_location_name": "Village Green",
-            "time_minutes": 5,
+            "source_location_id": "MPV2_LOC_VILLAGE_GREEN",
+            "source_runtime_location_id": "MP02",
+            "target_source_location_id": "MPV2_LOC_TOWER_APPROACH",
+            "target_location_id": "MP03",
+            "target_location_name": "Old Watchtower Approach",
+            "time_minutes": 10,
         }
         resolver = profile_runner._checkpoint_travel_response_resolver(turn)
         response = profile_runner._checkpoint_travel_response(turn)
-        self.assertIsNotNone(
-            resolver(
-                "dm_main",
-                "main.py",
-                (),
-                {
-                    "messages": [
-                        {"role": "user", "content": turn["utterance"]}
-                    ]
-                },
-            )
+        call_pairs = (
+            ("travel_narration", "core/generators/module_stitcher.py"),
+            ("safety_review", "core/generators/module_stitcher.py"),
+            ("travel_narration", "core/generators/module_stitcher.py"),
+            ("safety_review", "core/generators/module_stitcher.py"),
+            ("action_prediction", "utils/action_predictor.py"),
+            ("dm_main", "main.py"),
+            ("dm_validation", "main.py"),
+            ("action_prediction", "utils/action_predictor.py"),
+            ("dm_main", "main.py"),
+            ("dm_main", "core/ai/transition_validator.py"),
+            ("dm_validation", "main.py"),
+            ("dm_main", "core/ai/action_handler.py"),
+            ("adventure_summary", "core/ai/cumulative_summary.py"),
+            ("adventure_summary", "core/ai/cumulative_summary.py"),
+            ("adventure_summary", "core/ai/cumulative_summary.py"),
         )
-        self.assertIsNotNone(
-            resolver(
-                "dm_main",
-                "core/ai/transition_validator.py",
-                (),
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": turn["utterance"]
-                            + " "
-                            + turn["target_location_id"],
-                        }
-                    ]
-                },
-            )
-        )
-        self.assertIsNotNone(
-            resolver(
-                "dm_validation",
-                "main.py",
-                (),
-                {
-                    "messages": [
-                        {"role": "assistant", "content": response}
-                    ]
-                },
-            )
-        )
-        self.assertIsNotNone(
-            resolver("dm_main", "core/ai/action_handler.py", (), {})
+        call_kwargs = {
+            6: {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "The party pauses and takes in the scene.",
+                    }
+                ]
+            },
+            7: {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "The party pauses and takes in the scene.",
+                    }
+                ]
+            },
+            9: {
+                "messages": [
+                    {"role": "user", "content": turn["utterance"]}
+                ]
+            },
+            10: {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": turn["utterance"]
+                        + " "
+                        + turn["target_location_id"],
+                    }
+                ]
+            },
+            11: {"messages": [{"role": "assistant", "content": response}]},
+        }
+        resolved = [
+            resolver(task, source_file, (), call_kwargs.get(sequence, {}))
+            for sequence, (task, source_file) in enumerate(call_pairs, start=1)
+        ]
+        self.assertIsNone(resolved[5])
+        self.assertEqual(resolved[8], response)
+        self.assertIsNotNone(resolved[9])
+        self.assertIsNotNone(resolved[10])
+        self.assertIsNotNone(resolved[11])
+        self.assertEqual(
+            resolver.proof()["response_call_sequences"],
+            {
+                "travel_action": 9,
+                "transition_validation": 10,
+                "gameplay_validation": 11,
+                "transition_narration": 12,
+            },
         )
         calls = [
-            {"task": task, "source_file": source_file}
-            for task, source_file in (
-                ("dm_main", "main.py"),
-                ("dm_main", "core/ai/transition_validator.py"),
-                ("dm_validation", "main.py"),
-                ("dm_main", "core/ai/action_handler.py"),
-            )
+            {"sequence": sequence, "task": task, "source_file": source_file}
+            for sequence, (task, source_file) in enumerate(call_pairs, start=1)
         ]
         result = {
             "outcome": "completed",
@@ -7348,17 +7374,82 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         proof = profile_runner._validate_checkpoint_travel_exchange(
             result, travel_turn=turn, driver_exchange=driver_exchange
         )
-        self.assertEqual(proof, self._travel_proof(turn))
+        expected_proof = self._travel_proof(turn)
+        expected_proof["response_call_sequences"] = {
+            "travel_action": 9,
+            "transition_validation": 10,
+            "gameplay_validation": 11,
+            "transition_narration": 12,
+        }
+        self.assertEqual(proof, expected_proof)
 
-        result["calls"][1], result["calls"][2] = (
-            result["calls"][2],
-            result["calls"][1],
+        out_of_order = {
+            **result,
+            "calls": [dict(call) for call in result["calls"]],
+        }
+        out_of_order["calls"][9]["task"], out_of_order["calls"][9]["source_file"] = (
+            out_of_order["calls"][10]["task"],
+            out_of_order["calls"][10]["source_file"],
+        )
+        out_of_order["calls"][10]["task"], out_of_order["calls"][10]["source_file"] = (
+            result["calls"][9]["task"],
+            result["calls"][9]["source_file"],
         )
         with self.assertRaisesRegex(
             CharacterizationError, "checkpoint_travel_call_order_mismatch"
         ):
             profile_runner._validate_checkpoint_travel_exchange(
-                result, travel_turn=turn, driver_exchange=driver_exchange
+                out_of_order, travel_turn=turn, driver_exchange=driver_exchange
+            )
+
+        duplicate = {
+            **result,
+            "calls": [
+                *[dict(call) for call in result["calls"]],
+                {"sequence": 16, "task": "dm_main", "source_file": "main.py"},
+            ],
+            "call_count": 16,
+        }
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_travel_call_path_mismatch"
+        ):
+            profile_runner._validate_checkpoint_travel_exchange(
+                duplicate, travel_turn=turn, driver_exchange=driver_exchange
+            )
+
+        missing = {
+            **result,
+            "calls": [
+                {**call, "sequence": sequence}
+                for sequence, call in enumerate(
+                    (call for call in result["calls"] if call["sequence"] != 9),
+                    start=1,
+                )
+            ],
+            "call_count": len(result["calls"]) - 1,
+        }
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_travel_call_path_mismatch"
+        ):
+            profile_runner._validate_checkpoint_travel_exchange(
+                missing, travel_turn=turn, driver_exchange=driver_exchange
+            )
+
+        forged = {
+            **result,
+            "checkpoint_travel": {
+                **result["checkpoint_travel"],
+                "response_call_sequences": {
+                    **result["checkpoint_travel"]["response_call_sequences"],
+                    "travel_action": 6,
+                },
+            },
+        }
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_travel_call_path_mismatch"
+        ):
+            profile_runner._validate_checkpoint_travel_exchange(
+                forged, travel_turn=turn, driver_exchange=driver_exchange
             )
 
     def test_checkpoint_travel_resolver_rejects_out_of_order_and_duplicate_calls(
@@ -7447,6 +7538,19 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         self.assertEqual(resolver.proof()["response_counts"]["transition_validation_responses"], 1)
         self.assertFalse(resolver.proof()["complete"])
 
+        resolver = profile_runner._checkpoint_travel_response_resolver(turn)
+        self.assertIsNotNone(
+            resolver("dm_main", "main.py", (), travel_messages)
+        )
+        with self.assertRaisesRegex(
+            RouterStubError, "scripted travel response was already consumed"
+        ):
+            resolver("dm_main", "main.py", (), travel_messages)
+        self.assertEqual(
+            resolver.proof()["response_counts"]["travel_action_responses"], 1
+        )
+        self.assertFalse(resolver.proof()["complete"])
+
     def test_retained_checkpoint_attests_normalized_moved_state_and_detects_tampering(
         self,
     ) -> None:
@@ -7488,6 +7592,10 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
             self.assertEqual(attestation["row_id"], "E01")
             self.assertEqual(attestation["fixture_id"], "interior_tavern")
+            self.assertEqual(
+                attestation["travel_proof"],
+                self._travel_proof(state["travel_turn"]),
+            )
             self.assertEqual(attestation["party_size"], 1)
             self.assertEqual(attestation["arm"], "A")
             self.assertEqual(attestation["fixed_seed"], 5101)
