@@ -45,6 +45,10 @@ _KINFO_PROC_SIZE = 648
 _KINFO_PROC_P_STAT_OFFSET = 36
 _KINFO_PROC_P_PID_OFFSET = 40
 _SZOMB = 5
+# macOS SDK sys/proc.h: P_WEXIT ("Working on exiting"); offset trusted only
+# after the exact kinfo_proc size and embedded PID are validated above.
+_KINFO_PROC_P_FLAG_OFFSET = 32
+_P_WEXIT = 0x00002000
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -334,11 +338,11 @@ def _snapshot_darwin(uid: int | None = None) -> tuple[ProcessInfo, ...]:
 
 
 def _darwin_pid_is_absent_or_zombie(pid: int) -> bool:
-    """Allow only confirmed disappearance or a sysctl-confirmed zombie."""
+    """Allow only confirmed disappearance or a sysctl-confirmed defunct/exiting pid."""
     try:
         if _darwin_pid_is_absent(pid):
             return True
-        return _darwin_pid_is_zombie(pid)
+        return _darwin_pid_is_defunct_or_exiting(pid)
     except Exception:
         return False
 
@@ -353,8 +357,8 @@ def _darwin_pid_is_absent(pid: int) -> bool:
         return False
 
 
-def _darwin_pid_is_zombie(pid: int) -> bool:
-    """Confirm a listed Darwin PID is defunct using its kinfo_proc record."""
+def _darwin_pid_is_defunct_or_exiting(pid: int) -> bool:
+    """Confirm a listed Darwin PID is a zombie or stuck exiting via kinfo_proc."""
     try:
         if (
             platform.system() != "Darwin"
@@ -384,9 +388,14 @@ def _darwin_pid_is_zombie(pid: int) -> bool:
         if observed_pid != pid:
             raise ValueError("darwin_zombie_pid_mismatch")
         is_zombie = buffer[_KINFO_PROC_P_STAT_OFFSET] == _SZOMB
-        # A zombie has no executable, sockets, or ability to run; omitting it
-        # cannot hide a live companion from the census.
-        return is_zombie
+        p_flag = ctypes.c_uint32.from_buffer(
+            buffer, _KINFO_PROC_P_FLAG_OFFSET
+        ).value
+        is_exiting = bool(p_flag & _P_WEXIT)
+        # A zombie or a process stuck exiting (P_WEXIT) is not a running
+        # companion; the port observer separately covers any socket it still
+        # holds, so omitting it cannot hide a live companion from the census.
+        return is_zombie or is_exiting
     except Exception:
         raise ProcessInfoUnavailable("process_list_incomplete") from None
 
