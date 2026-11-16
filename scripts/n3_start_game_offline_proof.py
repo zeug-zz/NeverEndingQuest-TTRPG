@@ -31,7 +31,7 @@ import traceback
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import CodeType, ModuleType, SimpleNamespace, TracebackType
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +107,15 @@ STARTUP_FAILURE_CATEGORIES = frozenset(
         "startup_handler_error",
     }
 )
+OBSERVATION_HOOK_FAILURE_REASONS = frozenset(
+    {
+        "observation_hook_raised",
+        "observation_hook_invalid_return",
+    }
+)
+MAX_OBSERVATION_ENTRIES = 16
+MAX_OBSERVATION_KEY_LENGTH = 64
+MAX_OBSERVATION_STRING_VALUE_LENGTH = 200
 SAFE_MODEL_LABEL_PATTERN = re.compile(r"[A-Za-z0-9_.:/-]{1,128}\Z")
 MODEL_SECRET_VALUE_PATTERN = re.compile(
     r"(?i)(?:\b(?:sk|pk|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}\b|"
@@ -524,6 +533,57 @@ def _process_launch_refusal_origin(
         "status": "identified",
         "frames": [{"source": source, "line": line_number}],
     }
+
+
+class _ObservationClient:
+    """The only object passed to an observe_running_host hook as its client
+    argument. Exposes exactly emit() and get_received() -- nothing else, no
+    disconnect/connect/queue access -- so a hook cannot do anything to the
+    real Socket.IO test client beyond what request_status-style observation
+    needs. Every event get_received() returns is also appended, unmodified,
+    to a sink list owned by run_startup_diagnostic, so events the hook drains
+    are not lost to the diagnostic's own later event scan."""
+
+    def __init__(self, real_client: Any, drained_sink: list[Any]) -> None:
+        self._real_client = real_client
+        self._drained_sink = drained_sink
+
+    def emit(self, name: str, *args: Any) -> Any:
+        return self._real_client.emit(name, *args)
+
+    def get_received(self) -> list[Any]:
+        events = self._real_client.get_received()
+        self._drained_sink.extend(events)
+        return events
+
+
+def _sanitize_observation_mapping(value: Any) -> Optional[dict[str, Any]]:
+    """Bound an observation hook's return value to plain booleans, ints, and
+    short ASCII strings only; reject anything else so an observation hook can
+    never smuggle a payload, secret, or unbounded value into the report."""
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if len(result) >= MAX_OBSERVATION_ENTRIES:
+            return None
+        if (
+            not isinstance(key, str)
+            or not key.isascii()
+            or not (1 <= len(key) <= MAX_OBSERVATION_KEY_LENGTH)
+        ):
+            return None
+        if isinstance(item, bool):
+            result[key] = item
+        elif isinstance(item, int):
+            result[key] = int(item)
+        elif isinstance(item, str):
+            if not item.isascii() or len(item) > MAX_OBSERVATION_STRING_VALUE_LENGTH:
+                return None
+            result[key] = item
+        else:
+            return None
+    return result
 
 
 def _safe_failure_origin(value: Any) -> Optional[dict[str, Any]]:
@@ -1394,6 +1454,8 @@ def _startup_diagnostic_report(
     failure_category: Optional[str] = None,
     failure_origin: Any = None,
     process_launch_refusal: Any = None,
+    observation: Optional[Mapping[str, object]] = None,
+    observation_failure: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a payload-free, bounded report for the actual start_game path."""
     safe_events, event_schema_valid = _safe_diagnostic_call_events(call_events)
@@ -1458,6 +1520,12 @@ def _startup_diagnostic_report(
         and safe_provider_calls == 0
         and diagnostic_failure is None
     )
+    safe_observation_failure = (
+        observation_failure
+        if isinstance(observation_failure, str)
+        and observation_failure in OBSERVATION_HOOK_FAILURE_REASONS
+        else (None if observation_failure is None else "observation_hook_failed")
+    )
     passed = bool(
         coverage_established
         and startup_output_delivered
@@ -1467,10 +1535,13 @@ def _startup_diagnostic_report(
         and safe_network_attempts == 0
         and safe_ledger_reservations == 0
         and ledger_valid
+        and safe_observation_failure is None
     )
 
     if passed:
         reason = "startup narration delivered with bounded offline router stubs"
+    elif safe_observation_failure is not None:
+        reason = "observation hook failed (" + safe_observation_failure + ")"
     elif not coverage_established:
         if not host_imports_verified:
             reason = "complete real sandbox host imports were not verified"
@@ -1531,6 +1602,8 @@ def _startup_diagnostic_report(
             "real_host_imports": bool(host_imports_verified),
             "startup_boundaries": bool(startup_boundary_guard_active),
         },
+        "observation": _sanitize_observation_mapping(observation),
+        "observation_failure": safe_observation_failure,
     }
 
 
@@ -4060,6 +4133,7 @@ def run_startup_diagnostic(
     diagnostic_call_limit: int = DEFAULT_DIAGNOSTIC_CALL_LIMIT,
     isolated_worker: bool = False,
     host_importer: Optional[Callable[[str], Any]] = None,
+    observe_running_host: Optional[Callable[[Any, Any], Mapping[str, object]]] = None,
 ) -> dict[str, Any]:
     """Trace bounded router calls through the real Socket.IO start_game path.
 
@@ -4067,6 +4141,19 @@ def run_startup_diagnostic(
     router task, extra call, direct SDK request, or socket operation is blocked.
     Application output is discarded; only a non-empty narration event's
     delivery is observed.
+
+    observe_running_host, when given, is called exactly once with an
+    _ObservationClient facade (emit() and get_received() only, backed by the
+    real Socket.IO test client) and the real web module, after startup
+    narration has been delivered and before the diagnostic's own shutdown
+    input is queued. Any event the hook drains via get_received() is also
+    recorded and replayed into this function's own later event scan, so a
+    hook that calls get_received() can never cause this function to miss the
+    game_started/game_output events it still needs to see. The hook's bounded
+    (booleans/ints/short ASCII strings only) returned mapping is attached to
+    the report under "observation"; any exception or non-mapping return is
+    recorded under "observation_failure" and fails the report closed. Leaving
+    it unset (the default) leaves this function's behavior unchanged.
     """
     report_path = resolve_startup_diagnostic_output_file(output_dir, run_id)
     safe_run_id = validate_run_id(run_id)
@@ -4131,6 +4218,9 @@ def run_startup_diagnostic(
     blocked_reason: Optional[str] = None
     failure_exception_class: Optional[str] = None
     failure_category = "none"
+    observation: Optional[Mapping[str, object]] = None
+    observation_failure: Optional[str] = None
+    hook_drained_events: list[Any] = []
     failure_origin: Optional[dict[str, Any]] = None
     diagnostic_stage = "sandbox_setup"
     emit_thread: Optional[threading.Thread] = None
@@ -4431,6 +4521,24 @@ def run_startup_diagnostic(
             time.sleep(min(0.01, max(0.0, startup_deadline - time.monotonic())))
 
         if startup_output_sent.is_set():
+            if observe_running_host is not None:
+                diagnostic_stage = "startup_observation"
+                observation_client = _ObservationClient(client, hook_drained_events)
+                try:
+                    raw_observation = observe_running_host(observation_client, web_module)
+                except BaseException as exc:
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        raise
+                    observation_failure = "observation_hook_raised"
+                else:
+                    sanitized_observation = _sanitize_observation_mapping(
+                        raw_observation
+                    )
+                    if sanitized_observation is None:
+                        observation_failure = "observation_hook_invalid_return"
+                    else:
+                        observation = sanitized_observation
+                diagnostic_stage = "startup_event"
             diagnostic_stage = "startup_shutdown"
             try:
                 user_input_queue.put("/quit")
@@ -4455,7 +4563,7 @@ def run_startup_diagnostic(
         game_started = False
         client_narration_delivered = False
         try:
-            for event in client.get_received():
+            for event in list(hook_drained_events) + client.get_received():
                 if not isinstance(event, dict):
                     continue
                 event_name = event.get("name")
@@ -4646,6 +4754,8 @@ def run_startup_diagnostic(
         failure_category=failure_category,
         failure_origin=failure_origin,
         process_launch_refusal=recorder.process_launch_refusal_snapshot(),
+        observation=observation,
+        observation_failure=observation_failure,
     )
     if runtime_alive or (new_live_threads and not isolated_worker):
         report["verdict"] = "BLOCKED"

@@ -1445,6 +1445,209 @@ class N3StartGameOfflineProofTests(unittest.TestCase):
         )
         self.assertEqual(written, report)
 
+    def test_startup_diagnostic_observation_hook_default_is_unset(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-no-hook",
+            output_dir=self.scratch / "startup-diagnostic-no-hook",
+            startup_timeout=0.5,
+            host_importer=importer,
+        )
+        self.assertIsNone(report["observation"])
+        self.assertIsNone(report["observation_failure"])
+        self.assertEqual(
+            report["reason"],
+            "complete real sandbox host imports were not verified",
+        )
+
+    def test_startup_diagnostic_observation_hook_records_bounded_mapping(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        received_args: list[tuple[Any, Any]] = []
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            received_args.append((client, web_module))
+            return {"status_response_game_started": True, "attempt_count": 1, "label": "ok"}
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-bounded",
+            output_dir=self.scratch / "startup-diagnostic-hook-bounded",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertEqual(len(received_args), 1)
+        self.assertIs(received_args[0][1], importer.web_module)
+        self.assertEqual(
+            report["observation"],
+            {"status_response_game_started": True, "attempt_count": 1, "label": "ok"},
+        )
+        self.assertIsNone(report["observation_failure"])
+        self.assertEqual(
+            report["reason"],
+            "complete real sandbox host imports were not verified",
+        )
+        self.assertFalse(report["tripwire_coverage"]["real_host_imports"])
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+
+    def test_startup_diagnostic_observation_hook_exception_fails_closed(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            del client, web_module
+            raise RuntimeError("private-hook-failure-detail")
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-raises",
+            output_dir=self.scratch / "startup-diagnostic-hook-raises",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertIsNone(report["observation"])
+        self.assertEqual(report["observation_failure"], "observation_hook_raised")
+        self.assertNotEqual(report["verdict"], "PASS")
+        self.assertNotIn("private-hook-failure-detail", json.dumps(report, ensure_ascii=True))
+        self.assertTrue(report["game_started"])
+        self.assertTrue(report["startup_output_delivered"])
+        self.assertTrue(report["startup_thread_stopped"])
+        self.assertTrue(report["tripwire_coverage"]["process_launch"])
+
+    def test_startup_diagnostic_observation_hook_invalid_return_fails_closed(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+
+        def hook(client: Any, web_module: Any) -> Any:
+            del client, web_module
+            return ["not", "a", "mapping"]
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-invalid",
+            output_dir=self.scratch / "startup-diagnostic-hook-invalid",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertIsNone(report["observation"])
+        self.assertEqual(report["observation_failure"], "observation_hook_invalid_return")
+        self.assertNotEqual(report["verdict"], "PASS")
+
+    def test_startup_diagnostic_observation_hook_oversized_string_rejected(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            del client, web_module
+            return {"payload": "x" * 500}
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-oversized",
+            output_dir=self.scratch / "startup-diagnostic-hook-oversized",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertIsNone(report["observation"])
+        self.assertEqual(report["observation_failure"], "observation_hook_invalid_return")
+
+    def test_startup_diagnostic_observation_hook_draining_events_does_not_hide_them(
+        self,
+    ) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        drained_by_hook: list[Any] = []
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            del web_module
+            drained_by_hook.extend(client.get_received())
+            return {"hook_drained_event_count": len(drained_by_hook)}
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-drains-events",
+            output_dir=self.scratch / "startup-diagnostic-hook-drains-events",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertTrue(len(drained_by_hook) > 0)
+        self.assertEqual(
+            report["observation"], {"hook_drained_event_count": len(drained_by_hook)}
+        )
+        self.assertIsNone(report["observation_failure"])
+        self.assertTrue(report["game_started"])
+        self.assertTrue(report["startup_output_delivered"])
+        self.assertEqual(
+            report["reason"],
+            "complete real sandbox host imports were not verified",
+        )
+
+    def test_observation_client_facade_exposes_only_emit_and_get_received(self) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+        facade_type: list[Any] = []
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            del web_module
+            facade_type.append(client)
+            return {"ok": True}
+
+        proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-facade-surface",
+            output_dir=self.scratch / "startup-diagnostic-hook-facade-surface",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertEqual(len(facade_type), 1)
+        facade = facade_type[0]
+        self.assertIsInstance(facade, proof._ObservationClient)
+        public_attrs = {name for name in dir(facade) if not name.startswith("_")}
+        self.assertEqual(public_attrs, {"emit", "get_received"})
+        self.assertFalse(hasattr(facade, "disconnect"))
+        self.assertFalse(hasattr(facade, "connect"))
+
+    def test_startup_diagnostic_observation_hook_exception_replays_drained_events(
+        self,
+    ) -> None:
+        sandbox = self._fake_sandbox()
+        importer = FakeHostImporter(sandbox)
+        importer.web_module.startup_diagnostic = True
+
+        def hook(client: Any, web_module: Any) -> dict[str, Any]:
+            del web_module
+            client.get_received()
+            raise RuntimeError("private-hook-failure-detail")
+
+        report = proof.run_startup_diagnostic(
+            sandbox_root=sandbox,
+            run_id="startup-diagnostic-hook-raises-after-drain",
+            output_dir=self.scratch / "startup-diagnostic-hook-raises-after-drain",
+            startup_timeout=0.5,
+            host_importer=importer,
+            observe_running_host=hook,
+        )
+        self.assertIsNone(report["observation"])
+        self.assertEqual(report["observation_failure"], "observation_hook_raised")
+        self.assertNotIn("private-hook-failure-detail", json.dumps(report, ensure_ascii=True))
+        self.assertTrue(report["game_started"])
+        self.assertTrue(report["startup_output_delivered"])
+
     def test_startup_diagnostic_skips_ipv6_capability_bind_probe(self) -> None:
         sandbox = self._fake_sandbox()
         importer = IPv6ProbeHostImporter(sandbox)
