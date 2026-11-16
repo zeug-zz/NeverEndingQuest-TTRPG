@@ -1214,10 +1214,11 @@ def _validate_checkpoint_travel_exchange(
         "gameplay_validation",
         "transition_narration",
     )
-    # The host performs one startup response/validation pair before the
-    # scripted travel response/validation pair. The repeated call sites are
-    # therefore accepted only in that exact startup-plus-travel shape.
-    expected_site_counts = (2, 1, 2, 1)
+    # The host performs one startup dm_main/main.py response before the
+    # scripted travel turn. Only that one call site repeats; the
+    # transition_validator, gameplay-validation, and action_handler call
+    # sites each occur exactly once, during the scripted travel turn.
+    expected_site_counts = (2, 1, 1, 1)
     observed_site_sequences: list[list[int]] = []
     for pair, expected_count in zip(expected_path, expected_site_counts):
         matches = [
@@ -1246,9 +1247,7 @@ def _validate_checkpoint_travel_exchange(
         observed_sequences[-1] for observed_sequences in observed_site_sequences
     ]
     if not (
-        observed_site_sequences[0][0]
-        < observed_site_sequences[2][0]
-        < observed_response_positions[0]
+        observed_site_sequences[0][0] < observed_response_positions[0]
     ):
         raise CharacterizationError("checkpoint_travel_call_order_mismatch")
     if observed_response_positions != sorted(observed_response_positions) or (
@@ -4296,6 +4295,8 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     after_teardown_sample: Mapping[str, Any] | None = None
     after_teardown_sample_complete = False
     adv_summary_child_evidence: dict[str, Any] | None = None
+    summary_child_artifacts: dict[str, Any] | None = None
+    summary_child_retention: dict[str, Any] | None = None
 
     def release_live_window_lock() -> bool:
         if (
@@ -4594,6 +4595,57 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                         process_canaries.append(
                             {"canary_stage": "host-startup", **host_startup}
                         )
+            # Retained summary-child artifacts are copied from the shared
+            # sandbox while the live-window lock is still held. Waiting
+            # until after the lock release below would let a concurrent
+            # preflight row mutate tmp/combat_capture before these reads
+            # complete, producing spurious content-mismatch failures.
+            summary_child = result.get("adv_summary_child")
+            summary_child_launch_count = (
+                summary_child.get("launch_count")
+                if isinstance(summary_child, Mapping)
+                else None
+            )
+            if (
+                isinstance(summary_child, Mapping)
+                and run_directory is not None
+                and isinstance(summary_child_launch_count, int)
+                and summary_child_launch_count > 0
+            ):
+                from scripts.live_gate_preflight_retained import (
+                    RetainedEvidenceError,
+                    retain_summary_child_artifacts,
+                )
+
+                try:
+                    summary_child_artifacts = retain_summary_child_artifacts(
+                        sandbox,
+                        run_directory,
+                        run_id=args.run_id,
+                        summary_child=summary_child,
+                    )
+                except RetainedEvidenceError as exc:
+                    # Record the retention failure as its own evidence object
+                    # even when an earlier failure_code already won the race,
+                    # so it is never silently masked.
+                    failure_code = failure_code or "summary_child_artifact_retention_failed"
+                    summary_child_retention = {
+                        "succeeded": False,
+                        "failure_code": str(exc),
+                        "partial_artifact_count": len(
+                            getattr(exc, "retained_artifacts", []) or []
+                        ),
+                    }
+                else:
+                    summary_child_retention = {
+                        "succeeded": True,
+                        "failure_code": None,
+                        "partial_artifact_count": len(
+                            summary_child_artifacts.get("artifacts", [])
+                            if isinstance(summary_child_artifacts, Mapping)
+                            else []
+                        ),
+                    }
         if not ready:
             failure_code = failure_code or "host_startup_not_ready"
     except CharacterizationError as exc:
@@ -4892,27 +4944,6 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         if type(call_count) is not int or call_count < 0:
             call_count = len(calls)
         command_sites = _make_evidence_sites(calls)
-        summary_child_artifacts: dict[str, Any] | None = None
-        summary_child = (
-            result.get("adv_summary_child")
-            if isinstance(result, Mapping)
-            else None
-        )
-        if isinstance(summary_child, Mapping) and run_directory is not None:
-            try:
-                from scripts.live_gate_preflight_retained import (
-                    RetainedEvidenceError,
-                    retain_summary_child_artifacts,
-                )
-
-                summary_child_artifacts = retain_summary_child_artifacts(
-                    sandbox,
-                    run_directory,
-                    run_id=args.run_id,
-                    summary_child=summary_child,
-                )
-            except RetainedEvidenceError as exc:
-                failure_code = failure_code or "summary_child_artifact_retention_failed"
         evidence = {
             "schema_version": 1,
             "authorization_ruling_id": AUTHORIZATION_RULING_ID,
@@ -5038,6 +5069,8 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
         }
         if summary_child_artifacts is not None:
             evidence["summary_child_artifacts"] = summary_child_artifacts
+        if summary_child_retention is not None:
+            evidence["summary_child_retention"] = summary_child_retention
         if create_resume_checkpoint:
             evidence["checkpoint_travel"] = checkpoint_travel_proof
             evidence["resume_checkpoint"] = checkpoint_descriptor

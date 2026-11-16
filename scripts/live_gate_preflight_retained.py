@@ -99,6 +99,38 @@ def retain_summary_child_artifacts(
     if module_name in (".", ".."):
         raise RetainedEvidenceError("summary child module identity differs")
 
+    artifacts: list[dict[str, Any]] = []
+    try:
+        return _retain_summary_child_artifacts(
+            sandbox_relative,
+            evidence_relative,
+            evidence_directory_path,
+            run_id=run_id,
+            launches=launches,
+            records=records,
+            module_name=module_name,
+            tracker_raw=tracker_raw,
+            tracker_source=tracker_source,
+            artifacts=artifacts,
+        )
+    except RetainedEvidenceError as exc:
+        exc.retained_artifacts = list(artifacts)
+        raise
+
+
+def _retain_summary_child_artifacts(
+    sandbox_relative: PurePosixPath,
+    evidence_relative: PurePosixPath,
+    evidence_directory_path: Path,
+    *,
+    run_id: str,
+    launches: list[Any],
+    records: list[dict[str, Any]],
+    module_name: str,
+    tracker_raw: bytes,
+    tracker_source: str,
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
     writes_by_source: dict[str, dict[str, Any]] = {}
     for launch, record in zip(launches, records):
         if (
@@ -173,7 +205,6 @@ def retain_summary_child_artifacts(
         if observed_counts != expected_counts:
             raise RetainedEvidenceError("summary child canonical write set differs")
 
-    artifacts: list[dict[str, Any]] = []
     script_source_path = (
         sandbox_relative / "core" / "ai" / "adv_summary.py"
     ).as_posix()
@@ -212,13 +243,20 @@ def retain_summary_child_artifacts(
             provenance="sandbox_state_after_child_before_cleanup",
         )
     )
+    journal_source_path = (sandbox_relative / "journal.json").as_posix()
     for source_path, last_write in sorted(writes_by_source.items()):
         raw = _read_bounded_capture_file(source_path, "summary child final output")
-        if (
-            len(raw) != last_write["size_bytes"]
-            or hashlib.sha256(raw).hexdigest() != last_write["sha256"]
-        ):
-            raise RetainedEvidenceError("summary child final output differs from last write")
+        matches_last_write = (
+            len(raw) == last_write["size_bytes"]
+            and hashlib.sha256(raw).hexdigest() == last_write["sha256"]
+        )
+        if not matches_last_write and source_path != journal_source_path:
+            # journal.json is the only canonical write the host legitimately
+            # rewrites after the child exits (checkpoint/location-transition
+            # journal updates); every other file here is child-exclusive.
+            raise RetainedEvidenceError(
+                "summary child final output differs from last write"
+            )
         source_relative = PurePosixPath(source_path).relative_to(sandbox_relative)
         source_hash = hashlib.sha256(source_path.encode("ascii")).hexdigest()[:16]
         destination_path = (
@@ -228,6 +266,11 @@ def retain_summary_child_artifacts(
             / "final"
             / (source_hash + "-" + source_relative.name)
         ).as_posix()
+        provenance = (
+            "canonical_json_write_final_state_before_cleanup"
+            if matches_last_write
+            else "host_rewrote_after_child_final_state_before_cleanup"
+        )
         artifact = _copy_capture_artifact(
             raw,
             source_path=source_path,
@@ -235,9 +278,10 @@ def retain_summary_child_artifacts(
             evidence_directory=evidence_directory_path,
             run_id=run_id,
             role="final_output",
-            provenance="canonical_json_write_final_state_before_cleanup",
+            provenance=provenance,
         )
         artifact["last_write"] = dict(last_write)
+        artifact["final_write_matches_last_write"] = matches_last_write
         artifacts.append(artifact)
 
     return {
@@ -493,6 +537,10 @@ def _safe_project_tmp_directory(relative_path: str) -> Path:
 
 class RetainedEvidenceError(ValueError):
     """Raised when retained row evidence is missing, inconsistent, or unsafe."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.retained_artifacts: list[dict[str, Any]] = []
 
 
 def validate_retained_supervised_evidence(

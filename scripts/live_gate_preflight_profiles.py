@@ -628,11 +628,29 @@ def _validate_profile_evidence(
     retained_with_artifacts_fields = (
         evidence_with_retained_artifacts_fields | {"teardown_evidence"}
     )
+    # Retention is only attempted for a row that reached the point of
+    # retaining run evidence (teardown_evidence present) and whose worker
+    # actually launched a summary child (launch_count > 0); the retention
+    # outcome is then mandatory, which is what keeps a retention failure
+    # from being silently masked by an earlier failure_code. A row with no
+    # summary-child launch never gets this field.
+    retained_evidence_fields_with_retention = (
+        retained_evidence_fields | {"summary_child_retention"}
+    )
+    retained_with_artifacts_fields_with_retention = (
+        retained_with_artifacts_fields | {"summary_child_retention"}
+    )
     legacy_retained_evidence_fields = retained_evidence_fields - {
         "invocation_identity"
     }
     legacy_retained_with_artifacts_fields = (
         retained_with_artifacts_fields - {"invocation_identity"}
+    )
+    legacy_retained_evidence_fields_with_retention = (
+        retained_evidence_fields_with_retention - {"invocation_identity"}
+    )
+    legacy_retained_with_artifacts_fields_with_retention = (
+        retained_with_artifacts_fields_with_retention - {"invocation_identity"}
     )
     historic_retained_evidence_fields = (
         base_evidence_fields | {"teardown_evidence"}
@@ -646,8 +664,12 @@ def _validate_profile_evidence(
         legacy_evidence_fields,
         retained_evidence_fields,
         retained_with_artifacts_fields,
+        retained_evidence_fields_with_retention,
+        retained_with_artifacts_fields_with_retention,
         legacy_retained_evidence_fields,
         legacy_retained_with_artifacts_fields,
+        legacy_retained_evidence_fields_with_retention,
+        legacy_retained_with_artifacts_fields_with_retention,
         base_evidence_fields,
         historic_retained_evidence_fields,
         historic_legacy_retained_evidence_fields,
@@ -1115,6 +1137,64 @@ def _validate_profile_evidence(
             evidence_directory=path.parent,
             retained_artifacts=evidence.get("summary_child_artifacts"),
         )
+    summary_child_value = evidence.get("adv_summary_child")
+    launch_count = (
+        summary_child_value.get("launch_count")
+        if isinstance(summary_child_value, Mapping)
+        else None
+    )
+    retention_required = (
+        "teardown_evidence" in evidence
+        and isinstance(launch_count, int)
+        and launch_count > 0
+    )
+    retention_present = "summary_child_retention" in evidence
+    if retention_required and not retention_present:
+        raise ProfileValidationError(
+            "profile evidence summary child retention proof is missing"
+        )
+    if retention_present and not retention_required:
+        raise ProfileValidationError(
+            "profile evidence summary child retention proof is unexpected"
+        )
+    if retention_present:
+        _validate_summary_child_retention_evidence(
+            evidence.get("summary_child_retention"),
+            artifacts_present="summary_child_artifacts" in evidence,
+        )
+
+
+def _validate_summary_child_retention_evidence(
+    value: Any,
+    *,
+    artifacts_present: bool,
+) -> None:
+    fields = {"succeeded", "failure_code", "partial_artifact_count"}
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ProfileValidationError("summary child retention evidence is malformed")
+    succeeded = value.get("succeeded")
+    failure_code = value.get("failure_code")
+    partial_artifact_count = value.get("partial_artifact_count")
+    if (
+        type(succeeded) is not bool
+        or type(partial_artifact_count) is not int
+        or partial_artifact_count < 0
+    ):
+        raise ProfileValidationError("summary child retention evidence is malformed")
+    if succeeded:
+        if failure_code is not None or not artifacts_present:
+            raise ProfileValidationError(
+                "summary child retention evidence contradicts outcome"
+            )
+    else:
+        if (
+            not isinstance(failure_code, str)
+            or not failure_code
+            or artifacts_present
+        ):
+            raise ProfileValidationError(
+                "summary child retention evidence contradicts outcome"
+            )
 
 
 def _validate_adv_summary_child_evidence(
@@ -1848,7 +1928,10 @@ def _load_retained_summary_artifacts(
             ).as_posix()
             expected_provenance = "sandbox_executed_source_before_cleanup"
         elif role == "final_output":
-            expected_fields = common_fields | {"last_write"}
+            expected_fields = common_fields | {
+                "last_write",
+                "final_write_matches_last_write",
+            }
             source_path = artifact.get("source_path")
             if not isinstance(source_path, str):
                 raise ProfileValidationError(
@@ -1877,9 +1960,30 @@ def _load_retained_summary_artifacts(
                     + source.name
                 )
             ).as_posix()
-            expected_provenance = (
-                "canonical_json_write_final_state_before_cleanup"
+            # journal.json is the only canonical write the host legitimately
+            # rewrites after the child exits; every other final output must
+            # match the child's own last recorded write exactly.
+            final_write_matches_last_write = artifact.get(
+                "final_write_matches_last_write"
             )
+            if source_path == "tmp/combat_capture/journal.json":
+                if type(final_write_matches_last_write) is not bool:
+                    raise ProfileValidationError(
+                        "summary child retained output host-rewrite flag is malformed"
+                    )
+                expected_provenance = (
+                    "canonical_json_write_final_state_before_cleanup"
+                    if final_write_matches_last_write
+                    else "host_rewrote_after_child_final_state_before_cleanup"
+                )
+            else:
+                if final_write_matches_last_write is not True:
+                    raise ProfileValidationError(
+                        "summary child retained output must match the child's last write"
+                    )
+                expected_provenance = (
+                    "canonical_json_write_final_state_before_cleanup"
+                )
         else:
             raise ProfileValidationError(
                 "summary child retained artifact role is invalid"
@@ -1928,6 +2032,14 @@ def _load_retained_summary_artifacts(
             continue
 
         last_write = artifact.get("last_write")
+        final_write_matches_last_write = artifact.get(
+            "final_write_matches_last_write"
+        )
+        last_write_matches_digest = (
+            isinstance(last_write, Mapping)
+            and last_write.get("sha256") == digest
+            and last_write.get("size_bytes") == size_bytes
+        )
         if (
             not isinstance(last_write, Mapping)
             or set(last_write)
@@ -1936,9 +2048,11 @@ def _load_retained_summary_artifacts(
             or last_write.get("process_id") <= 0
             or type(last_write.get("sequence")) is not int
             or last_write.get("sequence") <= 0
-            or last_write.get("sha256") != digest
+            or type(last_write.get("sha256")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", last_write["sha256"]) is None
             or type(last_write.get("size_bytes")) is not int
-            or last_write.get("size_bytes") != size_bytes
+            or last_write.get("size_bytes") < 1
+            or final_write_matches_last_write is not last_write_matches_digest
         ):
             raise ProfileValidationError(
                 "summary child retained final output write provenance differs"

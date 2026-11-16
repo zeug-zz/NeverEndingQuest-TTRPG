@@ -139,6 +139,14 @@ def _sandbox_identity_cli_args(project_root: Path) -> list[str]:
     ]
 
 
+def _raise_summary_child_retention_error(*_args: object, **_kwargs: object) -> None:
+    error = retained_evidence.RetainedEvidenceError(
+        "summary child final output differs from last write"
+    )
+    error.retained_artifacts = [{"role": "script_source"}]
+    raise error
+
+
 def _guard_startup_event(
     pid: int,
     run_id: str,
@@ -3166,6 +3174,190 @@ class TestPreflightStubAndSafety(unittest.TestCase):
                 )
         child_evidence_path.write_bytes(raw_evidence)
 
+    def test_summary_child_retention_accepts_host_journal_rewrite_after_child(
+        self,
+    ) -> None:
+        sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
+        run_id = "summary-child-journal-rewrite-" + uuid.uuid4().hex[:12]
+        evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
+        evidence_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, evidence_directory, ignore_errors=True)
+        guard_events_path = evidence_directory / "guard-events.jsonl"
+        guard_events_path.write_bytes(b"")
+        child_evidence_path = evidence_directory / "adv-summary-child.jsonl"
+        child_command = [
+            _repository_python(),
+            str(sandbox / "core" / "ai" / "adv_summary.py"),
+            "modules/conversation_history/conversation_history.json",
+            "current_location.json",
+            location_name,
+            area_id,
+        ]
+        source_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        git_guard_patch = mock.patch(
+            "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+            side_effect=lambda command, **kwargs: subprocess.run(command, **kwargs),
+        )
+        git_guard_patch.start()
+        self.addCleanup(git_guard_patch.stop)
+        environment = build_guarded_environment(
+            {"PATH": os.environ.get("PATH", "")},
+            project_root=PROJECT_ROOT,
+            process_role="host",
+            run_id=run_id,
+            guard_events_path=guard_events_path,
+        )
+        wrapper_code = (
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "from scripts.live_gate_preflight_stub import "
+            "install_adv_summary_preflight_host_interceptor\n"
+            "sandbox = Path.cwd()\n"
+            "interceptor = install_adv_summary_preflight_host_interceptor(\n"
+            f"    source_sha={source_sha!r}, sandbox_root=sandbox,\n"
+            "    evidence_path=Path(sys.argv[2])\n"
+            ")\n"
+            "try:\n"
+            "    result = interceptor._run_adv_summary(\n"
+            "        json.loads(sys.argv[1]), check=True, capture_output=True, text=True\n"
+            "    )\n"
+            "    print(json.dumps({\n"
+            "        'pid': os.getpid(), 'launches': interceptor.launches,\n"
+            "        'calls': interceptor.calls, 'failure_code': interceptor.failure_code,\n"
+            "        'returncode': result.returncode,\n"
+            "    }, sort_keys=True, separators=(',', ':')))\n"
+            "finally:\n"
+            "    interceptor.cleanup()\n"
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="summary-child-journal-rewrite-", dir=PROJECT_ROOT / "tmp"
+        ) as driver_directory:
+            driver_path = Path(driver_directory) / "driver.py"
+            driver_path.write_text(wrapper_code, encoding="ascii")
+            process = subprocess.Popen(
+                [
+                    _repository_python(),
+                    str(driver_path),
+                    json.dumps(child_command),
+                    str(child_evidence_path),
+                ],
+                cwd=sandbox,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+                self.fail(
+                    "real guarded summary child timed out; "
+                    + (stderr[-2000:] if stderr else "")
+                )
+        self.assertEqual(process.returncode, 0, stderr[-4000:])
+        wrapper_result = json.loads(stdout.strip().splitlines()[-1])
+        self.assertIsNone(wrapper_result["failure_code"])
+        self.assertEqual(wrapper_result["returncode"], 0)
+
+        child_records = preflight_stub._read_adv_summary_child_records(
+            child_evidence_path
+        )
+        self.assertEqual(len(child_records), 1)
+
+        # Simulate the host's own in-process location-transition journal
+        # write (core/ai/cumulative_summary.py update_journal_with_summary)
+        # running after the child subprocess has already exited and
+        # recorded its own last write.
+        journal_path = sandbox / "journal.json"
+        original_journal = journal_path.read_bytes()
+        rewritten_journal = json.dumps(
+            {"entries": [{"source": "host_checkpoint_rewrite"}]},
+            ensure_ascii=True,
+        ).encode("ascii")
+        self.assertNotEqual(rewritten_journal, original_journal)
+        journal_path.write_bytes(rewritten_journal)
+
+        raw_evidence = child_evidence_path.read_bytes()
+        profile_child_evidence = {
+            "schema_version": 1,
+            "adapter_installed": True,
+            "launch_count": 1,
+            "launches": wrapper_result["launches"],
+            "calls": wrapper_result["calls"],
+            "failure_code": None,
+            "evidence_path": child_evidence_path.relative_to(
+                PROJECT_ROOT
+            ).as_posix(),
+            "evidence_sha256": hashlib.sha256(raw_evidence).hexdigest(),
+            "record_count": len(child_records),
+        }
+        retained_artifacts = retained_evidence.retain_summary_child_artifacts(
+            sandbox,
+            evidence_directory,
+            run_id=run_id,
+            summary_child=profile_child_evidence,
+        )
+        self.assertIsInstance(retained_artifacts, dict)
+
+        journal_artifact = next(
+            item
+            for item in retained_artifacts["artifacts"]
+            if item.get("source_path") == "tmp/combat_capture/journal.json"
+        )
+        self.assertFalse(journal_artifact["final_write_matches_last_write"])
+        self.assertEqual(
+            journal_artifact["provenance"],
+            "host_rewrote_after_child_final_state_before_cleanup",
+        )
+        self.assertEqual(
+            journal_artifact["sha256"], hashlib.sha256(rewritten_journal).hexdigest()
+        )
+        self.assertNotEqual(
+            journal_artifact["sha256"], journal_artifact["last_write"]["sha256"]
+        )
+        other_final_outputs = [
+            item
+            for item in retained_artifacts["artifacts"]
+            if item.get("role") == "final_output"
+            and item.get("source_path") != "tmp/combat_capture/journal.json"
+        ]
+        self.assertTrue(other_final_outputs)
+        for item in other_final_outputs:
+            self.assertTrue(item["final_write_matches_last_write"])
+            self.assertEqual(
+                item["provenance"],
+                "canonical_json_write_final_state_before_cleanup",
+            )
+
+        guard_events = [
+            json.loads(line)
+            for line in guard_events_path.read_text(encoding="ascii").splitlines()
+            if line
+        ]
+        preflight_profiles._validate_adv_summary_child_evidence(
+            PROJECT_ROOT,
+            profile_child_evidence,
+            run_id=run_id,
+            source_sha=source_sha,
+            pythonpath=environment["PYTHONPATH"],
+            worker_pid=wrapper_result["pid"],
+            worker_interpreter=wrapper_result["launches"][0]["interpreter"],
+            guard_events=guard_events,
+            evidence_directory=evidence_directory,
+            retained_artifacts=retained_artifacts,
+        )
+
     def test_summary_child_subprocess_reconciliation_counts_canary_and_child(
         self,
     ) -> None:
@@ -5985,6 +6177,10 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 *,
                 create_checkpoint: bool = False,
                 checkpoint_copy_fails: bool = False,
+                adv_summary_child: dict | None = None,
+                retained_summary_child_artifacts: dict | None = None,
+                checkpoint_travel_exchange_fails: bool = False,
+                summary_child_retention_fails: bool = False,
             ) -> tuple[dict, list[str], list[int]]:
                 run_directory = evidence_root / run_id
                 run_directory.mkdir()
@@ -6032,6 +6228,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         }
                     ],
                     "stub_failure_code": None,
+                    "adv_summary_child": adv_summary_child,
                 }
 
                 def record_launch(*_args: object, **_kwargs: object) -> FakeProcess:
@@ -6190,6 +6387,13 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         mock.patch.object(
                             profile_runner,
                             "_validate_checkpoint_travel_exchange",
+                            side_effect=(
+                                CharacterizationError(
+                                    "checkpoint_travel_call_path_mismatch"
+                                )
+                                if checkpoint_travel_exchange_fails
+                                else None
+                            ),
                             return_value={
                                 "step_id": "E01-01",
                                 "source_location_id": "MPV2_LOC_TAVERN",
@@ -6204,6 +6408,18 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                                 },
                                 "complete": True,
                             },
+                        ),
+                        mock.patch(
+                            "scripts.live_gate_preflight_retained.retain_summary_child_artifacts",
+                            side_effect=(
+                                _raise_summary_child_retention_error
+                                if summary_child_retention_fails
+                                else (
+                                    (lambda *_args, **_kwargs: retained_summary_child_artifacts)
+                                    if adv_summary_child is not None
+                                    else None
+                                )
+                            ),
                         ),
                         mock.patch.object(
                             profile_runner,
@@ -6439,6 +6655,92 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             self.assertIs(
                 failed_checkpoint_teardown["shared_lock"]["release_succeeded"],
                 True,
+            )
+
+            summary_child_fixture = {
+                "launch_count": 1,
+                "record_count": 1,
+                "launches": [{"child_pid": 1}],
+            }
+            retained_fixture = {
+                "schema_version": 1,
+                "run_id": "summary-child-failure",
+                "capture_phase": "after_child_before_cleanup",
+                "artifacts": [{"role": "script_source"}],
+            }
+            with self.assertRaisesRegex(
+                CharacterizationError, "checkpoint_travel_call_path_mismatch"
+            ):
+                run_characterization(
+                    "summary-child-failure",
+                    driver_success,
+                    create_checkpoint=True,
+                    checkpoint_travel_exchange_fails=True,
+                    adv_summary_child=summary_child_fixture,
+                    retained_summary_child_artifacts=retained_fixture,
+                )
+            summary_child_failure_evidence = json.loads(
+                (
+                    evidence_root / "summary-child-failure" / "profile-evidence.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(summary_child_failure_evidence["outcome"], "failed")
+            self.assertEqual(
+                summary_child_failure_evidence["failure_code"],
+                "checkpoint_travel_call_path_mismatch",
+            )
+            self.assertEqual(
+                summary_child_failure_evidence["summary_child_artifacts"],
+                retained_fixture,
+            )
+            self.assertEqual(
+                summary_child_failure_evidence["summary_child_retention"],
+                {
+                    "succeeded": True,
+                    "failure_code": None,
+                    "partial_artifact_count": len(retained_fixture["artifacts"]),
+                },
+            )
+
+            # Retention itself failing must not be masked by the earlier
+            # checkpoint-travel failure_code: the primary failure_code stays
+            # the first failure, but the retention failure is still recorded
+            # distinctly in its own evidence object.
+            with self.assertRaisesRegex(
+                CharacterizationError, "checkpoint_travel_call_path_mismatch"
+            ):
+                run_characterization(
+                    "summary-child-retention-failure",
+                    driver_success,
+                    create_checkpoint=True,
+                    checkpoint_travel_exchange_fails=True,
+                    adv_summary_child=summary_child_fixture,
+                    summary_child_retention_fails=True,
+                )
+            retention_failure_evidence = json.loads(
+                (
+                    evidence_root
+                    / "summary-child-retention-failure"
+                    / "profile-evidence.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(retention_failure_evidence["outcome"], "failed")
+            self.assertEqual(
+                retention_failure_evidence["failure_code"],
+                "checkpoint_travel_call_path_mismatch",
+            )
+            self.assertNotIn(
+                "summary_child_artifacts", retention_failure_evidence
+            )
+            self.assertEqual(
+                retention_failure_evidence["summary_child_retention"],
+                {
+                    "succeeded": False,
+                    "failure_code": (
+                        "summary child final output differs from last write"
+                    ),
+                    "partial_artifact_count": 1,
+                },
             )
 
             for run_id, invalid_canary in (
@@ -7289,7 +7591,7 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             ("safety_review", "core/generators/module_stitcher.py"),
             ("action_prediction", "utils/action_predictor.py"),
             ("dm_main", "main.py"),
-            ("dm_validation", "main.py"),
+            ("dm_validation", "core/ai/action_handler.py"),
             ("action_prediction", "utils/action_predictor.py"),
             ("dm_main", "main.py"),
             ("dm_main", "core/ai/transition_validator.py"),
@@ -7304,14 +7606,6 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
                 "messages": [
                     {
                         "role": "user",
-                        "content": "The party pauses and takes in the scene.",
-                    }
-                ]
-            },
-            7: {
-                "messages": [
-                    {
-                        "role": "assistant",
                         "content": "The party pauses and takes in the scene.",
                     }
                 ]
@@ -7338,6 +7632,7 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
             for sequence, (task, source_file) in enumerate(call_pairs, start=1)
         ]
         self.assertIsNone(resolved[5])
+        self.assertIsNone(resolved[6])
         self.assertEqual(resolved[8], response)
         self.assertIsNotNone(resolved[9])
         self.assertIsNotNone(resolved[10])
@@ -7450,6 +7745,20 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
         ):
             profile_runner._validate_checkpoint_travel_exchange(
                 forged, travel_turn=turn, driver_exchange=driver_exchange
+            )
+
+        old_wrong_shape_calls = [dict(call) for call in result["calls"]]
+        old_wrong_shape_calls[6]["task"] = "dm_validation"
+        old_wrong_shape_calls[6]["source_file"] = "main.py"
+        old_wrong_shape = {
+            **result,
+            "calls": old_wrong_shape_calls,
+        }
+        with self.assertRaisesRegex(
+            CharacterizationError, "checkpoint_travel_call_path_mismatch"
+        ):
+            profile_runner._validate_checkpoint_travel_exchange(
+                old_wrong_shape, travel_turn=turn, driver_exchange=driver_exchange
             )
 
     def test_checkpoint_travel_resolver_rejects_out_of_order_and_duplicate_calls(
