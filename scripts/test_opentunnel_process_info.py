@@ -68,10 +68,15 @@ class _FakeDarwinLibc:
 
 
 class ProcessInfoTests(unittest.TestCase):
-    def _kinfo_proc(self, pid: int, process_state: int) -> bytes:
+    def _kinfo_proc(
+        self, pid: int, process_state: int, *, p_flag: int = 0
+    ) -> bytes:
         payload = bytearray(process_info._KINFO_PROC_SIZE)
         struct.pack_into("@i", payload, process_info._KINFO_PROC_P_PID_OFFSET, pid)
         payload[process_info._KINFO_PROC_P_STAT_OFFSET] = process_state
+        struct.pack_into(
+            "@I", payload, process_info._KINFO_PROC_P_FLAG_OFFSET, p_flag
+        )
         return bytes(payload)
 
     def _snapshot_with_unreadable_darwin_pid(
@@ -112,7 +117,7 @@ class ProcessInfoTests(unittest.TestCase):
             if zombie_exception is not None:
                 with mock.patch.object(
                     process_info,
-                    "_darwin_pid_is_zombie",
+                    "_darwin_pid_is_defunct_or_exiting",
                     side_effect=zombie_exception,
                 ):
                     return process_info.snapshot()
@@ -549,6 +554,31 @@ class ProcessInfoTests(unittest.TestCase):
 
     def test_darwin_snapshot_rejects_listed_non_zombie(self) -> None:
         libc = _FakeDarwinLibc(self._kinfo_proc(201, 2))
+        with self.assertRaises(process_info.ProcessInfoUnavailable) as raised:
+            self._snapshot_with_unreadable_darwin_pid(libc)
+        self.assertEqual(raised.exception.reason, "process_list_incomplete")
+
+    def test_darwin_snapshot_skips_sysctl_confirmed_exiting_process(self) -> None:
+        libc = _FakeDarwinLibc(self._kinfo_proc(201, 2, p_flag=0x6006))
+        records = self._snapshot_with_unreadable_darwin_pid(libc)
+        self.assertEqual(tuple(item.pid for item in records), (202,))
+
+    def test_darwin_snapshot_rejects_listed_non_exiting_process(self) -> None:
+        libc = _FakeDarwinLibc(self._kinfo_proc(201, 2, p_flag=0x4006))
+        with self.assertRaises(process_info.ProcessInfoUnavailable) as raised:
+            self._snapshot_with_unreadable_darwin_pid(libc)
+        self.assertEqual(raised.exception.reason, "process_list_incomplete")
+
+    def test_darwin_snapshot_rejects_exiting_pid_mismatch(self) -> None:
+        libc = _FakeDarwinLibc(self._kinfo_proc(999, 2, p_flag=0x6006))
+        with self.assertRaises(process_info.ProcessInfoUnavailable) as raised:
+            self._snapshot_with_unreadable_darwin_pid(libc)
+        self.assertEqual(raised.exception.reason, "process_list_incomplete")
+
+    def test_darwin_snapshot_rejects_wrong_size_exiting_process(self) -> None:
+        libc = _FakeDarwinLibc(
+            self._kinfo_proc(201, 2, p_flag=0x6006), reported_size=647
+        )
         with self.assertRaises(process_info.ProcessInfoUnavailable) as raised:
             self._snapshot_with_unreadable_darwin_pid(libc)
         self.assertEqual(raised.exception.reason, "process_list_incomplete")
