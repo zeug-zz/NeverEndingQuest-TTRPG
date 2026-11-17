@@ -28,6 +28,10 @@ See proposal.md for motivation and `specs/live-gate-preflight/spec.md` for the c
 
 5. **Test stop policy with injected conditions.** Use injected counters, clock, and infrastructure outcomes to show attempt-cap, time-cap, and three-consecutive-infrastructure-failure behavior. These checks exercise the actual driver policy without waiting for live caps, sending providers, or debiting live attempt allowance. Normal preflight traversal separately proves continuation beyond the first path and row.
 
+### Running the preflight
+
+`scripts/live_gate_preflight_run.py` is the runnable entry point; it assembles every `run_preflight_rows_supervised` input from existing helpers and starts hosts only through the controller. `--mode same-sha` (default) binds the report to the clean checkout HEAD and is the normal exact-SHA preflight. `--mode comparison --application {frozen-origin-main,pre-105-control} --tool-sha SHA --tool-tree TREE` verifies the tool tree and the frozen application worktree, runs with the application SHA, and yields a comparison-only report (never booking eligible, no resume checkpoints). Before every lifecycle sandbox preparation, which precedes each host start, a load gate requires 1-minute load < 10 and 5-minute load < 20, waiting at most 30 minutes (checked every 60 s); on timeout no further host starts, the report is BLOCKED, and the summary names `LOAD_GATE`.
+
 ## Risks / Trade-offs
 
 - **A stub can hide a real provider integration defect** -> Keep the report explicitly preflight-only; require a separate owner-authorized live run and exact identity match for gate evidence.
