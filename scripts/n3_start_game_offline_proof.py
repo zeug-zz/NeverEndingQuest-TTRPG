@@ -8,23 +8,30 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import builtins
+import errno
 import importlib
 import ipaddress
 import json
+import logging
 import math
 import os
+import queue
 import re
 import socket
 import stat
+import subprocess  # Bounded worker launch plus guarded host process tripwires.
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
 import traceback
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from types import CodeType, ModuleType, SimpleNamespace, TracebackType
+from typing import Any, Callable, Mapping, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +45,21 @@ MAX_RECORDED_EGRESS = 100
 MAX_EGRESS_STACK_FRAMES = 64
 MAX_EGRESS_ORIGIN_FRAMES = 3
 MAX_EGRESS_LIBRARY_PACKAGES = 3
+MAX_FAILURE_ORIGIN_FRAMES = 5
+MAX_FAILURE_ORIGIN_TRACEBACK_FRAMES = 64
+MAX_FAILURE_ORIGIN_FILENAME_LENGTH = 4096
 MAX_COUNTER = 1_000_000
+MAX_DIAGNOSTIC_CALLS = 16
+DEFAULT_DIAGNOSTIC_CALL_LIMIT = 8
+STARTUP_DIAGNOSTIC_SHUTDOWN_SECONDS = 5.0
+DIAGNOSTIC_TASKS = ("action_prediction", "dm_main")
+DIAGNOSTIC_STUB_RESPONSES = {
+    "action_prediction": '{"requires_actions": false, "reason": "offline diagnostic"}',
+    "dm_main": (
+        '{"narration":"The chamber is quiet, and the party is ready to begin.",'
+        '"actions":[]}'
+    ),
+}
 MAX_REASON_LENGTH = 200
 MAX_BLOCKED_REASON_LENGTH = 160
 MAX_INITIAL_REQUEST_MESSAGES = 10_000
@@ -65,6 +86,36 @@ KNOWN_EXCHANGE_RATE_ORIGIN = (
     "utils/llm_usage_tracker.py:_resolve_exchange_rate"
 )
 EXCEPTION_CLASS_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+STARTUP_FAILURE_CATEGORIES = frozenset(
+    {
+        "none",
+        "other",
+        "setup_failed",
+        "egress_blocked",
+        "host_import_failed",
+        "host_import_egress_blocked",
+        "socketio_test_client_failed",
+        "socketio_test_client_egress_blocked",
+        "startup_event_failed",
+        "startup_event_egress_blocked",
+        "startup_output_failed",
+        "startup_shutdown_failed",
+        "provider_call_blocked",
+        "process_launch_blocked",
+        "router_call_blocked",
+        "tripwire_blocked",
+        "startup_handler_error",
+    }
+)
+OBSERVATION_HOOK_FAILURE_REASONS = frozenset(
+    {
+        "observation_hook_raised",
+        "observation_hook_invalid_return",
+    }
+)
+MAX_OBSERVATION_ENTRIES = 16
+MAX_OBSERVATION_KEY_LENGTH = 64
+MAX_OBSERVATION_STRING_VALUE_LENGTH = 200
 SAFE_MODEL_LABEL_PATTERN = re.compile(r"[A-Za-z0-9_.:/-]{1,128}\Z")
 MODEL_SECRET_VALUE_PATTERN = re.compile(
     r"(?i)(?:\b(?:sk|pk|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}\b|"
@@ -72,12 +123,107 @@ MODEL_SECRET_VALUE_PATTERN = re.compile(
 )
 SAFE_ORIGIN_PATH_PATTERN = re.compile(r"[A-Za-z0-9_./-]{1,180}\Z")
 SAFE_ORIGIN_FUNCTION_PATTERN = re.compile(r"[A-Za-z0-9_<>,.-]{1,80}\Z")
+SAFE_DNS_HOST_LABEL_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z"
+)
 SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)(?:\.env\b|\b(?:config(?:uration)?|environment|environ|"
     r"api[_ -]?key|secret|token|password|credential|authorization|bearer|"
     r"private[_ -]?key)\b)"
 )
+STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST = {
+    identifier: identifier
+    for identifier in (
+        "main.py",
+        "model_config.py",
+        "web/web_interface.py",
+        "web/shared_state.py",
+        "web/output_markers.py",
+        "web/extensions/live_chat_monitor.py",
+        "web/extensions/streaming_events.py",
+        "web/extensions/tabletop_socket_handlers.py",
+        "web/routes/browser_settings_routes.py",
+        "web/routes/character_sheet_routes.py",
+        "web/routes/memory_routes.py",
+        "web/routes/player_sharing_routes.py",
+        "web/routes/tabletop_party_routes.py",
+        "web/routes/toolkit_homebrew_routes.py",
+        "web/routes/world_narrative_routes.py",
+        "utils/provider_attempt_budget.py",
+        "utils/llm_router.py",
+        "utils/llm_runtime.py",
+        "utils/ai_client_factory.py",
+        "utils/version_checker.py",
+        "utils/media_paths.py",
+        "utils/repo_paths.py",
+        "utils/web_boundary.py",
+        "utils/redirect_debug_output.py",
+        "utils/reset_campaign.py",
+        "utils/pc_manager.py",
+        "utils/npc_identity.py",
+        "utils/module_media_generator_report.py",
+        "utils/image_response_payload.py",
+        "utils/enhanced_logger.py",
+        "utils/toolkit_adaptation_output_safety.py",
+        "utils/character_creation_audit.py",
+        "utils/encoding_utils.py",
+        "utils/session_cleanup.py",
+        "utils/combat_summary_history.py",
+        "utils/combat_latency_trace.py",
+        "utils/player_stats.py",
+        "utils/character_creator.py",
+        "utils/save_roll_contract.py",
+        "utils/location_path_finder.py",
+        "utils/file_operations.py",
+        "utils/module_path_manager.py",
+        "utils/authoritative_state_packet.py",
+        "utils/turn_time_sync.py",
+        "utils/inventory_possession_authority.py",
+        "utils/location_context_hygiene.py",
+        "utils/tracked_transfer_runtime.py",
+        "updates/update_character_info.py",
+        "updates/plot_update.py",
+        "updates/update_world_time.py",
+        "core/toolkit/portrait_service.py",
+        "core/memory/memory_db.py",
+        "core/managers/status_manager.py",
+        "core/managers/combat_manager.py",
+        "core/combat/__init__.py",
+        "core/combat/combat_manager.py",
+        "core/managers/level_up_manager.py",
+        "core/managers/location_manager.py",
+        "core/managers/campaign_manager.py",
+        "core/ai/conversation_utils.py",
+        "core/ai/incremental_compression.py",
+        "core/ai/action_handler.py",
+        "core/ai/cumulative_summary.py",
+        "core/ai/inventory_context_integration.py",
+    )
+}
+STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST = {
+    identifier: "site-packages/" + identifier
+    for identifier in (
+        "flask/__init__.py",
+        "flask/app.py",
+        "flask_socketio/__init__.py",
+        "socketio/__init__.py",
+        "socketio/server.py",
+        "engineio/__init__.py",
+        "engineio/server.py",
+        "werkzeug/__init__.py",
+        "werkzeug/exceptions.py",
+        "openai/__init__.py",
+        "openai/_client.py",
+        "httpx/__init__.py",
+        "PIL/Image.py",
+    )
+}
+FAILURE_ORIGIN_ALLOWED_IDENTIFIERS = frozenset(
+    set(STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST.values())
+    | set(STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST.values())
+)
 PROOF_ORIGIN = "http://127.0.0.1:8360"
+_MISSING_MODULE = object()
 UPDATE_CHECK_NOTE = (
     "The product's read-only update check is triggered by Socket.IO connect; "
     "it is stubbed here and executes for real in live runs."
@@ -181,15 +327,381 @@ def _exception_blocked_reason(exc: BaseException) -> str:
     return _safe_blocked_reason(exception_name + ": " + message)
 
 
+def _safe_exception_class(value: Any) -> Optional[str]:
+    if isinstance(value, str) and EXCEPTION_CLASS_PATTERN.fullmatch(value):
+        return value
+    return None
+
+
+def _contains_config_source_path(value: str) -> bool:
+    return any(
+        part.lower() == "config.py"
+        for part in re.split(r"[\\/]", value)
+    )
+
+
+def _known_installed_package_roots() -> list[str]:
+    """Return only this interpreter's configured package installation roots."""
+    try:
+        configured_paths = sysconfig.get_paths()
+    except BaseException:
+        return []
+
+    roots: list[str] = []
+    for key in ("purelib", "platlib"):
+        value = configured_paths.get(key) if isinstance(configured_paths, dict) else None
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > MAX_FAILURE_ORIGIN_FILENAME_LENGTH
+            or not value.isascii()
+            or _contains_config_source_path(value)
+        ):
+            continue
+        try:
+            root = os.path.normpath(os.path.abspath(value))
+        except (OSError, TypeError, ValueError):
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _relative_python_source(
+    filename: str, root: str
+) -> Optional[str]:
+    """Return a relative candidate solely for exact fixed-allowlist lookup."""
+    try:
+        candidate = os.path.normpath(os.path.abspath(filename))
+        approved_root = os.path.normpath(os.path.abspath(root))
+        if os.path.commonpath((candidate, approved_root)) != approved_root:
+            return None
+        relative = os.path.relpath(candidate, approved_root).replace(os.sep, "/")
+    except (OSError, TypeError, ValueError):
+        return None
+
+    parts = relative.split("/")
+    if (
+        relative in ("", ".")
+        or not relative.endswith(".py")
+        or any(part in ("", ".", "..") for part in parts)
+        or any(part.lower() == "config.py" for part in parts)
+    ):
+        return None
+    if (
+        len(relative) > 180
+        or not SAFE_ORIGIN_PATH_PATTERN.fullmatch(relative)
+        or MODEL_SECRET_VALUE_PATTERN.search(relative)
+        or SENSITIVE_DIAGNOSTIC_PATTERN.search(relative)
+    ):
+        return None
+    return relative
+
+
+def _safe_exception_source_identifier(
+    filename: Any,
+    sandbox_root: Optional[Path],
+    installed_roots: list[str],
+) -> Optional[str]:
+    """Recognize repository or configured-package Python code without opening it."""
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or len(filename) > MAX_FAILURE_ORIGIN_FILENAME_LENGTH
+        or not filename.isascii()
+        or "\\" in filename
+        or _contains_config_source_path(filename)
+    ):
+        return None
+
+    for root in installed_roots:
+        relative = _relative_python_source(filename, root)
+        if relative is not None:
+            source = STARTUP_IMPORT_PACKAGE_ORIGIN_ALLOWLIST.get(relative)
+            if source is not None:
+                return source
+
+    roots: list[tuple[str, str]] = []
+    if sandbox_root is not None:
+        try:
+            roots.append((os.fspath(sandbox_root), ""))
+        except (TypeError, ValueError):
+            pass
+    try:
+        roots.append((os.fspath(REPO_ROOT), ""))
+    except (TypeError, ValueError):
+        pass
+    for root, _prefix in roots:
+        relative = _relative_python_source(filename, root)
+        source = (
+            STARTUP_IMPORT_REPOSITORY_ORIGIN_ALLOWLIST.get(relative)
+            if relative is not None
+            else None
+        )
+        if source is not None:
+            return source
+    return None
+
+
+def _exception_failure_origin(
+    exc: BaseException, sandbox_root: Optional[Path]
+) -> dict[str, Any]:
+    """Extract bounded file/line origins without reading exception data or source."""
+    unknown = {"status": "unknown", "frames": []}
+    try:
+        traceback_descriptor = BaseException.__dict__["__traceback__"]
+        tb = traceback_descriptor.__get__(exc, type(exc))
+    except BaseException:
+        return unknown
+    if not isinstance(tb, TracebackType):
+        return unknown
+
+    installed_roots = _known_installed_package_roots()
+    frames: list[dict[str, Any]] = []
+    saw_traceback = False
+    rejected_frame = False
+    inspected = 0
+    while tb is not None and inspected < MAX_FAILURE_ORIGIN_TRACEBACK_FRAMES:
+        if not isinstance(tb, TracebackType):
+            rejected_frame = True
+            break
+        saw_traceback = True
+        try:
+            code = tb.tb_frame.f_code
+            filename = code.co_filename if isinstance(code, CodeType) else None
+            line_number = tb.tb_lineno
+            source = _safe_exception_source_identifier(
+                filename, sandbox_root, installed_roots
+            )
+        except BaseException:
+            source = None
+            line_number = None
+        if (
+            source is None
+            or isinstance(line_number, bool)
+            or not isinstance(line_number, int)
+            or not 1 <= line_number <= MAX_COUNTER
+        ):
+            rejected_frame = True
+        else:
+            frame = {"source": source, "line": line_number}
+            if frame not in frames:
+                frames.append(frame)
+                if len(frames) > MAX_FAILURE_ORIGIN_FRAMES:
+                    del frames[0]
+        try:
+            tb = tb.tb_next
+        except BaseException:
+            tb = None
+            rejected_frame = True
+        inspected += 1
+
+    if tb is not None:
+        rejected_frame = True
+    if frames:
+        return {"status": "identified", "frames": frames}
+    return {
+        "status": "redacted" if saw_traceback or rejected_frame else "unknown",
+        "frames": [],
+    }
+
+
+def _process_launch_refusal_origin(
+    caller_frame: Any, sandbox_root: Optional[Path]
+) -> dict[str, Any]:
+    """Identify a process-launch caller only through the fixed source allowlist."""
+    try:
+        code = getattr(caller_frame, "f_code", None)
+        filename = code.co_filename if isinstance(code, CodeType) else None
+        line_number = getattr(caller_frame, "f_lineno", None)
+        source = _safe_exception_source_identifier(
+            filename, sandbox_root, _known_installed_package_roots()
+        )
+    except BaseException:
+        source = None
+        line_number = None
+
+    if (
+        source is None
+        or isinstance(line_number, bool)
+        or not isinstance(line_number, int)
+        or not 1 <= line_number <= MAX_COUNTER
+    ):
+        return {"status": "redacted", "frames": []}
+
+    return {
+        "status": "identified",
+        "frames": [{"source": source, "line": line_number}],
+    }
+
+
+class _ObservationClient:
+    """The only object passed to an observe_running_host hook as its client
+    argument. Exposes exactly emit() and get_received() -- nothing else, no
+    disconnect/connect/queue access -- so a hook cannot do anything to the
+    real Socket.IO test client beyond what request_status-style observation
+    needs. Every event get_received() returns is also appended, unmodified,
+    to a sink list owned by run_startup_diagnostic, so events the hook drains
+    are not lost to the diagnostic's own later event scan."""
+
+    def __init__(self, real_client: Any, drained_sink: list[Any]) -> None:
+        self._real_client = real_client
+        self._drained_sink = drained_sink
+
+    def emit(self, name: str, *args: Any) -> Any:
+        return self._real_client.emit(name, *args)
+
+    def get_received(self) -> list[Any]:
+        events = self._real_client.get_received()
+        self._drained_sink.extend(events)
+        return events
+
+
+def _sanitize_observation_mapping(value: Any) -> Optional[dict[str, Any]]:
+    """Bound an observation hook's return value to plain booleans, ints, and
+    short ASCII strings only; reject anything else so an observation hook can
+    never smuggle a payload, secret, or unbounded value into the report."""
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if len(result) >= MAX_OBSERVATION_ENTRIES:
+            return None
+        if (
+            not isinstance(key, str)
+            or not key.isascii()
+            or not (1 <= len(key) <= MAX_OBSERVATION_KEY_LENGTH)
+        ):
+            return None
+        if isinstance(item, bool):
+            result[key] = item
+        elif isinstance(item, int):
+            result[key] = int(item)
+        elif isinstance(item, str):
+            if not item.isascii() or len(item) > MAX_OBSERVATION_STRING_VALUE_LENGTH:
+                return None
+            result[key] = item
+        else:
+            return None
+    return result
+
+
+def _safe_failure_origin(value: Any) -> Optional[dict[str, Any]]:
+    """Revalidate the bounded source/line-only report representation."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"status": "redacted", "frames": []}
+
+    status = value.get("status")
+    if status not in ("identified", "redacted", "unknown"):
+        status = "redacted"
+    raw_frames = value.get("frames")
+    frames: list[dict[str, Any]] = []
+    if isinstance(raw_frames, (list, tuple)):
+        for frame in raw_frames[:MAX_FAILURE_ORIGIN_FRAMES]:
+            if not isinstance(frame, dict):
+                continue
+            source = frame.get("source")
+            line_number = frame.get("line")
+            if (
+                not isinstance(source, str)
+                or not source.isascii()
+                or len(source) > 180
+                or not SAFE_ORIGIN_PATH_PATTERN.fullmatch(source)
+                or source not in FAILURE_ORIGIN_ALLOWED_IDENTIFIERS
+                or MODEL_SECRET_VALUE_PATTERN.search(source)
+                or SENSITIVE_DIAGNOSTIC_PATTERN.search(source)
+                or not source.endswith(".py")
+                or source.startswith("/")
+                or "\\" in source
+                or ".." in source.split("/")
+                or any(
+                    part.lower() == "config.py"
+                    for part in source.split("/")
+                )
+                or isinstance(line_number, bool)
+                or not isinstance(line_number, int)
+                or not 1 <= line_number <= MAX_COUNTER
+            ):
+                continue
+            frames.append({"source": source, "line": line_number})
+
+    if frames and status == "unknown":
+        status = "redacted"
+    elif not frames and status == "identified":
+        status = "redacted"
+    return {"status": status, "frames": frames}
+
+
+def _startup_failure_category(
+    exception_class: Optional[str],
+    stage: str,
+    recorder_failure: Optional[str] = None,
+) -> str:
+    """Map an exception and fixed diagnostic stage to a closed category."""
+    if exception_class in (
+        "EgressBlocked",
+        "ConnectionRefusedError",
+        "gaierror",
+    ):
+        if stage == "host_import":
+            return "host_import_egress_blocked"
+        if stage == "socketio_test_client":
+            return "socketio_test_client_egress_blocked"
+        if stage == "startup_event":
+            return "startup_event_egress_blocked"
+        return "egress_blocked"
+    if exception_class == "ProviderCallBlocked":
+        if recorder_failure == "native child-process launch was attempted":
+            return "process_launch_blocked"
+        if recorder_failure == "provider SDK entry point was attempted":
+            return "provider_call_blocked"
+        if recorder_failure in {
+            "router call blocked by offline proof",
+            "unexpected startup router entry point",
+            "unrecognized startup router task",
+            "extra startup router call",
+            "startup router call order was not observed",
+            "router/provider diagnostic call bound exceeded",
+        }:
+            return "router_call_blocked"
+        return "tripwire_blocked"
+    stage_categories = {
+        "host_import": "host_import_failed",
+        "socketio_test_client": "socketio_test_client_failed",
+        "startup_event": "startup_event_failed",
+        "startup_output": "startup_output_failed",
+        "startup_shutdown": "startup_shutdown_failed",
+    }
+    if exception_class is not None:
+        return stage_categories.get(stage, "setup_failed")
+    return "none"
+
+
 class ProviderCallRecorder:
     """Thread-safe counts for router and direct provider entry points."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        diagnostic_mode: bool = False,
+        diagnostic_call_limit: int = DEFAULT_DIAGNOSTIC_CALL_LIMIT,
+    ) -> None:
+        if not 2 <= diagnostic_call_limit <= MAX_DIAGNOSTIC_CALLS:
+            raise ValueError("diagnostic call limit is outside the supported bound")
         self._lock = threading.Lock()
+        self.diagnostic_mode = diagnostic_mode
+        self.diagnostic_call_limit = diagnostic_call_limit
         self.router_calls = 0
         self.provider_function_calls = 0
         self.update_check_calls = 0
         self.initial_narration_request: Optional[dict[str, Any]] = None
+        self._diagnostic_call_events: list[dict[str, Any]] = []
+        self._diagnostic_stub_call_counts = {task: 0 for task in DIAGNOSTIC_TASKS}
+        self._diagnostic_failure: Optional[str] = None
+        self._process_launch_refusal: Optional[dict[str, Any]] = None
+        self._diagnostic_overflow = False
 
     def record_initial_narration_request(
         self,
@@ -216,6 +728,142 @@ class ProviderCallRecorder:
         with self._lock:
             self.router_calls = min(self.router_calls + 1, MAX_COUNTER)
         raise ProviderCallBlocked("router call blocked by offline proof")
+
+    def diagnostic_router_call(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        model_config: Any,
+        sandbox_root: Path,
+        caller_frame: Any,
+        bound_method: bool = False,
+        allow_stub: bool = True,
+    ) -> str:
+        """Record a router entry and stub only the two bounded startup tasks."""
+        argument_offset = 1 if bound_method else 0
+        call_args = args[argument_offset:]
+        task_value = kwargs.get("task")
+        if task_value is None and call_args:
+            task_value = call_args[0]
+        task_candidate = _safe_model_label(task_value)
+        task = task_candidate if task_candidate in DIAGNOSTIC_TASKS else "unknown"
+        profile_value = kwargs.get(
+            "profile", kwargs.get("profile_name", kwargs.get("model_profile"))
+        )
+        profile = _diagnostic_profile_label(model_config, task, profile_value)
+        event = _diagnostic_call_event(
+            task=task,
+            profile=profile,
+            caller_frame=caller_frame,
+            sandbox_root=sandbox_root,
+        )
+
+        failure: Optional[str] = None
+        with self._lock:
+            self.router_calls = min(self.router_calls + 1, MAX_COUNTER)
+            if len(self._diagnostic_call_events) >= self.diagnostic_call_limit:
+                self._diagnostic_overflow = True
+                failure = "router/provider diagnostic call bound exceeded"
+            else:
+                event["sequence"] = len(self._diagnostic_call_events) + 1
+                self._diagnostic_call_events.append(event)
+                if not allow_stub:
+                    failure = "unexpected startup router entry point"
+                elif task not in DIAGNOSTIC_STUB_RESPONSES:
+                    failure = "unrecognized startup router task"
+                elif self._diagnostic_stub_call_counts[task] != 0:
+                    failure = "extra startup router call"
+                elif task == "dm_main" and self._diagnostic_stub_call_counts[
+                    "action_prediction"
+                ] != 1:
+                    failure = "startup router call order was not observed"
+                elif task == "action_prediction" and self._diagnostic_stub_call_counts[
+                    "dm_main"
+                ] != 0:
+                    failure = "startup router call order was not observed"
+                else:
+                    self._diagnostic_stub_call_counts[task] += 1
+            if failure is not None and self._diagnostic_failure is None:
+                self._diagnostic_failure = failure
+
+        if failure is not None:
+            raise ProviderCallBlocked(failure)
+        return DIAGNOSTIC_STUB_RESPONSES[task]
+
+    def block_diagnostic_provider_call(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        sandbox_root: Path,
+        caller_frame: Any,
+    ) -> None:
+        """Record a direct SDK entry without retaining request payload fields."""
+        task = _safe_model_label(kwargs.get("task")) or "unknown"
+        profile = _safe_model_label(
+            kwargs.get("profile", kwargs.get("profile_name"))
+        ) or "unknown"
+        event = _diagnostic_call_event(
+            task=task,
+            profile=profile,
+            caller_frame=caller_frame,
+            sandbox_root=sandbox_root,
+        )
+        with self._lock:
+            self.provider_function_calls = min(
+                self.provider_function_calls + 1, MAX_COUNTER
+            )
+            if len(self._diagnostic_call_events) < self.diagnostic_call_limit:
+                event["sequence"] = len(self._diagnostic_call_events) + 1
+                self._diagnostic_call_events.append(event)
+            else:
+                self._diagnostic_overflow = True
+            if self._diagnostic_failure is None:
+                self._diagnostic_failure = "provider SDK entry point was attempted"
+        del args
+        raise ProviderCallBlocked("provider SDK call blocked by offline diagnostic")
+
+    def block_diagnostic_process_launch(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        caller_frame: Any,
+        sandbox_root: Optional[Path],
+    ) -> None:
+        """Refuse native child-process creation without retaining arguments."""
+        del args, kwargs
+        origin = _process_launch_refusal_origin(caller_frame, sandbox_root)
+        with self._lock:
+            if self._diagnostic_failure is None:
+                self._diagnostic_failure = "native child-process launch was attempted"
+            if self._process_launch_refusal is None:
+                self._process_launch_refusal = origin
+        raise ProviderCallBlocked("native child-process launch blocked")
+
+    def process_launch_refusal_snapshot(self) -> Optional[dict[str, Any]]:
+        with self._lock:
+            if self._process_launch_refusal is None:
+                return None
+            return {
+                "status": self._process_launch_refusal["status"],
+                "frames": [
+                    dict(frame)
+                    for frame in self._process_launch_refusal["frames"]
+                ],
+            }
+
+    def diagnostic_snapshot(
+        self,
+    ) -> tuple[list[dict[str, Any]], dict[str, int], Optional[str], bool]:
+        with self._lock:
+            return (
+                [dict(event) for event in self._diagnostic_call_events],
+                dict(self._diagnostic_stub_call_counts),
+                self._diagnostic_failure,
+                self._diagnostic_overflow,
+            )
 
     def block_provider_function(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
@@ -293,7 +941,10 @@ def _host_class(host: Any) -> str:
     elif host is None:
         return "non_loopback"
     else:
-        normalized = str(host)
+        try:
+            normalized = str(host)
+        except BaseException:
+            return "non_loopback"
     normalized = normalized.strip().strip("[]").rstrip(".").lower()
     if normalized == "localhost" or normalized.endswith(".localhost"):
         return "loopback"
@@ -312,15 +963,97 @@ def _safe_port(port: Any) -> Optional[int]:
     if isinstance(port, int):
         return port if 0 <= port <= 65535 else None
     if isinstance(port, str) and port.isascii() and port.isdecimal():
-        parsed = int(port)
+        if len(port) > 5:
+            return None
+        try:
+            parsed = int(port)
+        except ValueError:
+            return None
         return parsed if parsed <= 65535 else None
     return None
+
+
+def _safe_refusal_hostname(host: Any) -> Optional[str]:
+    """Return an exact, bounded hostname/IP literal without URL or secret data."""
+    if isinstance(host, bytes):
+        try:
+            value = host.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    elif isinstance(host, str):
+        value = host
+    else:
+        return None
+    if (
+        not value
+        or value.lower() == "unavailable"
+        or len(value) > 253
+        or not value.isascii()
+        or value != value.strip()
+        or MODEL_SECRET_VALUE_PATTERN.search(value)
+        or SENSITIVE_DIAGNOSTIC_PATTERN.search(value)
+    ):
+        return None
+
+    candidate = (
+        value[1:-1]
+        if value.startswith("[") and value.endswith("]")
+        else value
+    )
+    try:
+        ipaddress.ip_address(candidate)
+        return value
+    except ValueError:
+        pass
+
+    hostname = candidate[:-1] if candidate.endswith(".") else candidate
+    if not hostname or len(hostname) > 253:
+        return None
+    if any(
+        not SAFE_DNS_HOST_LABEL_PATTERN.fullmatch(label)
+        for label in hostname.split(".")
+    ):
+        return None
+    return value
+
+
+def _connection_refused_error() -> ConnectionRefusedError:
+    return ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+
+
+def _name_resolution_refused_error() -> socket.gaierror:
+    return socket.gaierror(
+        getattr(socket, "EAI_NONAME", -2), "Name or service not known"
+    )
 
 
 def _address_parts(address: Any) -> tuple[Any, Any]:
     if isinstance(address, tuple) and address:
         return address[0], address[1] if len(address) > 1 else None
     return address, None
+
+
+def _is_ipv6_loopback_ephemeral_bind(sock: Any, address: Any) -> bool:
+    if getattr(sock, "family", None) != getattr(socket, "AF_INET6", None):
+        return False
+    host, port = _address_parts(address)
+    if _safe_port(port) != 0:
+        return False
+    if isinstance(host, bytes):
+        try:
+            host = host.decode("ascii")
+        except UnicodeDecodeError:
+            return False
+    if not isinstance(host, str):
+        return False
+    try:
+        parsed_host = ipaddress.ip_address(host.strip().strip("[]"))
+    except ValueError:
+        return False
+    return (
+        isinstance(parsed_host, ipaddress.IPv6Address)
+        and parsed_host == ipaddress.IPv6Address("::1")
+    )
 
 
 def _hostname_class(host: Any) -> str:
@@ -427,6 +1160,451 @@ def _safe_model_label(value: Any) -> Optional[str]:
     ):
         return label
     return None
+
+
+def _project_relative_call_site(caller_frame: Any, sandbox_root: Path) -> str:
+    """Resolve the nearest project frame without retaining an absolute path."""
+    frame = caller_frame
+    proof_path = Path(__file__).resolve(strict=False)
+    while frame is not None:
+        filename_value = getattr(getattr(frame, "f_code", None), "co_filename", None)
+        line_number = getattr(frame, "f_lineno", None)
+        if isinstance(filename_value, str):
+            try:
+                filename = Path(filename_value).resolve(strict=False)
+            except OSError:
+                filename = None
+            if filename is not None and filename != proof_path:
+                relative_name: Optional[str] = None
+                for root in (sandbox_root, REPO_ROOT):
+                    try:
+                        relative_name = filename.relative_to(root.resolve(strict=False)).as_posix()
+                        break
+                    except ValueError:
+                        continue
+                if (
+                    relative_name
+                    and SAFE_ORIGIN_PATH_PATTERN.fullmatch(relative_name)
+                    and isinstance(line_number, int)
+                    and not isinstance(line_number, bool)
+                    and 1 <= line_number <= MAX_COUNTER
+                ):
+                    return relative_name + ":" + str(line_number)
+        frame = getattr(frame, "f_back", None)
+    return "unknown:0"
+
+
+def _diagnostic_call_event(
+    *, task: Any, profile: Any, caller_frame: Any, sandbox_root: Path
+) -> dict[str, Any]:
+    """Build the exact payload-only-free event schema used by diagnostics."""
+    return {
+        "task": _safe_model_label(task) or "unknown",
+        "profile": _safe_model_label(profile) or "unknown",
+        "call_site": _project_relative_call_site(caller_frame, sandbox_root),
+        "thread_id": threading.get_ident(),
+        "thread_class": _thread_name_class(),
+    }
+
+
+def _diagnostic_profile_label(
+    model_config: Any, task: str, explicit_profile: Any
+) -> str:
+    profiles = getattr(model_config, "MODEL_PROFILES", {})
+    configured_names = {
+        safe_name
+        for name in profiles
+        if (safe_name := _safe_model_label(name)) is not None
+    } if isinstance(profiles, dict) else set()
+    explicit = _safe_model_label(explicit_profile)
+    if explicit in configured_names:
+        return explicit
+    task_overrides = getattr(model_config, "TASK_OVERRIDES", {})
+    if isinstance(task_overrides, dict):
+        task_override = task_overrides.get(task, {})
+        if isinstance(task_override, dict):
+            profile = _safe_model_label(task_override.get("profile"))
+            if profile in configured_names:
+                return profile
+    active = _safe_model_label(getattr(model_config, "ACTIVE_PROFILE", None))
+    return active if active in configured_names else "unknown"
+
+
+def _safe_diagnostic_call_events(values: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Sanitize diagnostic calls and reject malformed, unordered observations."""
+    if not isinstance(values, (list, tuple)):
+        return [], False
+    safe_events: list[dict[str, Any]] = []
+    valid = len(values) <= MAX_DIAGNOSTIC_CALLS
+    expected_sequence = 1
+    for value in values[:MAX_DIAGNOSTIC_CALLS]:
+        if not isinstance(value, dict):
+            valid = False
+            continue
+        task = _safe_model_label(value.get("task")) or "unknown"
+        profile = _safe_model_label(value.get("profile")) or "unknown"
+        if task == "unknown" or profile == "unknown":
+            valid = False
+        call_site = value.get("call_site")
+        thread_id = value.get("thread_id")
+        thread_class = value.get("thread_class")
+        sequence = value.get("sequence")
+        safe_call_site = "unknown:0"
+        if isinstance(call_site, str) and ":" in call_site:
+            path, line_value = call_site.rsplit(":", 1)
+            path_parts = Path(path).parts
+            if (
+                not path.startswith("/")
+                and ".." not in path_parts
+                and "\\" not in path
+                and SAFE_ORIGIN_PATH_PATTERN.fullmatch(path)
+                and path.endswith(".py")
+                and 1 <= len(line_value) <= 7
+                and line_value.isascii()
+                and line_value.isdecimal()
+                and 1 <= int(line_value) <= MAX_COUNTER
+            ):
+                safe_call_site = path + ":" + line_value
+            else:
+                valid = False
+        else:
+            valid = False
+        if (
+            isinstance(thread_id, bool)
+            or not isinstance(thread_id, int)
+            or not 0 < thread_id <= (1 << 64) - 1
+        ):
+            thread_id = 0
+            valid = False
+        if thread_class not in ("main", "background", "other"):
+            thread_class = "other"
+            valid = False
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence != expected_sequence
+        ):
+            valid = False
+            sequence = expected_sequence
+        safe_events.append(
+            {
+                "task": task,
+                "profile": profile,
+                "call_site": safe_call_site,
+                "thread_id": thread_id,
+                "thread_class": thread_class,
+                "sequence": sequence,
+            }
+        )
+        expected_sequence += 1
+    return safe_events, valid
+
+
+def _offline_diagnostic_config_module() -> ModuleType:
+    """Supply safe startup defaults without importing or reading config.py."""
+    module = ModuleType("config")
+    safe_values = {
+        "OPENAI_API_KEY": "",
+        "OPENROUTER_API_KEY": "",
+        "WEB_PORT": 8360,
+        "WEB_HOST": "127.0.0.1",
+        "WEB_CORS_ALLOWED_ORIGINS": [PROOF_ORIGIN],
+        "DM_MAIN_MODEL": "offline-diagnostic",
+        "PLAYER_INFO_UPDATE_MODEL": "offline-diagnostic",
+        "NPC_INFO_UPDATE_MODEL": "offline-diagnostic",
+        "COMBAT_MAIN_MODEL": "offline-diagnostic",
+        "COMBAT_DIALOGUE_SUMMARY_MODEL": "offline-diagnostic",
+        "DM_SUMMARIZATION_MODEL": "offline-diagnostic",
+        "DM_VALIDATION_MODEL": "offline-diagnostic",
+        "DM_MINI_MODEL": "offline-diagnostic",
+        "DM_FULL_MODEL": "offline-diagnostic",
+        "GPT5_MINI_MODEL": "offline-diagnostic",
+        "GPT5_FULL_MODEL": "offline-diagnostic",
+        "LEVEL_UP_MODEL": "offline-diagnostic",
+        "ENABLE_INTELLIGENT_ROUTING": False,
+        "MAX_VALIDATION_RETRIES": 0,
+        "USE_GPT5_MODELS": False,
+        "GPT5_USE_HIGH_REASONING_ON_RETRY": False,
+        "MULTIPLAYER_MODE": False,
+        "DEBUG_STATUS_SYNC": False,
+    }
+    module.__dict__.update(safe_values)
+    module.__file__ = "<offline-diagnostic-config>"
+    return module
+
+
+class _DiscardingTextStream:
+    """Text stream that drops application prompts, output, and diagnostics."""
+
+    encoding = "ascii"
+    errors = "replace"
+
+    def write(self, value: Any) -> int:
+        return len(value) if isinstance(value, str) else 0
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    def __enter__(self) -> "_DiscardingTextStream":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        del exc_type, exc, tb
+        self.flush()
+
+    def writelines(self, values: Any) -> None:
+        for value in values:
+            self.write(value)
+
+
+class _OfflineDiagnosticClient:
+    """Inert replacement for the import-time legacy provider client."""
+
+    def __init__(self, recorder: ProviderCallRecorder, sandbox_root: Path) -> None:
+        self._recorder = recorder
+        self._sandbox_root = sandbox_root
+
+    def __getattr__(self, name: str) -> Any:
+        del name
+        self._recorder.block_diagnostic_provider_call(
+            (),
+            {"task": "unknown"},
+            sandbox_root=self._sandbox_root,
+            caller_frame=sys._getframe(1),
+        )
+
+
+def _startup_diagnostic_worker_environment() -> dict[str, str]:
+    """Build a credential-free child environment from a minimal allowlist."""
+    environment: dict[str, str] = {}
+    for name in ("LANG", "LC_ALL", "LC_CTYPE"):
+        value = os.environ.get(name)
+        if isinstance(value, str) and value:
+            environment[name] = value
+    environment["PATH"] = ""
+    environment["PYTHONPATH"] = str(REPO_ROOT)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["NEQ_OPEN_BROWSER"] = "0"
+    return environment
+
+
+def _is_sensitive_diagnostic_log_path(path_value: Any, sandbox_root: Path) -> bool:
+    if not isinstance(path_value, (str, bytes, os.PathLike)):
+        return False
+    try:
+        value = os.fsdecode(os.fspath(path_value))
+        candidate = os.path.abspath(
+            value if os.path.isabs(value) else os.path.join(sandbox_root, value)
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+    temporary_conversation = os.path.abspath(
+        os.path.join(tempfile.gettempdir(), "temp_conversation_for_api.json")
+    )
+    if candidate == temporary_conversation:
+        return True
+    try:
+        relative = Path(candidate).relative_to(sandbox_root)
+    except ValueError:
+        return False
+    if (
+        relative.parts[:2] == ("debug", "quality_control")
+        and relative.name in ("model_selection.jsonl", "model_results.jsonl")
+    ):
+        return True
+    return False
+
+
+def _is_nonempty_narration_payload(value: Any) -> bool:
+    if not isinstance(value, dict) or value.get("type") != "narration":
+        return False
+    content = value.get("content")
+    return isinstance(content, str) and bool(content.strip())
+
+
+def _startup_diagnostic_report(
+    *,
+    call_events: Any,
+    stub_call_counts: Any,
+    router_calls: Any,
+    provider_calls: Any,
+    network_attempts: Any,
+    ledger_reservations: Any,
+    ledger_valid: bool,
+    startup_output_delivered: bool,
+    game_started: bool,
+    startup_thread_stopped: bool,
+    diagnostic_failure: Optional[str],
+    call_overflow: bool,
+    router_call_guard: bool,
+    router_decide_guard: bool,
+    sdk_tripwire_count: int,
+    egress_guard_active: bool,
+    process_launch_guard: bool = False,
+    host_imports_verified: bool = False,
+    startup_boundary_guard_active: bool = False,
+    egress_attributions: Any = None,
+    egress_refusals: Any = None,
+    egress_refusal_count: Any = None,
+    failure_exception_class: Optional[str] = None,
+    failure_category: Optional[str] = None,
+    failure_origin: Any = None,
+    process_launch_refusal: Any = None,
+    observation: Optional[Mapping[str, object]] = None,
+    observation_failure: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build a payload-free, bounded report for the actual start_game path."""
+    safe_events, event_schema_valid = _safe_diagnostic_call_events(call_events)
+    safe_stub_counts = {
+        task: _bounded_count(
+            stub_call_counts.get(task, 0)
+            if isinstance(stub_call_counts, dict)
+            else 0
+        )
+        for task in DIAGNOSTIC_TASKS
+    }
+    safe_router_calls = _bounded_count(router_calls)
+    safe_provider_calls = _bounded_count(provider_calls)
+    safe_network_attempts = _bounded_count(network_attempts)
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals
+    )
+    refusal_coverage_complete = bool(
+        refusal_events_valid
+        and _bounded_count(egress_refusal_count) == safe_network_attempts
+        and len(safe_egress_refusals) == safe_network_attempts
+    )
+    safe_failure_class = _safe_exception_class(failure_exception_class)
+    safe_failure_category = (
+        failure_category
+        if isinstance(failure_category, str)
+        and failure_category in STARTUP_FAILURE_CATEGORIES
+        else ("other" if diagnostic_failure else "none")
+    )
+    safe_ledger_reservations = (
+        _bounded_count(ledger_reservations)
+        if ledger_reservations is not None
+        else None
+    )
+    coverage_established = bool(
+        router_call_guard
+        and router_decide_guard
+        and isinstance(sdk_tripwire_count, int)
+        and not isinstance(sdk_tripwire_count, bool)
+        and sdk_tripwire_count >= 1
+        and egress_guard_active
+        and process_launch_guard
+        and host_imports_verified
+        and startup_boundary_guard_active
+        and event_schema_valid
+        and refusal_coverage_complete
+        and not call_overflow
+    )
+    expected_call_sequence = [
+        {"task": "action_prediction", "sequence": 1},
+        {"task": "dm_main", "sequence": 2},
+    ]
+    observed_call_sequence = [
+        {"task": event["task"], "sequence": event["sequence"]}
+        for event in safe_events
+    ]
+    expected_stubs = {"action_prediction": 1, "dm_main": 1}
+    clean_calls = (
+        observed_call_sequence == expected_call_sequence
+        and safe_stub_counts == expected_stubs
+        and safe_router_calls == 2
+        and safe_provider_calls == 0
+        and diagnostic_failure is None
+    )
+    safe_observation_failure = (
+        observation_failure
+        if isinstance(observation_failure, str)
+        and observation_failure in OBSERVATION_HOOK_FAILURE_REASONS
+        else (None if observation_failure is None else "observation_hook_failed")
+    )
+    passed = bool(
+        coverage_established
+        and startup_output_delivered
+        and game_started
+        and startup_thread_stopped
+        and clean_calls
+        and safe_network_attempts == 0
+        and safe_ledger_reservations == 0
+        and ledger_valid
+        and safe_observation_failure is None
+    )
+
+    if passed:
+        reason = "startup narration delivered with bounded offline router stubs"
+    elif safe_observation_failure is not None:
+        reason = "observation hook failed (" + safe_observation_failure + ")"
+    elif not coverage_established:
+        if not host_imports_verified:
+            reason = "complete real sandbox host imports were not verified"
+        elif not process_launch_guard:
+            reason = "native process-launch tripwire coverage was not established"
+        elif not startup_boundary_guard_active:
+            reason = "startup boundary guards were not fully installed"
+        else:
+            reason = "router/provider/network tripwire coverage was not established"
+    elif safe_network_attempts:
+        reason = "network attempt was blocked by the offline diagnostic"
+    elif safe_provider_calls:
+        reason = "direct provider SDK call was blocked by the offline diagnostic"
+    elif diagnostic_failure:
+        reason = diagnostic_failure[:MAX_REASON_LENGTH]
+    elif not startup_output_delivered:
+        reason = "startup narration output was not delivered within the bound"
+    elif not game_started:
+        reason = "start_game did not report successful startup"
+    elif not startup_thread_stopped:
+        reason = "startup runtime did not stop after the diagnostic shutdown input"
+    elif not clean_calls:
+        reason = "startup router call sequence was incomplete or unexpected"
+    elif safe_ledger_reservations != 0 or not ledger_valid:
+        reason = "provider attempt ledger was not verified empty"
+    else:
+        reason = "startup diagnostic did not establish a safe pass"
+
+    return {
+        "verdict": "PASS" if passed else "BLOCKED",
+        "reason": reason[:MAX_REASON_LENGTH],
+        "startup_output_delivered": bool(startup_output_delivered),
+        "game_started": bool(game_started),
+        "startup_thread_stopped": bool(startup_thread_stopped),
+        "coverage_established": coverage_established,
+        "call_trace": safe_events,
+        "stub_call_counts": safe_stub_counts,
+        "router_call_count": safe_router_calls,
+        "provider_call_count": safe_provider_calls,
+        "network_attempt_count": safe_network_attempts,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
+        "network_attempt_attributions": _safe_egress_attributions(
+            egress_attributions
+        ),
+        "failure_exception_class": safe_failure_class,
+        "failure_category": safe_failure_category,
+        "failure_origin": _safe_failure_origin(failure_origin),
+        "process_launch_refusal": _safe_failure_origin(process_launch_refusal),
+        "ledger_reservation_count": safe_ledger_reservations,
+        "ledger_valid": bool(ledger_valid),
+        "tripwire_coverage": {
+            "router_call": bool(router_call_guard),
+            "router_decide": bool(router_decide_guard),
+            "sdk_method_count": min(max(sdk_tripwire_count, 0), len(SDK_PATCH_TARGETS)),
+            "socket_egress": bool(egress_guard_active),
+            "process_launch": bool(process_launch_guard),
+            "real_host_imports": bool(host_imports_verified),
+            "startup_boundaries": bool(startup_boundary_guard_active),
+        },
+        "observation": _sanitize_observation_mapping(observation),
+        "observation_failure": safe_observation_failure,
+    }
 
 
 def _safe_price_per_1k(value: Any) -> Optional[dict[str, float]]:
@@ -887,12 +2065,15 @@ def _expected_startup_narration_intercept(
 
 
 class EgressGuard:
-    """Observe socket destinations and refuse every non-loopback operation."""
+    """Deny non-loopback operations before transport using ordinary socket errors."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, deny_loopback: bool = False) -> None:
         self._lock = threading.Lock()
+        self._deny_loopback = deny_loopback
         self._attempts: list[dict[str, Any]] = []
         self._attempt_count = 0
+        self._refusals: list[dict[str, Any]] = []
+        self._refusal_count = 0
         self._sandbox_root: Optional[Path] = None
         self._attributions: dict[
             tuple[tuple[str, ...], tuple[str, ...], str], dict[str, Any]
@@ -905,13 +2086,16 @@ class EgressGuard:
     def set_sandbox_root(self, sandbox_root: Path) -> None:
         self._sandbox_root = sandbox_root
 
-    def _record_attribution(self, host: Any) -> None:
+    def _record_attribution(
+        self, host: Any, thread_class: Optional[str] = None
+    ) -> None:
         project_frames, library_packages = _collect_egress_origin(
             traceback.extract_stack(limit=MAX_EGRESS_STACK_FRAMES),
             self._sandbox_root,
         )
         hostname = _hostname_class(host)
-        thread_class = _thread_name_class()
+        if thread_class not in ("main", "background", "other"):
+            thread_class = _thread_name_class()
         key = (tuple(project_frames), tuple(library_packages), hostname)
         with self._lock:
             attribution = self._attributions.get(key)
@@ -933,39 +2117,186 @@ class EgressGuard:
                 attribution["thread_classes"].sort()
             attribution["count"] = min(attribution["count"] + 1, MAX_COUNTER)
 
+    def _record_refusal(
+        self, host: Any, port: Any, caller_frame: Any
+    ) -> str:
+        """Retain one safe destination and source record for each refusal."""
+        safe_hostname = _safe_refusal_hostname(host) or "unavailable"
+        safe_port: Any = _safe_port(port)
+        if safe_port is None:
+            safe_port = "unavailable"
+        try:
+            thread_id: Any = threading.get_ident()
+            if (
+                isinstance(thread_id, bool)
+                or not isinstance(thread_id, int)
+                or not 0 < thread_id <= (1 << 64) - 1
+            ):
+                thread_id = "unavailable"
+        except BaseException:
+            thread_id = "unavailable"
+        try:
+            thread_class: Any = _thread_name_class()
+            if thread_class not in ("main", "background", "other"):
+                thread_class = "unavailable"
+        except BaseException:
+            thread_class = "unavailable"
+        try:
+            call_site: Any = _project_relative_call_site(
+                caller_frame, self._sandbox_root or REPO_ROOT
+            )
+            if call_site == "unknown:0":
+                call_site = "unavailable"
+        except BaseException:
+            call_site = "unavailable"
+        event = {
+            "hostname": safe_hostname,
+            "port": safe_port,
+            "thread_id": thread_id,
+            "thread_class": thread_class,
+            "call_site": call_site,
+        }
+        with self._lock:
+            self._refusal_count = min(self._refusal_count + 1, MAX_COUNTER)
+            if len(self._refusals) < MAX_RECORDED_EGRESS:
+                event["sequence"] = self._refusal_count
+                self._refusals.append(event)
+        return (
+            thread_class
+            if thread_class in ("main", "background", "other")
+            else "other"
+        )
+
     def _record(self, host: Any, port: Any, record_loopback: bool) -> str:
-        host_class = _host_class(host)
-        if host_class == "non_loopback" or record_loopback:
-            entry = {"host_class": host_class, "port": _safe_port(port)}
+        safe_hostname = _safe_refusal_hostname(host)
+        safe_port = _safe_port(port)
+        port_unavailable = port is None or safe_port is None
+        host_class = (
+            _host_class(host)
+            if safe_hostname is not None and not port_unavailable
+            else "non_loopback"
+        )
+        refused = host_class == "non_loopback" or (
+            host_class == "loopback" and self._deny_loopback
+        )
+        if (
+            host_class == "non_loopback"
+            or record_loopback
+            or self._deny_loopback
+        ):
+            entry = {"host_class": host_class, "port": safe_port}
             with self._lock:
                 self._attempt_count = min(self._attempt_count + 1, MAX_COUNTER)
                 if len(self._attempts) < MAX_RECORDED_EGRESS:
                     self._attempts.append(entry)
-        if host_class == "non_loopback":
-            self._record_attribution(host)
-            raise EgressBlocked("non-loopback destination refused")
+        if refused:
+            thread_class = self._record_refusal(
+                safe_hostname, port, sys._getframe(1)
+            )
+            try:
+                self._record_attribution(host, thread_class)
+            except BaseException:
+                # Refusal must never depend on successful diagnostic attribution.
+                pass
+        if host_class == "loopback" and self._deny_loopback:
+            raise EgressBlocked("network destination refused")
         return host_class
 
     def _connect(self, sock: Any, address: Any, method_name: str) -> Any:
         original = self._originals[(socket.socket, method_name)]
         if getattr(sock, "family", None) == getattr(socket, "AF_UNIX", object()):
+            if self._deny_loopback:
+                self._record(None, None, record_loopback=True)
+                raise EgressBlocked("unix socket destination refused")
             return original(sock, address)
         host, port = _address_parts(address)
-        self._record(host, port, record_loopback=True)
+        host_class = self._record(host, port, record_loopback=True)
+        if host_class == "non_loopback":
+            raise _connection_refused_error()
         return original(sock, address)
+
+    def _send(
+        self,
+        sock: Any,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        original = self._originals[(socket.socket, method_name)]
+        family = getattr(sock, "family", None)
+        if self._deny_loopback:
+            self._record(None, None, record_loopback=True)
+            raise EgressBlocked("socket send destination refused")
+        elif method_name in ("sendto", "sendmsg"):
+            address = kwargs.get("address")
+            if address is None and method_name == "sendto" and len(args) > 1:
+                address = args[-1]
+            elif address is None and method_name == "sendmsg" and len(args) > 3:
+                address = args[3]
+            if address is not None and family != getattr(socket, "AF_UNIX", object()):
+                host, port = _address_parts(address)
+                host_class = self._record(host, port, record_loopback=False)
+                if host_class == "non_loopback":
+                    raise _connection_refused_error()
+        return original(sock, *args, **kwargs)
+
+    def _bind(self, sock: Any, address: Any, method_name: str) -> Any:
+        original = self._originals[(socket.socket, method_name)]
+        if self._deny_loopback:
+            host, port = _address_parts(address)
+            try:
+                host_class = self._record(host, port, record_loopback=True)
+            except EgressBlocked:
+                if _is_ipv6_loopback_ephemeral_bind(sock, address):
+                    raise PermissionError(
+                        errno.EPERM, "socket bind destination refused"
+                    ) from None
+                raise
+            if host_class == "non_loopback":
+                raise EgressBlocked("socket bind destination refused")
+        return original(sock, address)
+
+    def _listen(self, sock: Any, backlog: Any) -> Any:
+        original = self._originals[(socket.socket, "listen")]
+        if self._deny_loopback:
+            self._record(None, None, record_loopback=True)
+            raise EgressBlocked("socket listener refused")
+        return original(sock, backlog)
 
     def _create_connection(self, address: Any, *args: Any, **kwargs: Any) -> Any:
         original = self._originals[(socket, "create_connection")]
         host, port = _address_parts(address)
-        self._record(host, port, record_loopback=True)
+        host_class = self._record(host, port, record_loopback=True)
+        if host_class == "non_loopback":
+            raise _connection_refused_error()
         return original(address, *args, **kwargs)
+
+    def _record_name_lookup(self, host: Any, port: Any) -> None:
+        try:
+            host_class = self._record(host, port, record_loopback=False)
+        except EgressBlocked:
+            raise _name_resolution_refused_error() from None
+        if host_class == "non_loopback":
+            raise _name_resolution_refused_error()
 
     def _getaddrinfo(
         self, host: Any, port: Any, *args: Any, **kwargs: Any
     ) -> Any:
         original = self._originals[(socket, "getaddrinfo")]
-        self._record(host, port, record_loopback=False)
+        self._record_name_lookup(host, port)
         return original(host, port, *args, **kwargs)
+
+    def _resolve_name(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        original = self._originals[(socket, method_name)]
+        host = args[0] if args else kwargs.get("host", kwargs.get("hostname"))
+        self._record_name_lookup(host, None)
+        return original(*args, **kwargs)
+
+    def _getnameinfo(self, address: Any, *args: Any, **kwargs: Any) -> Any:
+        original = self._originals[(socket, "getnameinfo")]
+        host, port = _address_parts(address)
+        self._record_name_lookup(host, port)
+        return original(address, *args, **kwargs)
 
     def install(self) -> "EgressGuard":
         if self._active:
@@ -976,17 +2307,71 @@ class EgressGuard:
             (self._socket_class, "connect_ex"),
             (socket, "create_connection"),
             (socket, "getaddrinfo"),
+        ) + tuple(
+            (socket, name)
+            for name in (
+                "gethostbyname",
+                "gethostbyname_ex",
+                "gethostbyaddr",
+                "getfqdn",
+                "getnameinfo",
+            )
+            if callable(getattr(socket, name, None))
         )
+        if self._deny_loopback:
+            targets += tuple(
+                (self._socket_class, name)
+                for name in (
+                    "send",
+                    "sendall",
+                    "sendto",
+                    "sendmsg",
+                    "sendfile",
+                    "bind",
+                    "listen",
+                )
+                if callable(getattr(self._socket_class, name, None))
+            )
         for owner, name in targets:
             original = getattr(owner, name)
             self._originals[(owner, name)] = original
 
             if owner is socket.socket:
-                def wrapper(*args: Any, _name: str = name, **kwargs: Any) -> Any:
-                    return self._connect(*args, _name, **kwargs)
+                if name in ("connect", "connect_ex"):
+                    def wrapper(*args: Any, _name: str = name, **kwargs: Any) -> Any:
+                        return self._connect(*args, _name, **kwargs)
+                elif name == "bind":
+                    def wrapper(*args: Any, _name: str = name, **kwargs: Any) -> Any:
+                        if len(args) < 2:
+                            raise EgressBlocked("socket bind destination refused")
+                        return self._bind(args[0], args[1], _name)
+                elif name == "listen":
+                    def wrapper(*args: Any, **kwargs: Any) -> Any:
+                        if not args:
+                            raise EgressBlocked("socket listener refused")
+                        backlog = args[1] if len(args) > 1 else kwargs.get("backlog", 0)
+                        return self._listen(args[0], backlog)
+                else:
+                    def wrapper(*args: Any, _name: str = name, **kwargs: Any) -> Any:
+                        if not args:
+                            raise EgressBlocked("socket send destination refused")
+                        return self._send(args[0], _name, *args[1:], **kwargs)
             elif name == "create_connection":
                 def wrapper(*args: Any, **kwargs: Any) -> Any:
                     return self._create_connection(*args, **kwargs)
+            elif name == "getnameinfo":
+                def wrapper(*args: Any, **kwargs: Any) -> Any:
+                    if not args:
+                        raise EgressBlocked("socket name resolution refused")
+                    return self._getnameinfo(args[0], *args[1:], **kwargs)
+            elif name in (
+                "gethostbyname",
+                "gethostbyname_ex",
+                "gethostbyaddr",
+                "getfqdn",
+            ):
+                def wrapper(*args: Any, _name: str = name, **kwargs: Any) -> Any:
+                    return self._resolve_name(_name, *args, **kwargs)
             else:
                 def wrapper(*args: Any, **kwargs: Any) -> Any:
                     return self._getaddrinfo(*args, **kwargs)
@@ -1039,6 +2424,10 @@ class EgressGuard:
         )
         return result
 
+    def refusal_snapshot(self) -> tuple[list[dict[str, Any]], int]:
+        with self._lock:
+            return [dict(item) for item in self._refusals], self._refusal_count
+
     def attempt_count(self) -> int:
         with self._lock:
             return self._attempt_count
@@ -1063,17 +2452,39 @@ class AttributePatches:
 
     def __init__(self) -> None:
         self._originals: list[tuple[Any, str, Any]] = []
+        self._installed: list[tuple[Any, str, Any]] = []
 
     def set(self, owner: Any, name: str, value: Any) -> None:
         if not hasattr(owner, name):
             raise ProofSetupError("required provider tripwire target is unavailable")
         self._originals.append((owner, name, getattr(owner, name)))
         setattr(owner, name, value)
+        self._installed.append((owner, name, value))
+
+    def assert_active(self) -> None:
+        if any(getattr(owner, name, None) is not value for owner, name, value in self._installed):
+            raise ProofSetupError("provider entry-point tripwire was replaced")
+
+    def targets_active(self, targets: Any) -> bool:
+        """Check exact guard targets without coupling unrelated patches."""
+        requested = tuple(targets)
+        if not requested:
+            return False
+        installed = {
+            (id(owner), name): value
+            for owner, name, value in self._installed
+        }
+        return all(
+            (id(owner), name) in installed
+            and getattr(owner, name, None) is installed[(id(owner), name)]
+            for owner, name in requested
+        )
 
     def restore(self) -> None:
         for owner, name, original in reversed(self._originals):
             setattr(owner, name, original)
         self._originals.clear()
+        self._installed.clear()
 
 
 def run_guard_self_test() -> dict[str, Any]:
@@ -1129,7 +2540,7 @@ def run_guard_self_test() -> dict[str, Any]:
 
         try:
             socket.socket.connect(FakeSocket(), ("203.0.113.19", 443))
-        except EgressBlocked:
+        except ConnectionRefusedError:
             egress_detected = True
         finally:
             patches.restore()
@@ -1251,6 +2662,35 @@ def resolve_preintegrate_output_file(
         candidate.resolve(strict=False).relative_to(tmp_root.resolve(strict=True))
     except ValueError as exc:
         raise ValueError("preintegrate output must be below repository tmp") from exc
+    return candidate
+
+
+def resolve_startup_diagnostic_output_file(
+    output_dir: Optional[str | Path],
+    run_id: str,
+    repo_root: Path = REPO_ROOT,
+) -> Path:
+    """Resolve the private startup trace report under repository tmp."""
+    safe_run_id = validate_run_id(run_id)
+    repo = repo_root.resolve(strict=True)
+    tmp_root = repo / "tmp"
+    if not tmp_root.is_dir() or tmp_root.is_symlink():
+        raise ValueError("repository tmp directory is unavailable")
+    if output_dir is None:
+        supplied = DEFAULT_OUTPUT_PARENT / safe_run_id / "startup-diagnostic.json"
+    else:
+        requested = Path(output_dir)
+        supplied = (
+            requested
+            if requested.suffix.lower() == ".json"
+            else requested / "startup-diagnostic.json"
+        )
+    candidate = _absolute_lexical_path(supplied, repo)
+    _reject_symlink_components(candidate, tmp_root)
+    try:
+        candidate.resolve(strict=False).relative_to(tmp_root.resolve(strict=True))
+    except ValueError as exc:
+        raise ValueError("startup diagnostic output must be below repository tmp") from exc
     return candidate
 
 
@@ -1676,6 +3116,88 @@ def _safe_egress_attributions(values: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _safe_egress_refusals(
+    values: Any,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Sanitize per-refusal evidence and report whether every field is present."""
+    if not isinstance(values, (list, tuple)):
+        return [], False
+    safe_events: list[dict[str, Any]] = []
+    valid = len(values) <= MAX_RECORDED_EGRESS
+    for index, value in enumerate(values[:MAX_RECORDED_EGRESS], start=1):
+        event_valid = isinstance(value, dict)
+        if not isinstance(value, dict):
+            value = {}
+
+        hostname = _safe_refusal_hostname(value.get("hostname"))
+        if hostname is None:
+            hostname = "unavailable"
+            event_valid = False
+
+        raw_port = value.get("port")
+        port = _safe_port(raw_port)
+        if port is None:
+            port = "unavailable"
+            event_valid = False
+
+        thread_id = value.get("thread_id")
+        if (
+            isinstance(thread_id, bool)
+            or not isinstance(thread_id, int)
+            or not 0 < thread_id <= (1 << 64) - 1
+        ):
+            thread_id = "unavailable"
+            event_valid = False
+
+        thread_class = value.get("thread_class")
+        if thread_class not in ("main", "background", "other"):
+            thread_class = "unavailable"
+            event_valid = False
+
+        call_site = value.get("call_site")
+        safe_call_site = "unavailable"
+        if isinstance(call_site, str) and ":" in call_site:
+            path, line_value = call_site.rsplit(":", 1)
+            path_parts = Path(path).parts
+            if (
+                not path.startswith("/")
+                and ".." not in path_parts
+                and "\\" not in path
+                and SAFE_ORIGIN_PATH_PATTERN.fullmatch(path)
+                and path.endswith(".py")
+                and line_value.isascii()
+                and line_value.isdecimal()
+                and 1 <= len(line_value) <= 7
+                and 1 <= int(line_value) <= MAX_COUNTER
+            ):
+                safe_call_site = path + ":" + line_value
+            else:
+                event_valid = False
+        else:
+            event_valid = False
+
+        sequence = value.get("sequence")
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence != index
+        ):
+            sequence = index
+            event_valid = False
+        safe_events.append(
+            {
+                "hostname": hostname,
+                "port": port,
+                "thread_id": thread_id,
+                "thread_class": thread_class,
+                "call_site": safe_call_site,
+                "sequence": sequence,
+            }
+        )
+        valid = valid and event_valid
+    return safe_events, valid
+
+
 def _known_startup_egress_contacts(
     attributions: list[dict[str, Any]], enabled: bool
 ) -> list[dict[str, Any]]:
@@ -1734,6 +3256,8 @@ def build_report(
     blocked_reason: Optional[str] = None,
     ledger_valid: bool = True,
     egress_attributions: Optional[list[dict[str, Any]]] = None,
+    egress_refusals: Optional[list[dict[str, Any]]] = None,
+    egress_refusal_count: Optional[int] = None,
     initial_narration_request: Optional[dict[str, Any]] = None,
     expect_startup_narration: bool = False,
     require_priced_route: bool = False,
@@ -1754,6 +3278,29 @@ def build_report(
     }
     safe_egress_attributions = _safe_egress_attributions(
         egress_attributions or []
+    )
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals if egress_refusals is not None else []
+    )
+    non_loopback_attempt_count = sum(
+        1
+        for attempt in safe_egress
+        if attempt["host_class"] == "non_loopback"
+    )
+    recorded_refusal_count = (
+        _bounded_count(egress_refusal_count)
+        if egress_refusal_count is not None
+        else non_loopback_attempt_count
+    )
+    egress_attempts_valid = (
+        isinstance(egress_attempts, (list, tuple))
+        and len(safe_egress) == min(len(egress_attempts), MAX_RECORDED_EGRESS)
+    )
+    refusal_coverage_complete = bool(
+        egress_attempts_valid
+        and refusal_events_valid
+        and recorded_refusal_count == non_loopback_attempt_count
+        and len(safe_egress_refusals) == recorded_refusal_count
     )
     known_product_contacts = _known_startup_egress_contacts(
         safe_egress_attributions, expect_startup_narration
@@ -1790,6 +3337,8 @@ def build_report(
         "provider_function_calls": _bounded_count(provider_function_calls),
         "egress_attempts": safe_egress,
         "egress_attributions": safe_egress_attributions,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
         "known_product_contacts": known_product_contacts,
         "initial_narration_request": safe_initial_request,
         "route_pin": route_pin,
@@ -1819,6 +3368,8 @@ def build_report(
         report["blocked_reason"] = safe_blocked_reason
 
     failures: list[str] = []
+    if not refusal_coverage_complete:
+        failures.append("egress refusal attribution incomplete")
     if not report["game_thread_alive"]:
         failures.append("game thread was not observed alive")
     if expect_startup_narration:
@@ -1877,6 +3428,8 @@ def build_preintegrate_report(
     *,
     stub_call_counts: dict[str, int],
     egress_attempts: list[dict[str, Any]],
+    egress_refusals: Optional[list[dict[str, Any]]] = None,
+    egress_refusal_count: Optional[int] = None,
     registered_modules: list[str],
     detect_new_modules_after: list[str],
     active_combat_encounter_after: Any,
@@ -1906,6 +3459,29 @@ def build_preintegrate_report(
             safe_egress.append(
                 {"host_class": host_class, "port": _safe_port(attempt.get("port"))}
             )
+    safe_egress_refusals, refusal_events_valid = _safe_egress_refusals(
+        egress_refusals if egress_refusals is not None else []
+    )
+    non_loopback_attempt_count = sum(
+        1
+        for attempt in safe_egress
+        if attempt["host_class"] == "non_loopback"
+    )
+    recorded_refusal_count = (
+        _bounded_count(egress_refusal_count)
+        if egress_refusal_count is not None
+        else non_loopback_attempt_count
+    )
+    egress_attempts_valid = (
+        isinstance(egress_attempts, (list, tuple))
+        and len(safe_egress) == min(len(egress_attempts), MAX_RECORDED_EGRESS)
+    )
+    refusal_coverage_complete = bool(
+        egress_attempts_valid
+        and refusal_events_valid
+        and recorded_refusal_count == non_loopback_attempt_count
+        and len(safe_egress_refusals) == recorded_refusal_count
+    )
     safe_registered, registered_names_valid = _safe_report_names(registered_modules)
     safe_detected, detected_names_valid = _safe_report_names(
         detect_new_modules_after
@@ -1945,6 +3521,8 @@ def build_preintegrate_report(
     report: dict[str, Any] = {
         "stub_call_counts": safe_stubs,
         "egress_attempts": safe_egress,
+        "egress_refusals": safe_egress_refusals,
+        "egress_refusal_coverage_complete": refusal_coverage_complete,
         "registered_modules": safe_registered,
         "detect_new_modules_after": safe_detected,
         "active_combat_encounter_after": active_value,
@@ -1965,6 +3543,8 @@ def build_preintegrate_report(
     if safe_blocked_reason is not None:
         report["blocked_reason"] = safe_blocked_reason
     failures: list[str] = []
+    if not refusal_coverage_complete:
+        failures.append("egress refusal attribution incomplete")
     if inspection_failure_reason:
         failures.append(_safe_blocked_reason(inspection_failure_reason))
     if not all(safe_checks.values()):
@@ -2000,9 +3580,13 @@ def _install_sdk_tripwires(
     importer: Callable[[str], Any],
     patches: AttributePatches,
     recorder: ProviderCallRecorder,
-) -> None:
-    def provider_tripwire(*args: Any, **kwargs: Any) -> None:
-        recorder.block_provider_function(*args, **kwargs)
+    *,
+    diagnostic_mode: bool = False,
+    sandbox_root: Optional[Path] = None,
+    tracked_targets: Optional[list[tuple[Any, str]]] = None,
+) -> int:
+    patched_count = 0
+    chat_completion_patched = False
 
     seen_modules: dict[str, Any] = {}
     for module_name, class_name, method_name in SDK_PATCH_TARGETS:
@@ -2015,7 +3599,81 @@ def _install_sdk_tripwires(
             continue
         owner = getattr(module, class_name, None)
         if owner is not None and callable(getattr(owner, method_name, None)):
+            def provider_tripwire(*args: Any, **kwargs: Any) -> None:
+                if diagnostic_mode:
+                    if sandbox_root is None:
+                        raise ProofSetupError("diagnostic SDK tripwire root is unavailable")
+                    recorder.block_diagnostic_provider_call(
+                        args,
+                        kwargs,
+                        sandbox_root=sandbox_root,
+                        caller_frame=sys._getframe(1),
+                    )
+                recorder.block_provider_function(*args, **kwargs)
+
             patches.set(owner, method_name, provider_tripwire)
+            if tracked_targets is not None:
+                tracked_targets.append((owner, method_name))
+            patched_count += 1
+            if (module_name, class_name, method_name) == (
+                "openai.resources.chat.completions",
+                "Completions",
+                "create",
+            ):
+                chat_completion_patched = True
+    if diagnostic_mode and not chat_completion_patched:
+        raise ProofSetupError("OpenAI chat completion tripwire coverage is unavailable")
+    return patched_count
+
+
+def _install_process_launch_tripwires(
+    patches: AttributePatches,
+    recorder: ProviderCallRecorder,
+    sandbox_root: Optional[Path],
+) -> tuple[tuple[Any, str], ...]:
+    """Block Python-level child-process and process-replacement APIs."""
+    def process_tripwire(*args: Any, **kwargs: Any) -> None:
+        recorder.block_diagnostic_process_launch(
+            args,
+            kwargs,
+            caller_frame=sys._getframe(1),
+            sandbox_root=sandbox_root,
+        )
+
+    targets: list[tuple[Any, str]] = [
+        (subprocess, "Popen"),
+        (subprocess, "run"),
+        (subprocess, "call"),
+        (subprocess, "check_call"),
+        (subprocess, "check_output"),
+        (os, "system"),
+        (os, "popen"),
+    ]
+    targets.extend(
+        (os, name)
+        for name in dir(os)
+        if name.startswith(("exec", "spawn", "posix_spawn"))
+        and callable(getattr(os, name, None))
+    )
+    targets.extend(
+        (asyncio, name)
+        for name in ("create_subprocess_exec", "create_subprocess_shell")
+        if callable(getattr(asyncio, name, None))
+    )
+    unique_targets: list[tuple[Any, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for owner, name in targets:
+        key = (id(owner), name)
+        if key not in seen and callable(getattr(owner, name, None)):
+            seen.add(key)
+            unique_targets.append((owner, name))
+
+    required = ((subprocess, "Popen"), (subprocess, "run"), (os, "system"))
+    if any(not callable(getattr(owner, name, None)) for owner, name in required):
+        raise ProofSetupError("native process-launch tripwire coverage is unavailable")
+    for owner, name in unique_targets:
+        patches.set(owner, name, process_tripwire)
+    return tuple(unique_targets)
 
 
 def _ledger_reservation_count(ledger_path: Path) -> int:
@@ -2436,6 +4094,7 @@ def run_proof(
                 sys.path[:] = original_sys_path
             sys.stdout, sys.stderr, sys.stdin = original_streams
 
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
     report = build_report(
         sandbox_path_class=(
             _history_path_class(sandbox)
@@ -2451,6 +4110,8 @@ def run_proof(
         update_check_calls=update_check_calls,
         egress_attempts=egress_guard.snapshot(),
         egress_attributions=egress_guard.attribution_snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
         initial_narration_request=recorder.initial_request_snapshot(),
         ledger_reservations=ledger_reservations,
         observed_events=event_counts,
@@ -2459,6 +4120,650 @@ def run_proof(
         expect_startup_narration=expect_startup_narration,
         require_priced_route=require_priced_route,
     )
+    _atomic_write_report(report_path, report)
+    return report
+
+
+def run_startup_diagnostic(
+    *,
+    sandbox_root: str | Path = DEFAULT_SANDBOX,
+    run_id: str = DEFAULT_RUN_ID,
+    output_dir: Optional[str | Path] = None,
+    startup_timeout: float = 30.0,
+    diagnostic_call_limit: int = DEFAULT_DIAGNOSTIC_CALL_LIMIT,
+    isolated_worker: bool = False,
+    host_importer: Optional[Callable[[str], Any]] = None,
+    observe_running_host: Optional[Callable[[Any, Any], Mapping[str, object]]] = None,
+) -> dict[str, Any]:
+    """Trace bounded router calls through the real Socket.IO start_game path.
+
+    The two expected startup requests receive fixed local responses. Any other
+    router task, extra call, direct SDK request, or socket operation is blocked.
+    Application output is discarded; only a non-empty narration event's
+    delivery is observed.
+
+    observe_running_host, when given, is called exactly once with an
+    _ObservationClient facade (emit() and get_received() only, backed by the
+    real Socket.IO test client) and the real web module, after startup
+    narration has been delivered and before the diagnostic's own shutdown
+    input is queued. Any event the hook drains via get_received() is also
+    recorded and replayed into this function's own later event scan, so a
+    hook that calls get_received() can never cause this function to miss the
+    game_started/game_output events it still needs to see. The hook's bounded
+    (booleans/ints/short ASCII strings only) returned mapping is attached to
+    the report under "observation"; any exception or non-mapping return is
+    recorded under "observation_failure" and fails the report closed. Leaving
+    it unset (the default) leaves this function's behavior unchanged.
+    """
+    report_path = resolve_startup_diagnostic_output_file(output_dir, run_id)
+    safe_run_id = validate_run_id(run_id)
+    if report_path.exists() or report_path.is_symlink():
+        raise ProofSetupError("startup diagnostic report path already exists")
+    if not 0 < startup_timeout <= 120:
+        raise ValueError("startup diagnostic timeout must be bounded")
+    if not 2 <= diagnostic_call_limit <= MAX_DIAGNOSTIC_CALLS:
+        raise ValueError("startup diagnostic call limit is outside the supported bound")
+
+    recorder = ProviderCallRecorder(
+        diagnostic_mode=True,
+        diagnostic_call_limit=diagnostic_call_limit,
+    )
+    egress_guard = EgressGuard(deny_loopback=True)
+    patches = AttributePatches()
+    importer = importlib.import_module if host_importer is None else host_importer
+    real_host_importer = host_importer is None
+    host_imports_verified = False
+    original_cwd = Path.cwd()
+    original_sys_path = list(sys.path)
+    original_streams = (sys.stdout, sys.stderr, sys.stdin)
+    original_config = sys.modules.get("config", _MISSING_MODULE)
+    original_thread_ids = {
+        thread.ident for thread in threading.enumerate() if thread.ident is not None
+    }
+    env_names = (
+        "NEQ_OPEN_BROWSER",
+        "NEQ_PROVIDER_ATTEMPT_BUDGET",
+        "NEQ_PROVIDER_ATTEMPT_LEDGER",
+        "NEQ_PROVIDER_ATTEMPT_RUN_ID",
+    )
+    original_env = {name: os.environ.get(name) for name in env_names}
+    sandbox: Optional[Path] = None
+    web_module: Any = None
+    client: Any = None
+    ledger_path: Optional[Path] = None
+    ledger_created_by_tool = False
+    ledger_identity: Optional[tuple[int, int]] = None
+    ledger_reservations: Optional[int] = None
+    ledger_valid = False
+    patches_active = False
+    router_call_target: Optional[tuple[Any, str]] = None
+    router_decide_target: Optional[tuple[Any, str]] = None
+    router_call_guard = False
+    router_decide_guard = False
+    sdk_tripwire_targets: list[tuple[Any, str]] = []
+    sdk_tripwire_count = 0
+    egress_guard_active = False
+    process_launch_targets: tuple[tuple[Any, str], ...] = ()
+    process_launch_guard = False
+    startup_output_sent = threading.Event()
+    output_pump_done = threading.Event()
+    emit_completed = threading.Event()
+    emit_failure: Optional[str] = None
+    output_pump_failure: Optional[str] = None
+    output_pump_deadline: Optional[float] = None
+    startup_thread_stopped = False
+    game_started = False
+    startup_output_delivered = False
+    shutdown_sent = False
+    blocked_reason: Optional[str] = None
+    failure_exception_class: Optional[str] = None
+    failure_category = "none"
+    observation: Optional[Mapping[str, object]] = None
+    observation_failure: Optional[str] = None
+    hook_drained_events: list[Any] = []
+    failure_origin: Optional[dict[str, Any]] = None
+    diagnostic_stage = "sandbox_setup"
+    emit_thread: Optional[threading.Thread] = None
+    cleanup_context = True
+    context_changed = False
+    runtime_alive = False
+    new_live_threads = False
+
+    try:
+        sandbox = validate_sandbox_root(sandbox_root)
+        egress_guard.set_sandbox_root(sandbox)
+        required_sources = (
+            "main.py",
+            "web/web_interface.py",
+            "utils/llm_router.py",
+            "utils/ai_client_factory.py",
+            "utils/provider_attempt_budget.py",
+            "utils/version_checker.py",
+            "model_config.py",
+        )
+        if any(not (sandbox / relative).is_file() for relative in required_sources):
+            raise ProofSetupError("sandbox host source inventory is incomplete")
+
+        ledger_directory = sandbox / "tmp" / "n2"
+        try:
+            _reject_symlink_components(ledger_directory, sandbox)
+        except ValueError as exc:
+            raise ProofSetupError("sandbox provider ledger directory is unsafe") from exc
+        ledger_directory.mkdir(parents=True, exist_ok=True)
+        ledger_path = ledger_directory / (
+            "provider-attempt-ledger-startup-diagnostic-" + safe_run_id + ".jsonl"
+        )
+        if ledger_path.exists() or ledger_path.is_symlink():
+            raise ProofSetupError("provider ledger path already exists")
+
+        os.environ["NEQ_OPEN_BROWSER"] = "0"
+        os.environ.update(PROVIDER_ENVIRONMENT)
+        os.environ["NEQ_PROVIDER_ATTEMPT_LEDGER"] = str(ledger_path)
+        os.environ["NEQ_PROVIDER_ATTEMPT_RUN_ID"] = safe_run_id
+        os.chdir(sandbox)
+        sys.path.insert(0, str(sandbox))
+        sys.stdout = _DiscardingTextStream()
+        sys.stderr = _DiscardingTextStream()
+        sys.modules["config"] = _offline_diagnostic_config_module()
+        context_changed = True
+
+        egress_guard.install()
+        egress_guard.assert_active()
+        egress_guard_active = True
+        # urllib3's IPv6 capability probe binds to ::1:0 during import. The
+        # diagnostic needs no IPv6 capability discovery; disable only this
+        # import-time probe while the egress guard remains fully active.
+        patches.set(socket, "has_ipv6", False)
+        process_launch_targets = _install_process_launch_tripwires(
+            patches, recorder, sandbox
+        )
+
+        diagnostic_stage = "provider_budget_setup"
+        budget_module = importer("utils.provider_attempt_budget")
+        _assert_module_from_sandbox(budget_module, sandbox)
+        activate = getattr(budget_module, "activate_provider_attempt_budget", None)
+        if not callable(activate):
+            raise ProofSetupError("provider attempt budget activation is unavailable")
+        active_path = activate()
+        if active_path is None or Path(active_path).resolve(strict=False) != ledger_path:
+            raise ProofSetupError("provider attempt budget did not activate the requested ledger")
+        ledger_identity = _ledger_identity(ledger_path)
+        ledger_created_by_tool = ledger_identity is not None
+
+        diagnostic_stage = "router_setup"
+        router_module = importer("utils.llm_router")
+        _assert_module_from_sandbox(router_module, sandbox)
+        router = getattr(router_module, "llm", None)
+        model_config_module = _optional_model_config_from_sandbox(importer, sandbox)
+        if router is None or model_config_module is None:
+            raise ProofSetupError("sandbox router or model profile is unavailable")
+        if not callable(getattr(router, "call", None)):
+            raise ProofSetupError("LLM router call entry point is unavailable")
+        if not callable(getattr(router, "decide", None)):
+            raise ProofSetupError("LLM router decide entry point is unavailable")
+
+        def router_call_tripwire(*args: Any, **kwargs: Any) -> str:
+            return recorder.diagnostic_router_call(
+                args,
+                kwargs,
+                model_config=model_config_module,
+                sandbox_root=sandbox,
+                caller_frame=sys._getframe(1),
+                bound_method=False,
+            )
+
+        def router_decide_tripwire(*args: Any, **kwargs: Any) -> str:
+            return recorder.diagnostic_router_call(
+                args,
+                kwargs,
+                model_config=model_config_module,
+                sandbox_root=sandbox,
+                caller_frame=sys._getframe(1),
+                bound_method=False,
+                allow_stub=False,
+            )
+
+        patches.set(router, "call", router_call_tripwire)
+        patches.set(router, "decide", router_decide_tripwire)
+        router_call_target = (router, "call")
+        router_decide_target = (router, "decide")
+        diagnostic_stage = "sdk_tripwire_setup"
+        sdk_tripwire_count = _install_sdk_tripwires(
+            importer,
+            patches,
+            recorder,
+            diagnostic_mode=True,
+            sandbox_root=sandbox,
+            tracked_targets=sdk_tripwire_targets,
+        )
+
+        diagnostic_stage = "client_factory_setup"
+        factory_module = importer("utils.ai_client_factory")
+        _assert_module_from_sandbox(factory_module, sandbox)
+        if not callable(getattr(factory_module, "create_chat_client", None)):
+            raise ProofSetupError("legacy provider client factory is unavailable")
+
+        def offline_chat_client_factory(*args: Any, **kwargs: Any) -> _OfflineDiagnosticClient:
+            del args, kwargs
+            return _OfflineDiagnosticClient(recorder, sandbox)
+
+        def blocked_provider_factory(*args: Any, **kwargs: Any) -> None:
+            recorder.block_diagnostic_provider_call(
+                args,
+                kwargs,
+                sandbox_root=sandbox,
+                caller_frame=sys._getframe(1),
+            )
+
+        patches.set(factory_module, "create_chat_client", offline_chat_client_factory)
+        for factory_name in (
+            "create_image_client",
+            "create_tts_client",
+            "create_video_client",
+        ):
+            if callable(getattr(factory_module, factory_name, None)):
+                patches.set(factory_module, factory_name, blocked_provider_factory)
+
+        diagnostic_stage = "version_check_setup"
+        version_module = importer("utils.version_checker")
+        _assert_module_from_sandbox(version_module, sandbox)
+        if not callable(getattr(version_module, "_run_git_command", None)):
+            raise ProofSetupError("version git metadata probe entry point is unavailable")
+        if not callable(getattr(version_module, "get_latest_remote_version", None)):
+            raise ProofSetupError("version update check entry point is unavailable")
+
+        def git_metadata_probe_stub(*args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+            return None
+
+        def update_check_stub(*args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+            recorder.record_update_check()
+            return None
+
+        patches.set(version_module, "_run_git_command", git_metadata_probe_stub)
+        patches.set(version_module, "get_latest_remote_version", update_check_stub)
+
+        diagnostic_stage = "host_import"
+        web_module = importer("web.web_interface")
+        _assert_module_from_sandbox(web_module, sandbox)
+        main_module = getattr(web_module, "dm_main", None)
+        if main_module is None:
+            raise ProofSetupError("web interface main module is unavailable")
+        _assert_module_from_sandbox(main_module, sandbox)
+        host_imports_verified = real_host_importer
+        if not callable(getattr(main_module, "get_ai_response", None)):
+            raise ProofSetupError("main AI response entry point is unavailable")
+        if not callable(getattr(main_module, "save_conversation_history", None)):
+            raise ProofSetupError("conversation-history persistence boundary is unavailable")
+        if not callable(getattr(web_module, "add_to_message_cache", None)):
+            raise ProofSetupError("narration cache persistence boundary is unavailable")
+
+        socketio = getattr(web_module, "socketio", None)
+        app = getattr(web_module, "app", None)
+        user_input_queue = getattr(web_module, "user_input_queue", None)
+        game_output_queue = getattr(web_module, "game_output_queue", None)
+        output_pump = getattr(web_module, "send_output_to_clients", None)
+        original_emit = getattr(socketio, "emit", None) if socketio is not None else None
+        if (
+            socketio is None
+            or app is None
+            or user_input_queue is None
+            or game_output_queue is None
+            or not callable(getattr(game_output_queue, "get", None))
+            or not callable(output_pump)
+            or not callable(original_emit)
+            or not callable(getattr(socketio, "test_client", None))
+            or not callable(getattr(user_input_queue, "put", None))
+        ):
+            raise ProofSetupError("in-process Socket.IO startup surface is unavailable")
+
+        def observe_socket_emit(*args: Any, **kwargs: Any) -> Any:
+            event_name = args[0] if args else kwargs.get("event")
+            payload = args[1] if len(args) > 1 else kwargs.get("data")
+            result = original_emit(*args, **kwargs)
+            if event_name == "game_output" and _is_nonempty_narration_payload(payload):
+                startup_output_sent.set()
+            return result
+
+        def discard_conversation_history(history: Any) -> None:
+            del history
+
+        def discard_message_cache(message: Any) -> None:
+            del message
+
+        original_open = builtins.open
+
+        def guarded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+            mode = args[0] if args else kwargs.get("mode", "r")
+            if (
+                isinstance(mode, str)
+                and any(flag in mode for flag in ("w", "a", "x", "+"))
+                and _is_sensitive_diagnostic_log_path(file, sandbox)
+            ):
+                return _DiscardingTextStream()
+            return original_open(file, *args, **kwargs)
+
+        def discard_log_record(logger: Any, record: Any) -> None:
+            del logger, record
+
+        def bounded_output_pump() -> None:
+            nonlocal output_pump_failure
+            try:
+                while True:
+                    deadline = output_pump_deadline
+                    if deadline is None:
+                        deadline = time.monotonic() + startup_timeout
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return
+                    try:
+                        payload = game_output_queue.get(timeout=min(0.05, remaining))
+                    except queue.Empty:
+                        continue
+                    socketio.emit("game_output", payload)
+                    if _is_nonempty_narration_payload(payload):
+                        return
+            except BaseException as exc:
+                name = type(exc).__name__
+                output_pump_failure = (
+                    name if EXCEPTION_CLASS_PATTERN.fullmatch(name) else "Exception"
+                )
+            finally:
+                output_pump_done.set()
+
+        diagnostic_stage = "startup_boundary_setup"
+        patches.set(socketio, "emit", observe_socket_emit)
+        patches.set(web_module, "send_output_to_clients", bounded_output_pump)
+        patches.set(main_module, "save_conversation_history", discard_conversation_history)
+        patches.set(web_module, "add_to_message_cache", discard_message_cache)
+        patches.set(builtins, "open", guarded_open)
+        patches.set(logging.Logger, "handle", discard_log_record)
+        patches_active = True
+        patches.assert_active()
+        egress_guard.assert_active()
+
+        diagnostic_stage = "socketio_test_client"
+        client = socketio.test_client(app, headers={"Origin": PROOF_ORIGIN})
+        if not client:
+            raise ProofSetupError("Socket.IO test client could not connect")
+
+        def emit_start_game() -> None:
+            nonlocal emit_failure
+            try:
+                client.emit("start_game")
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    emit_failure = type(exc).__name__
+                else:
+                    name = type(exc).__name__
+                    emit_failure = (
+                        name if EXCEPTION_CLASS_PATTERN.fullmatch(name) else "Exception"
+                    )
+            finally:
+                emit_completed.set()
+
+        diagnostic_stage = "startup_event"
+        started_at = time.monotonic()
+        startup_deadline = started_at + startup_timeout
+        output_pump_deadline = startup_deadline
+        emit_thread = threading.Thread(
+            target=emit_start_game,
+            name="n3-start-game-diagnostic",
+            daemon=True,
+        )
+        emit_thread.start()
+        while time.monotonic() < startup_deadline:
+            patches.assert_active()
+            egress_guard.assert_active()
+            if startup_output_sent.is_set():
+                break
+            time.sleep(min(0.01, max(0.0, startup_deadline - time.monotonic())))
+
+        if startup_output_sent.is_set():
+            if observe_running_host is not None:
+                diagnostic_stage = "startup_observation"
+                observation_client = _ObservationClient(client, hook_drained_events)
+                try:
+                    raw_observation = observe_running_host(observation_client, web_module)
+                except BaseException as exc:
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        raise
+                    observation_failure = "observation_hook_raised"
+                else:
+                    sanitized_observation = _sanitize_observation_mapping(
+                        raw_observation
+                    )
+                    if sanitized_observation is None:
+                        observation_failure = "observation_hook_invalid_return"
+                    else:
+                        observation = sanitized_observation
+                diagnostic_stage = "startup_event"
+            diagnostic_stage = "startup_shutdown"
+            try:
+                user_input_queue.put("/quit")
+                shutdown_sent = True
+            except BaseException:
+                blocked_reason = "diagnostic shutdown input could not be queued"
+
+        shutdown_deadline = time.monotonic() + STARTUP_DIAGNOSTIC_SHUTDOWN_SECONDS
+        while time.monotonic() < shutdown_deadline:
+            if (
+                shutdown_sent
+                and emit_completed.is_set()
+                and output_pump_done.is_set()
+                and not _runtime_alive(web_module)
+            ):
+                startup_thread_stopped = True
+                break
+            time.sleep(min(0.01, max(0.0, shutdown_deadline - time.monotonic())))
+        if emit_thread is not None:
+            emit_thread.join(timeout=0.1)
+
+        game_started = False
+        client_narration_delivered = False
+        try:
+            for event in list(hook_drained_events) + client.get_received():
+                if not isinstance(event, dict):
+                    continue
+                event_name = event.get("name")
+                if event_name == "game_started":
+                    game_started = True
+                elif event_name == "error":
+                    if blocked_reason is None:
+                        failure_category = "startup_handler_error"
+                        blocked_reason = "start_game handler reported an error"
+                elif event_name == "game_output":
+                    event_args = event.get("args")
+                    if isinstance(event_args, (list, tuple)):
+                        client_narration_delivered = client_narration_delivered or any(
+                            _is_nonempty_narration_payload(payload)
+                            for payload in event_args
+                        )
+        except BaseException:
+            if blocked_reason is None:
+                failure_category = "startup_output_failed"
+                blocked_reason = "startup output delivery could not be verified"
+        startup_output_delivered = bool(
+            startup_output_sent.is_set() and client_narration_delivered
+        )
+
+        try:
+            patches.assert_active()
+        except ProofSetupError:
+            patches_active = False
+        try:
+            egress_guard.assert_active()
+        except ProofSetupError:
+            egress_guard_active = False
+        if emit_failure and blocked_reason is None:
+            failure_exception_class = _safe_exception_class(emit_failure)
+            _, _, recorder_failure, _ = recorder.diagnostic_snapshot()
+            failure_category = _startup_failure_category(
+                failure_exception_class,
+                "startup_event",
+                recorder_failure,
+            )
+            blocked_reason = "start_game event failed (" + emit_failure + ")"
+        if output_pump_failure and blocked_reason is None:
+            failure_exception_class = _safe_exception_class(output_pump_failure)
+            failure_category = _startup_failure_category(
+                failure_exception_class, "startup_output"
+            )
+            blocked_reason = "startup output transport failed (" + output_pump_failure + ")"
+        if not startup_output_delivered and blocked_reason is None:
+            failure_category = "startup_output_failed"
+            blocked_reason = "startup narration output was not delivered within the bound"
+        if startup_output_delivered and not shutdown_sent and blocked_reason is None:
+            failure_category = "startup_shutdown_failed"
+            blocked_reason = "diagnostic shutdown input was not queued"
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        if diagnostic_stage == "host_import":
+            failure_origin = _exception_failure_origin(exc, sandbox)
+        name = type(exc).__name__
+        safe_name = name if EXCEPTION_CLASS_PATTERN.fullmatch(name) else "Exception"
+        failure_exception_class = _safe_exception_class(name)
+        _, _, recorder_failure, _ = recorder.diagnostic_snapshot()
+        failure_category = _startup_failure_category(
+            failure_exception_class,
+            diagnostic_stage,
+            recorder_failure,
+        )
+        blocked_reason = "startup diagnostic setup or runtime failed (" + safe_name + ")"
+    finally:
+        if client is not None:
+            try:
+                client.disconnect()
+            except BaseException:
+                pass
+        try:
+            ledger_reservations = (
+                _ledger_reservation_count(ledger_path)
+                if ledger_path is not None
+                else None
+            )
+            ledger_valid = ledger_reservations is not None
+        except BaseException:
+            ledger_valid = False
+
+        try:
+            runtime_alive = _runtime_alive(web_module) if web_module is not None else False
+        except BaseException:
+            runtime_alive = True
+        new_live_threads = any(
+            thread.is_alive()
+            and thread.ident not in original_thread_ids
+            and thread is not threading.current_thread()
+            for thread in threading.enumerate()
+        )
+        cleanup_context = not (runtime_alive or new_live_threads)
+
+        if patches_active:
+            try:
+                patches.assert_active()
+            except ProofSetupError:
+                patches_active = False
+        router_call_guard = bool(
+            router_call_target
+            and patches.targets_active((router_call_target,))
+        )
+        router_decide_guard = bool(
+            router_decide_target
+            and patches.targets_active((router_decide_target,))
+        )
+        process_launch_guard = bool(
+            len(process_launch_targets) >= 3
+            and patches.targets_active(process_launch_targets)
+        )
+        sdk_tripwire_count = sum(
+            patches.targets_active((target,)) for target in sdk_tripwire_targets
+        )
+        if sdk_tripwire_targets and not patches.targets_active(
+            (sdk_tripwire_targets[0],)
+        ):
+            sdk_tripwire_count = 0
+
+        if ledger_path is not None:
+            try:
+                _remove_owned_ledger(
+                    ledger_path,
+                    ledger_created_by_tool,
+                    ledger_identity,
+                    sandbox if sandbox is not None else ledger_path.parents[2],
+                )
+            except OSError:
+                ledger_valid = False
+        if cleanup_context:
+            patches.restore()
+            egress_guard.restore()
+            for name, previous in original_env.items():
+                if previous is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous
+            if original_config is _MISSING_MODULE:
+                sys.modules.pop("config", None)
+            else:
+                sys.modules["config"] = original_config
+            if context_changed:
+                os.chdir(original_cwd)
+                sys.path[:] = original_sys_path
+            sys.stdout, sys.stderr, sys.stdin = original_streams
+
+    call_events, stub_counts, recorder_failure, call_overflow = (
+        recorder.diagnostic_snapshot()
+    )
+    router_calls, provider_calls, _ = recorder.snapshot()
+    network_attempts = egress_guard.attempt_count()
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
+    if failure_category == "none" and recorder_failure:
+        failure_exception_class = "ProviderCallBlocked"
+        failure_category = _startup_failure_category(
+            failure_exception_class,
+            "startup_event",
+            recorder_failure,
+        )
+    if failure_category == "none" and network_attempts:
+        failure_category = "egress_blocked"
+    report = _startup_diagnostic_report(
+        call_events=call_events,
+        stub_call_counts=stub_counts,
+        router_calls=router_calls,
+        provider_calls=provider_calls,
+        network_attempts=network_attempts,
+        ledger_reservations=ledger_reservations,
+        ledger_valid=ledger_valid,
+        startup_output_delivered=startup_output_delivered,
+        game_started=game_started,
+        startup_thread_stopped=startup_thread_stopped,
+        diagnostic_failure=recorder_failure or blocked_reason,
+        call_overflow=call_overflow,
+        router_call_guard=router_call_guard,
+        router_decide_guard=router_decide_guard,
+        sdk_tripwire_count=sdk_tripwire_count,
+        egress_guard_active=egress_guard_active,
+        process_launch_guard=process_launch_guard,
+        host_imports_verified=host_imports_verified,
+        startup_boundary_guard_active=patches_active,
+        egress_attributions=egress_guard.attribution_snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
+        failure_exception_class=failure_exception_class,
+        failure_category=failure_category,
+        failure_origin=failure_origin,
+        process_launch_refusal=recorder.process_launch_refusal_snapshot(),
+        observation=observation,
+        observation_failure=observation_failure,
+    )
+    if runtime_alive or (new_live_threads and not isolated_worker):
+        report["verdict"] = "BLOCKED"
+        report["reason"] = (
+            "startup game thread remained active after the diagnostic shutdown"
+            if runtime_alive
+            else "startup diagnostic retained guarded background threads"
+        )
     _atomic_write_report(report_path, report)
     return report
 
@@ -2686,9 +4991,12 @@ def run_preintegrate(
             "RuntimeError: module integration did not complete"
         )
 
+    egress_refusals, egress_refusal_count = egress_guard.refusal_snapshot()
     report = build_preintegrate_report(
         stub_call_counts=recorder.stub_counts_snapshot(),
         egress_attempts=egress_guard.snapshot(),
+        egress_refusals=egress_refusals,
+        egress_refusal_count=egress_refusal_count,
         registered_modules=registered_modules,
         detect_new_modules_after=detected_modules,
         active_combat_encounter_after=active_combat_encounter,
@@ -2719,12 +5027,17 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("prove", "preintegrate"),
+        choices=(
+            "prove",
+            "preintegrate",
+            "startup-diagnostic",
+        ),
         default="prove",
         help=(
             "prove runs the start_game proof (default); preintegrate runs the "
-            "offline module scan/integration. Run preintegrate and prove as "
-            "separate process invocations."
+            "offline module scan/integration; startup-diagnostic traces the actual "
+            "start_game path with bounded offline router stubs. Run preintegrate "
+            "and prove as separate process invocations."
         ),
     )
     parser.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX))
@@ -2739,6 +5052,17 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--startup-timeout", type=float, default=30.0)
     parser.add_argument("--settle-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--diagnostic-call-limit",
+        type=int,
+        default=DEFAULT_DIAGNOSTIC_CALL_LIMIT,
+        help="maximum router/provider observations for startup-diagnostic (2-16)",
+    )
+    parser.add_argument(
+        "--diagnostic-worker",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--expect-startup-narration",
         action="store_true",
@@ -2755,6 +5079,14 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         args.expect_startup_narration or args.require_priced_route
     ):
         parser.error("startup narration route expectations apply only with --mode prove")
+    if args.mode == "startup-diagnostic" and (
+        args.expect_startup_narration or args.require_priced_route
+    ):
+        parser.error("startup narration route expectations cannot be combined with the diagnostic")
+    if args.diagnostic_worker and args.mode != "startup-diagnostic":
+        parser.error("--diagnostic-worker requires --mode startup-diagnostic")
+    if not 2 <= args.diagnostic_call_limit <= MAX_DIAGNOSTIC_CALLS:
+        parser.error("--diagnostic-call-limit must be between 2 and 16")
     if args.self_test and (args.expect_startup_narration or args.require_priced_route):
         parser.error("startup narration route expectations cannot be combined with --self-test")
     return args
@@ -2790,6 +5122,114 @@ def main(argv: Optional[list[str]] = None) -> int:
                 run_id=args.run_id,
                 output_dir=args.output_dir,
             )
+        elif args.mode == "startup-diagnostic":
+            report_path = resolve_startup_diagnostic_output_file(
+                args.output_dir, args.run_id
+            )
+            if report_path.exists() or report_path.is_symlink():
+                raise ProofSetupError(
+                    "startup diagnostic report path already exists; choose a new run ID"
+                )
+            if args.diagnostic_worker:
+                report = run_startup_diagnostic(
+                    sandbox_root=args.sandbox_root,
+                    run_id=args.run_id,
+                    output_dir=args.output_dir,
+                    startup_timeout=args.startup_timeout,
+                    diagnostic_call_limit=args.diagnostic_call_limit,
+                    isolated_worker=True,
+                )
+            else:
+                command = [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--mode",
+                    "startup-diagnostic",
+                    "--diagnostic-worker",
+                    "--sandbox-root",
+                    str(args.sandbox_root),
+                    "--run-id",
+                    args.run_id,
+                    "--startup-timeout",
+                    str(args.startup_timeout),
+                    "--diagnostic-call-limit",
+                    str(args.diagnostic_call_limit),
+                ]
+                if args.output_dir is not None:
+                    command.extend(("--output-dir", str(args.output_dir)))
+                try:
+                    child = subprocess.run(
+                        command,
+                        cwd=REPO_ROOT,
+                        env=_startup_diagnostic_worker_environment(),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=(
+                            args.startup_timeout
+                            + STARTUP_DIAGNOSTIC_SHUTDOWN_SECONDS
+                            + 10.0
+                        ),
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired:
+                    report = _startup_diagnostic_report(
+                        call_events=[],
+                        stub_call_counts={},
+                        router_calls=0,
+                        provider_calls=0,
+                        network_attempts=0,
+                        ledger_reservations=None,
+                        ledger_valid=False,
+                        startup_output_delivered=False,
+                        game_started=False,
+                        startup_thread_stopped=False,
+                        diagnostic_failure="startup diagnostic worker exceeded its process bound",
+                        call_overflow=False,
+                        router_call_guard=False,
+                        router_decide_guard=False,
+                        sdk_tripwire_count=0,
+                        egress_guard_active=False,
+                    )
+                    _atomic_write_report(report_path, report)
+                else:
+                    if not report_path.is_file() or report_path.is_symlink():
+                        report = _startup_diagnostic_report(
+                            call_events=[],
+                            stub_call_counts={},
+                            router_calls=0,
+                            provider_calls=0,
+                            network_attempts=0,
+                            ledger_reservations=None,
+                            ledger_valid=False,
+                            startup_output_delivered=False,
+                            game_started=False,
+                            startup_thread_stopped=False,
+                            diagnostic_failure=(
+                                "startup diagnostic worker did not produce a report"
+                                if child.returncode == 0
+                                else "startup diagnostic worker failed before reporting"
+                            ),
+                            call_overflow=False,
+                            router_call_guard=False,
+                            router_decide_guard=False,
+                            sdk_tripwire_count=0,
+                            egress_guard_active=False,
+                        )
+                        _atomic_write_report(report_path, report)
+                    else:
+                        if report_path.stat().st_size > 1024 * 1024:
+                            raise ProofSetupError("startup diagnostic report size bound exceeded")
+                        with open(report_path, "r", encoding="ascii") as stream:
+                            report = json.load(stream)
+                        if not isinstance(report, dict) or report.get("verdict") not in (
+                            "PASS",
+                            "BLOCKED",
+                        ) or (
+                            report.get("verdict") == "PASS"
+                            and report.get("egress_refusal_coverage_complete") is not True
+                        ):
+                            raise ProofSetupError("startup diagnostic report is invalid")
         else:
             report = run_proof(
                 sandbox_root=args.sandbox_root,

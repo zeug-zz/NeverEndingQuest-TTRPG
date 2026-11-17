@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import http.client
+import importlib.util
 import io
 import json
 import math
@@ -30,14 +32,23 @@ from unittest.mock import patch
 
 import scripts.n3_lifecycle_gate as preflight_gate
 import scripts.n3_live_lifecycle_gate as gate
+from web.extensions.opentunnel_sharing import identity_bootstrap
 import web.extensions.opentunnel_sharing.profile_state as profile_state_module
 from web.extensions.opentunnel_sharing.cleanup import (
     OwnedProcessRecord,
     write_owner_record,
 )
 from web.extensions.opentunnel_sharing.identity_bootstrap import Observation
-from web.extensions.opentunnel_sharing.profile_state import prepare_profile
+from web.extensions.opentunnel_sharing.profile_state import (
+    ProfileState,
+    prepare_profile,
+)
+from web.extensions.opentunnel_sharing.service import (
+    SharingServiceStatus,
+    _initial_snapshot,
+)
 from web.extensions.player.contracts import make_snapshot_envelope
+from web.routes.player_sharing_routes import _status_projection
 
 
 TEST_SHA = "a" * 40
@@ -45,6 +56,11 @@ TEST_RUN_ID = "n3-20261111-test-run"
 TEST_BOOKING = "n3-booking-test"
 TEST_NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
 SCRATCH_ROOT = gate.REPO_ROOT / "tmp" / "n3-live-lifecycle-gate-tests"
+RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "n3_attempt11_startup_telemetry.jsonl"
+)
 
 
 class FakePortInspector:
@@ -834,6 +850,9 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         cost: float,
         model: str = "openai/gpt-6-luna",
         task: str = "dm_main",
+        fallback: bool = False,
+        cost_complete: bool = True,
+        entry_cost_usd: float | None = None,
     ) -> bytes:
         context = {
             "call_id": call_id,
@@ -844,21 +863,65 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "resolved_model": model,
             "attempt_number": 1,
             "retry": False,
-            "fallback": False,
+            "fallback": fallback,
             "error_type": None,
             "cost_usd": cost,
             "cost_provenance": "actual",
-            "cost_complete": True,
+            "cost_complete": cost_complete,
             "provider_reported_cost_usd": cost,
         }
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "context": context,
-            "cost_usd": cost,
+            "cost_usd": cost if entry_cost_usd is None else entry_cost_usd,
             "cost_source": "provider_reported",
             "cost_estimate": False,
         }
         return (json.dumps(entry, sort_keys=True) + "\n").encode("utf-8")
+
+    def assert_single_start_game_emission(
+        self, client: FakeHostSocketClient
+    ) -> None:
+        self.assertEqual(client.emitted.count("start_game"), 1)
+        self.assertEqual(client.emitted[0], "start_game")
+        self.assertTrue(
+            all(event == "request_status" for event in client.emitted[1:])
+        )
+
+    def real_player_sharing_status_payload(
+        self, *, identity_initialized: bool = True
+    ) -> dict[str, object]:
+        """Production-recorded /api/player-sharing/status projection while
+        sharing is OFF, derived from the real service's `_initial_snapshot`
+        and the real route serializer, never hand-written to True."""
+        profile = ProfileState(state="ready", reason="ready", layout=None)
+        snapshot = _initial_snapshot(profile, identity_initialized)
+        status = SharingServiceStatus(
+            lifecycle=snapshot,
+            profile_state="ready",
+            identity_initialized=identity_initialized,
+            credential_state="absent",
+        )
+        projection = _status_projection(status)
+        assert projection is not None
+        return projection
+
+    def real_status_response_payload(
+        self,
+        *,
+        game_started: bool,
+        game_starting: bool = False,
+        is_processing: bool = False,
+        message: str = "Ready",
+    ) -> dict[str, object]:
+        """The exact Socket.IO `status_response` payload keys emitted by
+        web/web_interface.py handle_request_status."""
+        return {
+            "message": message,
+            "is_processing": is_processing,
+            "game_started": game_started,
+            "game_starting": game_starting,
+        }
 
     def prepare_l03_startup(
         self,
@@ -866,13 +929,19 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         api: LifecycleFakeApi,
         *,
         receipt_cost: float = 0.01,
+        receipt_costs: tuple[float, ...] | None = None,
+        receipt_entry_costs: tuple[float | None, ...] | None = None,
         receipt_model: str = "openai/gpt-6-luna",
-        receipt_count: int = 1,
+        receipt_tasks: tuple[str, ...] = gate.STARTUP_TASKS,
+        receipt_fallback: bool = False,
+        receipt_cost_completes: tuple[bool, ...] | None = None,
         reserve_attempt: bool = True,
         startup_events: bool = True,
         local_runtime_ready: bool = True,
         baseline_cost: float = 0.0,
         reservation_timestamp: str | None = None,
+        error_event: bool = False,
+        use_recorded_fixture_receipts: bool = False,
     ) -> list[FakeHostSocketClient]:
         self._l03_context_counter += 1
         context.run_id = "%s-startup-%d" % (
@@ -923,49 +992,87 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "provider_free_startup_seed": True,
         }
         context.startup_input_validator = lambda _root: (checks, usage_baseline)
-        api.status_sequence = [
-            {
-                "state": "off",
-                "checks": {"local_runtime": False},
-            },
-            {
-                "state": "off",
-                "checks": {"local_runtime": local_runtime_ready},
-            },
-        ]
+        # Production-recorded: the real /api/player-sharing/status projection
+        # while sharing is OFF never reports local_runtime True (derived from
+        # the real service's _initial_snapshot + the real route serializer;
+        # the startup readiness wait no longer reads this route at all, see
+        # the real status_response payload below).
+        real_status_payload = self.real_player_sharing_status_payload()
+        self.assertFalse(real_status_payload["checks"]["local_runtime"])
+        api.status_sequence = [dict(real_status_payload), dict(real_status_payload)]
+        api.status = dict(real_status_payload)
         clients: list[FakeHostSocketClient] = []
 
         def on_emit(event: str, client: FakeHostSocketClient) -> None:
+            if event == "request_status":
+                client.trigger(
+                    "status_response",
+                    self.real_status_response_payload(
+                        game_started=local_runtime_ready
+                    ),
+                )
+                return
             if event != "start_game":
                 return
             if reserve_attempt:
                 timestamp = reservation_timestamp or datetime.now(
                     timezone.utc
                 ).isoformat(timespec="seconds").replace("+00:00", "Z")
-                reservation = {
-                    "event": "reservation",
-                    "schema_version": 1,
-                    "budget": gate.PROVIDER_BUDGET,
-                    "run_id": context.run_id,
-                    "reservation_number": 1,
-                    "pid": context.host.owner_pid,
-                    "timestamp_utc": timestamp,
-                }
                 with ledger_path.open("a", encoding="ascii") as stream:
-                    stream.write(json.dumps(reservation, sort_keys=True) + "\n")
+                    for reservation_number in range(1, gate.PROVIDER_BUDGET + 1):
+                        reservation = {
+                            "event": "reservation",
+                            "schema_version": 1,
+                            "budget": gate.PROVIDER_BUDGET,
+                            "run_id": context.run_id,
+                            "reservation_number": reservation_number,
+                            "pid": context.host.owner_pid,
+                            "timestamp_utc": timestamp,
+                        }
+                        stream.write(json.dumps(reservation, sort_keys=True) + "\n")
+            if use_recorded_fixture_receipts:
+                with usage_path.open("ab") as stream:
+                    stream.write(RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE.read_bytes())
+                if startup_events:
+                    client.trigger("game_started")
+                    client.trigger("game_output", "narration must not be retained")
+                if error_event:
+                    client.trigger("error", {"message": "runtime start rejected"})
+                return
             with usage_path.open("ab") as stream:
-                for index in range(receipt_count):
+                for index, task in enumerate(receipt_tasks):
+                    selected_cost = (
+                        receipt_costs[index]
+                        if receipt_costs is not None and index < len(receipt_costs)
+                        else receipt_cost
+                    )
                     stream.write(
                         self._usage_record(
                             call_id="startup-call-%d" % index,
                             attempt_id="startup-attempt-%d" % index,
-                            cost=receipt_cost,
+                            cost=selected_cost,
                             model=receipt_model,
+                            task=task,
+                            fallback=receipt_fallback,
+                            cost_complete=(
+                                receipt_cost_completes[index]
+                                if receipt_cost_completes is not None
+                                and index < len(receipt_cost_completes)
+                                else True
+                            ),
+                            entry_cost_usd=(
+                                receipt_entry_costs[index]
+                                if receipt_entry_costs is not None
+                                and index < len(receipt_entry_costs)
+                                else None
+                            ),
                         )
                     )
             if startup_events:
                 client.trigger("game_started")
                 client.trigger("game_output", "narration must not be retained")
+            if error_event:
+                client.trigger("error", {"message": "runtime start rejected"})
 
         def factory(**options: object) -> FakeHostSocketClient:
             client = FakeHostSocketClient(on_emit, **options)
@@ -1688,7 +1795,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             "frozen_caps": {
                 "party_size": 1,
                 "platform": "macos-arm64",
-                "provider_dispatch_attempts": 1,
+                "provider_dispatch_attempts": gate.PROVIDER_BUDGET,
                 "max_tunnel_creations": 2,
                 "max_companion_launches": 4,
                 "window_hours": 1,
@@ -1898,6 +2005,72 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             unavailable_public_observation.reason,
             "public_exposure_observation_unavailable",
         )
+        self.assertEqual(
+            unavailable_public_observation.observed["failure_diagnostic"][
+                "http_status"
+            ],
+            503,
+        )
+        self.assertEqual(
+            unavailable_public_observation.observed["failure_diagnostic"][
+                "reason_code"
+            ],
+            "service_unavailable",
+        )
+        secret_reason = execute_public_probe(
+            gate.HostApiResponse(
+                503,
+                {"ok": False, "reason": "row-payload-secret-sentinel"},
+            )
+        )
+        self.assertEqual(
+            secret_reason.observed["failure_diagnostic"]["reason_code"],
+            "unclassified_reason",
+        )
+        self.assertNotIn(
+            "row-payload-secret-sentinel", repr(secret_reason.observed)
+        )
+
+    def test_l01_caught_exception_diagnostic_allowlists_class_and_reason(self) -> None:
+        class RaisingApi:
+            def get_status(self, *, timeout_seconds: float | None = None):
+                raise gate.HostApiError("row-reason-secret-sentinel")
+
+        context = self.make_row_context(api=RaisingApi())
+        result = gate.L01SharingOffExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "BLOCKED")
+        self.assertEqual(result.reason, "l01_observation_unavailable")
+        diagnostic = result.observed["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "HostApiError")
+        self.assertEqual(diagnostic["gate_step"], "l01_status_query")
+        self.assertIsNone(diagnostic["http_status"])
+        self.assertEqual(diagnostic["reason_code"], "unclassified_reason")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        self.assertNotIn("row-reason-secret-sentinel", repr(result.observed))
+
+    def test_l01_caught_exception_propagates_each_host_api_error_reason(self) -> None:
+        for reason in (
+            "host_api_action_invalid",
+            "host_api_payload_invalid",
+            "host_api_payload_too_large",
+            "host_api_timeout_invalid",
+            "managed_host_ownership_failed",
+        ):
+            with self.subTest(reason=reason):
+                class RaisingApi:
+                    def get_status(self, *, timeout_seconds: float | None = None):
+                        raise gate.HostApiError(reason)
+
+                context = self.make_row_context(api=RaisingApi())
+                result = gate.L01SharingOffExecutor().execute(context)
+                diagnostic = result.observed["failure_diagnostic"]
+                self.assertEqual(diagnostic["reason_code"], reason)
 
     def test_companion_process_identification_uses_capture_copy_path(self) -> None:
         context = self.make_row_context()
@@ -2063,7 +2236,15 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
                 "status_state",
                 "identity_initialized",
                 "identity_up_invocations",
+                "failure_diagnostic",
             },
+        )
+        self.assertEqual(
+            result.observed["failure_diagnostic"]["reason_code"],
+            "identity_bootstrap_failed",
+        )
+        self.assertEqual(
+            result.observed["failure_diagnostic"]["http_status"], 503
         )
         self.assertNotIn(secret, repr(result.observed))
 
@@ -2190,10 +2371,16 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(clients[0].connect_kwargs["transports"], ["polling"])
         self.assertFalse(clients[0].options["reconnection"])
         self.assertFalse(clients[0].connect_kwargs["retry"])
-        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(clients[0])
         self.assertEqual(clients[0].disconnect_calls, 1)
-        self.assertEqual(result.observed["provider_attempts_in_startup_window"], 1)
+        self.assertEqual(result.observed["provider_attempts_in_startup_window"], 2)
+        self.assertEqual(result.observed["startup_task_receipt_count"], 2)
+        self.assertEqual(
+            result.observed["startup_task_receipt_order"],
+            ["action_prediction", "dm_main"],
+        )
         self.assertEqual(result.observed["startup_narration_receipt_count"], 1)
+        self.assertEqual(result.observed["startup_provider_cost_usd"], 0.02)
         self.assertEqual(
             result.observed["startup_narration_requested_model"],
             "openai/gpt-6-luna",
@@ -2410,25 +2597,131 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(result.reason, "startup_runtime_already_running")
         self.assertEqual(runtime_clients, [])
 
+    def test_l03_startup_requires_exact_ordered_task_receipts_without_fallback(self) -> None:
+        missing_api = LifecycleFakeApi()
+        missing_clock = [1000.0]
+        missing_context = self.make_row_context(
+            api=missing_api,
+            monotonic=lambda: missing_clock[0],
+            sleep=lambda seconds: missing_clock.__setitem__(
+                0, missing_clock[0] + seconds
+            ),
+        )
+        missing_clients = self.prepare_l03_startup(
+            missing_context,
+            missing_api,
+            receipt_tasks=("action_prediction",),
+        )
+        with patch.object(gate, "HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS", 1.0):
+            missing = gate.L03PublicAccessExecutor().execute(missing_context)
+        self.assertEqual(missing.verdict, "FAIL")
+        self.assertEqual(
+            missing.reason, "startup_provider_task_receipt_missing"
+        )
+        self.assert_single_start_game_emission(missing_clients[0])
+
+        invalid_cases = (
+            (
+                "duplicate",
+                ("action_prediction", "action_prediction"),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "extra",
+                ("action_prediction", "dm_main", "dm_main"),
+                False,
+                "startup_provider_receipt_count_invalid",
+            ),
+            (
+                "reversed",
+                ("dm_main", "action_prediction"),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "outside-list",
+                ("unapproved_task",),
+                False,
+                "startup_provider_task_sequence_invalid",
+            ),
+            (
+                "fallback",
+                gate.STARTUP_TASKS,
+                True,
+                "startup_narration_receipt_invalid",
+            ),
+        )
+        for label, tasks, fallback, expected_reason in invalid_cases:
+            with self.subTest(case=label):
+                api = LifecycleFakeApi()
+                context = self.make_row_context(api=api)
+                clients = self.prepare_l03_startup(
+                    context,
+                    api,
+                    receipt_tasks=tasks,
+                    receipt_fallback=fallback,
+                )
+                result = gate.L03PublicAccessExecutor().execute(context)
+                self.assertEqual(result.verdict, "FAIL")
+                self.assertEqual(result.reason, expected_reason)
+                self.assert_single_start_game_emission(clients[0])
+
+        for label, receipt_options in (
+            ("incomplete-cost", {"receipt_cost_completes": (False, True)}),
+            ("inconsistent-priced-cost", {"receipt_entry_costs": (0.02, 0.01)}),
+        ):
+            with self.subTest(case=label):
+                api = LifecycleFakeApi()
+                context = self.make_row_context(api=api)
+                clients = self.prepare_l03_startup(
+                    context, api, **receipt_options
+                )
+                result = gate.L03PublicAccessExecutor().execute(context)
+                self.assertEqual(result.verdict, "FAIL")
+                self.assertEqual(
+                    result.reason, "startup_narration_receipt_invalid"
+                )
+                self.assert_single_start_game_emission(clients[0])
+
+        outside_window_api = LifecycleFakeApi()
+        outside_window_context = self.make_row_context(api=outside_window_api)
+        outside_window_clients = self.prepare_l03_startup(
+            outside_window_context,
+            outside_window_api,
+            reservation_timestamp="2000-01-01T00:00:00Z",
+        )
+        outside_window = gate.L03PublicAccessExecutor().execute(
+            outside_window_context
+        )
+        self.assertEqual(outside_window.verdict, "FAIL")
+        self.assertEqual(
+            outside_window.reason, "provider_attempt_outside_startup_window"
+        )
+        self.assert_single_start_game_emission(outside_window_clients[0])
+
     def test_l03_startup_cost_failures_preserve_runtime_observations(self) -> None:
         high_cost_api = LifecycleFakeApi()
         high_cost_context = self.make_row_context(api=high_cost_api)
         self.prepare_l03_startup(
-            high_cost_context, high_cost_api, receipt_cost=0.06
+            high_cost_context,
+            high_cost_api,
+            receipt_costs=(0.04, 0.02),
         )
         high_cost = gate.L03PublicAccessExecutor().execute(high_cost_context)
         self.assertEqual(high_cost.verdict, "FAIL")
         self.assertEqual(high_cost.reason, "startup_provider_cost_cap_exceeded")
         self.assertTrue(high_cost.observed["game_started_event_observed"])
         self.assertTrue(high_cost.observed["local_runtime_ready"])
-        self.assertEqual(high_cost.observed["startup_narration_cost_usd"], 0.06)
+        self.assertEqual(high_cost.observed["startup_provider_cost_usd"], 0.06)
+        self.assertEqual(high_cost.observed["startup_narration_cost_usd"], 0.02)
 
         cumulative_api = LifecycleFakeApi()
         cumulative_context = self.make_row_context(api=cumulative_api)
         self.prepare_l03_startup(
             cumulative_context,
             cumulative_api,
-            receipt_cost=0.02,
+            receipt_costs=(0.02, 0.02),
             baseline_cost=0.99,
         )
         cumulative = gate.L03PublicAccessExecutor().execute(cumulative_context)
@@ -2450,12 +2743,14 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         wrong_model = gate.L03PublicAccessExecutor().execute(wrong_model_context)
         self.assertEqual(wrong_model.reason, "startup_narration_receipt_invalid")
-        self.assertEqual(wrong_model_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(wrong_model_clients[0])
 
         extra_receipt_api = LifecycleFakeApi()
         extra_receipt_context = self.make_row_context(api=extra_receipt_api)
         extra_receipt_clients = self.prepare_l03_startup(
-            extra_receipt_context, extra_receipt_api, receipt_count=2
+            extra_receipt_context,
+            extra_receipt_api,
+            receipt_tasks=("action_prediction", "dm_main", "dm_main"),
         )
         extra_receipt = gate.L03PublicAccessExecutor().execute(
             extra_receipt_context
@@ -2464,7 +2759,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             extra_receipt.reason, "startup_provider_receipt_count_invalid"
         )
-        self.assertEqual(extra_receipt_clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(extra_receipt_clients[0])
 
     def test_l03_startup_readiness_wait_is_bounded(self) -> None:
         clock = [0.0]
@@ -2482,9 +2777,134 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
 
         self.assertEqual(result.verdict, "BLOCKED")
         self.assertEqual(result.reason, "startup_runtime_timeout")
-        self.assertEqual(clients[0].emitted, ["start_game"])
+        self.assert_single_start_game_emission(clients[0])
         self.assertEqual(clients[0].disconnect_calls, 1)
         self.assertGreaterEqual(clock[0], 1.0)
+        self.assertEqual(
+            result.observed,
+            {
+                "game_started_event": True,
+                "game_output_count": 1,
+                "runtime_alive": False,
+                "receipt_count": 2,
+            },
+        )
+        serialized = json.dumps(result.observed)
+        self.assertTrue(
+            all(isinstance(v, (bool, int)) for v in result.observed.values())
+        )
+        self.assertNotIn("http://", serialized)
+        self.assertNotIn("Bearer", serialized)
+
+    def test_l03_startup_succeeds_while_sharing_status_reports_local_runtime_false(
+        self,
+    ) -> None:
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api)
+        self.assertEqual(api.status["checks"]["local_runtime"], False)
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+    def test_l03_startup_completes_via_real_status_response_though_old_local_runtime_rule_would_time_out(
+        self,
+    ) -> None:
+        """Provider-free, no-companion reproduction of the N3 attempt-11
+        defect: the real /api/player-sharing/status projection (built from
+        the real PlayerSharingService._initial_snapshot plus the real route
+        serializer, never a hand-written True) and the real Socket.IO
+        status_response payload keys from handle_request_status. The startup
+        wait completes using only the status_response `game_started` signal;
+        the retired `checks.local_runtime` source never turns True across the
+        whole window, so the old rule would have blocked on
+        startup_runtime_timeout even though the runtime is alive."""
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api)
+
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+        for _ in range(5):
+            retired_status = gate._host_status(context.host_api.get_status())
+            retired_checks = (
+                retired_status.get("checks")
+                if isinstance(retired_status, Mapping)
+                else None
+            )
+            self.assertIsNotNone(retired_checks)
+            self.assertIsNot(retired_checks.get("local_runtime"), True)
+
+    def test_recorded_attempt11_startup_telemetry_matches_driver_receipt_contract(
+        self,
+    ) -> None:
+        """The telemetry preserved verbatim from live N3 attempt 11 (real
+        provider-reported costs for n3-luna) decodes through the driver's
+        real _read_usage_snapshot/_usage_receipts_after/_startup_receipt_is_valid
+        path into exactly the two ordered, valid, bounded-cost receipts the
+        startup wait requires."""
+        context = self.make_row_context()
+        sandbox = context.sandbox_root
+        usage_path = sandbox / "telemetry_log.jsonl"
+        if usage_path.exists():
+            usage_path.unlink()
+        baseline = gate._read_usage_snapshot(sandbox)
+        usage_path.write_bytes(
+            RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE.read_bytes()
+        )
+        current = gate._read_usage_snapshot(sandbox)
+        receipts = gate._usage_receipts_after(baseline, current)
+
+        self.assertEqual(len(receipts), 2)
+        self.assertEqual(
+            tuple(receipt.task for receipt in receipts), gate.STARTUP_TASKS
+        )
+        self.assertTrue(
+            all(
+                gate._startup_receipt_is_valid(receipt, expected_task)
+                for expected_task, receipt in zip(gate.STARTUP_TASKS, receipts)
+            )
+        )
+        total_cost = sum(
+            (receipt.cost_usd for receipt in receipts), Decimal("0")
+        )
+        self.assertLessEqual(total_cost, Decimal("0.05"))
+        dm_main_receipt = receipts[1]
+        self.assertEqual(dm_main_receipt.task, "dm_main")
+        self.assertEqual(dm_main_receipt.cost_provenance, "actual")
+        self.assertEqual(dm_main_receipt.cost_source, "provider_reported")
+
+    def test_l03_startup_succeeds_with_recorded_attempt11_receipts_fixture(
+        self,
+    ) -> None:
+        """Same startup-wait success path as the other L03 tests, but the
+        receipts come verbatim from the recorded attempt-11 telemetry fixture
+        instead of synthetic per-test _usage_record entries."""
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(
+            context, api, use_recorded_fixture_receipts=True
+        )
+        startup_observed, startup_failure = gate._start_local_game_runtime(context)
+        self.assertIsNone(startup_failure)
+        assert startup_observed is not None
+        self.assertTrue(startup_observed["local_runtime_ready"])
+        self.assert_single_start_game_emission(clients[0])
+
+    def test_l03_startup_error_event_rejects_runtime_start(self) -> None:
+        api = LifecycleFakeApi()
+        context = self.make_row_context(api=api)
+        clients = self.prepare_l03_startup(context, api, error_event=True)
+        result = gate.L03PublicAccessExecutor().execute(context)
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "game_runtime_start_rejected")
+        self.assertEqual(clients[0].emitted, ["start_game"])
 
     def test_startup_profile_and_usage_receipt_parsers_fail_closed(self) -> None:
         profile_source = b'''MODEL_PROFILES["n3-luna"] = {
@@ -2506,6 +2926,15 @@ ACTIVE_PROFILE = "n3-luna"
             gate._literal_profile_assignment(
                 profile_source.replace(
                     b'"openai/gpt-6-luna"', b'"openai/other-model"', 1
+                )
+            )
+        )
+        self.assertFalse(
+            gate._literal_profile_assignment(
+                profile_source.replace(
+                    b'"allow_fallbacks": False',
+                    b'"allow_fallbacks": True',
+                    1,
                 )
             )
         )
@@ -3424,7 +3853,7 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(gate.FROZEN_CAPS["companion_serve_launches"], 4)
         self.assertEqual(gate.FROZEN_CAPS["companion_up_invocations"], 1)
         self.assertEqual(gate.FROZEN_CAPS["relay_tunnel_creations"], 2)
-        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 1)
+        self.assertEqual(gate.FROZEN_CAPS["provider_attempts"], 2)
         self.assertEqual(gate.FROZEN_CAPS["automatic_retries"], 0)
         manifest = gate.live_manifest()
         self.assertTrue(
@@ -3434,11 +3863,28 @@ ACTIVE_PROFILE = "n3-luna"
             manifest["verdict_policy"]["linux-arm64"]["reason"],
             "owner-run-required",
         )
-        self.assertEqual(manifest["provider_budget_ceiling"], 1)
-        self.assertEqual(manifest["manifest_id"], "n3-live-lifecycle-v3")
+        self.assertEqual(manifest["provider_budget_ceiling"], 2)
+        self.assertEqual(manifest["manifest_id"], "n3-live-lifecycle-v4")
         self.assertIn("emit start_game once", manifest["rows"][2]["action"])
         self.assertEqual(manifest["startup_narration"]["max_event_emissions"], 1)
         self.assertEqual(manifest["startup_narration"]["resolved_model"], "openai/gpt-6-luna")
+        self.assertEqual(
+            [task["task"] for task in manifest["startup_tasks"]],
+            ["action_prediction", "dm_main"],
+        )
+        self.assertTrue(
+            all(
+                task["requested_model"] == task["resolved_model"]
+                == "openai/gpt-6-luna"
+                for task in manifest["startup_tasks"]
+            )
+        )
+        self.assertTrue(
+            all(task["fallbacks_allowed"] is False for task in manifest["startup_tasks"])
+        )
+        self.assertEqual(manifest["startup_narration"]["max_task_receipts"], 2)
+        self.assertEqual(manifest["startup_narration"]["max_provider_attempts"], 2)
+        self.assertEqual(manifest["startup_narration"]["max_combined_cost_usd"], 0.05)
         self.assertEqual(manifest["caps"]["provider_cost_cap_usd"], 0.05)
         self.assertEqual(manifest["caps"]["cumulative_narration_cost_cap_usd"], 1.0)
 
@@ -3466,6 +3912,54 @@ ACTIVE_PROFILE = "n3-luna"
                 gate.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("usage:", help_output.getvalue())
+
+    def test_diagnostic_stop_parser_only_accepts_l01(self) -> None:
+        run_args = [
+            "run",
+            "--run-id",
+            self.run_id,
+            "--sha",
+            self.sha,
+            "--booking-id",
+            self.booking_id,
+            "--preflight-report",
+            self.report_argument,
+        ]
+        parser = gate._build_parser()
+
+        parsed_default = parser.parse_args(run_args)
+        self.assertIsNone(parsed_default.diagnostic_stop_after_row)
+
+        parsed_diagnostic = parser.parse_args(
+            run_args + ["--diagnostic-stop-after-row", "L01"]
+        )
+        self.assertEqual(parsed_diagnostic.diagnostic_stop_after_row, "L01")
+
+        with patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                parser.parse_args(
+                    run_args + ["--diagnostic-stop-after-row", "L02"]
+                )
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_invalid_diagnostic_stop_row_refuses_before_host_start(self) -> None:
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L02",
+        )
+
+        result = gate.run_live_gate(self.dependencies, arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertIn(
+            "diagnostic_stop_row_invalid", result["infrastructure_failures"]
+        )
+        self.assertEqual(self.host_factory_calls, 0)
 
     def test_capture_creation_failure_returns_blocked_without_launch(self) -> None:
         original_mkdir = Path.mkdir
@@ -4005,6 +4499,115 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertTrue(run_record["teardown"]["gate_state_root_removed"])
         self.assertTrue(summary_record["teardown_complete"])
 
+    def test_diagnostic_stop_after_l01_blocks_remaining_rows_and_tears_down(self) -> None:
+        executed: list[str] = []
+
+        class RecordingExecutor:
+            def __init__(self, row_id: str) -> None:
+                self.row_id = row_id
+
+            def execute(
+                self, _context: gate.RowContext
+            ) -> gate.RowExecutionResult:
+                executed.append(self.row_id)
+                return gate.RowExecutionResult("PASS", "diagnostic-row-pass")
+
+        registry = {
+            row.row_id: RecordingExecutor(row.row_id) for row in gate.LIVE_ROWS
+        }
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L01",
+        )
+
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), arguments
+        )
+
+        self.assertEqual(executed, ["L01"])
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(result["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(result["rows"][0]["verdict"], "PASS")
+        self.assertEqual(
+            [row["verdict"] for row in result["rows"][1:]],
+            ["BLOCKED"] * (len(gate.LIVE_ROWS) - 1),
+        )
+        self.assertEqual(
+            [row["reason"] for row in result["rows"][1:]],
+            ["diagnostic-stop-after-row"] * (len(gate.LIVE_ROWS) - 1),
+        )
+        self.assertEqual(result["infrastructure_failures"], [])
+        self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
+        evidence = self.root / str(result["evidence_path"])
+        run_record = json.loads((evidence / "run.json").read_text(encoding="utf-8"))
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(run_record["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(summary_record["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(run_record["gate_verdict"], "BLOCKED")
+        self.assertFalse(run_record["is_gate_pass"])
+        self.assertEqual(summary_record["gate_verdict"], "BLOCKED")
+        self.assertFalse(summary_record["is_gate_pass"])
+        self.assertTrue(summary_record["row_coverage_complete"])
+        self.assertTrue(summary_record["teardown_complete"])
+
+    def test_diagnostic_stop_preserves_l01_failure(self) -> None:
+        executed: list[str] = []
+
+        class RecordingExecutor:
+            def __init__(self, row_id: str) -> None:
+                self.row_id = row_id
+
+            def execute(
+                self, _context: gate.RowContext
+            ) -> gate.RowExecutionResult:
+                executed.append(self.row_id)
+                verdict = "FAIL" if self.row_id == "L01" else "PASS"
+                return gate.RowExecutionResult(verdict, "diagnostic-row-result")
+
+        registry = {
+            row.row_id: RecordingExecutor(row.row_id) for row in gate.LIVE_ROWS
+        }
+        arguments = gate.RunArguments(
+            run_id=self.run_id,
+            sha=self.sha,
+            booking_id=self.booking_id,
+            preflight_report=self.report_argument,
+            party_size=1,
+            diagnostic_stop_after_row="L01",
+        )
+
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), arguments
+        )
+
+        self.assertEqual(executed, ["L01"])
+        self.assertEqual(result["gate_verdict"], "FAIL")
+        self.assertFalse(result["is_gate_pass"])
+        self.assertEqual(result["diagnostic_stop_after_row"], "L01")
+        self.assertEqual(result["rows"][0]["verdict"], "FAIL")
+        self.assertTrue(
+            all(
+                row["reason"] == "diagnostic-stop-after-row"
+                for row in result["rows"][1:]
+            )
+        )
+        evidence = self.root / str(result["evidence_path"])
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary_record["gate_verdict"], "FAIL")
+        self.assertEqual(
+            summary_record["platform_verdicts"]["macos-arm64"]["verdict"],
+            "FAIL",
+        )
+
     def test_full_simulated_run_passes_rows_but_stays_pending_and_redacts(self) -> None:
         secrets = [
             "credential-secret-%s-sentinel" % row.row_id
@@ -4038,6 +4641,7 @@ ACTIVE_PROFILE = "n3-luna"
 
         self.assertEqual(result["gate_verdict"], "PENDING")
         self.assertFalse(result["is_gate_pass"])
+        self.assertNotIn("diagnostic_stop_after_row", result)
         self.assertEqual(
             result["platform_verdicts"]["macos-arm64"]["verdict"], "PASS"
         )
@@ -4051,6 +4655,12 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertEqual([row["verdict"] for row in result["rows"]], ["PASS"] * 10)
         evidence = self.root / result["evidence_path"]
+        run_record = json.loads((evidence / "run.json").read_text(encoding="utf-8"))
+        summary_record = json.loads(
+            (evidence / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("diagnostic_stop_after_row", run_record)
+        self.assertNotIn("diagnostic_stop_after_row", summary_record)
         for artifact in evidence.iterdir():
             if not artifact.is_file():
                 continue
@@ -4119,7 +4729,10 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(environment["NEQ_OPEN_BROWSER"], "0")
         self.assertEqual(environment["NEQ_N3_GATE_MAX_RECOVERY_ATTEMPTS"], "1")
         self.assertEqual(environment["NEQ_N3_GATE_RUN_ID"], self.run_id)
-        self.assertEqual(environment["NEQ_PROVIDER_ATTEMPT_BUDGET"], "1")
+        self.assertEqual(
+            environment["NEQ_PROVIDER_ATTEMPT_BUDGET"],
+            str(gate.PROVIDER_BUDGET),
+        )
         self.assertEqual(environment["NEQ_PROVIDER_ATTEMPT_RUN_ID"], self.run_id)
         self.assertEqual(environment["PYTHONPATH"], str(sandbox))
         self.assertTrue(environment["XDG_STATE_HOME"].startswith(str(state)))
@@ -4585,11 +5198,291 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(
             summary["platform_verdicts"]["macos-arm64"]["verdict"], "BLOCKED"
         )
+        rows = [
+            json.loads(line)
+            for line in (self.root / result["evidence_path"] / "rows.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(len(rows), len(gate.LIVE_ROWS))
+        self.assertTrue(all(row["observed"] for row in rows))
+        self.assertTrue(
+            all(
+                row["observed"]["failure_diagnostic"]["category"] == "no_failure"
+                for row in rows
+            )
+        )
+
+    def test_l02_through_l10_catches_preserve_bounded_exception_diagnostics(self) -> None:
+        class RaisingLifecycleApi:
+            def get_status(self) -> gate.HostApiResponse:
+                raise gate.HostApiError("host_api_transport_error")
+
+        cases = (
+            ("L02", gate.L02IdentityInitExecutor(), "l02_identity_init",
+             "l02_observation_unavailable"),
+            ("L03", gate.L03PublicAccessExecutor(), "l03_public_access",
+             "l03_public_observation_unavailable"),
+            ("L04", gate.L04DuplicateStartExecutor(), "l04_duplicate_start",
+             "l04_observation_unavailable"),
+            ("L05", gate.L05RelayLossRecoveryExecutor(), "l05_relay_recovery",
+             "l05_lifecycle_observation_unavailable"),
+            ("L06", gate.L06CredentialRotationExecutor(),
+             "l06_credential_rotation", "l06_lifecycle_observation_unavailable"),
+            ("L07", gate.L07StopSharingExecutor(), "l07_stop_sharing",
+             "l07_lifecycle_observation_unavailable"),
+            ("L08", gate.L08HostExitRestartExecutor(), "l08_host_exit_restart",
+             "l08_lifecycle_observation_unavailable"),
+            ("L09", gate.L09RevokeAccessExecutor(), "l09_revoke_access",
+             "l09_lifecycle_observation_unavailable"),
+            ("L10", gate.L10CleanTeardownExecutor(), "l10_clean_teardown",
+             "l10_lifecycle_observation_unavailable"),
+        )
+        for row_id, executor, expected_step, expected_reason in cases:
+            with self.subTest(row_id=row_id):
+                context = self.make_row_context(api=RaisingLifecycleApi())
+                if row_id in {"L06", "L07", "L10"}:
+                    context.public_client.bind_invitation(
+                        FakePublicService().accepted_origin
+                    )
+                if row_id in {"L06", "L07"}:
+                    context.public_client._session = gate.PublicPlayerSession(
+                        "cookie", "csrf", "credential", "build", 1
+                    )
+                if row_id == "L03":
+                    with patch.object(
+                        gate,
+                        "_start_local_game_runtime",
+                        side_effect=gate.PublicClientError(
+                            "public_transport_unavailable"
+                        ),
+                    ):
+                        result = executor.execute(context)
+                elif row_id == "L10":
+                    with patch.object(
+                        gate,
+                        "_companion_path",
+                        side_effect=gate.HostApiError(
+                            "host_api_transport_error"
+                        ),
+                    ):
+                        result = executor.execute(context)
+                else:
+                    result = executor.execute(context)
+
+                self.assertEqual(result.verdict, "BLOCKED")
+                self.assertEqual(result.reason, expected_reason)
+                diagnostic = result.observed["failure_diagnostic"]
+                self.assertEqual(diagnostic["category"], "caught_exception")
+                self.assertEqual(diagnostic["exception_class"], (
+                    "PublicClientError" if row_id == "L03" else "HostApiError"
+                ))
+                self.assertEqual(diagnostic["gate_step"], expected_step)
+                self.assertTrue(diagnostic["raising_frame_available"])
+                self.assertRegex(
+                    diagnostic["raising_frame"],
+                    r"^scripts/(?:n3_live_lifecycle_gate|test_n3_live_lifecycle_gate)\.py:[1-9][0-9]*$",
+                )
+
+    def test_l02_409_response_diagnostic_reaches_persisted_observation(self) -> None:
+        message_secret = "precheck-message-secret-sentinel"
+        payload_secret = "precheck-payload-secret-sentinel"
+
+        class PrecheckUnprovenApi:
+            def get_status(
+                self, *, timeout_seconds: float | None = None
+            ) -> gate.HostApiResponse:
+                return gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "status": {
+                            "state": "off",
+                            "identity_initialized": False,
+                            "identity_up_invocations": 0,
+                            "companion_launches": 0,
+                        },
+                    },
+                )
+
+            def post(
+                self,
+                action: str,
+                payload: Mapping[str, object] | None = None,
+                *,
+                timeout_seconds: float | None = None,
+            ) -> gate.HostApiResponse:
+                if action == "initialize-identity":
+                    return gate.HostApiResponse(
+                        409,
+                        {
+                            "ok": False,
+                            "reason": "precheck_unproven",
+                            "message": message_secret,
+                            "payload": {"private_detail": payload_secret},
+                        },
+                    )
+                return gate.HostApiResponse(
+                    200, {"ok": True, "reason": "stopped"}
+                )
+
+        registry = dict(self.pass_registry)
+        registry["L02"] = gate.L02IdentityInitExecutor()
+        dependencies = self.make_dependencies(
+            executors=registry,
+            api=PrecheckUnprovenApi(),
+        )
+        # This regression covers L02 diagnostics and persistence, not recovery
+        # of an unconfirmed native companion request.
+        with (
+            patch.object(
+                gate.LiveGateRunner,
+                "_wait_for_unconfirmed_companion_post",
+                return_value=True,
+            ),
+            patch.object(
+                gate.LiveGateRunner,
+                "_clean_unconfirmed_companion_identity",
+                return_value=True,
+            ),
+        ):
+            result = gate.run_live_gate(dependencies, self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "FAIL")
+        l02_result = result["rows"][1]
+        self.assertEqual(l02_result["row_id"], "L02")
+        self.assertEqual(l02_result["verdict"], "FAIL")
+        self.assertEqual(
+            l02_result["reason"], "identity_initialization_contract_failed"
+        )
+
+        evidence = self.root / result["evidence_path"]
+        persisted_rows = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        persisted_l02 = persisted_rows[1]
+        self.assertEqual(persisted_l02["row_id"], "L02")
+        self.assertEqual(persisted_l02["verdict"], "FAIL")
+        self.assertEqual(
+            persisted_l02["reason"], "identity_initialization_contract_failed"
+        )
+        observed = persisted_l02["observed"]
+        self.assertEqual(observed["http_status"], 409)
+        self.assertEqual(observed["reason"], "precheck_unproven")
+        diagnostic = observed["failure_diagnostic"]
+        self.assertEqual(diagnostic["reason_code"], "precheck_unproven")
+        self.assertEqual(diagnostic["http_status"], 409)
+        self.assertEqual(diagnostic["category"], "row_assertion")
+        self.assertEqual(
+            set(diagnostic),
+            {
+                "category",
+                "exception_class",
+                "gate_step",
+                "http_status",
+                "reason_code",
+                "raising_frame",
+                "raising_frame_available",
+            },
+        )
+        for artifact in evidence.iterdir():
+            if artifact.is_file():
+                content = artifact.read_text(encoding="utf-8")
+                self.assertNotIn(message_secret, content)
+                self.assertNotIn(payload_secret, content)
+
+    def test_row_helper_exception_diagnostic_reaches_persisted_observation(self) -> None:
+        class FailingPortInspector:
+            def inspect(self, _port: int) -> preflight_gate.PortObservation:
+                raise RuntimeError("helper-message-secret-sentinel")
+
+        class HelperFailureExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.port_inspector = FailingPortInspector()
+                gate._inspect_port(context, gate.PLAYER_PORT)
+                return gate._blocked("player_listener_observation_unavailable")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = HelperFailureExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        diagnostic = row_records[0]["observed"]["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "RuntimeError")
+        self.assertEqual(diagnostic["gate_step"], "port_inspection")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        for path in evidence.iterdir():
+            if path.is_file():
+                self.assertNotIn(
+                    "helper-message-secret-sentinel",
+                    path.read_text(encoding="utf-8"),
+                )
+
+    def test_l03_startup_helper_catch_preserves_real_exception_diagnostic(self) -> None:
+        class StartupInputFailure(ValueError):
+            pass
+
+        context = self.make_row_context()
+
+        def fail_startup_input(_sandbox: Path):
+            raise StartupInputFailure("startup-helper-message-secret-sentinel")
+
+        context.startup_input_validator = fail_startup_input
+        result = gate.L03PublicAccessExecutor().execute(context)
+        diagnostic = result.observed["failure_diagnostic"]
+        self.assertEqual(result.reason, "startup_precheck_unavailable")
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "OtherException")
+        self.assertEqual(diagnostic["gate_step"], "startup_precheck")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        self.assertNotIn(
+            "startup-helper-message-secret-sentinel", repr(result.observed)
+        )
 
     def test_executor_exception_fails_fast_and_teardown_is_always_invoked(self) -> None:
+        class ExceptionNameSecretSentinel(RuntimeError):
+            pass
+
+        hostile_module_path = self.root / "ROW-DIAG-PATH-SENTINEL.py"
+        hostile_module_path.write_text(
+            "class ExceptionNameSecretSentinel(RuntimeError):\n"
+            "    pass\n"
+            "\n"
+            "def raise_secret_exception():\n"
+            "    raise ExceptionNameSecretSentinel("
+            "'exception-message-secret-sentinel')\n",
+            encoding="ascii",
+        )
+        spec = importlib.util.spec_from_file_location(
+            "n3_hostile_row_diagnostic", hostile_module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        hostile_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hostile_module)
+
         class ExplodingExecutor:
             def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
-                raise RuntimeError("executor-secret-sentinel")
+                hostile_module.raise_secret_exception()
 
         registry = dict(gate.ROW_EXECUTORS)
         registry["L01"] = ExplodingExecutor()
@@ -4600,12 +5493,76 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertIn("executor_exception:L01", result["infrastructure_failures"])
         self.assertEqual(result["rows"][0]["reason"], "executor_exception")
         self.assertTrue(all(row["reason"] == "fail-fast" for row in result["rows"][1:]))
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        self.assertTrue(all(row["observed"] for row in row_records))
+        diagnostic = row_records[0]["observed"]["failure_diagnostic"]
+        self.assertEqual(diagnostic["category"], "caught_exception")
+        self.assertEqual(diagnostic["exception_class"], "OtherException")
+        self.assertEqual(diagnostic["gate_step"], "row_executor")
+        self.assertEqual(diagnostic["reason_code"], "executor_exception")
+        self.assertTrue(diagnostic["raising_frame_available"])
+        self.assertRegex(
+            diagnostic["raising_frame"],
+            r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
+        )
+        for row in row_records[1:]:
+            self.assertEqual(
+                row["observed"]["failure_diagnostic"]["category"], "fail_fast"
+            )
         self.assertTrue(self.fake_host is not None and self.fake_host.stopped)
         self.assertIn(("POST", ("stop", {})), self.fake_api.calls)
-        evidence = self.root / result["evidence_path"]
         for path in evidence.iterdir():
             if path.is_file():
-                self.assertNotIn("executor-secret-sentinel", path.read_text(encoding="utf-8"))
+                content = path.read_text(encoding="utf-8")
+                for sentinel in (
+                    "exception-message-secret-sentinel",
+                    "ExceptionNameSecretSentinel",
+                    "ROW-DIAG-PATH-SENTINEL",
+                ):
+                    self.assertNotIn(sentinel, content)
+
+    def test_gate_error_reason_sentinel_is_not_persisted(self) -> None:
+        class ExplodingExecutor:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                raise gate.GateError("gate-reason-secret-sentinel")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = ExplodingExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+
+        self.assertEqual(result["rows"][0]["reason"], "executor_exception")
+        self.assertNotIn(
+            "gate-reason-secret-sentinel", result["infrastructure_failures"]
+        )
+        evidence = self.root / result["evidence_path"]
+        rows = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        self.assertEqual(
+            rows[0]["observed"]["failure_diagnostic"]["exception_class"],
+            "GateError",
+        )
+        self.assertEqual(
+            rows[0]["observed"]["failure_diagnostic"]["reason_code"],
+            "unclassified_reason",
+        )
+        for path in evidence.iterdir():
+            if path.is_file():
+                self.assertNotIn(
+                    "gate-reason-secret-sentinel",
+                    path.read_text(encoding="utf-8"),
+                )
 
     def test_counter_cap_breach_stops_after_one_row(self) -> None:
         class PassingExecutor:
@@ -4816,8 +5773,11 @@ ACTIVE_PROFILE = "n3-luna"
             patch.object(gate, "_installed_companion_matches", return_value=True),
             patch.object(
                 gate,
-                "_gate_profile_layout",
-                return_value=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
             ),
             patch.object(gate, "_identity_owner_record_matches", return_value=True),
             patch.object(
@@ -4875,6 +5835,470 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertTrue(runner.teardown["gate_state_root_removed"])
         self.assertNotIn(secret, repr(runner.teardown))
+
+    def _build_unresponsive_host_teardown_runner(self) -> gate.LiveGateRunner:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = self.fake_api
+        runner.host_started = True
+        runner.state_root = host.state_root
+        self.ports.host_pid = None
+        context = self.make_row_context(api=self.fake_api)
+        context.host = host
+        runner.context = context
+        host.stop = lambda: True
+        return runner
+
+    def test_teardown_cleans_identity_when_host_unresponsive_and_ownership_matches(
+        self,
+    ) -> None:
+        events: list[str] = []
+        runner = self._build_unresponsive_host_teardown_runner()
+
+        status_outputs = iter(("running", "stopped", "absent"))
+
+        def companion_status(*_args: object) -> gate.RunResult:
+            events.append("identity-status")
+            return gate.RunResult(0, next(status_outputs))
+
+        def companion_command(
+            _context: gate.RowContext,
+            argv: tuple[str, ...],
+            _environment: Mapping[str, str],
+        ) -> gate.RunResult:
+            action = argv[-1]
+            events.append("identity-down" if action == "down" else "identity-delete")
+            return gate.RunResult(0, "")
+
+        def identity_evidence(output: str) -> tuple[bool, bool, bool] | None:
+            return {
+                "running": (True, True, False),
+                "stopped": (True, False, True),
+                "absent": (False, False, True),
+            }.get(output)
+
+        def identity_absent(output: str) -> bool | None:
+            return {"running": False, "stopped": False, "absent": True}.get(output)
+
+        def identity_postchecks(*_args: object) -> list[dict[str, object]]:
+            events.append("identity-postcheck")
+            return [
+                {"kind": kind, "state": "absent", "count": 0}
+                for kind in ("service_manager", "profile_processes", "helper_processes")
+            ]
+
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(
+                gate,
+                "companion_environment",
+                return_value={
+                    "HOME": "gate-home",
+                    "XDG_CONFIG_HOME": "gate-config",
+                    "XDG_DATA_HOME": "gate-data",
+                    "XDG_STATE_HOME": "gate-state",
+                    "XDG_RUNTIME_DIR": "gate-runtime",
+                },
+            ),
+            patch.object(gate, "_run_companion_status", side_effect=companion_status),
+            patch.object(gate, "_run_companion_command", side_effect=companion_command),
+            patch.object(gate, "_identity_status_evidence", side_effect=identity_evidence),
+            patch.object(gate, "_identity_absent_status", side_effect=identity_absent),
+            patch.object(
+                gate,
+                "_identity_cleanup_observations",
+                side_effect=identity_postchecks,
+            ),
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                side_effect=lambda *_args, **_kwargs: (
+                    events.append("state-root-remove") or (True, True)
+                ),
+            ),
+        ):
+            runner._teardown()
+
+        self.assertEqual(
+            events,
+            [
+                "identity-status",
+                "identity-down",
+                "identity-status",
+                "identity-delete",
+                "identity-status",
+                "identity-postcheck",
+                "state-root-remove",
+            ],
+        )
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "verified_absent")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_identity_cleanup_refuses_on_ownership_mismatches(self) -> None:
+        scenarios = {
+            "foreign_profile": dict(
+                layout=SimpleNamespace(profile="other-profile"),
+                installed=True,
+                owner_matches=True,
+            ),
+            "missing_owner_record": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=True,
+                owner_matches=False,
+            ),
+            "owner_record_for_different_run": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=True,
+                owner_matches=False,
+            ),
+            "missing_layout_or_path_mismatch": dict(
+                layout=None,
+                installed=True,
+                owner_matches=True,
+            ),
+            "installed_companion_mismatch": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=False,
+                owner_matches=True,
+            ),
+        }
+        for name, scenario in scenarios.items():
+            with self.subTest(scenario=name):
+                runner = self._build_unresponsive_host_teardown_runner()
+                profile_state = SimpleNamespace(
+                    state="ready" if scenario["layout"] is not None else "foreign",
+                    layout=scenario["layout"],
+                )
+                with (
+                    patch.object(
+                        gate,
+                        "_installed_companion_matches",
+                        return_value=scenario["installed"],
+                    ),
+                    patch.object(
+                        gate, "_gate_profile_state", return_value=profile_state
+                    ),
+                    patch.object(
+                        gate,
+                        "_identity_owner_record_matches",
+                        return_value=scenario["owner_matches"],
+                    ),
+                    patch.object(gate, "_run_companion_status") as status_mock,
+                    patch.object(gate, "_run_companion_command") as command_mock,
+                ):
+                    runner._teardown()
+                self.assertFalse(status_mock.called)
+                self.assertFalse(command_mock.called)
+                self.assertEqual(
+                    runner.teardown["identity_cleanup_result"], "ownership_unavailable"
+                )
+                self.assertIn(
+                    "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+                )
+
+    def test_teardown_identity_cleanup_refuses_on_environment_key_mismatch(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(
+                gate, "companion_environment", return_value={"HOME": "incomplete"}
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(
+            runner.teardown["identity_cleanup_result"], "environment_invalid"
+        )
+        self.assertIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_skips_new_cleanup_path_when_l10_already_passed(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        runner.rows.append({"row_id": "L10", "verdict": "PASS"})
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_no_profile_artifacts_is_clean_noop(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        with (
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(state="absent", layout=None),
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                return_value=(True, True),
+            ),
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+        self.assertTrue(runner.teardown["gate_state_root_removed"])
+
+    def test_teardown_early_row_failure_host_never_started_no_profile(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = self.fake_api
+        runner.host_started = False
+        runner.state_root = host.state_root
+        self.ports.host_pid = None
+        context = self.make_row_context(api=self.fake_api)
+        context.host = host
+        runner.context = context
+        host.stop = lambda: True
+        with (
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(state="absent", layout=None),
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                return_value=(True, True),
+            ),
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertEqual(runner.infrastructure_failures, [])
+        self.assertTrue(runner.teardown["sharing_stopped"])
+        self.assertTrue(runner.teardown["gate_state_root_removed"])
+
+    def test_unconfirmed_teardown_uses_launchctl_parser_and_fails_closed(self) -> None:
+        unrelated_lines = (
+            "unrelated section line\n"
+            * (identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES + 1)
+        )
+        oversized_unrelated_output = (
+            "gui = {\n"
+            "\tservices = {\n"
+            "\t\t   64868      1 \tcom.apple.example\n"
+            "\t}\n"
+            "\tdisabled services = {\n"
+            "\t}\n"
+            "}\n"
+            + unrelated_lines
+        )
+        self.assertGreater(
+            len(oversized_unrelated_output),
+            identity_bootstrap.MAX_COMMAND_OUTPUT_CHARS,
+        )
+        self.assertGreater(
+            len(oversized_unrelated_output.splitlines()),
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES,
+        )
+        self.assertLess(
+            len(oversized_unrelated_output.encode("utf-8")),
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES,
+        )
+
+        class LaunchctlOutputRunner:
+            def __init__(self, output: str) -> None:
+                self.output = output
+                self.calls: list[
+                    tuple[tuple[str, ...], dict[str, str], float]
+                ] = []
+
+            def __call__(
+                self,
+                argv: tuple[str, ...],
+                environment: Mapping[str, str],
+                timeout: float,
+            ) -> gate.RunResult:
+                self.calls.append((tuple(argv), dict(environment), timeout))
+                return gate.RunResult(0, self.output)
+
+        def run_teardown(output: str):
+            service = FakePublicService()
+            companion_runner = FakeIdentityCommandRunner()
+            context, api, _ports, _table = self.make_owned_lifecycle_context(
+                service, companion_runner=companion_runner
+            )
+            context.public_client.bind_invitation(service.accepted_origin)
+            # Keep the production default factory to exercise actual wiring.
+            context.identity_observer_factory = (
+                self.dependencies.identity_observer_factory
+            )
+            context.companion_start_post_attempted = True
+            context.companion_start_post_unconfirmed = True
+            context.companion_start_post_action = "start"
+            api.status = {
+                "state": "ready",
+                "identity_initialized": True,
+                "identity_up_invocations": 1,
+                "companion_launches": 1,
+            }
+
+            host = context.host
+            original_stop = host.stop
+
+            def stop_host() -> bool:
+                stopped = original_stop()
+                self.ports.host_pid = None
+                return stopped
+
+            host.stop = stop_host
+            self.ports.host_pid = host.owner_pid
+
+            arguments = gate.RunArguments(
+                run_id=context.run_id,
+                sha=self.sha,
+                booking_id=self.booking_id,
+                preflight_report=self.report_argument,
+            )
+            runner = gate.LiveGateRunner(self.dependencies, arguments)
+            runner.host = host
+            runner.api = api
+            runner.context = context
+            runner.host_started = True
+            runner.state_root = host.state_root
+
+            launchctl_runner = LaunchctlOutputRunner(output)
+            original_is_file = Path.is_file
+
+            def is_file(path: Path, *args: object, **kwargs: object) -> bool:
+                if path == Path("/bin/launchctl"):
+                    return True
+                return original_is_file(path, *args, **kwargs)
+
+            with (
+                patch.object(
+                    identity_bootstrap, "DefaultCommandRunner",
+                    return_value=launchctl_runner,
+                ),
+                patch.object(
+                    identity_bootstrap.process_info,
+                    "snapshot_current_user",
+                    return_value=(),
+                ),
+                patch.object(
+                    identity_bootstrap.platform, "system", return_value="Darwin"
+                ),
+                patch.object(Path, "is_file", new=is_file),
+            ):
+                runner._teardown()
+            return runner, context, launchctl_runner
+
+        safe, safe_context, safe_runner = run_teardown(oversized_unrelated_output)
+        self.assertEqual(safe.teardown["identity_cleanup_result"], "verified_absent")
+        self.assertEqual(
+            safe.teardown["identity_cleanup_observations"][0]["state"], "absent"
+        )
+        self.assertTrue(safe.teardown["gate_state_root_removed"])
+        self.assertFalse(safe_context.host.state_root.exists())
+        self.assertEqual(
+            safe_runner.calls,
+            [
+                (
+                    ("/bin/launchctl", "print", "gui/%d" % os.getuid()),
+                    {
+                        "PATH": "",
+                        "HOME": str(
+                            safe_context.host.state_root
+                            / "neq"
+                            / "opentunnel"
+                            / gate.DEFAULT_PROFILE
+                            / "data"
+                        ),
+                        "LANG": "C",
+                        "LC_ALL": "C",
+                    },
+                    10.0,
+                )
+            ],
+        )
+
+        malformed_output = (
+            "gui = {\n"
+            "\tservices = {\n"
+            "\t\t malformed row\n"
+            "\t}\n"
+            "}\n"
+        )
+        blocked, blocked_context, blocked_runner = run_teardown(malformed_output)
+        self.assertEqual(
+            blocked.teardown["identity_cleanup_result"], "postcheck_unavailable"
+        )
+        self.assertEqual(
+            blocked.teardown["identity_cleanup_observations"][0]["state"],
+            "unknown",
+        )
+        self.assertFalse(blocked.teardown["gate_state_root_removed"])
+        self.assertTrue(blocked_context.host.state_root.exists())
+        self.assertIn(
+            "unconfirmed_identity_cleanup_failed",
+            blocked.infrastructure_failures,
+        )
+        self.assertEqual(len(blocked_runner.calls), 1)
 
     def test_unsettled_unconfirmed_post_preserves_state_root_evidence(self) -> None:
         events: list[str] = []
@@ -5005,7 +6429,7 @@ ACTIVE_PROFILE = "n3-luna"
                 {"companion_launches": 0, "identity_up_invocations": 0}
             )
 
-    def test_provider_ledger_reservation_is_fail(self) -> None:
+    def test_provider_attempt_outside_l03_startup_window_is_fail(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
         ledger = Path(
@@ -5015,11 +6439,11 @@ ACTIVE_PROFILE = "n3-luna"
         )
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text(
-            json.dumps({"event": "header", "schema_version": 1, "budget": 1, "run_id": self.run_id})
+            json.dumps({"event": "header", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id})
             + "\n"
-            + json.dumps({"event": "activated", "schema_version": 1, "budget": 1, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
+            + json.dumps({"event": "activated", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
             + "\n"
-            + json.dumps({"event": "reservation", "schema_version": 1, "budget": 1, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "timestamp_utc": TEST_NOW.isoformat(), "host": "provider-secret.example"})
+            + json.dumps({"event": "reservation", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "reservation_number": 1, "pid": 444, "timestamp_utc": TEST_NOW.isoformat(), "host": "provider-secret.example"})
             + "\n",
             encoding="ascii",
         )
@@ -5029,7 +6453,7 @@ ACTIVE_PROFILE = "n3-luna"
         self.assertEqual(result["verdict"], "FAIL")
         self.assertEqual(result["reservation_count"], 1)
 
-    def test_provider_ledger_accepts_only_one_attempt_in_startup_window(self) -> None:
+    def test_provider_ledger_accepts_exactly_two_attempts_in_startup_window(self) -> None:
         sandbox = self.root / gate.CAPTURE_RELATIVE
         state = self.root / gate.EVIDENCE_BASE / self.run_id / "state"
         ledger = Path(
@@ -5062,6 +6486,15 @@ ACTIVE_PROFILE = "n3-luna"
                 "pid": 444,
                 "timestamp_utc": (TEST_NOW + timedelta(seconds=2)).isoformat(),
             },
+            {
+                "event": "reservation",
+                "schema_version": 1,
+                "budget": gate.PROVIDER_BUDGET,
+                "run_id": self.run_id,
+                "reservation_number": 2,
+                "pid": 444,
+                "timestamp_utc": (TEST_NOW + timedelta(seconds=3)).isoformat(),
+            },
         ]
         ledger.write_text(
             "".join(json.dumps(item, sort_keys=True) + "\n" for item in records),
@@ -5078,7 +6511,7 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertEqual(accepted["verdict"], "PASS")
         self.assertTrue(accepted["startup_window_verified"])
-        self.assertEqual(accepted["attempt_count"], 1)
+        self.assertEqual(accepted["attempt_count"], 2)
 
         records[-1]["timestamp_utc"] = (
             TEST_NOW - timedelta(seconds=1)
@@ -5127,7 +6560,7 @@ ACTIVE_PROFILE = "n3-luna"
                 TEST_NOW + timedelta(seconds=5),
             ),
         )
-        self.assertEqual(repeated_attempt["attempt_count"], 2)
+        self.assertEqual(repeated_attempt["attempt_count"], 3)
         self.assertEqual(repeated_attempt["verdict"], "FAIL")
         self.assertFalse(repeated_attempt["startup_window_verified"])
 
@@ -5142,7 +6575,7 @@ ACTIVE_PROFILE = "n3-luna"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         record_base = {
             "schema_version": 1,
-            "budget": 1,
+            "budget": gate.PROVIDER_BUDGET,
             "run_id": self.run_id,
         }
         records = [
@@ -5194,9 +6627,9 @@ ACTIVE_PROFILE = "n3-luna"
         )
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text(
-            json.dumps({"event": "header", "schema_version": True, "budget": 1, "run_id": self.run_id})
+            json.dumps({"event": "header", "schema_version": True, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id})
             + "\n"
-            + json.dumps({"event": "activated", "schema_version": 1, "budget": 1, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
+            + json.dumps({"event": "activated", "schema_version": 1, "budget": gate.PROVIDER_BUDGET, "run_id": self.run_id, "transport_guard": "httpx-client-single-request", "pid": 444})
             + "\n",
             encoding="ascii",
         )
@@ -5489,6 +6922,251 @@ ACTIVE_PROFILE = "n3-luna"
             host.start()
         self.assertTrue(original_root.is_dir())
         self.assertTrue(host.process is None)
+
+    def test_step_timings_from_checkpoints_bounded_and_rounded(self) -> None:
+        checkpoints = [("startup_precheck", 1000.0), ("startup_connect", 1000.5)]
+        entries = gate._step_timings_from_checkpoints(checkpoints, 1001.25)
+        self.assertEqual(
+            entries,
+            [
+                {"step": "startup_precheck", "elapsed_seconds": 0.5},
+                {"step": "startup_connect", "elapsed_seconds": 0.75},
+            ],
+        )
+
+    def test_step_timings_cap_enforced(self) -> None:
+        checkpoints = [("startup_precheck", float(i)) for i in range(50)]
+        entries = gate._step_timings_from_checkpoints(checkpoints, 100.0)
+        self.assertLessEqual(len(entries), gate.MAX_STEP_TIMING_ENTRIES)
+
+    def test_mark_step_rejects_unknown_step_name(self) -> None:
+        context = SimpleNamespace(step_checkpoints=[], monotonic=lambda: 5.0)
+        gate._mark_step(context, "not-a-real-step")
+        self.assertEqual(context.step_checkpoints, [])
+
+    def test_mark_step_bounded(self) -> None:
+        context = SimpleNamespace(step_checkpoints=[], monotonic=lambda: 5.0)
+        for _ in range(gate.MAX_STEP_TIMING_ENTRIES + 5):
+            gate._mark_step(context, "startup_precheck")
+        self.assertEqual(len(context.step_checkpoints), gate.MAX_STEP_TIMING_ENTRIES)
+
+    def test_load_sampler_records_unavailable_on_oserror(self) -> None:
+        def failing_getloadavg() -> tuple[float, float, float]:
+            raise OSError("unavailable")
+
+        sampler = gate._LoadSampler(
+            getloadavg=failing_getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        self.assertEqual(
+            sampler.samples(),
+            [[0.0, "unavailable", "unavailable", "unavailable"]],
+        )
+        self.assertIsNone(sampler.abort_samples())
+
+    def test_load_sampler_caps_entries_at_bound(self) -> None:
+        sampler = gate._LoadSampler(
+            getloadavg=lambda: (1.0, 1.0, 1.0),
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+            max_samples=3,
+        )
+        for _ in range(10):
+            sampler.record_sample()
+        self.assertEqual(len(sampler.samples()), 3)
+
+    def test_load_sampler_does_not_abort_on_single_spike_then_calm_sample(self) -> None:
+        values = iter([60.0, 5.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        sampler.record_sample()
+        self.assertIsNone(sampler.abort_samples())
+
+    def test_load_sampler_aborts_after_two_consecutive_high_samples(self) -> None:
+        values = iter([60.0, 70.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        self.assertIsNone(sampler.abort_samples())
+        sampler.record_sample()
+        abort_samples = sampler.abort_samples()
+        self.assertIsNotNone(abort_samples)
+        self.assertEqual(len(abort_samples), 2)
+        self.assertEqual(abort_samples[0][1], 60.0)
+        self.assertEqual(abort_samples[1][1], 70.0)
+
+    def test_load_abort_constants_match_contract(self) -> None:
+        self.assertEqual(gate.LOAD_ABORT_ONE_MINUTE_THRESHOLD, 50.0)
+        self.assertEqual(gate.LOAD_ABORT_CONSECUTIVE_SAMPLES, 2)
+        self.assertEqual(gate.LOAD_SAMPLE_INTERVAL_SECONDS, 30.0)
+
+    def test_check_environment_load_raises_blocked_when_sampler_aborted(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        values = iter([60.0, 70.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        sampler.record_sample()
+        runner._active_load_sampler = sampler
+        with self.assertRaises(gate.GateError) as caught:
+            runner._check_environment_load()
+        self.assertEqual(caught.exception.reason, "environment_load")
+        self.assertEqual(caught.exception.verdict, "BLOCKED")
+
+    def test_check_environment_load_is_noop_without_active_sampler(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        runner._active_load_sampler = None
+        runner._check_environment_load()
+
+    def test_row_record_carries_bounded_step_timings_and_load_samples(self) -> None:
+        class ObservingExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                gate._mark_step(context, "startup_precheck")
+                gate._mark_step(context, "startup_connect")
+                return gate._blocked("diagnostic_only_stop")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = ObservingExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        first_row = row_records[0]
+        self.assertIn("step_timings", first_row["observed"])
+        self.assertIn("load_samples", first_row["observed"])
+        step_timings = first_row["observed"]["step_timings"]
+        self.assertLessEqual(len(step_timings), gate.MAX_STEP_TIMING_ENTRIES)
+        self.assertEqual(
+            [entry["step"] for entry in step_timings][:2],
+            ["startup_precheck", "startup_connect"],
+        )
+        self.assertTrue(
+            all(
+                isinstance(entry.get("elapsed_seconds"), float)
+                for entry in step_timings
+            )
+        )
+        load_samples = first_row["observed"]["load_samples"]
+        self.assertLessEqual(len(load_samples), gate.MAX_LOAD_SAMPLES_PER_ROW)
+        run_record = json.loads(
+            (evidence / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            set(run_record["environment_load_summary"]),
+            {"max_one_minute_load_observed", "sample_count"},
+        )
+
+    def test_environment_load_abort_blocks_row_and_fails_fast_later_rows(self) -> None:
+        class SleepyExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.sleep(0.01)
+                context.sleep(0.01)
+                context.sleep(0.01)
+                return gate.RowExecutionResult("PASS", "sleepy_pass")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SleepyExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=lambda: (60.0, 1.0, 1.0),
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "BLOCKED")
+        self.assertEqual(first_row["reason"], "environment_load")
+        self.assertTrue(
+            all(row["reason"] == "fail-fast" for row in result["rows"][1:])
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        load_samples = row_records[0]["observed"]["load_samples"]
+        self.assertLessEqual(len(load_samples), gate.MAX_LOAD_SAMPLES_PER_ROW)
+        self.assertGreaterEqual(len(load_samples), 2)
+        self.assertTrue(all(entry[1] == 60.0 for entry in load_samples))
+        self.assertTrue(self.fake_host.stopped)
+
+    def test_environment_load_single_spike_then_calm_does_not_abort(self) -> None:
+        class SleepyExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.sleep(0.01)
+                return gate.RowExecutionResult("PASS", "sleepy_pass")
+
+        readings = iter([(60.0, 1.0, 1.0), (5.0, 1.0, 1.0)])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return next(readings, (5.0, 1.0, 1.0))
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SleepyExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=getloadavg,
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "PASS")
+        self.assertEqual(first_row["reason"], "sleepy_pass")
+
+    def test_environment_load_abort_honored_by_post_row_check_without_sleeps(
+        self,
+    ) -> None:
+        class SilentExecutor:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                return gate.RowExecutionResult("PASS", "silent_pass")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SilentExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=lambda: (60.0, 1.0, 1.0),
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "BLOCKED")
+        self.assertEqual(first_row["reason"], "environment_load")
+        self.assertTrue(
+            all(row["reason"] == "fail-fast" for row in result["rows"][1:])
+        )
+        self.assertTrue(self.fake_host.stopped)
 
     def test_host_harness_refuses_ports_without_touching_8357(self) -> None:
         ports = FakePortInspector()

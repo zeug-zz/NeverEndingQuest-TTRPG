@@ -630,6 +630,51 @@ class OpenTunnelIdentityBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(by_profile, Observation("present", "observed_user_view", 1))
 
+    def test_launchctl_print_parser_bounds_services_rows_and_total_lines_separately(self) -> None:
+        unrelated_output = LAUNCHCTL_PRINT_FIXTURE + (
+            "unrelated section line\n"
+            * (identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES + 1)
+        )
+        self.assertGreater(
+            len(unrelated_output.splitlines()),
+            identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES,
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(unrelated_output, "neq-share"),
+            Observation("absent", "observed_user_view"),
+        )
+        matching_output = unrelated_output.replace(
+            "com.apple.peer", "com.vendor.OpenTunnel.neq-share.agent"
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(matching_output, "neq-share"),
+            Observation("present", "observed_user_view", 1),
+        )
+
+        valid_row = "\t\t   64868      1 \tcom.apple.example\n"
+        oversized_services_block = (
+            "\tservices = {\n"
+            + valid_row * (identity_bootstrap.MAX_LAUNCHCTL_PRINT_LINES + 1)
+            + "\t}\n"
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(oversized_services_block, "neq-share"),
+            Observation("unknown", "invalid_observation"),
+        )
+
+        total_line_overflow = LAUNCHCTL_PRINT_FIXTURE + (
+            "x\n"
+            * (
+                identity_bootstrap.MAX_LAUNCHCTL_PRINT_TOTAL_LINES
+                - len(LAUNCHCTL_PRINT_FIXTURE.splitlines())
+                + 1
+            )
+        )
+        self.assertEqual(
+            parse_launchctl_print_services(total_line_overflow, "neq-share"),
+            Observation("unknown", "invalid_observation"),
+        )
+
     def test_launchctl_print_parser_returns_unknown_for_incomplete_or_ambiguous_data(self) -> None:
         unknown = Observation("unknown", "invalid_observation")
         self.assertEqual(parse_launchctl_print_services("gui = {}\n", DEFAULT_PROFILE), unknown)

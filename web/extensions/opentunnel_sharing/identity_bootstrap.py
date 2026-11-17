@@ -42,7 +42,10 @@ BOOTSTRAP_MARKER_FILENAME = "identity_bootstrap.json"
 MAX_BOOTSTRAP_MARKER_BYTES = 1024
 MAX_COMMAND_OUTPUT_CHARS = 64 * 1024
 MAX_LAUNCHCTL_PRINT_OUTPUT_BYTES = 1024 * 1024
+# Maximum number of rows trusted within launchctl's services block.
 MAX_LAUNCHCTL_PRINT_LINES = 16 * 1024
+# Total-line memory/DoS guard, consistent with the 1 MiB output byte cap.
+MAX_LAUNCHCTL_PRINT_TOTAL_LINES = 128 * 1024
 MAX_LAUNCHCTL_PRINT_ROW_CHARS = 2048
 MAX_RESULT_FACTS = 24
 MAX_STATUS_TIMEOUT_SECONDS = 30.0
@@ -252,7 +255,7 @@ def parse_launchctl_print_services(output: str, profile: str) -> Observation:
         return Observation("unknown", "invalid_observation")
 
     lines = output.splitlines()
-    if len(lines) > MAX_LAUNCHCTL_PRINT_LINES:
+    if len(lines) > MAX_LAUNCHCTL_PRINT_TOTAL_LINES:
         return Observation("unknown", "invalid_observation")
     headers = [index for index, line in enumerate(lines) if line == "\tservices = {"]
     if len(headers) != 1:
@@ -266,6 +269,8 @@ def parse_launchctl_print_services(output: str, profile: str) -> Observation:
         return Observation("unknown", "invalid_observation")
     rows = lines[start + 1 : end]
     if not rows:
+        return Observation("unknown", "invalid_observation")
+    if len(rows) > MAX_LAUNCHCTL_PRINT_LINES:
         return Observation("unknown", "invalid_observation")
 
     matches = 0

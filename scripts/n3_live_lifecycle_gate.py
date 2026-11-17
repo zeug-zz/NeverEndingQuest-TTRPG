@@ -60,6 +60,7 @@ from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
     MAX_UNIX_SOCKET_PATH,
     ProfileLayout,
+    ProfileState,
     companion_environment,
     prepare_profile,
 )
@@ -74,7 +75,7 @@ from web.extensions.player.contracts import PROTOCOL_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GATE_ID = "N3-live"
-MANIFEST_ID = "n3-live-lifecycle-v3"
+MANIFEST_ID = "n3-live-lifecycle-v4"
 EVIDENCE_BASE = Path("tmp/router-rollout/v2-network/n3")
 CAPTURE_RELATIVE = Path("tmp/combat_capture")
 HOST_PORT = 8360
@@ -117,11 +118,220 @@ TEARDOWN_BOOTSTRAP_SETTLE_SECONDS = 180.0
 TEARDOWN_BOOTSTRAP_POLL_SECONDS = 0.5
 TEARDOWN_BOOTSTRAP_MAX_POLLS = 361
 TEARDOWN_STOP_FALLBACK_TIMEOUT_SECONDS = 60.0
-PROVIDER_BUDGET = 1
+STARTUP_TASKS = ("action_prediction", "dm_main")
+STARTUP_PROFILE = "n3-luna"
+STARTUP_MODEL = "openai/gpt-6-luna"
+PROVIDER_BUDGET = len(STARTUP_TASKS)
 PROVIDER_COST_CAP_USD = 0.05
 CUMULATIVE_NARRATION_COST_CAP_USD = 1.00
 PROVIDER_LEDGER_NAME = "provider-attempt-ledger.jsonl"
 _PROVIDER_LEDGER_RELATIVE = Path("tmp/n2")
+# Diagnostic-only instrumentation (step timings, load samples). Pure
+# observation: never alters row order, caps, deadlines, or pass/fail logic
+# except the dedicated environment_load abort path below.
+STEP_TIMING_NAMES = frozenset(
+    {
+        "startup_precheck",
+        "startup_connect",
+        "start_game_wait",
+        "issue_access",
+        "start_sharing",
+        "copy_invitation",
+        "boundary_checks",
+        "row_counter_observation",
+    }
+)
+MAX_STEP_TIMING_ENTRIES = 16
+LOAD_SAMPLE_INTERVAL_SECONDS = 30.0
+LOAD_ABORT_ONE_MINUTE_THRESHOLD = 50.0
+LOAD_ABORT_CONSECUTIVE_SAMPLES = 2
+MAX_LOAD_SAMPLES_PER_ROW = 64
+_DIAGNOSTIC_CATEGORIES = frozenset(
+    {
+        "caught_exception",
+        "fail_fast",
+        "no_failure",
+        "observation_blocked",
+        "row_assertion",
+    }
+)
+_DIAGNOSTIC_STEPS = frozenset(
+    {
+        "counter_check",
+        "fail_fast",
+        "host_start_counter_check",
+        "l01_companion_observation",
+        "l01_listener_observation",
+        "l01_public_exposure_observation",
+        "l01_status_query",
+        "l01_status_validation",
+        "l02_identity_init",
+        "l03_public_access",
+        "l04_duplicate_start",
+        "l05_relay_recovery",
+        "l06_credential_rotation",
+        "l07_stop_sharing",
+        "l08_host_exit_restart",
+        "l09_revoke_access",
+        "l10_clean_teardown",
+        "host_start",
+        "companion_path",
+        "companion_start_recovery",
+        "identity_observation",
+        "port_inspection",
+        "process_observation",
+        "public_authentication",
+        "companion_command",
+        "provider_ledger_check",
+        "row_counter_observation",
+        "row_executor",
+        "row_postcheck",
+        "row_precheck",
+        "startup_precheck",
+        "startup_runtime",
+    }
+)
+_DIAGNOSTIC_REASON_CODES = frozenset(
+    {
+        "already_initialized",
+        "booking_id_invalid",
+        "capture_destination_exists",
+        "capture_destination_invalid",
+        "capture_destination_symlink",
+        "capture_files_invalid",
+        "capture_frontend_invalid",
+        "capture_path_escape",
+        "capture_root_invalid",
+        "capture_sandbox_invalid",
+        "capture_sandbox_path_mismatch",
+        "capture_symlink_rejected",
+        "capture_web_port_invalid",
+        "companion_digest_invalid",
+        "companion_launch_cap_breached",
+        "companion_manifest_unavailable",
+        "companion_not_installed_in_capture_root",
+        "companion_up_cap_breached",
+        "companion_path_unavailable",
+        "companion_path_invalid",
+        "companion_path_mismatch",
+        "companion_platform_mismatch",
+        "companion_process_observation_unavailable",
+        "companion_start_action_invalid",
+        "companion_unavailable",
+        "companion_long_post_action_invalid",
+        "cumulative_narration_cost_cap_reached",
+        "degraded",
+        "diagnostic_stop_row_invalid",
+        "driver_time_cap_exceeded",
+        "executor_exception",
+        "fail-fast",
+        "gate_port_not_free",
+        "gate_state_cleanup_failed",
+        "gate_state_root_exists",
+        "gate_state_root_invalid",
+        "environment_load",
+        "host_api_action_invalid",
+        "host_api_ownership_guard_invalid",
+        "host_api_payload_invalid",
+        "host_api_payload_too_large",
+        "host_api_response_invalid",
+        "host_api_response_too_large",
+        "host_api_timeout",
+        "host_api_timeout_invalid",
+        "host_api_transport_error",
+        "host_counters_invalid",
+        "host_counters_regressed",
+        "host_owner_unavailable",
+        "host_status_invalid",
+        "identity_already_initialized",
+        "identity_bootstrap_failed",
+        "identity_initialized",
+        "initializing_required",
+        "invitation_unavailable",
+        "live_platform_not_supported",
+        "lock_caps_mismatch",
+        "lock_record_invalid",
+        "lock_record_mismatch",
+        "lock_unavailable",
+        "lock_window_expired",
+        "lock_window_invalid",
+        "l01_observation_unavailable",
+        "manifest_digest_mismatch",
+        "managed_host_ownership_failed",
+        "managed_host_port_ownership_failed",
+        "narration_receipt_unpriced",
+        "none",
+        "not_found",
+        "off",
+        "party_size_unsupported",
+        "preflight_identity_mismatch",
+        "preflight_infrastructure_failures",
+        "preflight_report_invalid",
+        "preflight_report_missing",
+        "precheck_unproven",
+        "provider_ledger_identity_mismatch",
+        "provider_ledger_invalid",
+        "provider_ledger_missing_or_invalid",
+        "provider_ledger_not_active",
+        "provider_ledger_path_invalid",
+        "provider_ledger_preexisting",
+        "provider_ledger_sandbox_invalid",
+        "provider_ledger_symlink_rejected",
+        "provider_startup_window_invalid",
+        "public_exposure_observation_unavailable",
+        "public_transport_unavailable",
+        "ready",
+        "repository_root_invalid",
+        "request_rejected",
+        "recovery_override_cap_breached",
+        "row_result_invalid",
+        "row_time_cap_exceeded",
+        "row_timeout",
+        "relay_tunnel_creation_cap_breached",
+        "run_id_invalid",
+        "run_evidence_directory_missing",
+        "sha_invalid",
+        "sha_mismatch",
+        "service_unavailable",
+        "sharing_inactive_no_listener_or_companion",
+        "sharing_not_off",
+        "startup_precheck_unavailable",
+        "startup_profile_precheck_failed",
+        "startup_seed_precheck_failed",
+        "state_root_too_long",
+        "unexpected_companion_process",
+        "unexpected_initial_companion_counters",
+        "unexpected_player_listener",
+        "unexpected_public_exposure",
+        "usage_telemetry_changed",
+        "usage_telemetry_duplicate_receipt",
+        "usage_telemetry_invalid",
+        "usage_telemetry_path_invalid",
+        "usage_telemetry_replaced",
+        "usage_telemetry_truncated",
+        "usage_telemetry_unavailable",
+        "validation_failed",
+        "worktree_dirty",
+        "unclassified_reason",
+        "workspace_identity_unavailable",
+    }
+)
+_SAFE_ROW_GATE_ERROR_REASONS = _DIAGNOSTIC_REASON_CODES
+_PROJECT_DIAGNOSTIC_FILES = MappingProxyType(
+    {
+        str(REPO_ROOT / relative_path): relative_path
+        for relative_path in (
+            "scripts/n3_live_lifecycle_gate.py",
+            "scripts/n3_lifecycle_gate.py",
+            "scripts/test_n3_live_lifecycle_gate.py",
+            "web/extensions/opentunnel_sharing/companion.py",
+            "web/extensions/opentunnel_sharing/identity_bootstrap.py",
+            "web/extensions/opentunnel_sharing/native_process_info.py",
+            "web/extensions/opentunnel_sharing/profile_state.py",
+            "web/extensions/opentunnel_sharing/supervisor.py",
+        )
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,8 +363,8 @@ LIVE_ROWS = (
     LiveRow(
         "L03", "issue-access-start-auth-entry", 300,
         "Owned host is up; identity initialization has passed; sharing is OFF.",
-        "Precheck the capture seed/profile; connect to the owned host with Socket.IO polling and the local Origin; emit start_game once and wait for bounded local-runtime/startup-narration readiness. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL.",
-        "After fail-closed seed/profile checks, connect to the owned host using Socket.IO polling with Origin http://127.0.0.1:8360 and emit start_game exactly once. Wait within the bounded startup window for game_started, local_runtime readiness, startup narration output, and exactly one priced dm_main receipt from n3-luna resolving to openai/gpt-6-luna. The sole provider reservation must fall inside that window and cost no more than USD 0.05; cumulative narration cost must remain at or below USD 1.00. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
+        "Precheck the capture seed/profile; connect to the owned host with Socket.IO polling and the local Origin; emit start_game once and wait for bounded runtime readiness and the exact ordered startup task receipts. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL.",
+        "After fail-closed seed/profile checks, connect to the owned host using Socket.IO polling with Origin http://127.0.0.1:8360 and emit start_game exactly once. Within the startup window require exactly one n3-luna attempt each for action_prediction then dm_main, in that order, with no retry or fallback, complete priced receipts, and no other task. The two reservations must be in-window; their combined cost must not exceed USD 0.05, and cumulative dm_main narration cost must remain at or below USD 1.00. Then issue access, start sharing, copy the invitation, and exercise the player boundary over the public URL. Keep the one-time plaintext credential and invitation URL in memory only. Over that PUBLIC URL, the player shell returns 200; an unauthenticated protected request returns 401, 403, or 404, is not a 2xx/3xx response, and has a bounded body free of gameplay, state, or session data (including snapshot fields). A 2xx/3xx response or any data-bearing response is FAIL. Host-only paths (/api/player-sharing/*, host routes, and host socket events) are refused/404 under the public Host. Login with the credential and exact Host/Origin succeeds and the cookie has Secure, HttpOnly, and SameSite. An authenticated Socket.IO websocket to /player receives initial state. A wrong credential is rejected and a forged Origin is rejected.",
         "The public URL/client path or any required boundary observation cannot be reached or measured safely. Any secret persisted or logged, public host-surface access, rejected valid login, accepted invalid credential/Origin, or missing required cookie/socket property is FAIL.",
     ),
     LiveRow(
@@ -216,8 +426,9 @@ FROZEN_CAPS = MappingProxyType(
         "companion_serve_launches": 4,
         "companion_up_invocations": 1,
         "relay_tunnel_creations": 2,
-        "provider_attempts": 1,
+        "provider_attempts": PROVIDER_BUDGET,
         "startup_narration_calls": 1,
+        "startup_task_receipts": len(STARTUP_TASKS),
         "provider_cost_cap_usd": PROVIDER_COST_CAP_USD,
         "cumulative_narration_cost_cap_usd": CUMULATIVE_NARRATION_COST_CAP_USD,
         "automatic_retries": 0,
@@ -277,20 +488,34 @@ def live_manifest() -> dict[str, object]:
         },
         "caps": dict(FROZEN_CAPS),
         "provider_budget_ceiling": PROVIDER_BUDGET,
+        "startup_tasks": [
+            {
+                "task": task,
+                "profile": STARTUP_PROFILE,
+                "requested_model": STARTUP_MODEL,
+                "resolved_model": STARTUP_MODEL,
+                "max_attempts": 1,
+                "fallbacks_allowed": False,
+            }
+            for task in STARTUP_TASKS
+        ],
         "startup_narration": {
             "socket_event": "start_game",
             "transport": "polling",
             "host_origin": HOST_SOCKET_ORIGIN,
             "max_event_emissions": 1,
+            "max_task_receipts": len(STARTUP_TASKS),
+            "max_provider_attempts": PROVIDER_BUDGET,
+            "max_combined_cost_usd": PROVIDER_COST_CAP_USD,
             "receipt_task": "dm_main",
-            "profile": "n3-luna",
-            "resolved_model": "openai/gpt-6-luna",
+            "profile": STARTUP_PROFILE,
+            "resolved_model": STARTUP_MODEL,
         },
         "verdict_policy": {
             "macos-arm64": {
                 "pass": "all-required-rows-pass",
                 "blocked": "any-required-row-blocked-or-missing",
-                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt-outside-the-single-priced-L03-startup-window-or-cost-cap-breach",
+                "fail": "any-observed-unmet-pass-criterion-or-provider-attempt-outside-the-exact-ordered-two-task-L03-startup-window-or-combined-cost-cap-breach",
             },
             "linux-arm64": {
                 "verdict": "BLOCKED",
@@ -324,7 +549,7 @@ def calculate_manifest_digest() -> str:
 
 
 # Updated only as part of a reviewed frozen-contract revision.
-FROZEN_MANIFEST_SHA256 = "01750d7e32a8140985a51ad8e0bc8616179c03a1930bcb280f9beb13fdb1acfc"
+FROZEN_MANIFEST_SHA256 = "b754bb6fe3fdd206fb96d68ea972c741fc524f0477db71a523792459772b8ee4"
 
 
 def verify_frozen_manifest() -> bool:
@@ -358,6 +583,7 @@ class RunArguments:
     booking_id: str
     preflight_report: str
     party_size: int = 1
+    diagnostic_stop_after_row: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1053,6 +1279,272 @@ class ProcessTableError(RuntimeError):
         self.reason = reason
 
 
+_DIAGNOSTIC_EXCEPTION_CLASSES = (
+    (GateError, "GateError"),
+    (HostApiError, "HostApiError"),
+    (ProcessTableError, "ProcessTableError"),
+    (PublicClientError, "PublicClientError"),
+    (TimeoutError, "TimeoutError"),
+    (ConnectionError, "ConnectionError"),
+    (FileNotFoundError, "FileNotFoundError"),
+    (PermissionError, "PermissionError"),
+    (OSError, "OSError"),
+    (ValueError, "ValueError"),
+    (TypeError, "TypeError"),
+    (RuntimeError, "RuntimeError"),
+    (AssertionError, "AssertionError"),
+    (KeyboardInterrupt, "KeyboardInterrupt"),
+)
+_DIAGNOSTIC_RECORD_KEYS = frozenset(
+    {
+        "category",
+        "exception_class",
+        "gate_step",
+        "http_status",
+        "reason_code",
+        "raising_frame",
+        "raising_frame_available",
+    }
+)
+
+
+def _safe_diagnostic_reason(value: object) -> str:
+    if type(value) is str and value in _DIAGNOSTIC_REASON_CODES:
+        return value
+    return "unclassified_reason"
+
+
+def _safe_row_gate_error_reason(value: object) -> str:
+    if type(value) is str and value in _SAFE_ROW_GATE_ERROR_REASONS:
+        return value
+    return "executor_exception"
+
+
+def _diagnostic_exception_class(exception: BaseException | None) -> str:
+    if exception is None:
+        return "none"
+    exception_type = type(exception)
+    for known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES:
+        if exception_type is known_type:
+            return label
+    return "OtherException"
+
+
+def _diagnostic_project_frame(
+    exception: BaseException | None,
+) -> tuple[str, bool]:
+    if exception is None:
+        return "none", False
+    selected: tuple[str, int] | None = None
+    current = BaseException.__getattribute__(exception, "__traceback__")
+    while current is not None:
+        filename = current.tb_frame.f_code.co_filename
+        if type(filename) is str:
+            normalized = os.path.normpath(os.path.abspath(filename))
+            identifier = _PROJECT_DIAGNOSTIC_FILES.get(normalized)
+            line_number = current.tb_lineno
+            if (
+                identifier is not None
+                and type(line_number) is int
+                and 1 <= line_number <= 1_000_000
+            ):
+                selected = (identifier, line_number)
+        current = current.tb_next
+    if selected is None:
+        return "scripts/n3_live_lifecycle_gate.py:0", False
+    return "%s:%d" % selected, True
+
+
+def _exception_reason_code(exception: BaseException | None) -> str | None:
+    if exception is None or type(exception) not in {
+        GateError,
+        HostApiError,
+        ProcessTableError,
+        PublicClientError,
+    }:
+        return None
+    return _safe_diagnostic_reason(exception.reason)
+
+
+def _response_diagnostic_fields(
+    response: object | None,
+) -> tuple[int | None, str | None]:
+    if type(response) is not HostApiResponse:
+        return None, None
+    status = response.status
+    safe_status = (
+        status
+        if type(status) is int and 100 <= status <= 599
+        else None
+    )
+    payload = response.payload
+    if type(payload) is not dict:
+        return safe_status, None
+    reason = payload.get("reason")
+    if reason is None and type(payload.get("status")) is dict:
+        reason = payload["status"].get("reason")
+    if reason is None:
+        return safe_status, None
+    return safe_status, _safe_diagnostic_reason(reason)
+
+
+def _make_failure_diagnostic(
+    *,
+    category: str,
+    gate_step: str,
+    reason: object = None,
+    exception: BaseException | None = None,
+    response: object | None = None,
+) -> dict[str, object]:
+    selected_category = (
+        category if category in _DIAGNOSTIC_CATEGORIES else "observation_blocked"
+    )
+    selected_step = (
+        gate_step if gate_step in _DIAGNOSTIC_STEPS else "row_executor"
+    )
+    http_status, response_reason = _response_diagnostic_fields(response)
+    exception_reason = _exception_reason_code(exception)
+    if exception_reason is not None:
+        reason_code = exception_reason
+    elif response_reason is not None:
+        reason_code = response_reason
+    elif reason is None:
+        reason_code = "none"
+    else:
+        reason_code = _safe_diagnostic_reason(reason)
+    raising_frame, frame_available = _diagnostic_project_frame(exception)
+    return {
+        "category": selected_category,
+        "exception_class": _diagnostic_exception_class(exception),
+        "gate_step": selected_step,
+        "http_status": http_status,
+        "reason_code": reason_code,
+        "raising_frame": raising_frame,
+        "raising_frame_available": frame_available,
+    }
+
+
+def _valid_failure_diagnostic(value: object) -> bool:
+    if type(value) is not dict or set(value) != _DIAGNOSTIC_RECORD_KEYS:
+        return False
+    category = value.get("category")
+    exception_class = value.get("exception_class")
+    gate_step = value.get("gate_step")
+    reason_code = value.get("reason_code")
+    if (
+        type(category) is not str
+        or category not in _DIAGNOSTIC_CATEGORIES
+        or type(exception_class) is not str
+        or exception_class
+        not in {
+            "none",
+            *(label for _known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES),
+            "OtherException",
+        }
+        or type(gate_step) is not str
+        or gate_step not in _DIAGNOSTIC_STEPS
+        or type(reason_code) is not str
+        or reason_code not in _DIAGNOSTIC_REASON_CODES
+        or type(value.get("raising_frame_available")) is not bool
+    ):
+        return False
+    status = value.get("http_status")
+    if status is not None and (type(status) is not int or not 100 <= status <= 599):
+        return False
+    frame = value.get("raising_frame")
+    if frame == "none":
+        return value.get("raising_frame_available") is False
+    if type(frame) is not str:
+        return False
+    file_id, separator, line = frame.rpartition(":")
+    return (
+        separator == ":"
+        and file_id in set(_PROJECT_DIAGNOSTIC_FILES.values())
+        and line.isdigit()
+        and len(line) <= 7
+        and int(line) <= 1_000_000
+        and (value.get("raising_frame_available") is True or line == "0")
+    )
+
+
+def _result_with_failure_diagnostic(
+    result: "RowExecutionResult",
+    *,
+    gate_step: str,
+    exception: BaseException | None = None,
+    response: object | None = None,
+) -> "RowExecutionResult":
+    observed = dict(result.observed)
+    if _valid_failure_diagnostic(observed.get("failure_diagnostic")):
+        return result
+    if exception is not None:
+        category = "caught_exception"
+    elif result.verdict == "PASS":
+        category = "no_failure"
+    elif result.verdict == "FAIL":
+        category = "row_assertion"
+    else:
+        category = "observation_blocked"
+    observed["failure_diagnostic"] = _make_failure_diagnostic(
+        category=category,
+        gate_step=gate_step,
+        reason=result.reason,
+        exception=exception,
+        response=response,
+    )
+    return RowExecutionResult(
+        result.verdict,
+        result.reason,
+        observed,
+        result.recovery_attempts,
+    )
+
+
+def _result_with_captured_row_diagnostic(
+    result: RowExecutionResult,
+    captured_diagnostic: object,
+) -> RowExecutionResult:
+    if not _valid_failure_diagnostic(captured_diagnostic):
+        return result
+    observed = dict(result.observed)
+    existing_diagnostic = observed.get("failure_diagnostic")
+    if _valid_failure_diagnostic(existing_diagnostic):
+        # A few helpers deliberately translate a caught low-level error into a
+        # sanitized GateError. Preserve the original bounded exception record
+        # rather than replacing it with that wrapper's class and frame.
+        if (
+            existing_diagnostic.get("exception_class") != "GateError"
+            or captured_diagnostic.get("exception_class") == "GateError"
+        ):
+            return result
+    observed["failure_diagnostic"] = dict(captured_diagnostic)
+    return RowExecutionResult(
+        result.verdict,
+        result.reason,
+        observed,
+        result.recovery_attempts,
+    )
+
+
+def _result_with_row_instrumentation(
+    result: RowExecutionResult,
+    step_checkpoints: Sequence[tuple[str, float]],
+    row_end_monotonic: float,
+    load_samples: Sequence[list[object]],
+) -> RowExecutionResult:
+    observed = dict(result.observed)
+    observed["step_timings"] = _step_timings_from_checkpoints(
+        step_checkpoints, row_end_monotonic
+    )
+    observed["load_samples"] = [list(entry) for entry in load_samples]
+    return RowExecutionResult(
+        result.verdict,
+        result.reason,
+        observed,
+        result.recovery_attempts,
+    )
+
+
 class ProcessTable(Protocol):
     def snapshot(self) -> tuple[ProcessRecord, ...]: ...
 
@@ -1178,6 +1670,9 @@ class RowContext:
     host: "ManagedHostHarness"
     companion_install_root: Path
     secrets: list[str] = field(default_factory=list, repr=False)
+    caught_failure_diagnostic: dict[str, object] | None = field(
+        default=None, repr=False
+    )
     public_client: PublicUrlClient = field(default_factory=PublicUrlClient)
     public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
     process_table: ProcessTable = field(default_factory=SystemProcessTable)
@@ -1216,10 +1711,154 @@ class RowContext:
     companion_post_recovery_observation: dict[str, object] | None = field(
         default=None, repr=False
     )
+    step_checkpoints: list[tuple[str, float]] = field(
+        default_factory=list, repr=False
+    )
 
     def remember_secret(self, value: object) -> None:
         if isinstance(value, str) and len(value) >= 3 and value not in self.secrets:
             self.secrets.append(value)
+
+
+def _mark_step(context: RowContext, step_name: str) -> None:
+    """Record a bounded, observation-only checkpoint for step timing.
+
+    Never raises and never affects control flow; callers invoke this purely
+    for diagnostics at existing phase boundaries.
+    """
+    if step_name not in STEP_TIMING_NAMES:
+        return
+    if len(context.step_checkpoints) >= MAX_STEP_TIMING_ENTRIES:
+        return
+    context.step_checkpoints.append((step_name, context.monotonic()))
+
+
+def _step_timings_from_checkpoints(
+    checkpoints: Sequence[tuple[str, float]], row_end: float
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    bounded = list(checkpoints[:MAX_STEP_TIMING_ENTRIES])
+    for index, (name, started_at) in enumerate(bounded):
+        ended_at = bounded[index + 1][1] if index + 1 < len(bounded) else row_end
+        elapsed = max(0.0, min(float(ended_at) - float(started_at), 1_000_000.0))
+        entries.append({"step": name, "elapsed_seconds": round(elapsed, 3)})
+    return entries
+
+
+class _LoadSampler:
+    """Bounded, observation-only background load sampler for one row.
+
+    Samples os.getloadavg() at construction, every interval_seconds while
+    running, and whenever record_sample() is called explicitly (failure or
+    row-end). Never raises into the row; a failed sample is recorded as the
+    'unavailable' marker. Detects two consecutive 1-minute samples above
+    threshold and exposes them via abort_samples() without raising itself;
+    the caller decides whether to abort.
+    """
+
+    def __init__(
+        self,
+        *,
+        getloadavg: Callable[[], tuple[float, float, float]],
+        monotonic: Callable[[], float],
+        row_start_monotonic: float,
+        interval_seconds: float = LOAD_SAMPLE_INTERVAL_SECONDS,
+        threshold: float = LOAD_ABORT_ONE_MINUTE_THRESHOLD,
+        consecutive_required: int = LOAD_ABORT_CONSECUTIVE_SAMPLES,
+        max_samples: int = MAX_LOAD_SAMPLES_PER_ROW,
+    ) -> None:
+        self._getloadavg = getloadavg
+        self._monotonic = monotonic
+        self._row_start = row_start_monotonic
+        self._interval = interval_seconds
+        self._threshold = threshold
+        self._consecutive_required = consecutive_required
+        self._max_samples = max_samples
+        self._lock = threading.Lock()
+        self._samples: list[list[object]] = []
+        self._consecutive_high = 0
+        self._abort_samples: list[list[object]] | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self.record_sample()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            try:
+                self.record_sample()
+            except Exception:
+                pass
+
+    def record_sample(self) -> None:
+        try:
+            one, five, fifteen = self._getloadavg()
+            one_valid = type(one) in (int, float) and math.isfinite(one)
+            five_valid = type(five) in (int, float) and math.isfinite(five)
+            fifteen_valid = type(fifteen) in (int, float) and math.isfinite(fifteen)
+        except OSError:
+            one_valid = five_valid = fifteen_valid = False
+        with self._lock:
+            if len(self._samples) >= self._max_samples:
+                return
+            try:
+                offset = round(max(0.0, self._monotonic() - self._row_start), 2)
+            except Exception:
+                offset = 0.0
+            if not (one_valid and five_valid and fifteen_valid):
+                entry: list[object] = [offset, "unavailable", "unavailable", "unavailable"]
+                self._consecutive_high = 0
+            else:
+                entry = [offset, round(float(one), 2), round(float(five), 2), round(float(fifteen), 2)]
+                if float(one) > self._threshold:
+                    self._consecutive_high += 1
+                else:
+                    self._consecutive_high = 0
+                if (
+                    self._consecutive_high >= self._consecutive_required
+                    and self._abort_samples is None
+                ):
+                    trigger_window = self._samples[-(self._consecutive_required - 1):]
+                    self._abort_samples = list(trigger_window) + [entry]
+            self._samples.append(entry)
+
+    def samples(self) -> list[list[object]]:
+        with self._lock:
+            return [list(entry) for entry in self._samples]
+
+    def abort_samples(self) -> list[list[object]] | None:
+        with self._lock:
+            return (
+                [list(entry) for entry in self._abort_samples]
+                if self._abort_samples is not None
+                else None
+            )
+
+    def stop(self, timeout: float = 1.0) -> None:
+        self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
+
+def _remember_caught_row_exception(
+    context: RowContext,
+    exception: BaseException,
+    *,
+    gate_step: str,
+    reason: object = None,
+    response: object | None = None,
+) -> None:
+    if context.caught_failure_diagnostic is None:
+        context.caught_failure_diagnostic = _make_failure_diagnostic(
+            category="caught_exception",
+            gate_step=gate_step,
+            reason=reason,
+            exception=exception,
+            response=response,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1232,52 +1871,86 @@ class _OwnedCompanionTarget:
 
 class L01SharingOffExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
+        step = "l01_status_query"
+        latest_response: HostApiResponse | None = None
+
+        def finish(
+            verdict: str,
+            reason: str,
+            observed: Mapping[str, object] | None = None,
+            *,
+            exception: BaseException | None = None,
+        ) -> RowExecutionResult:
+            selected_observed = dict(observed or {})
+            if exception is not None:
+                category = "caught_exception"
+            elif verdict == "PASS":
+                category = "no_failure"
+            elif verdict == "FAIL":
+                category = "row_assertion"
+            else:
+                category = "observation_blocked"
+            selected_observed["failure_diagnostic"] = _make_failure_diagnostic(
+                category=category,
+                gate_step=step,
+                reason=reason,
+                exception=exception,
+                response=latest_response,
+            )
+            return RowExecutionResult(verdict, reason, selected_observed)
+
         try:
             status_response = context.host_api.get_status()
+            latest_response = status_response
+            step = "l01_status_validation"
             status = _host_status(status_response)
             if status is None:
-                return _blocked("host_status_invalid")
+                return finish("BLOCKED", "host_status_invalid")
             state = status.get("state")
             identity_initialized = status.get("identity_initialized")
             if state not in {"off", "initializing_required"}:
-                return _failed("sharing_not_off")
+                return finish("FAIL", "sharing_not_off")
             if type(identity_initialized) is not bool:
-                return _blocked("host_status_invalid")
+                return finish("BLOCKED", "host_status_invalid")
 
+            step = "l01_listener_observation"
             inspector = context.port_inspector
             if inspector is None:
-                return _blocked("player_listener_observation_unavailable")
+                return finish("BLOCKED", "player_listener_observation_unavailable")
             port = inspector.inspect(PLAYER_PORT)
             if not _port_observation_valid(port, PLAYER_PORT):
-                return _blocked("player_listener_observation_unavailable")
+                return finish("BLOCKED", "player_listener_observation_unavailable")
             if port.state == "unknown":
-                return _blocked("player_listener_observation_unavailable")
+                return finish("BLOCKED", "player_listener_observation_unavailable")
             if port.state == "occupied" or port.pids:
-                return _failed("unexpected_player_listener")
+                return finish("FAIL", "unexpected_player_listener")
 
+            step = "l01_companion_observation"
             path = _companion_path(context)
             processes = _matching_companion_processes(
-                context.process_table.snapshot(), path, None
+                context.process_table.snapshot(), path, None, context=context
             )
             if processes is None:
-                return _blocked("companion_process_observation_unavailable")
+                return finish("BLOCKED", "companion_process_observation_unavailable")
             if processes:
-                return _failed("unexpected_companion_process")
+                return finish("FAIL", "unexpected_companion_process")
 
+            step = "l01_public_exposure_observation"
             invitation = context.host_api.post("copy-invitation", {})
+            latest_response = invitation
             if (
                 invitation.status == 200
                 and invitation.payload.get("ok") is True
                 and isinstance(invitation.payload.get("invitation"), str)
             ):
-                return _failed("unexpected_public_exposure")
+                return finish("FAIL", "unexpected_public_exposure")
             if (
                 invitation.status != 409
                 or invitation.payload.get("ok") is not False
                 or invitation.payload.get("reason") != "invitation_unavailable"
             ):
-                return _blocked("public_exposure_observation_unavailable")
-            return RowExecutionResult(
+                return finish("BLOCKED", "public_exposure_observation_unavailable")
+            return finish(
                 "PASS",
                 "sharing_inactive_no_listener_or_companion",
                 {
@@ -1288,8 +1961,12 @@ class L01SharingOffExecutor:
                     "invitation_unavailable": True,
                 },
             )
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l01_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return finish(
+                "BLOCKED",
+                "l01_observation_unavailable",
+                exception=exc,
+            )
 
 
 class L02IdentityInitExecutor:
@@ -1328,9 +2005,13 @@ class L02IdentityInitExecutor:
                 or type(first_status.get("identity_up_invocations")) is not int
                 or first_status.get("identity_up_invocations") != 1
             ):
-                return _failed(
-                    "identity_initialization_contract_failed",
-                    observed=_host_api_observation(first),
+                return _result_with_failure_diagnostic(
+                    _failed(
+                        "identity_initialization_contract_failed",
+                        observed=_host_api_observation(first),
+                    ),
+                    gate_step="l02_identity_init",
+                    response=first,
                 )
 
             companion_path = _companion_path(context)
@@ -1338,7 +2019,9 @@ class L02IdentityInitExecutor:
             if layout is None:
                 return _blocked("identity_profile_observation_unavailable")
             observer = context.identity_observer_factory(layout, companion_path)
-            postchecks = _identity_cleanup_observations(observer, DEFAULT_PROFILE)
+            postchecks = _identity_cleanup_observations(
+                observer, DEFAULT_PROFILE, context=context
+            )
             if postchecks is None:
                 return _blocked("identity_postcheck_unavailable")
             if any(item["state"] != "absent" for item in postchecks):
@@ -1362,9 +2045,13 @@ class L02IdentityInitExecutor:
                 or type(second_status.get("identity_up_invocations")) is not int
                 or second_status.get("identity_up_invocations") != 1
             ):
-                return _failed(
-                    "identity_initialization_not_idempotent",
-                    observed=_host_api_observation(second),
+                return _result_with_failure_diagnostic(
+                    _failed(
+                        "identity_initialization_not_idempotent",
+                        observed=_host_api_observation(second),
+                    ),
+                    gate_step="l02_identity_init",
+                    response=second,
                 )
             return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
@@ -1379,8 +2066,12 @@ class L02IdentityInitExecutor:
                     "second_up_invocations": 1,
                 },
             ))
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l02_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l02_observation_unavailable"),
+                gate_step="l02_identity_init",
+                exception=exc,
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1395,9 +2086,12 @@ class _UsageReceipt:
     retry: bool | None
     fallback: bool | None
     cost_usd: Decimal | None
+    entry_cost_usd: Decimal | None
     cost_provenance: str | None
     cost_complete: bool | None
     cost_source: str | None
+    cost_estimate: bool | None
+    provider_reported_cost_usd: Decimal | None
     error_type: str | None
 
 
@@ -1538,6 +2232,7 @@ def _usage_receipts(raw: bytes) -> tuple[_UsageReceipt, ...]:
                     else None
                 ),
                 cost_usd=context_cost,
+                entry_cost_usd=entry_cost,
                 cost_provenance=(
                     provenance if isinstance(provenance, str) else None
                 ),
@@ -1545,6 +2240,14 @@ def _usage_receipts(raw: bytes) -> tuple[_UsageReceipt, ...]:
                     cost_complete if type(cost_complete) is bool else None
                 ),
                 cost_source=(cost_source if isinstance(cost_source, str) else None),
+                cost_estimate=(
+                    record.get("cost_estimate")
+                    if type(record.get("cost_estimate")) is bool
+                    else None
+                ),
+                provider_reported_cost_usd=_decimal_cost(
+                    context.get("provider_reported_cost_usd")
+                ),
                 error_type=(
                     context.get("error_type")
                     if isinstance(context.get("error_type"), str)
@@ -1749,25 +2452,51 @@ def _context_provider_ledger(
     )
 
 
-def _startup_receipt_is_valid(receipt: _UsageReceipt) -> bool:
+def _startup_receipt_is_valid(
+    receipt: _UsageReceipt, expected_task: str
+) -> bool:
+    expected_cost_source = {
+        "actual": "provider_reported",
+        "estimated": "estimated",
+    }.get(receipt.cost_provenance)
     return bool(
-        receipt.task == "dm_main"
-        and receipt.profile == "n3-luna"
-        and receipt.requested_model == "openai/gpt-6-luna"
-        and receipt.resolved_model == "openai/gpt-6-luna"
+        receipt.task == expected_task
+        and receipt.profile == STARTUP_PROFILE
+        and receipt.requested_model == STARTUP_MODEL
+        and receipt.resolved_model == STARTUP_MODEL
         and receipt.attempt_number == 1
         and receipt.retry is False
         and receipt.fallback is False
         and receipt.error_type is None
         and receipt.cost_usd is not None
+        and receipt.entry_cost_usd == receipt.cost_usd
         and receipt.cost_provenance in {"actual", "estimated"}
         and receipt.cost_complete is True
+        and receipt.cost_source == expected_cost_source
+        and receipt.cost_estimate is (receipt.cost_provenance == "estimated")
+        and (
+            receipt.cost_provenance != "actual"
+            or receipt.provider_reported_cost_usd == receipt.cost_usd
+        )
     )
+
+
+def _startup_timeout_observation(
+    event_state: Mapping[str, object],
+    startup_receipts: tuple[_UsageReceipt, ...],
+) -> dict[str, object]:
+    return {
+        "game_started_event": event_state.get("game_started") is True,
+        "game_output_count": int(event_state.get("game_output") or 0),
+        "runtime_alive": event_state.get("runtime_alive") is True,
+        "receipt_count": len(startup_receipts),
+    }
 
 
 def _start_local_game_runtime(
     context: RowContext,
 ) -> tuple[dict[str, object] | None, RowExecutionResult | None]:
+    _mark_step(context, "startup_precheck")
     try:
         seed_checks, usage_baseline = context.startup_input_validator(
             context.sandbox_root
@@ -1797,11 +2526,25 @@ def _start_local_game_runtime(
             request_timeout=HOST_API_TIMEOUT_SECONDS,
         )
     except GateError as exc:
-        return None, _failed(exc.reason)
-    except (HostApiError, TypeError, ValueError):
-        return None, _blocked("startup_precheck_unavailable")
+        return None, _result_with_failure_diagnostic(
+            _failed(exc.reason),
+            gate_step="startup_precheck",
+            exception=exc,
+        )
+    except (HostApiError, TypeError, ValueError) as exc:
+        return None, _result_with_failure_diagnostic(
+            _blocked("startup_precheck_unavailable"),
+            gate_step="startup_precheck",
+            exception=exc,
+        )
 
-    events = {"game_started": False, "error": False, "game_output": 0}
+    _mark_step(context, "startup_connect")
+    events = {
+        "game_started": False,
+        "error": False,
+        "game_output": 0,
+        "runtime_alive": False,
+    }
     events_lock = threading.Lock()
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -1819,6 +2562,13 @@ def _start_local_game_runtime(
         with events_lock:
             events["game_output"] = min(int(events["game_output"]) + 1, 2)
 
+    def mark_status_response(*args: object) -> None:
+        payload = args[0] if args else None
+        with events_lock:
+            events["runtime_alive"] = (
+                isinstance(payload, Mapping) and payload.get("game_started") is True
+            )
+
     try:
         on = getattr(client, "on", None)
         connect = getattr(client, "connect", None)
@@ -1829,6 +2579,7 @@ def _start_local_game_runtime(
         on("game_output", mark_output)
         on("error", mark_error)
         on("connect_error", mark_error)
+        on("status_response", mark_status_response)
         remaining = _row_remaining_seconds(context)
         startup_timeout = HOST_RUNTIME_STARTUP_TIMEOUT_SECONDS
         if remaining is not None:
@@ -1862,58 +2613,76 @@ def _start_local_game_runtime(
         if _usage_receipts_after(usage_baseline, connected_usage):
             return None, _failed("startup_receipt_outside_startup_window")
 
+        _mark_step(context, "start_game_wait")
         started_at = datetime.now(timezone.utc)
         context.provider_attempt_window = (started_at, started_at)
         emit("start_game")
         latest_usage = connected_usage
-        latest_status: Mapping[str, object] | None = None
         startup_receipts: tuple[_UsageReceipt, ...] = ()
         while True:
             remaining = startup_deadline - context.monotonic()
             if remaining <= 0:
-                return None, _blocked("startup_runtime_timeout")
+                with events_lock:
+                    event_state = dict(events)
+                if (
+                    event_state["game_started"] is True
+                    and event_state["runtime_alive"] is True
+                    and len(startup_receipts) < len(STARTUP_TASKS)
+                ):
+                    return None, _failed("startup_provider_task_receipt_missing")
+                return None, _blocked(
+                    "startup_runtime_timeout",
+                    observed=_startup_timeout_observation(
+                        event_state, startup_receipts
+                    ),
+                )
             with events_lock:
                 event_state = dict(events)
             if event_state["error"]:
                 return None, _failed("game_runtime_start_rejected")
             try:
-                response = context.host_api.get_status(
-                    timeout_seconds=min(
-                        HOST_API_TIMEOUT_SECONDS,
-                        max(0.05, remaining),
-                    )
-                )
-                latest_status = _host_status(response)
+                emit("request_status")
                 latest_usage = _read_usage_snapshot(context.sandbox_root)
                 startup_receipts = _usage_receipts_after(
                     usage_baseline, latest_usage
                 )
-            except (HostApiError, GateError):
+            except GateError:
                 return None, _blocked("startup_observation_unavailable")
-            if len(startup_receipts) > 1:
+            if len(startup_receipts) > len(STARTUP_TASKS):
                 return None, _failed("startup_provider_receipt_count_invalid")
-            if startup_receipts and not _startup_receipt_is_valid(startup_receipts[0]):
+            observed_tasks = tuple(receipt.task for receipt in startup_receipts)
+            if observed_tasks != STARTUP_TASKS[: len(observed_tasks)]:
+                return None, _failed("startup_provider_task_sequence_invalid")
+            if any(
+                not _startup_receipt_is_valid(receipt, expected_task)
+                for expected_task, receipt in zip(STARTUP_TASKS, startup_receipts)
+            ):
                 return None, _failed("startup_narration_receipt_invalid")
-            status_checks = (
-                latest_status.get("checks")
-                if isinstance(latest_status, Mapping)
-                else None
-            )
-            runtime_ready = (
-                isinstance(status_checks, Mapping)
-                and status_checks.get("local_runtime") is True
-            )
+            with events_lock:
+                event_state = dict(events)
+            runtime_ready = event_state["runtime_alive"] is True
             if (
                 context.monotonic() < startup_deadline
                 and event_state["game_started"] is True
                 and event_state["game_output"] >= 1
                 and runtime_ready
-                and len(startup_receipts) == 1
+                and len(startup_receipts) == len(STARTUP_TASKS)
             ):
                 break
             remaining = startup_deadline - context.monotonic()
             if remaining <= 0:
-                return None, _blocked("startup_runtime_timeout")
+                if (
+                    event_state["game_started"] is True
+                    and runtime_ready
+                    and len(startup_receipts) < len(STARTUP_TASKS)
+                ):
+                    return None, _failed("startup_provider_task_receipt_missing")
+                return None, _blocked(
+                    "startup_runtime_timeout",
+                    observed=_startup_timeout_observation(
+                        event_state, startup_receipts
+                    ),
+                )
             context.sleep(min(HOST_RUNTIME_STARTUP_POLL_SECONDS, remaining))
 
         ended_at = datetime.now(timezone.utc)
@@ -1923,43 +2692,52 @@ def _start_local_game_runtime(
         )
         if (
             ledger_after.get("verdict") != "PASS"
-            or ledger_after.get("attempt_count") != 1
-            or ledger_after.get("reservation_count") != 1
+            or ledger_after.get("attempt_count") != PROVIDER_BUDGET
+            or ledger_after.get("reservation_count") != PROVIDER_BUDGET
             or ledger_after.get("startup_window_verified") is not True
         ):
             return None, _failed("provider_attempt_outside_startup_window")
-        receipt = startup_receipts[0]
-        assert receipt.cost_usd is not None
+        narration_receipt = startup_receipts[STARTUP_TASKS.index("dm_main")]
+        if narration_receipt.cost_usd is None:
+            raise GateError("narration_receipt_unpriced")
+        combined_cost = sum(
+            (receipt.cost_usd or Decimal("0")) for receipt in startup_receipts
+        )
         cumulative_cost = latest_usage.cumulative_narration_cost_usd
         startup_observed = {
             "startup_seed_checks_passed": seed_checks,
             "host_socket_transport": "polling",
             "host_socket_origin": HOST_SOCKET_ORIGIN,
             "start_game_event_emissions": 1,
+            "startup_task_receipt_count": len(startup_receipts),
+            "startup_task_receipt_order": list(
+                receipt.task for receipt in startup_receipts
+            ),
             "game_started_event_observed": True,
             "local_runtime_ready": True,
             "startup_narration_output_observed": True,
             "startup_narration_receipt_count": 1,
-            "startup_narration_task": receipt.task,
-            "startup_narration_profile": receipt.profile,
-            "startup_narration_requested_model": receipt.requested_model,
-            "startup_narration_model": receipt.resolved_model,
-            "startup_narration_attempt_number": receipt.attempt_number,
-            "startup_narration_retry": receipt.retry,
-            "startup_narration_fallback": receipt.fallback,
-            "startup_narration_cost_provenance": receipt.cost_provenance,
-            "startup_narration_cost_complete": receipt.cost_complete,
-            "startup_narration_cost_source": receipt.cost_source,
-            "startup_narration_cost_usd": float(receipt.cost_usd),
+            "startup_narration_task": narration_receipt.task,
+            "startup_narration_profile": narration_receipt.profile,
+            "startup_narration_requested_model": narration_receipt.requested_model,
+            "startup_narration_model": narration_receipt.resolved_model,
+            "startup_narration_attempt_number": narration_receipt.attempt_number,
+            "startup_narration_retry": narration_receipt.retry,
+            "startup_narration_fallback": narration_receipt.fallback,
+            "startup_narration_cost_provenance": narration_receipt.cost_provenance,
+            "startup_narration_cost_complete": narration_receipt.cost_complete,
+            "startup_narration_cost_source": narration_receipt.cost_source,
+            "startup_narration_cost_usd": float(narration_receipt.cost_usd),
+            "startup_provider_cost_usd": float(combined_cost),
             "cumulative_narration_cost_usd": float(cumulative_cost),
-            "provider_attempts_in_startup_window": 1,
+            "provider_attempts_in_startup_window": PROVIDER_BUDGET,
         }
         context.permitted_provider_attempt_fingerprint = str(
             ledger_after["attempt_fingerprint"]
         )
-        context.startup_narration_cost_usd = receipt.cost_usd
+        context.startup_narration_cost_usd = narration_receipt.cost_usd
         context.cumulative_narration_cost_usd = cumulative_cost
-        if receipt.cost_usd > Decimal(str(PROVIDER_COST_CAP_USD)):
+        if combined_cost > Decimal(str(PROVIDER_COST_CAP_USD)):
             return startup_observed, _failed(
                 "startup_provider_cost_cap_exceeded", observed=startup_observed
             )
@@ -1973,9 +2751,17 @@ def _start_local_game_runtime(
             None,
         )
     except GateError as exc:
-        return None, _failed(exc.reason)
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return None, _blocked("startup_runtime_unavailable")
+        return None, _result_with_failure_diagnostic(
+            _failed(exc.reason),
+            gate_step="startup_runtime",
+            exception=exc,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return None, _result_with_failure_diagnostic(
+            _blocked("startup_runtime_unavailable"),
+            gate_step="startup_runtime",
+            exception=exc,
+        )
     finally:
         if started_at is not None and ended_at is None:
             ended_at = datetime.now(timezone.utc)
@@ -1986,7 +2772,12 @@ def _start_local_game_runtime(
                 raise RuntimeError("host Socket.IO disconnect unavailable")
             disconnect()
             disconnected = True
-        except Exception:
+        except Exception as exc:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="startup_runtime",
+            )
             disconnected = False
         if not disconnected:
             context.provider_attempt_window = None
@@ -2009,6 +2800,7 @@ class L03PublicAccessExecutor:
             if startup_observed is None:
                 return _blocked("startup_observation_unavailable")
 
+            _mark_step(context, "issue_access")
             issued = context.host_api.post("issue-access", {})
             if issued.status != 200 or issued.payload.get("ok") is not True:
                 return _failed(
@@ -2023,6 +2815,7 @@ class L03PublicAccessExecutor:
                 )
             context.remember_secret(credential)
 
+            _mark_step(context, "start_sharing")
             started, _recovery, failure = _post_companion_starting_action(
                 context, "start", {}
             )
@@ -2042,6 +2835,7 @@ class L03PublicAccessExecutor:
                     observed=_host_api_observation(started),
                 )
 
+            _mark_step(context, "copy_invitation")
             invitation = context.host_api.post("copy-invitation", {})
             invitation_url = invitation.payload.get("invitation")
             if (
@@ -2056,6 +2850,7 @@ class L03PublicAccessExecutor:
             context.remember_secret(invitation_url)
             client.bind_invitation(invitation_url)
 
+            _mark_step(context, "boundary_checks")
             shell = client.request("GET", "/")
             if shell.status != 200:
                 return _failed("public_player_shell_unavailable")
@@ -2156,10 +2951,22 @@ class L03PublicAccessExecutor:
             ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_response_contract_invalid")
-            return _blocked("l03_public_observation_unavailable")
-        except (HostApiError, GateError, ValueError):
-            return _blocked("l03_public_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_response_contract_invalid"),
+                    gate_step="l03_public_access",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l03_public_observation_unavailable"),
+                gate_step="l03_public_access",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l03_public_observation_unavailable"),
+                gate_step="l03_public_access",
+                exception=exc,
+            )
         finally:
             client.disconnect()
 
@@ -2238,8 +3045,12 @@ class L04DuplicateStartExecutor:
                     "companion_launches_unchanged": True,
                 },
             ))
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l04_observation_unavailable")
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l04_observation_unavailable"),
+                gate_step="l04_duplicate_start",
+                exception=exc,
+            )
 
 
 class L05RelayLossRecoveryExecutor:
@@ -2392,6 +3203,12 @@ class L05RelayLossRecoveryExecutor:
                 response = client.request("GET", "/")
                 public_unavailable = response.status not in range(200, 400)
             except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l05_relay_recovery",
+                    reason=exc.reason,
+                )
                 public_unavailable = exc.reason == "public_transport_unavailable"
             if not public_unavailable:
                 return _failed("public_player_remained_reachable")
@@ -2506,7 +3323,13 @@ class L05RelayLossRecoveryExecutor:
                 pre_loss_cookie = recovery_client.authenticated_snapshot(session)
                 pre_loss_cookie_status = pre_loss_cookie.status
                 pre_loss_cookie_valid = _decode_player_snapshot(pre_loss_cookie) is not None
-            except PublicClientError:
+            except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l05_relay_recovery",
+                    reason=exc.reason,
+                )
                 pre_loss_cookie_status = None
                 pre_loss_cookie_valid = False
 
@@ -2518,7 +3341,13 @@ class L05RelayLossRecoveryExecutor:
                 )
                 stale_origin_accepted = _decode_player_snapshot(stale_origin_response) is not None
                 stale_origin_status: int | None = stale_origin_response.status
-            except PublicClientError:
+            except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l05_relay_recovery",
+                    reason=exc.reason,
+                )
                 stale_origin_accepted = False
                 stale_origin_status = None
                 stale_origin_response = None
@@ -2562,7 +3391,13 @@ class L05RelayLossRecoveryExecutor:
                     socket_reestablished = recovery_client.connect_player_socket(
                         session, old_session_snapshot
                     )
-            except PublicClientError:
+            except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l05_relay_recovery",
+                    reason=exc.reason,
+                )
                 socket_reestablished = False
             recovery_client.disconnect()
             client.disconnect()
@@ -2619,10 +3454,22 @@ class L05RelayLossRecoveryExecutor:
             )
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_recovery_contract_invalid")
-            return _blocked("l05_public_observation_unavailable")
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l05_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_recovery_contract_invalid"),
+                    gate_step="l05_relay_recovery",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l05_public_observation_unavailable"),
+                gate_step="l05_relay_recovery",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l05_lifecycle_observation_unavailable"),
+                gate_step="l05_relay_recovery",
+                exception=exc,
+            )
         finally:
             client.disconnect()
             if recovery_client is not None:
@@ -2756,10 +3603,22 @@ class L06CredentialRotationExecutor:
             )
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_rotation_contract_invalid")
-            return _blocked("l06_public_observation_unavailable")
-        except (HostApiError, GateError, ValueError):
-            return _blocked("l06_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_rotation_contract_invalid"),
+                    gate_step="l06_credential_rotation",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l06_public_observation_unavailable"),
+                gate_step="l06_credential_rotation",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l06_lifecycle_observation_unavailable"),
+                gate_step="l06_credential_rotation",
+                exception=exc,
+            )
 
 
 class L07StopSharingExecutor:
@@ -2817,8 +3676,18 @@ class L07StopSharingExecutor:
 
             try:
                 public_after = client.request("GET", "/")
-            except PublicClientError:
-                return _blocked("public_stop_observation_unavailable")
+            except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l07_stop_sharing",
+                    reason=exc.reason,
+                )
+                return _result_with_failure_diagnostic(
+                    _blocked("public_stop_observation_unavailable"),
+                    gate_step="l07_stop_sharing",
+                    exception=exc,
+                )
             if not _public_root_unreachable(public_after):
                 return _failed("public_player_reachable_after_stop")
 
@@ -2855,10 +3724,22 @@ class L07StopSharingExecutor:
             )
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_stop_contract_invalid")
-            return _blocked("l07_public_observation_unavailable")
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l07_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_stop_contract_invalid"),
+                    gate_step="l07_stop_sharing",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l07_public_observation_unavailable"),
+                gate_step="l07_stop_sharing",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l07_lifecycle_observation_unavailable"),
+                gate_step="l07_stop_sharing",
+                exception=exc,
+            )
 
 
 class L08HostExitRestartExecutor:
@@ -3056,10 +3937,22 @@ class L08HostExitRestartExecutor:
             ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_host_exit_contract_invalid")
-            return _blocked("l08_public_observation_unavailable")
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l08_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_host_exit_contract_invalid"),
+                    gate_step="l08_host_exit_restart",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l08_public_observation_unavailable"),
+                gate_step="l08_host_exit_restart",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l08_lifecycle_observation_unavailable"),
+                gate_step="l08_host_exit_restart",
+                exception=exc,
+            )
 
 
 class L09RevokeAccessExecutor:
@@ -3207,10 +4100,22 @@ class L09RevokeAccessExecutor:
             ))
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_revoke_contract_invalid")
-            return _blocked("l09_public_observation_unavailable")
-        except (HostApiError, GateError, ValueError):
-            return _blocked("l09_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_revoke_contract_invalid"),
+                    gate_step="l09_revoke_access",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l09_public_observation_unavailable"),
+                gate_step="l09_revoke_access",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l09_lifecycle_observation_unavailable"),
+                gate_step="l09_revoke_access",
+                exception=exc,
+            )
 
 
 class L10CleanTeardownExecutor:
@@ -3370,8 +4275,18 @@ class L10CleanTeardownExecutor:
 
             try:
                 public_after = client.request("GET", "/")
-            except PublicClientError:
-                return _blocked("public_teardown_observation_unavailable")
+            except PublicClientError as exc:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="l10_clean_teardown",
+                    reason=exc.reason,
+                )
+                return _result_with_failure_diagnostic(
+                    _blocked("public_teardown_observation_unavailable"),
+                    gate_step="l10_clean_teardown",
+                    exception=exc,
+                )
             if not _public_root_unreachable(public_after):
                 return _failed("public_player_reachable_after_teardown")
             client.disconnect()
@@ -3396,10 +4311,22 @@ class L10CleanTeardownExecutor:
             )
         except PublicClientError as exc:
             if _is_observed_public_contract_failure(exc.reason):
-                return _failed("public_teardown_contract_invalid")
-            return _blocked("l10_public_observation_unavailable")
-        except (HostApiError, GateError, ProcessTableError, OSError, ValueError):
-            return _blocked("l10_lifecycle_observation_unavailable")
+                return _result_with_failure_diagnostic(
+                    _failed("public_teardown_contract_invalid"),
+                    gate_step="l10_clean_teardown",
+                    exception=exc,
+                )
+            return _result_with_failure_diagnostic(
+                _blocked("l10_public_observation_unavailable"),
+                gate_step="l10_clean_teardown",
+                exception=exc,
+            )
+        except (HostApiError, GateError, ProcessTableError, OSError, ValueError) as exc:
+            return _result_with_failure_diagnostic(
+                _blocked("l10_lifecycle_observation_unavailable"),
+                gate_step="l10_clean_teardown",
+                exception=exc,
+            )
 
 
 def _inspect_port(context: RowContext, port: int) -> preflight_gate.PortObservation | None:
@@ -3407,7 +4334,12 @@ def _inspect_port(context: RowContext, port: int) -> preflight_gate.PortObservat
         return None
     try:
         observation = context.port_inspector.inspect(port)
-    except Exception:
+    except Exception as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="port_inspection",
+        )
         return None
     return observation if _port_observation_valid(observation, port) else None
 
@@ -3439,9 +4371,17 @@ def _profile_companion_records(context: RowContext) -> tuple[ProcessRecord, ...]
     try:
         path = _companion_path(context)
         matches = _matching_companion_processes(
-            context.process_table.snapshot(), path, DEFAULT_PROFILE
+            context.process_table.snapshot(),
+            path,
+            DEFAULT_PROFILE,
+            context=context,
         )
-    except (GateError, ProcessTableError, OSError, ValueError):
+    except (GateError, ProcessTableError, OSError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="process_observation",
+        )
         return None
     return matches
 
@@ -3456,8 +4396,15 @@ def _run_processes_absent(
         path = _companion_path(context)
         # The orphan check covers every process executing this capture-copy
         # binary, including a process that selected a different profile.
-        matches = _matching_companion_processes(records, path, profile=None)
-    except (GateError, ProcessTableError, OSError, ValueError):
+        matches = _matching_companion_processes(
+            records, path, profile=None, context=context
+        )
+    except (GateError, ProcessTableError, OSError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="process_observation",
+        )
         return None
     if matches is None:
         return None
@@ -3466,13 +4413,21 @@ def _run_processes_absent(
     return not matches
 
 
-def _process_group_id(host: object, pid: int) -> int | None:
+def _process_group_id(
+    host: object, pid: int, *, context: RowContext | None = None
+) -> int | None:
     probe = getattr(host, "_getpgid", os.getpgid)
     if not callable(probe):
         return None
     try:
         result = probe(pid)
-    except Exception:
+    except Exception as exc:
+        if context is not None:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="process_observation",
+            )
         return None
     return result if type(result) is int and result > 0 else None
 
@@ -3550,7 +4505,7 @@ def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
             or owner_pid not in owned_pids
             or owner_pid == pid
             or server_record.parent_pid != pid
-            or _process_group_id(host, owner_pid) != pid
+            or _process_group_id(host, owner_pid, context=context) != pid
             or _process_is_descendant(by_pid, owner_pid, pid) is not True
             or port_observation is None
             or not _port_is_owned_by(port_observation, HOST_PORT, owner_pid)
@@ -3567,7 +4522,12 @@ def _observe_owned_host(context: RowContext) -> ProcessRecord | None:
         ValueError,
         ProcessTableError,
         RecursionError,
-    ):
+    ) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="process_observation",
+        )
         return None
 
 
@@ -3604,7 +4564,12 @@ def _owned_state_root_identity(context: RowContext) -> tuple[int, int] | None:
         ):
             return None
         return identity
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="identity_observation",
+        )
         return None
 
 
@@ -3624,7 +4589,12 @@ def _identity_owner_record_matches(
             and layout.owner_file.is_file()
             and not layout.owner_file.is_symlink()
         )
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="identity_observation",
+        )
         return False
 
 
@@ -3674,7 +4644,12 @@ def _bind_current_invitation(
         context.remember_secret(url)
         client.bind_invitation(url)
         return url, response
-    except (HostApiError, PublicClientError, ValueError):
+    except (HostApiError, PublicClientError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="public_authentication",
+        )
         return None, response
 
 
@@ -3695,7 +4670,13 @@ def _login_public_session(
         if _decode_player_snapshot(client.authenticated_snapshot(session)) is None:
             return None
         return session
-    except PublicClientError:
+    except PublicClientError as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="public_authentication",
+            reason=exc.reason,
+        )
         return None
 
 
@@ -3710,7 +4691,12 @@ def _installed_companion_matches(context: RowContext, path: Path) -> bool:
         digest = installed.get("sha256")
         verified_path = Path(installed_path).resolve(strict=True)
         selected_path = path.resolve(strict=True)
-    except (GateError, OSError, RuntimeError, TypeError, ValueError):
+    except (GateError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="companion_path",
+        )
         return False
     return bool(
         isinstance(context.companion_sha256, str)
@@ -3727,7 +4713,12 @@ def _run_companion_command(
 ) -> RunResult | None:
     try:
         result = context.companion_runner(tuple(argv), dict(environment), 30.0)
-    except Exception:
+    except Exception as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="companion_command",
+        )
         return None
     if (
         not isinstance(result, RunResult)
@@ -3900,7 +4891,12 @@ def _row_remaining_seconds(context: RowContext) -> float | None:
         return None
     try:
         remaining = float(deadline) - float(context.monotonic())
-    except (OverflowError, TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="startup_runtime",
+        )
         return 0.0
     if not math.isfinite(remaining):
         return 0.0
@@ -3953,6 +4949,7 @@ def _companion_post_status_observation(
     response: HostApiResponse | None,
     *,
     request_outcome: str,
+    context: RowContext | None = None,
 ) -> dict[str, object]:
     observed = _host_api_observation(response)
     observed["request_outcome"] = request_outcome
@@ -3961,7 +4958,13 @@ def _companion_post_status_observation(
     if response is not None:
         try:
             counters = _status_counters(response)
-        except GateError:
+        except GateError as exc:
+            if context is not None:
+                _remember_caught_row_exception(
+                    context,
+                    exc,
+                    gate_step="companion_start_recovery",
+                )
             counters = None
     observed["companion_counters"] = counters
     return observed
@@ -3993,6 +4996,11 @@ def _post_companion_starting_action(
             action, payload, timeout_seconds=timeout_seconds
         )
     except HostApiError as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="companion_start_recovery",
+        )
         if exc.reason in {
             "host_api_action_invalid",
             "host_api_payload_invalid",
@@ -4043,11 +5051,18 @@ def _post_companion_starting_action(
                         },
                     )
                     observed = _companion_post_status_observation(
-                        latest_status, request_outcome=request_outcome
+                        latest_status,
+                        request_outcome=request_outcome,
+                        context=context,
                     )
                     context.companion_post_recovery_observation = observed
                     return recovered, observed, None
-            except (HostApiError, GateError, OSError, ValueError, TypeError):
+            except (HostApiError, GateError, OSError, ValueError, TypeError) as poll_exc:
+                _remember_caught_row_exception(
+                    context,
+                    poll_exc,
+                    gate_step="companion_start_recovery",
+                )
                 pass
             if attempt + 1 >= COMPANION_POST_STATUS_ATTEMPTS:
                 break
@@ -4059,11 +5074,18 @@ def _post_companion_starting_action(
                 pause = min(pause, remaining)
             try:
                 context.sleep(pause)
-            except TimeoutError:
+            except TimeoutError as sleep_exc:
+                _remember_caught_row_exception(
+                    context,
+                    sleep_exc,
+                    gate_step="companion_start_recovery",
+                )
                 break
 
         observed = _companion_post_status_observation(
-            latest_status, request_outcome=request_outcome
+            latest_status,
+            request_outcome=request_outcome,
+            context=context,
         )
         context.companion_post_recovery_observation = observed
         failure_reason = _companion_post_error_reason(action, request_outcome)
@@ -4123,7 +5145,12 @@ def _observe_player_listener(context: RowContext) -> bool | None:
         return None
     try:
         observation = inspector.inspect(PLAYER_PORT)
-    except Exception:
+    except Exception as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="port_inspection",
+        )
         return None
     if not _port_observation_valid(observation, PLAYER_PORT):
         return None
@@ -4148,7 +5175,12 @@ def _companion_path(context: RowContext) -> Path:
         resolved = value.resolve(strict=True)
         resolved.relative_to(runtime_root)
         metadata = value.lstat()
-    except (GateError, OSError, RuntimeError, TypeError, ValueError):
+    except (GateError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="companion_path",
+        )
         raise GateError("companion_path_unavailable") from None
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise GateError("companion_path_unavailable")
@@ -4167,7 +5199,12 @@ def _parse_process_record(line: str) -> ProcessRecord:
     return ProcessRecord(pid, parent_pid, uid, started_at, date_text, parts[8])
 
 
-def _process_arguments(record: ProcessRecord, expected_path: Path) -> tuple[str, ...] | None:
+def _process_arguments(
+    record: ProcessRecord,
+    expected_path: Path,
+    *,
+    context: RowContext | None = None,
+) -> tuple[str, ...] | None:
     if record.native_info is not None:
         candidate = process_info.could_be_companion(
             record.native_info, expected_path
@@ -4179,13 +5216,25 @@ def _process_arguments(record: ProcessRecord, expected_path: Path) -> tuple[str,
         return record.native_info.argv or None
     try:
         arguments = tuple(shlex.split(record.command, posix=True))
-    except ValueError:
+    except ValueError as exc:
+        if context is not None:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="process_observation",
+            )
         return None if str(expected_path) in record.command else ()
     if not arguments:
         return ()
     try:
         executable = Path(arguments[0]).resolve(strict=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        if context is not None:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="process_observation",
+            )
         return None if str(expected_path) in record.command else ()
     return arguments if executable == expected_path else ()
 
@@ -4200,11 +5249,17 @@ def _has_profile_argument(arguments: Sequence[str], profile: str) -> bool:
 
 
 def _matching_companion_processes(
-    records: Sequence[ProcessRecord], companion_path: Path, profile: str | None
+    records: Sequence[ProcessRecord],
+    companion_path: Path,
+    profile: str | None,
+    *,
+    context: RowContext | None = None,
 ) -> tuple[ProcessRecord, ...] | None:
     matches: list[ProcessRecord] = []
     for record in records:
-        arguments = _process_arguments(record, companion_path)
+        arguments = _process_arguments(
+            record, companion_path, context=context
+        )
         if arguments is None:
             return None
         if (
@@ -4216,9 +5271,13 @@ def _matching_companion_processes(
 
 
 def _is_serve_process(
-    record: ProcessRecord, companion_path: Path, profile: str
+    record: ProcessRecord,
+    companion_path: Path,
+    profile: str,
+    *,
+    context: RowContext | None = None,
 ) -> bool | None:
-    arguments = _process_arguments(record, companion_path)
+    arguments = _process_arguments(record, companion_path, context=context)
     if arguments is None:
         return None
     return bool(
@@ -4228,23 +5287,35 @@ def _is_serve_process(
     )
 
 
-def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
+def _gate_profile_state(context: RowContext) -> ProfileState | None:
     try:
         install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
         install_marker = "neq-" + hashlib.sha256(os.fsencode(install_path)).hexdigest()[:32]
-        profile = prepare_profile(
+        return prepare_profile(
             Path(context.host.state_root),
             install_marker=install_marker,
             profile=DEFAULT_PROFILE,
             create=False,
         )
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="identity_observation",
+        )
         return None
-    return profile.layout if profile.state == "ready" else None
+
+
+def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
+    profile = _gate_profile_state(context)
+    return profile.layout if profile is not None and profile.state == "ready" else None
 
 
 def _identity_cleanup_observations(
-    observer: IdentityObserver, profile: str
+    observer: IdentityObserver,
+    profile: str,
+    *,
+    context: RowContext | None = None,
 ) -> list[dict[str, object]] | None:
     try:
         observed = (
@@ -4252,7 +5323,13 @@ def _identity_cleanup_observations(
             ("profile_processes", observer.profile_processes(profile)),
             ("helper_processes", observer.helper_processes()),
         )
-    except Exception:
+    except Exception as exc:
+        if context is not None:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="identity_observation",
+            )
         return None
     result: list[dict[str, object]] = []
     for kind, item in observed:
@@ -4468,7 +5545,12 @@ def _validated_owned_companion(
         executable = Path(
             str(getattr(candidate_identity, "executable_path", ""))
         ).resolve(strict=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="process_observation",
+        )
         return None
     host_command = str(getattr(host_identity, "command_line", ""))
     host_argv = getattr(host_identity, "argv", ())
@@ -4489,7 +5571,7 @@ def _validated_owned_companion(
         or executable != companion_path
         or host_listener is None
         or not _port_is_owned_by(host_listener, HOST_PORT, host_pid)
-        or _process_group_id(context.host, host_pid) != launcher_pid
+        or _process_group_id(context.host, host_pid, context=context) != launcher_pid
         or _process_is_descendant(by_pid, host_pid, launcher_pid) is not True
         or candidate.started_at <= host_record.started_at
     ):
@@ -4498,7 +5580,12 @@ def _validated_owned_companion(
     if not isinstance(host_arguments, (tuple, list)):
         try:
             host_arguments = shlex.split(host_command)
-        except ValueError:
+        except ValueError as exc:
+            _remember_caught_row_exception(
+                context,
+                exc,
+                gate_step="process_observation",
+            )
             return None
     if len(host_arguments) < 2:
         return None
@@ -4507,7 +5594,12 @@ def _validated_owned_companion(
         expected_script = (
             context.sandbox_root / "web" / "web_interface.py"
         ).resolve(strict=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _remember_caught_row_exception(
+            context,
+            exc,
+            gate_step="process_observation",
+        )
         return None
     if server_script != expected_script:
         return None
@@ -4526,12 +5618,16 @@ def _owned_profile_companions(
 ) -> tuple[_OwnedCompanionTarget, ...] | None:
     companion_path = _companion_path(context)
     records = context.process_table.snapshot()
-    matches = _matching_companion_processes(records, companion_path, DEFAULT_PROFILE)
+    matches = _matching_companion_processes(
+        records, companion_path, DEFAULT_PROFILE, context=context
+    )
     if matches is None:
         return None
     serves: list[ProcessRecord] = []
     for record in matches:
-        is_serve = _is_serve_process(record, companion_path, DEFAULT_PROFILE)
+        is_serve = _is_serve_process(
+            record, companion_path, DEFAULT_PROFILE, context=context
+        )
         if is_serve is None:
             return None
         if is_serve:
@@ -4548,12 +5644,16 @@ def _owned_profile_companions(
 def _select_owned_companion(context: RowContext) -> _OwnedCompanionTarget | None:
     companion_path = _companion_path(context)
     records = context.process_table.snapshot()
-    matches = _matching_companion_processes(records, companion_path, DEFAULT_PROFILE)
+    matches = _matching_companion_processes(
+        records, companion_path, DEFAULT_PROFILE, context=context
+    )
     if matches is None:
         return None
     serves: list[ProcessRecord] = []
     for record in matches:
-        is_serve = _is_serve_process(record, companion_path, DEFAULT_PROFILE)
+        is_serve = _is_serve_process(
+            record, companion_path, DEFAULT_PROFILE, context=context
+        )
         if is_serve is None:
             return None
         if is_serve:
@@ -4933,6 +6033,7 @@ class LiveGateDependencies:
     monotonic: Callable[[], float] = time.monotonic
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     sleep: Callable[[float], None] = time.sleep
+    getloadavg: Callable[[], tuple[float, float, float]] = os.getloadavg
     public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
     process_table_factory: Callable[[], ProcessTable] = SystemProcessTable
     process_identity_probe: Callable[[int], object | None] = probe_process_identity
@@ -6179,10 +7280,13 @@ def _validate_provider_ledger(
         except (TypeError, ValueError):
             raise GateError("provider_startup_window_invalid") from None
         in_window = (
-            len(reservation_timestamps) == 1
-            and attempts == 1
-            and reservations == 1
-            and window_start <= reservation_timestamps[0] <= window_end
+            len(reservation_timestamps) == PROVIDER_BUDGET
+            and attempts == PROVIDER_BUDGET
+            and reservations == PROVIDER_BUDGET
+            and all(
+                window_start <= timestamp <= window_end
+                for timestamp in reservation_timestamps
+            )
         )
         verdict = "PASS" if in_window else "FAIL"
     return {
@@ -6340,8 +7444,19 @@ class LiveGateRunner:
         self.companion_path: Path | None = None
         self.companion_install_root: Path | None = None
         self._unconfirmed_identity_cleanup_safe = True
+        self._pre_row_exception: BaseException | None = None
+        self._pre_row_gate_step = "row_precheck"
+        self._active_load_sampler: _LoadSampler | None = None
+        self._max_one_minute_load_observed: float | None = None
+        self._load_sample_count = 0
+        self._environment_load_abort: str | None = None
 
     def run(self) -> dict[str, object]:
+        if (
+            self.arguments.diagnostic_stop_after_row is not None
+            and self.arguments.diagnostic_stop_after_row != "L01"
+        ):
+            return self._refusal(GateError("diagnostic_stop_row_invalid"))
         try:
             self._validate_before_side_effects()
         except GateError as exc:
@@ -6397,7 +7512,7 @@ class LiveGateRunner:
                     else None
                 ),
                 monotonic=self.dependencies.monotonic,
-                sleep=self.dependencies.sleep,
+                sleep=self._sleep_with_load_check,
                 startup_input_validator=self.dependencies.startup_input_validator,
             )
             self._start_host()
@@ -6406,21 +7521,42 @@ class LiveGateRunner:
             elif self.semantic_failures:
                 self._append_blocked_rows(1, "initial-companion-counter-failure")
             else:
-                self._append_blocked_rows(0, "pre-row-infrastructure-blocked")
+                self._append_blocked_rows(
+                    0,
+                    "pre-row-infrastructure-blocked",
+                    first_exception=self._pre_row_exception,
+                    first_gate_step=self._pre_row_gate_step,
+                )
         except GateError as exc:
-            self._add_infrastructure(exc.reason)
-            self._append_blocked_rows(0, exc.reason)
-        except KeyboardInterrupt:
+            safe_reason = _safe_row_gate_error_reason(exc.reason)
+            self._add_infrastructure(safe_reason)
+            self._append_blocked_rows(
+                0,
+                safe_reason,
+                first_exception=exc,
+                first_gate_step="row_precheck",
+            )
+        except KeyboardInterrupt as exc:
             self._add_infrastructure("driver_interrupted")
-            self._append_blocked_rows(0, "driver_interrupted")
-        except Exception:
+            self._append_blocked_rows(
+                0,
+                "driver_interrupted",
+                first_exception=exc,
+                first_gate_step="row_precheck",
+            )
+        except Exception as exc:
             reason = (
                 "driver_execution_failed"
                 if self.capture_created
                 else "capture_directory_create_failed"
             )
             self._add_infrastructure(reason)
-            self._append_blocked_rows(0, reason)
+            self._append_blocked_rows(
+                0,
+                reason,
+                first_exception=exc,
+                first_gate_step="row_precheck",
+            )
         try:
             self._teardown()
         except Exception:
@@ -6591,9 +7727,13 @@ class LiveGateRunner:
         try:
             self.host_started = self.host.start() is True
         except GateError as exc:
-            self._add_infrastructure(exc.reason)
+            self._pre_row_exception = exc
+            self._pre_row_gate_step = "host_start"
+            self._add_infrastructure(_safe_row_gate_error_reason(exc.reason))
             return
-        except Exception:
+        except Exception as exc:
+            self._pre_row_exception = exc
+            self._pre_row_gate_step = "host_start"
             self.host_started = False
         if not self.host_started:
             self._add_infrastructure("managed_host_start_failed")
@@ -6610,7 +7750,9 @@ class LiveGateRunner:
                         self.dependencies.port_inspector, self.host.owner_pid
                     )
                 )
-            except Exception:
+            except Exception as exc:
+                self._pre_row_exception = exc
+                self._pre_row_gate_step = "host_start"
                 self._add_infrastructure("managed_host_port_ownership_failed")
                 return
         assert self.api is not None
@@ -6618,7 +7760,9 @@ class LiveGateRunner:
             status = self.api.get_status()
             _remember_payload_secrets(status.payload, self.secrets)
             counters = _status_counters(status)
-        except (HostApiError, GateError):
+        except (HostApiError, GateError) as exc:
+            self._pre_row_exception = exc
+            self._pre_row_gate_step = "host_start"
             self._add_infrastructure("host_status_unavailable")
             return
         self._observe_counter_sample(counters)
@@ -6634,7 +7778,14 @@ class LiveGateRunner:
                     "row_id": row.row_id,
                     "name": row.name,
                     **_row_evidence_fields(row),
-                    "observed": {"companion_counters_at_host_start": counters},
+                    "observed": {
+                        "companion_counters_at_host_start": counters,
+                        "failure_diagnostic": _make_failure_diagnostic(
+                            category="row_assertion",
+                            gate_step="host_start_counter_check",
+                            reason=reason,
+                        ),
+                    },
                     "reason": reason,
                     "elapsed_seconds": 0.0,
                     "verdict": "FAIL",
@@ -6658,11 +7809,19 @@ class LiveGateRunner:
                 return
             try:
                 self._check_driver_time()
+                self._check_environment_load()
                 self._reverify_lock()
                 self._check_driver_time()
+                self._check_environment_load()
             except GateError as exc:
-                self._add_infrastructure(exc.reason)
-                self._append_blocked_rows(index, exc.reason)
+                safe_reason = _safe_row_gate_error_reason(exc.reason)
+                self._add_infrastructure(safe_reason)
+                self._append_blocked_rows(
+                    index,
+                    safe_reason,
+                    first_exception=exc,
+                    first_gate_step="row_precheck",
+                )
                 return
             before_status: dict[str, int]
             try:
@@ -6671,9 +7830,14 @@ class LiveGateRunner:
                 _remember_payload_secrets(response.payload, self.secrets)
                 before_status = _status_counters(response)
                 self._observe_counter_sample(before_status)
-            except (HostApiError, GateError):
+            except (HostApiError, GateError) as exc:
                 self._add_infrastructure("host_counters_unavailable")
-                self._append_blocked_rows(index, "host_counters_unavailable")
+                self._append_blocked_rows(
+                    index,
+                    "host_counters_unavailable",
+                    first_exception=exc,
+                    first_gate_step="row_counter_observation",
+                )
                 return
             counter_error = _counter_cap_error(
                 self.cumulative_counters, self.recovery_attempts
@@ -6687,7 +7851,14 @@ class LiveGateRunner:
                         "row_id": row.row_id,
                         "name": row.name,
                         **_row_evidence_fields(row),
-                        "observed": {"companion_counters_before": before_status},
+                        "observed": {
+                            "companion_counters_before": before_status,
+                            "failure_diagnostic": _make_failure_diagnostic(
+                                category="row_assertion",
+                                gate_step="counter_check",
+                                reason=counter_error,
+                            ),
+                        },
                         "reason": counter_error,
                         "elapsed_seconds": 0.0,
                         "verdict": "FAIL",
@@ -6710,22 +7881,40 @@ class LiveGateRunner:
                 return
             self.context.row_deadline_at = row_started + timeout_seconds
             self.context.companion_post_recovery_observation = None
+            self.context.caught_failure_diagnostic = None
+            self.context.step_checkpoints = []
+            caught_exception: BaseException | None = None
+            diagnostic_step = "row_executor"
+            load_sampler = _LoadSampler(
+                getloadavg=self.dependencies.getloadavg,
+                monotonic=self.dependencies.monotonic,
+                row_start_monotonic=row_started,
+            )
+            self._active_load_sampler = load_sampler
+            load_sampler.start()
             try:
                 with _RowDeadline(timeout_seconds):
                     result = registry[row.row_id].execute(self.context)
                 if not isinstance(result, RowExecutionResult):
                     raise GateError("row_result_invalid")
-            except TimeoutError:
+            except TimeoutError as exc:
+                caught_exception = exc
                 result = RowExecutionResult("BLOCKED", "row_timeout")
                 self._add_infrastructure("row_time_cap_exceeded:" + row.row_id)
             except GateError as exc:
-                result = RowExecutionResult("BLOCKED", exc.reason)
-                self._add_infrastructure(exc.reason)
-            except Exception:
+                caught_exception = exc
+                safe_reason = _safe_row_gate_error_reason(exc.reason)
+                result = RowExecutionResult("BLOCKED", safe_reason)
+                self._add_infrastructure(safe_reason)
+            except Exception as exc:
+                caught_exception = exc
                 result = RowExecutionResult("BLOCKED", "executor_exception")
                 self._add_infrastructure("executor_exception:" + row.row_id)
             finally:
                 self.context.row_deadline_at = None
+                load_sampler.record_sample()
+                load_sampler.stop()
+                self._observe_load_sampler(load_sampler)
             result = _include_companion_post_observation(self.context, result)
             elapsed = max(0.0, self.dependencies.monotonic() - row_started)
             if elapsed > row.timeout_seconds:
@@ -6735,12 +7924,17 @@ class LiveGateRunner:
                 self._add_infrastructure("row_time_cap_exceeded:" + row.row_id)
             try:
                 self._check_driver_time()
+                self._check_environment_load()
             except GateError as exc:
+                caught_exception = exc
+                diagnostic_step = "row_postcheck"
+                safe_reason = _safe_row_gate_error_reason(exc.reason)
                 result = RowExecutionResult(
-                    "BLOCKED", exc.reason, dict(result.observed)
+                    "BLOCKED", safe_reason, dict(result.observed)
                 )
-                self._add_infrastructure(exc.reason)
-            self._observe_result_secrets(result)
+                self._add_infrastructure(safe_reason)
+            finally:
+                self._active_load_sampler = None
             if row.row_id == "L10" and self.host is not None and self.host.owner_pid is None:
                 # L10 intentionally stops the owned host and removes its private
                 # state before returning. The last pre-teardown sample is the
@@ -6749,14 +7943,18 @@ class LiveGateRunner:
                 after_status = before_status
             else:
                 try:
+                    _mark_step(self.context, "row_counter_observation")
                     assert self.api is not None
                     after_response = self.api.get_status()
                     _remember_payload_secrets(after_response.payload, self.secrets)
                     after_status = _status_counters(after_response)
                     self._observe_counter_sample(after_status)
-                except (HostApiError, GateError):
+                except (HostApiError, GateError) as exc:
                     after_status = before_status
                     self._add_infrastructure("host_counters_unavailable")
+                    if caught_exception is None:
+                        caught_exception = exc
+                        diagnostic_step = "row_counter_observation"
                     has_request_observation = (
                         result.observed.get("request_outcome")
                         in {"request_timeout", "transport_error"}
@@ -6771,7 +7969,12 @@ class LiveGateRunner:
                                 self._observe_counter_sample(recovery_counters)
                                 after_status = dict(recovery_counters)
                             except GateError as exc:
-                                self._add_infrastructure(exc.reason)
+                                if caught_exception is None:
+                                    caught_exception = exc
+                                    diagnostic_step = "row_counter_observation"
+                                self._add_infrastructure(
+                                    _safe_row_gate_error_reason(exc.reason)
+                                )
                     else:
                         result = RowExecutionResult(
                             "BLOCKED",
@@ -6799,6 +8002,22 @@ class LiveGateRunner:
                     "FAIL", counter_error, dict(result.observed)
                 )
                 self._add_infrastructure(counter_error)
+            if caught_exception is None:
+                result = _result_with_captured_row_diagnostic(
+                    result, self.context.caught_failure_diagnostic
+                )
+            result = _result_with_failure_diagnostic(
+                result,
+                gate_step=diagnostic_step,
+                exception=caught_exception,
+            )
+            result = _result_with_row_instrumentation(
+                result,
+                self.context.step_checkpoints,
+                self.dependencies.monotonic(),
+                load_sampler.samples(),
+            )
+            self._observe_result_secrets(result)
             record = {
                 "row_id": row.row_id,
                 "name": row.name,
@@ -6815,6 +8034,20 @@ class LiveGateRunner:
                 "companion_counters_cumulative": dict(self.cumulative_counters),
             }
             self.rows.append(record)
+            if self.arguments.diagnostic_stop_after_row == row.row_id:
+                if result.verdict == "FAIL":
+                    self.semantic_failures.append(
+                        "row_assertion_failed:" + row.row_id
+                    )
+                elif result.verdict != "PASS":
+                    self._add_infrastructure(
+                        "required_row_blocked:" + row.row_id
+                    )
+                self._check_provider_ledger_during_run(row.row_id)
+                self._append_blocked_rows(
+                    index + 1, "diagnostic-stop-after-row"
+                )
+                return
             if result.verdict == "FAIL":
                 self.semantic_failures.append("row_assertion_failed:" + row.row_id)
                 self._append_blocked_rows(index + 1, "fail-fast")
@@ -6827,6 +8060,28 @@ class LiveGateRunner:
             if self.infrastructure_failures or self.semantic_failures:
                 self._append_blocked_rows(index + 1, "fail-fast")
                 return
+
+    def _attach_row_failure_diagnostic(
+        self,
+        row_id: str,
+        exception: BaseException,
+        *,
+        gate_step: str,
+        reason: object,
+    ) -> None:
+        for row in reversed(self.rows):
+            if row.get("row_id") != row_id:
+                continue
+            observed = row.get("observed")
+            selected_observed = dict(observed) if isinstance(observed, Mapping) else {}
+            selected_observed["failure_diagnostic"] = _make_failure_diagnostic(
+                category="caught_exception",
+                gate_step=gate_step,
+                reason=reason,
+                exception=exception,
+            )
+            row["observed"] = selected_observed
+            return
 
     def _check_provider_ledger_during_run(self, row_id: str) -> None:
         if self.companion_install_root is None or self.context is None:
@@ -6842,7 +8097,14 @@ class LiveGateRunner:
                 self.context, allowed_window=allowed_window
             )
         except GateError as exc:
-            self._add_infrastructure(exc.reason)
+            safe_reason = _safe_row_gate_error_reason(exc.reason)
+            self._add_infrastructure(safe_reason)
+            self._attach_row_failure_diagnostic(
+                row_id,
+                exc,
+                gate_step="provider_ledger_check",
+                reason=safe_reason,
+            )
             return
         self.provider_ledger = status
         if status.get("verdict") != "PASS":
@@ -6856,8 +8118,8 @@ class LiveGateRunner:
         if (
             row_id == "L03"
             and (
-                status.get("attempt_count") != 1
-                or status.get("reservation_count") != 1
+                status.get("attempt_count") != PROVIDER_BUDGET
+                or status.get("reservation_count") != PROVIDER_BUDGET
                 or status.get("startup_window_verified") is not True
             )
         ):
@@ -6919,8 +8181,9 @@ class LiveGateRunner:
                 must_not_exist=False,
             )
         except GateError as exc:
-            self.provider_ledger = {"status": exc.reason}
-            self._add_infrastructure(exc.reason)
+            safe_reason = _safe_row_gate_error_reason(exc.reason)
+            self.provider_ledger = {"status": safe_reason}
+            self._add_infrastructure(safe_reason)
             return
         if Path(ledger_value) != expected_path:
             self._add_infrastructure("provider_ledger_path_mismatch")
@@ -6937,8 +8200,9 @@ class LiveGateRunner:
                 ),
             )
         except GateError as exc:
-            self.provider_ledger = {"status": exc.reason}
-            self._add_infrastructure(exc.reason)
+            safe_reason = _safe_row_gate_error_reason(exc.reason)
+            self.provider_ledger = {"status": safe_reason}
+            self._add_infrastructure(safe_reason)
             return
         self.provider_ledger = status
         if status.get("verdict") != "PASS":
@@ -6948,8 +8212,8 @@ class LiveGateRunner:
                 self.context.permitted_provider_attempt_fingerprint
             )
             if (
-                status.get("attempt_count") != 1
-                or status.get("reservation_count") != 1
+                status.get("attempt_count") != PROVIDER_BUDGET
+                or status.get("reservation_count") != PROVIDER_BUDGET
                 or status.get("startup_window_verified") is not True
                 or not isinstance(expected_fingerprint, str)
                 or status.get("attempt_fingerprint") != expected_fingerprint
@@ -6961,17 +8225,40 @@ class LiveGateRunner:
     def _observe_result_secrets(self, result: RowExecutionResult) -> None:
         _remember_payload_secrets(result.observed, self.secrets)
 
-    def _append_blocked_rows(self, start_index: int, reason: str) -> None:
+    def _append_blocked_rows(
+        self,
+        start_index: int,
+        reason: str,
+        *,
+        first_exception: BaseException | None = None,
+        first_gate_step: str = "fail_fast",
+    ) -> None:
         existing = {str(item.get("row_id")) for item in self.rows}
-        for row in LIVE_ROWS[start_index:]:
+        for offset, row in enumerate(LIVE_ROWS[start_index:]):
             if row.row_id in existing:
                 continue
+            is_first_exception = offset == 0 and first_exception is not None
             self.rows.append(
                 {
                     "row_id": row.row_id,
                     "name": row.name,
                     **_row_evidence_fields(row),
-                    "observed": {},
+                    "observed": {
+                        "failure_diagnostic": _make_failure_diagnostic(
+                            category=(
+                                "caught_exception"
+                                if is_first_exception
+                                else "fail_fast"
+                            ),
+                            gate_step=(
+                                first_gate_step
+                                if is_first_exception
+                                else "fail_fast"
+                            ),
+                            reason=reason,
+                            exception=first_exception if is_first_exception else None,
+                        )
+                    },
                     "reason": reason,
                     "verdict": "BLOCKED",
                 }
@@ -6991,6 +8278,28 @@ class LiveGateRunner:
     def _check_driver_time(self) -> None:
         if self._remaining_driver_seconds() <= 0:
             raise GateError("driver_time_cap_exceeded", verdict="BLOCKED")
+
+    def _sleep_with_load_check(self, seconds: float) -> None:
+        self.dependencies.sleep(seconds)
+        self._check_environment_load()
+
+    def _check_environment_load(self) -> None:
+        sampler = self._active_load_sampler
+        if sampler is None:
+            return
+        if sampler.abort_samples() is not None:
+            raise GateError("environment_load", verdict="BLOCKED")
+
+    def _observe_load_sampler(self, sampler: "_LoadSampler") -> None:
+        for entry in sampler.samples():
+            self._load_sample_count += 1
+            one_minute = entry[1] if len(entry) > 1 else None
+            if isinstance(one_minute, (int, float)):
+                if (
+                    self._max_one_minute_load_observed is None
+                    or float(one_minute) > self._max_one_minute_load_observed
+                ):
+                    self._max_one_minute_load_observed = float(one_minute)
 
     def _remaining_driver_seconds(self) -> float:
         elapsed = self.dependencies.monotonic() - self.started
@@ -7066,12 +8375,16 @@ class LiveGateRunner:
 
     def _clean_unconfirmed_companion_identity(self, host_port_owned: bool) -> bool:
         context = self.context
-        if not host_port_owned or context is None:
+        if context is None:
             self.teardown["identity_cleanup_result"] = "ownership_unavailable"
             return False
         try:
+            profile_state = _gate_profile_state(context)
+            if profile_state is not None and profile_state.state == "absent":
+                self.teardown["identity_cleanup_result"] = "not_needed"
+                return True
             companion = _companion_path(context)
-            layout = _gate_profile_layout(context)
+            layout = profile_state.layout if profile_state is not None else None
             if (
                 not _installed_companion_matches(context, companion)
                 or layout is None
@@ -7173,8 +8486,11 @@ class LiveGateRunner:
                 self.teardown["identity_cleanup_result"] = "postcheck_unavailable"
                 return False
             self.teardown["identity_cleanup_observations"] = postchecks
-            if any(item["state"] != "absent" for item in postchecks):
+            if any(item["state"] == "present" for item in postchecks):
                 self.teardown["identity_cleanup_result"] = "residual_resource_found"
+                return False
+            if any(item["state"] != "absent" for item in postchecks):
+                self.teardown["identity_cleanup_result"] = "postcheck_unavailable"
                 return False
             self.teardown["identity_cleanup_result"] = "verified_absent"
             return True
@@ -7230,7 +8546,30 @@ class LiveGateRunner:
                 self.teardown["sharing_stopped"] = False
         else:
             self.teardown["sharing_stopped"] = False
+        l10_passed = any(
+            row.get("row_id") == "L10" and row.get("verdict") == "PASS"
+            for row in self.rows
+        )
+        host_unresponsive_or_stopped = (
+            not host_port_owned or self.teardown.get("sharing_stopped") is not True
+        )
+        identity_cleanup_required = unconfirmed_post or (
+            not l10_passed and host_unresponsive_or_stopped
+        )
         if unconfirmed_post:
+            self._unconfirmed_identity_cleanup_safe = (
+                self._clean_unconfirmed_companion_identity(host_port_owned)
+            )
+            if not self._unconfirmed_identity_cleanup_safe:
+                self._add_infrastructure("unconfirmed_identity_cleanup_failed")
+        elif not l10_passed and host_unresponsive_or_stopped:
+            # L10 PASS already deletes the gate-owned identity itself; outside
+            # that golden path, a stopped or unresponsive host can otherwise
+            # leave a live companion identity behind (see attempt-12 L03
+            # host_counters_unavailable incident). Attempt cleanup only when
+            # ownership and profile/path are proven to belong to this run;
+            # _clean_unconfirmed_companion_identity refuses (no companion
+            # command run) on any mismatch.
             self._unconfirmed_identity_cleanup_safe = (
                 self._clean_unconfirmed_companion_identity(host_port_owned)
             )
@@ -7262,7 +8601,7 @@ class LiveGateRunner:
             if host_state_root != self.state_root:
                 self.teardown["gate_state_root_removed"] = False
                 self._add_infrastructure("gate_state_cleanup_failed")
-            elif unconfirmed_post and not self._unconfirmed_identity_cleanup_safe:
+            elif identity_cleanup_required and not self._unconfirmed_identity_cleanup_safe:
                 self.teardown["gate_state_root_removed"] = False
                 self._add_infrastructure("gate_state_cleanup_failed")
             elif not self.teardown["host_stopped"] or not self.teardown["ports_free"]:
@@ -7322,6 +8661,56 @@ class LiveGateRunner:
             infrastructure_failures=self.infrastructure_failures,
             semantic_failures=self.semantic_failures,
         )
+        diagnostic_stop_after_row = self.arguments.diagnostic_stop_after_row
+        diagnostic_gate_verdict: str | None = None
+        diagnostic_platform_reason: str | None = None
+        if diagnostic_stop_after_row is not None:
+            diagnostic_row_verdict = next(
+                (
+                    row.get("verdict")
+                    for row in self.rows
+                    if row.get("row_id") == diagnostic_stop_after_row
+                ),
+                None,
+            )
+            diagnostic_gate_verdict = (
+                "FAIL" if diagnostic_row_verdict == "FAIL" else "BLOCKED"
+            )
+            diagnostic_platform_reason = (
+                "diagnostic-row-failed"
+                if diagnostic_gate_verdict == "FAIL"
+                else "diagnostic-stop-after-row"
+            )
+            selected_platform_verdicts = verdicts["platform_verdicts"]
+            assert isinstance(selected_platform_verdicts, dict)
+            selected_platform_verdicts = dict(selected_platform_verdicts)
+            selected_platform_verdicts["macos-arm64"] = {
+                "verdict": diagnostic_gate_verdict,
+                "reason": diagnostic_platform_reason,
+            }
+            verdicts["platform_verdicts"] = selected_platform_verdicts
+            verdicts["gate_verdict"] = diagnostic_gate_verdict
+            verdicts["is_gate_pass"] = False
+
+        def apply_diagnostic_marker(document: dict[str, object]) -> None:
+            if (
+                diagnostic_stop_after_row is None
+                or diagnostic_gate_verdict is None
+                or diagnostic_platform_reason is None
+            ):
+                return
+            document["diagnostic_stop_after_row"] = diagnostic_stop_after_row
+            document["gate_verdict"] = diagnostic_gate_verdict
+            document["is_gate_pass"] = False
+            platform_verdicts = document.get("platform_verdicts")
+            if isinstance(platform_verdicts, dict):
+                selected_platform_verdicts = dict(platform_verdicts)
+                selected_platform_verdicts["macos-arm64"] = {
+                    "verdict": diagnostic_gate_verdict,
+                    "reason": diagnostic_platform_reason,
+                }
+                document["platform_verdicts"] = selected_platform_verdicts
+
         run_record = {
             "schema_version": 1,
             "manifest_id": MANIFEST_ID,
@@ -7353,8 +8742,13 @@ class LiveGateRunner:
             "infrastructure_failures": list(self.infrastructure_failures),
             "semantic_failures": list(self.semantic_failures),
             "teardown": dict(self.teardown),
+            "environment_load_summary": {
+                "max_one_minute_load_observed": self._max_one_minute_load_observed,
+                "sample_count": self._load_sample_count,
+            },
             **verdicts,
         }
+        apply_diagnostic_marker(run_record)
         summary = {
             "schema_version": 1,
             "manifest_id": MANIFEST_ID,
@@ -7387,6 +8781,7 @@ class LiveGateRunner:
             ),
             **verdicts,
         }
+        apply_diagnostic_marker(summary)
         write_ok = True
         try:
             write_ok = _write_rows_jsonl(
@@ -7411,10 +8806,12 @@ class LiveGateRunner:
             summary["infrastructure_failures"] = list(self.infrastructure_failures)
             summary["semantic_failures"] = list(self.semantic_failures)
             _force_evidence_blocked(summary)
+            apply_diagnostic_marker(summary)
             run_record.update(verdicts)
             run_record["infrastructure_failures"] = list(self.infrastructure_failures)
             run_record["semantic_failures"] = list(self.semantic_failures)
             _force_evidence_blocked(run_record)
+            apply_diagnostic_marker(run_record)
             _write_json_evidence(
                 self.capture_dir / "run.json", run_record, self.secrets
             )
@@ -7439,7 +8836,7 @@ class LiveGateRunner:
             block_unwritable_evidence()
             _write_sha256sums(self.capture_dir)
             write_ok = False
-        return {
+        result = {
             "run_id": self.arguments.run_id,
             "gate_verdict": summary["gate_verdict"],
             "is_gate_pass": False,
@@ -7452,6 +8849,9 @@ class LiveGateRunner:
             ).as_posix(),
             "evidence_written": write_ok,
         }
+        if diagnostic_stop_after_row is not None:
+            result["diagnostic_stop_after_row"] = diagnostic_stop_after_row
+        return result
 
     def _copy_provider_ledger(self) -> bool:
         if self.capture_dir is None:
@@ -7502,31 +8902,48 @@ class LiveGateRunner:
         )
 
     def _refusal(self, error: GateError) -> dict[str, object]:
-        return {
+        safe_reason = _safe_row_gate_error_reason(error.reason)
+        is_diagnostic = self.arguments.diagnostic_stop_after_row == "L01"
+        result = {
             "run_id": self.arguments.run_id,
-            "gate_verdict": error.verdict,
+            "gate_verdict": "BLOCKED" if is_diagnostic else error.verdict,
             "is_gate_pass": False,
             "platform_verdicts": {
-                "macos-arm64": {"verdict": "BLOCKED", "reason": error.reason},
+                "macos-arm64": {"verdict": "BLOCKED", "reason": safe_reason},
                 "linux-arm64": {
                     "verdict": "BLOCKED",
                     "reason": "owner-run-required",
                 },
             },
-            "infrastructure_failures": [error.reason],
+            "infrastructure_failures": [safe_reason],
             "evidence_path": None,
             "evidence_written": False,
         }
+        if is_diagnostic:
+            result["diagnostic_stop_after_row"] = "L01"
+        return result
 
     def _result_without_evidence(self) -> dict[str, object]:
-        return {
+        diagnostic_row_failed = (
+            self.arguments.diagnostic_stop_after_row == "L01"
+            and any(
+                row.get("row_id") == "L01" and row.get("verdict") == "FAIL"
+                for row in self.rows
+            )
+        )
+        gate_verdict = "FAIL" if diagnostic_row_failed else "BLOCKED"
+        result = {
             "run_id": self.arguments.run_id,
-            "gate_verdict": "BLOCKED",
+            "gate_verdict": gate_verdict,
             "is_gate_pass": False,
             "platform_verdicts": {
                 "macos-arm64": {
-                    "verdict": "BLOCKED",
-                    "reason": "evidence-write-failed",
+                    "verdict": gate_verdict,
+                    "reason": (
+                        "diagnostic-row-failed"
+                        if diagnostic_row_failed
+                        else "evidence-write-failed"
+                    ),
                 },
                 "linux-arm64": {
                     "verdict": "BLOCKED",
@@ -7538,6 +8955,9 @@ class LiveGateRunner:
             "evidence_path": None,
             "evidence_written": False,
         }
+        if self.arguments.diagnostic_stop_after_row == "L01":
+            result["diagnostic_stop_after_row"] = "L01"
+        return result
 
 
 def run_live_gate(
@@ -7865,6 +9285,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--booking-id", required=True)
     run.add_argument("--preflight-report", required=True, metavar="PATH")
     run.add_argument("--party-size", type=int, default=1)
+    run.add_argument(
+        "--diagnostic-stop-after-row",
+        choices=("L01",),
+        default=None,
+    )
     return parser
 
 
@@ -7894,6 +9319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         booking_id=args.booking_id,
         preflight_report=args.preflight_report,
         party_size=args.party_size,
+        diagnostic_stop_after_row=args.diagnostic_stop_after_row,
     )
     try:
         result = run_live_gate(_default_dependencies(REPO_ROOT), run_arguments)
@@ -7905,6 +9331,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "infrastructure_failures": ["driver_unavailable"],
             "evidence_path": None,
         }
+        if args.diagnostic_stop_after_row is not None:
+            result["diagnostic_stop_after_row"] = args.diagnostic_stop_after_row
     print(json.dumps(result, ensure_ascii=True, sort_keys=True))
     if result.get("gate_verdict") == "FAIL":
         return 1

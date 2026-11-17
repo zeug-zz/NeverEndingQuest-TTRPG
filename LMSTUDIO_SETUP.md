@@ -50,7 +50,7 @@ troubleshooting; it is disabled by default.
 
 2. **Install mitmproxy:**
    ```bash
-   pip install mitmproxy
+   pip install -r requirements-forwarder.txt
    ```
 
 3. **Choose your launch style:**
@@ -79,7 +79,7 @@ troubleshooting; it is disabled by default.
 
 3. **mitmproxy** - Install via:
    ```bash
-   pip install mitmproxy
+   pip install -r requirements-forwarder.txt
    ```
    Only needed for the advanced proxy method.
 
@@ -157,7 +157,7 @@ If running LM Studio on a different machine:
 
 **Solution:**
 ```bash
-pip install mitmproxy
+pip install -r requirements-forwarder.txt
 ```
 
 ### "The forwarder proxy does not appear to be running"

@@ -1,0 +1,5 @@
+# Optional dependencies for the local LM Studio forwarder only
+# (lmstudio_forwarder.py / start_lmstudio_forwarder.sh). Not needed to play.
+# Install with: pip install -r requirements-forwarder.txt
+# mitmproxy caps tornado<=6.5.10 (see SECURITY.md).
+mitmproxy>=12.3.0

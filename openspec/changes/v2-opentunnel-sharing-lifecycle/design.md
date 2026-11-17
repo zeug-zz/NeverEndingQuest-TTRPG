@@ -67,7 +67,7 @@ This lifecycle gate does not establish installer/update readiness, N4 external g
 
 ### Live gate contract
 
-The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v3`, its rows, caps, lock protocol, platform verdicts, state-root policy, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). L03 starts the local runtime exactly once through host-side Socket.IO polling and permits only its single priced startup narration attempt within the USD 0.05 per-run and USD 1.00 cumulative narration caps. Seed/profile validation is fail-closed and occurs before host side effects. The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
+The frozen primary-owned live-gate contract, including manifest `n3-live-lifecycle-v4`, its rows, caps, lock protocol, platform verdicts, state-root policy, and evidence rules, is specified in [`reports/n3-live-gate-contract.md`](reports/n3-live-gate-contract.md). L03 starts the local runtime exactly once through host-side Socket.IO polling and permits only one attempt each for the exact ordered tasks `action_prediction` then `dm_main`, both on `n3-luna` without fallback. Both complete, priced receipts must be in-window and their combined cost must stay within the unchanged USD 0.05 per-run cap; cumulative `dm_main` narration cost remains capped at USD 1.00. Seed/profile validation is fail-closed and occurs before host side effects. The recovery-attempt override is sandbox-only; production defaults and backoff delays remain unchanged outside the isolated gate host.
 
 ## Risks / Trade-offs
 
