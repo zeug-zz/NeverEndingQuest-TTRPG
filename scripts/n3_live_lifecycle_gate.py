@@ -60,6 +60,7 @@ from web.extensions.opentunnel_sharing.profile_state import (
     DEFAULT_PROFILE,
     MAX_UNIX_SOCKET_PATH,
     ProfileLayout,
+    ProfileState,
     companion_environment,
     prepare_profile,
 )
@@ -125,6 +126,26 @@ PROVIDER_COST_CAP_USD = 0.05
 CUMULATIVE_NARRATION_COST_CAP_USD = 1.00
 PROVIDER_LEDGER_NAME = "provider-attempt-ledger.jsonl"
 _PROVIDER_LEDGER_RELATIVE = Path("tmp/n2")
+# Diagnostic-only instrumentation (step timings, load samples). Pure
+# observation: never alters row order, caps, deadlines, or pass/fail logic
+# except the dedicated environment_load abort path below.
+STEP_TIMING_NAMES = frozenset(
+    {
+        "startup_precheck",
+        "startup_connect",
+        "start_game_wait",
+        "issue_access",
+        "start_sharing",
+        "copy_invitation",
+        "boundary_checks",
+        "row_counter_observation",
+    }
+)
+MAX_STEP_TIMING_ENTRIES = 16
+LOAD_SAMPLE_INTERVAL_SECONDS = 30.0
+LOAD_ABORT_ONE_MINUTE_THRESHOLD = 50.0
+LOAD_ABORT_CONSECUTIVE_SAMPLES = 2
+MAX_LOAD_SAMPLES_PER_ROW = 64
 _DIAGNOSTIC_CATEGORIES = frozenset(
     {
         "caught_exception",
@@ -208,10 +229,15 @@ _DIAGNOSTIC_REASON_CODES = frozenset(
         "gate_state_cleanup_failed",
         "gate_state_root_exists",
         "gate_state_root_invalid",
+        "environment_load",
+        "host_api_action_invalid",
         "host_api_ownership_guard_invalid",
+        "host_api_payload_invalid",
+        "host_api_payload_too_large",
         "host_api_response_invalid",
         "host_api_response_too_large",
         "host_api_timeout",
+        "host_api_timeout_invalid",
         "host_api_transport_error",
         "host_counters_invalid",
         "host_counters_regressed",
@@ -231,6 +257,7 @@ _DIAGNOSTIC_REASON_CODES = frozenset(
         "lock_window_invalid",
         "l01_observation_unavailable",
         "manifest_digest_mismatch",
+        "managed_host_ownership_failed",
         "managed_host_port_ownership_failed",
         "narration_receipt_unpriced",
         "none",
@@ -1499,6 +1526,25 @@ def _result_with_captured_row_diagnostic(
     )
 
 
+def _result_with_row_instrumentation(
+    result: RowExecutionResult,
+    step_checkpoints: Sequence[tuple[str, float]],
+    row_end_monotonic: float,
+    load_samples: Sequence[list[object]],
+) -> RowExecutionResult:
+    observed = dict(result.observed)
+    observed["step_timings"] = _step_timings_from_checkpoints(
+        step_checkpoints, row_end_monotonic
+    )
+    observed["load_samples"] = [list(entry) for entry in load_samples]
+    return RowExecutionResult(
+        result.verdict,
+        result.reason,
+        observed,
+        result.recovery_attempts,
+    )
+
+
 class ProcessTable(Protocol):
     def snapshot(self) -> tuple[ProcessRecord, ...]: ...
 
@@ -1665,10 +1711,136 @@ class RowContext:
     companion_post_recovery_observation: dict[str, object] | None = field(
         default=None, repr=False
     )
+    step_checkpoints: list[tuple[str, float]] = field(
+        default_factory=list, repr=False
+    )
 
     def remember_secret(self, value: object) -> None:
         if isinstance(value, str) and len(value) >= 3 and value not in self.secrets:
             self.secrets.append(value)
+
+
+def _mark_step(context: RowContext, step_name: str) -> None:
+    """Record a bounded, observation-only checkpoint for step timing.
+
+    Never raises and never affects control flow; callers invoke this purely
+    for diagnostics at existing phase boundaries.
+    """
+    if step_name not in STEP_TIMING_NAMES:
+        return
+    if len(context.step_checkpoints) >= MAX_STEP_TIMING_ENTRIES:
+        return
+    context.step_checkpoints.append((step_name, context.monotonic()))
+
+
+def _step_timings_from_checkpoints(
+    checkpoints: Sequence[tuple[str, float]], row_end: float
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    bounded = list(checkpoints[:MAX_STEP_TIMING_ENTRIES])
+    for index, (name, started_at) in enumerate(bounded):
+        ended_at = bounded[index + 1][1] if index + 1 < len(bounded) else row_end
+        elapsed = max(0.0, min(float(ended_at) - float(started_at), 1_000_000.0))
+        entries.append({"step": name, "elapsed_seconds": round(elapsed, 3)})
+    return entries
+
+
+class _LoadSampler:
+    """Bounded, observation-only background load sampler for one row.
+
+    Samples os.getloadavg() at construction, every interval_seconds while
+    running, and whenever record_sample() is called explicitly (failure or
+    row-end). Never raises into the row; a failed sample is recorded as the
+    'unavailable' marker. Detects two consecutive 1-minute samples above
+    threshold and exposes them via abort_samples() without raising itself;
+    the caller decides whether to abort.
+    """
+
+    def __init__(
+        self,
+        *,
+        getloadavg: Callable[[], tuple[float, float, float]],
+        monotonic: Callable[[], float],
+        row_start_monotonic: float,
+        interval_seconds: float = LOAD_SAMPLE_INTERVAL_SECONDS,
+        threshold: float = LOAD_ABORT_ONE_MINUTE_THRESHOLD,
+        consecutive_required: int = LOAD_ABORT_CONSECUTIVE_SAMPLES,
+        max_samples: int = MAX_LOAD_SAMPLES_PER_ROW,
+    ) -> None:
+        self._getloadavg = getloadavg
+        self._monotonic = monotonic
+        self._row_start = row_start_monotonic
+        self._interval = interval_seconds
+        self._threshold = threshold
+        self._consecutive_required = consecutive_required
+        self._max_samples = max_samples
+        self._lock = threading.Lock()
+        self._samples: list[list[object]] = []
+        self._consecutive_high = 0
+        self._abort_samples: list[list[object]] | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self.record_sample()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            try:
+                self.record_sample()
+            except Exception:
+                pass
+
+    def record_sample(self) -> None:
+        try:
+            one, five, fifteen = self._getloadavg()
+            one_valid = type(one) in (int, float) and math.isfinite(one)
+            five_valid = type(five) in (int, float) and math.isfinite(five)
+            fifteen_valid = type(fifteen) in (int, float) and math.isfinite(fifteen)
+        except OSError:
+            one_valid = five_valid = fifteen_valid = False
+        with self._lock:
+            if len(self._samples) >= self._max_samples:
+                return
+            try:
+                offset = round(max(0.0, self._monotonic() - self._row_start), 2)
+            except Exception:
+                offset = 0.0
+            if not (one_valid and five_valid and fifteen_valid):
+                entry: list[object] = [offset, "unavailable", "unavailable", "unavailable"]
+                self._consecutive_high = 0
+            else:
+                entry = [offset, round(float(one), 2), round(float(five), 2), round(float(fifteen), 2)]
+                if float(one) > self._threshold:
+                    self._consecutive_high += 1
+                else:
+                    self._consecutive_high = 0
+                if (
+                    self._consecutive_high >= self._consecutive_required
+                    and self._abort_samples is None
+                ):
+                    trigger_window = self._samples[-(self._consecutive_required - 1):]
+                    self._abort_samples = list(trigger_window) + [entry]
+            self._samples.append(entry)
+
+    def samples(self) -> list[list[object]]:
+        with self._lock:
+            return [list(entry) for entry in self._samples]
+
+    def abort_samples(self) -> list[list[object]] | None:
+        with self._lock:
+            return (
+                [list(entry) for entry in self._abort_samples]
+                if self._abort_samples is not None
+                else None
+            )
+
+    def stop(self, timeout: float = 1.0) -> None:
+        self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
 
 def _remember_caught_row_exception(
@@ -2324,6 +2496,7 @@ def _startup_timeout_observation(
 def _start_local_game_runtime(
     context: RowContext,
 ) -> tuple[dict[str, object] | None, RowExecutionResult | None]:
+    _mark_step(context, "startup_precheck")
     try:
         seed_checks, usage_baseline = context.startup_input_validator(
             context.sandbox_root
@@ -2365,6 +2538,7 @@ def _start_local_game_runtime(
             exception=exc,
         )
 
+    _mark_step(context, "startup_connect")
     events = {
         "game_started": False,
         "error": False,
@@ -2439,6 +2613,7 @@ def _start_local_game_runtime(
         if _usage_receipts_after(usage_baseline, connected_usage):
             return None, _failed("startup_receipt_outside_startup_window")
 
+        _mark_step(context, "start_game_wait")
         started_at = datetime.now(timezone.utc)
         context.provider_attempt_window = (started_at, started_at)
         emit("start_game")
@@ -2625,6 +2800,7 @@ class L03PublicAccessExecutor:
             if startup_observed is None:
                 return _blocked("startup_observation_unavailable")
 
+            _mark_step(context, "issue_access")
             issued = context.host_api.post("issue-access", {})
             if issued.status != 200 or issued.payload.get("ok") is not True:
                 return _failed(
@@ -2639,6 +2815,7 @@ class L03PublicAccessExecutor:
                 )
             context.remember_secret(credential)
 
+            _mark_step(context, "start_sharing")
             started, _recovery, failure = _post_companion_starting_action(
                 context, "start", {}
             )
@@ -2658,6 +2835,7 @@ class L03PublicAccessExecutor:
                     observed=_host_api_observation(started),
                 )
 
+            _mark_step(context, "copy_invitation")
             invitation = context.host_api.post("copy-invitation", {})
             invitation_url = invitation.payload.get("invitation")
             if (
@@ -2672,6 +2850,7 @@ class L03PublicAccessExecutor:
             context.remember_secret(invitation_url)
             client.bind_invitation(invitation_url)
 
+            _mark_step(context, "boundary_checks")
             shell = client.request("GET", "/")
             if shell.status != 200:
                 return _failed("public_player_shell_unavailable")
@@ -5108,11 +5287,11 @@ def _is_serve_process(
     )
 
 
-def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
+def _gate_profile_state(context: RowContext) -> ProfileState | None:
     try:
         install_path = Path(os.path.abspath(os.fspath(context.sandbox_root)))
         install_marker = "neq-" + hashlib.sha256(os.fsencode(install_path)).hexdigest()[:32]
-        profile = prepare_profile(
+        return prepare_profile(
             Path(context.host.state_root),
             install_marker=install_marker,
             profile=DEFAULT_PROFILE,
@@ -5125,7 +5304,11 @@ def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
             gate_step="identity_observation",
         )
         return None
-    return profile.layout if profile.state == "ready" else None
+
+
+def _gate_profile_layout(context: RowContext) -> ProfileLayout | None:
+    profile = _gate_profile_state(context)
+    return profile.layout if profile is not None and profile.state == "ready" else None
 
 
 def _identity_cleanup_observations(
@@ -5850,6 +6033,7 @@ class LiveGateDependencies:
     monotonic: Callable[[], float] = time.monotonic
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     sleep: Callable[[float], None] = time.sleep
+    getloadavg: Callable[[], tuple[float, float, float]] = os.getloadavg
     public_client_factory: Callable[[], PublicUrlClient] = PublicUrlClient
     process_table_factory: Callable[[], ProcessTable] = SystemProcessTable
     process_identity_probe: Callable[[int], object | None] = probe_process_identity
@@ -7262,6 +7446,10 @@ class LiveGateRunner:
         self._unconfirmed_identity_cleanup_safe = True
         self._pre_row_exception: BaseException | None = None
         self._pre_row_gate_step = "row_precheck"
+        self._active_load_sampler: _LoadSampler | None = None
+        self._max_one_minute_load_observed: float | None = None
+        self._load_sample_count = 0
+        self._environment_load_abort: str | None = None
 
     def run(self) -> dict[str, object]:
         if (
@@ -7324,7 +7512,7 @@ class LiveGateRunner:
                     else None
                 ),
                 monotonic=self.dependencies.monotonic,
-                sleep=self.dependencies.sleep,
+                sleep=self._sleep_with_load_check,
                 startup_input_validator=self.dependencies.startup_input_validator,
             )
             self._start_host()
@@ -7621,8 +7809,10 @@ class LiveGateRunner:
                 return
             try:
                 self._check_driver_time()
+                self._check_environment_load()
                 self._reverify_lock()
                 self._check_driver_time()
+                self._check_environment_load()
             except GateError as exc:
                 safe_reason = _safe_row_gate_error_reason(exc.reason)
                 self._add_infrastructure(safe_reason)
@@ -7692,8 +7882,16 @@ class LiveGateRunner:
             self.context.row_deadline_at = row_started + timeout_seconds
             self.context.companion_post_recovery_observation = None
             self.context.caught_failure_diagnostic = None
+            self.context.step_checkpoints = []
             caught_exception: BaseException | None = None
             diagnostic_step = "row_executor"
+            load_sampler = _LoadSampler(
+                getloadavg=self.dependencies.getloadavg,
+                monotonic=self.dependencies.monotonic,
+                row_start_monotonic=row_started,
+            )
+            self._active_load_sampler = load_sampler
+            load_sampler.start()
             try:
                 with _RowDeadline(timeout_seconds):
                     result = registry[row.row_id].execute(self.context)
@@ -7714,6 +7912,9 @@ class LiveGateRunner:
                 self._add_infrastructure("executor_exception:" + row.row_id)
             finally:
                 self.context.row_deadline_at = None
+                load_sampler.record_sample()
+                load_sampler.stop()
+                self._observe_load_sampler(load_sampler)
             result = _include_companion_post_observation(self.context, result)
             elapsed = max(0.0, self.dependencies.monotonic() - row_started)
             if elapsed > row.timeout_seconds:
@@ -7723,6 +7924,7 @@ class LiveGateRunner:
                 self._add_infrastructure("row_time_cap_exceeded:" + row.row_id)
             try:
                 self._check_driver_time()
+                self._check_environment_load()
             except GateError as exc:
                 caught_exception = exc
                 diagnostic_step = "row_postcheck"
@@ -7731,6 +7933,8 @@ class LiveGateRunner:
                     "BLOCKED", safe_reason, dict(result.observed)
                 )
                 self._add_infrastructure(safe_reason)
+            finally:
+                self._active_load_sampler = None
             if row.row_id == "L10" and self.host is not None and self.host.owner_pid is None:
                 # L10 intentionally stops the owned host and removes its private
                 # state before returning. The last pre-teardown sample is the
@@ -7739,6 +7943,7 @@ class LiveGateRunner:
                 after_status = before_status
             else:
                 try:
+                    _mark_step(self.context, "row_counter_observation")
                     assert self.api is not None
                     after_response = self.api.get_status()
                     _remember_payload_secrets(after_response.payload, self.secrets)
@@ -7805,6 +8010,12 @@ class LiveGateRunner:
                 result,
                 gate_step=diagnostic_step,
                 exception=caught_exception,
+            )
+            result = _result_with_row_instrumentation(
+                result,
+                self.context.step_checkpoints,
+                self.dependencies.monotonic(),
+                load_sampler.samples(),
             )
             self._observe_result_secrets(result)
             record = {
@@ -8068,6 +8279,28 @@ class LiveGateRunner:
         if self._remaining_driver_seconds() <= 0:
             raise GateError("driver_time_cap_exceeded", verdict="BLOCKED")
 
+    def _sleep_with_load_check(self, seconds: float) -> None:
+        self.dependencies.sleep(seconds)
+        self._check_environment_load()
+
+    def _check_environment_load(self) -> None:
+        sampler = self._active_load_sampler
+        if sampler is None:
+            return
+        if sampler.abort_samples() is not None:
+            raise GateError("environment_load", verdict="BLOCKED")
+
+    def _observe_load_sampler(self, sampler: "_LoadSampler") -> None:
+        for entry in sampler.samples():
+            self._load_sample_count += 1
+            one_minute = entry[1] if len(entry) > 1 else None
+            if isinstance(one_minute, (int, float)):
+                if (
+                    self._max_one_minute_load_observed is None
+                    or float(one_minute) > self._max_one_minute_load_observed
+                ):
+                    self._max_one_minute_load_observed = float(one_minute)
+
     def _remaining_driver_seconds(self) -> float:
         elapsed = self.dependencies.monotonic() - self.started
         return float(FROZEN_CAPS["driver_wall_clock_seconds"]) - elapsed
@@ -8142,12 +8375,16 @@ class LiveGateRunner:
 
     def _clean_unconfirmed_companion_identity(self, host_port_owned: bool) -> bool:
         context = self.context
-        if not host_port_owned or context is None:
+        if context is None:
             self.teardown["identity_cleanup_result"] = "ownership_unavailable"
             return False
         try:
+            profile_state = _gate_profile_state(context)
+            if profile_state is not None and profile_state.state == "absent":
+                self.teardown["identity_cleanup_result"] = "not_needed"
+                return True
             companion = _companion_path(context)
-            layout = _gate_profile_layout(context)
+            layout = profile_state.layout if profile_state is not None else None
             if (
                 not _installed_companion_matches(context, companion)
                 or layout is None
@@ -8309,7 +8546,30 @@ class LiveGateRunner:
                 self.teardown["sharing_stopped"] = False
         else:
             self.teardown["sharing_stopped"] = False
+        l10_passed = any(
+            row.get("row_id") == "L10" and row.get("verdict") == "PASS"
+            for row in self.rows
+        )
+        host_unresponsive_or_stopped = (
+            not host_port_owned or self.teardown.get("sharing_stopped") is not True
+        )
+        identity_cleanup_required = unconfirmed_post or (
+            not l10_passed and host_unresponsive_or_stopped
+        )
         if unconfirmed_post:
+            self._unconfirmed_identity_cleanup_safe = (
+                self._clean_unconfirmed_companion_identity(host_port_owned)
+            )
+            if not self._unconfirmed_identity_cleanup_safe:
+                self._add_infrastructure("unconfirmed_identity_cleanup_failed")
+        elif not l10_passed and host_unresponsive_or_stopped:
+            # L10 PASS already deletes the gate-owned identity itself; outside
+            # that golden path, a stopped or unresponsive host can otherwise
+            # leave a live companion identity behind (see attempt-12 L03
+            # host_counters_unavailable incident). Attempt cleanup only when
+            # ownership and profile/path are proven to belong to this run;
+            # _clean_unconfirmed_companion_identity refuses (no companion
+            # command run) on any mismatch.
             self._unconfirmed_identity_cleanup_safe = (
                 self._clean_unconfirmed_companion_identity(host_port_owned)
             )
@@ -8341,7 +8601,7 @@ class LiveGateRunner:
             if host_state_root != self.state_root:
                 self.teardown["gate_state_root_removed"] = False
                 self._add_infrastructure("gate_state_cleanup_failed")
-            elif unconfirmed_post and not self._unconfirmed_identity_cleanup_safe:
+            elif identity_cleanup_required and not self._unconfirmed_identity_cleanup_safe:
                 self.teardown["gate_state_root_removed"] = False
                 self._add_infrastructure("gate_state_cleanup_failed")
             elif not self.teardown["host_stopped"] or not self.teardown["ports_free"]:
@@ -8482,6 +8742,10 @@ class LiveGateRunner:
             "infrastructure_failures": list(self.infrastructure_failures),
             "semantic_failures": list(self.semantic_failures),
             "teardown": dict(self.teardown),
+            "environment_load_summary": {
+                "max_one_minute_load_observed": self._max_one_minute_load_observed,
+                "sample_count": self._load_sample_count,
+            },
             **verdicts,
         }
         apply_diagnostic_marker(run_record)

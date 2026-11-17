@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import http.client
 import importlib.util
@@ -2052,6 +2053,24 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             r"^scripts/test_n3_live_lifecycle_gate\.py:[1-9][0-9]*$",
         )
         self.assertNotIn("row-reason-secret-sentinel", repr(result.observed))
+
+    def test_l01_caught_exception_propagates_each_host_api_error_reason(self) -> None:
+        for reason in (
+            "host_api_action_invalid",
+            "host_api_payload_invalid",
+            "host_api_payload_too_large",
+            "host_api_timeout_invalid",
+            "managed_host_ownership_failed",
+        ):
+            with self.subTest(reason=reason):
+                class RaisingApi:
+                    def get_status(self, *, timeout_seconds: float | None = None):
+                        raise gate.HostApiError(reason)
+
+                context = self.make_row_context(api=RaisingApi())
+                result = gate.L01SharingOffExecutor().execute(context)
+                diagnostic = result.observed["failure_diagnostic"]
+                self.assertEqual(diagnostic["reason_code"], reason)
 
     def test_companion_process_identification_uses_capture_copy_path(self) -> None:
         context = self.make_row_context()
@@ -5754,8 +5773,11 @@ ACTIVE_PROFILE = "n3-luna"
             patch.object(gate, "_installed_companion_matches", return_value=True),
             patch.object(
                 gate,
-                "_gate_profile_layout",
-                return_value=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
             ),
             patch.object(gate, "_identity_owner_record_matches", return_value=True),
             patch.object(
@@ -5813,6 +5835,303 @@ ACTIVE_PROFILE = "n3-luna"
         )
         self.assertTrue(runner.teardown["gate_state_root_removed"])
         self.assertNotIn(secret, repr(runner.teardown))
+
+    def _build_unresponsive_host_teardown_runner(self) -> gate.LiveGateRunner:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = self.fake_api
+        runner.host_started = True
+        runner.state_root = host.state_root
+        self.ports.host_pid = None
+        context = self.make_row_context(api=self.fake_api)
+        context.host = host
+        runner.context = context
+        host.stop = lambda: True
+        return runner
+
+    def test_teardown_cleans_identity_when_host_unresponsive_and_ownership_matches(
+        self,
+    ) -> None:
+        events: list[str] = []
+        runner = self._build_unresponsive_host_teardown_runner()
+
+        status_outputs = iter(("running", "stopped", "absent"))
+
+        def companion_status(*_args: object) -> gate.RunResult:
+            events.append("identity-status")
+            return gate.RunResult(0, next(status_outputs))
+
+        def companion_command(
+            _context: gate.RowContext,
+            argv: tuple[str, ...],
+            _environment: Mapping[str, str],
+        ) -> gate.RunResult:
+            action = argv[-1]
+            events.append("identity-down" if action == "down" else "identity-delete")
+            return gate.RunResult(0, "")
+
+        def identity_evidence(output: str) -> tuple[bool, bool, bool] | None:
+            return {
+                "running": (True, True, False),
+                "stopped": (True, False, True),
+                "absent": (False, False, True),
+            }.get(output)
+
+        def identity_absent(output: str) -> bool | None:
+            return {"running": False, "stopped": False, "absent": True}.get(output)
+
+        def identity_postchecks(*_args: object) -> list[dict[str, object]]:
+            events.append("identity-postcheck")
+            return [
+                {"kind": kind, "state": "absent", "count": 0}
+                for kind in ("service_manager", "profile_processes", "helper_processes")
+            ]
+
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(
+                gate,
+                "companion_environment",
+                return_value={
+                    "HOME": "gate-home",
+                    "XDG_CONFIG_HOME": "gate-config",
+                    "XDG_DATA_HOME": "gate-data",
+                    "XDG_STATE_HOME": "gate-state",
+                    "XDG_RUNTIME_DIR": "gate-runtime",
+                },
+            ),
+            patch.object(gate, "_run_companion_status", side_effect=companion_status),
+            patch.object(gate, "_run_companion_command", side_effect=companion_command),
+            patch.object(gate, "_identity_status_evidence", side_effect=identity_evidence),
+            patch.object(gate, "_identity_absent_status", side_effect=identity_absent),
+            patch.object(
+                gate,
+                "_identity_cleanup_observations",
+                side_effect=identity_postchecks,
+            ),
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                side_effect=lambda *_args, **_kwargs: (
+                    events.append("state-root-remove") or (True, True)
+                ),
+            ),
+        ):
+            runner._teardown()
+
+        self.assertEqual(
+            events,
+            [
+                "identity-status",
+                "identity-down",
+                "identity-status",
+                "identity-delete",
+                "identity-status",
+                "identity-postcheck",
+                "state-root-remove",
+            ],
+        )
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "verified_absent")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_identity_cleanup_refuses_on_ownership_mismatches(self) -> None:
+        scenarios = {
+            "foreign_profile": dict(
+                layout=SimpleNamespace(profile="other-profile"),
+                installed=True,
+                owner_matches=True,
+            ),
+            "missing_owner_record": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=True,
+                owner_matches=False,
+            ),
+            "owner_record_for_different_run": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=True,
+                owner_matches=False,
+            ),
+            "missing_layout_or_path_mismatch": dict(
+                layout=None,
+                installed=True,
+                owner_matches=True,
+            ),
+            "installed_companion_mismatch": dict(
+                layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                installed=False,
+                owner_matches=True,
+            ),
+        }
+        for name, scenario in scenarios.items():
+            with self.subTest(scenario=name):
+                runner = self._build_unresponsive_host_teardown_runner()
+                profile_state = SimpleNamespace(
+                    state="ready" if scenario["layout"] is not None else "foreign",
+                    layout=scenario["layout"],
+                )
+                with (
+                    patch.object(
+                        gate,
+                        "_installed_companion_matches",
+                        return_value=scenario["installed"],
+                    ),
+                    patch.object(
+                        gate, "_gate_profile_state", return_value=profile_state
+                    ),
+                    patch.object(
+                        gate,
+                        "_identity_owner_record_matches",
+                        return_value=scenario["owner_matches"],
+                    ),
+                    patch.object(gate, "_run_companion_status") as status_mock,
+                    patch.object(gate, "_run_companion_command") as command_mock,
+                ):
+                    runner._teardown()
+                self.assertFalse(status_mock.called)
+                self.assertFalse(command_mock.called)
+                self.assertEqual(
+                    runner.teardown["identity_cleanup_result"], "ownership_unavailable"
+                )
+                self.assertIn(
+                    "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+                )
+
+    def test_teardown_identity_cleanup_refuses_on_environment_key_mismatch(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(
+                gate, "companion_environment", return_value={"HOME": "incomplete"}
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(
+            runner.teardown["identity_cleanup_result"], "environment_invalid"
+        )
+        self.assertIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_skips_new_cleanup_path_when_l10_already_passed(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        runner.rows.append({"row_id": "L10", "verdict": "PASS"})
+        with (
+            patch.object(gate, "_installed_companion_matches", return_value=True),
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(
+                    state="ready",
+                    layout=SimpleNamespace(profile=gate.DEFAULT_PROFILE),
+                ),
+            ),
+            patch.object(gate, "_identity_owner_record_matches", return_value=True),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+
+    def test_teardown_no_profile_artifacts_is_clean_noop(self) -> None:
+        runner = self._build_unresponsive_host_teardown_runner()
+        with (
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(state="absent", layout=None),
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                return_value=(True, True),
+            ),
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertNotIn(
+            "unconfirmed_identity_cleanup_failed", runner.infrastructure_failures
+        )
+        self.assertTrue(runner.teardown["gate_state_root_removed"])
+
+    def test_teardown_early_row_failure_host_never_started_no_profile(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        host = FakeHost(
+            self.root,
+            self.root / gate.CAPTURE_RELATIVE,
+            self.state_root_for(self.run_id),
+            self.run_id,
+            self.ports,
+        )
+        runner.host = host
+        runner.api = self.fake_api
+        runner.host_started = False
+        runner.state_root = host.state_root
+        self.ports.host_pid = None
+        context = self.make_row_context(api=self.fake_api)
+        context.host = host
+        runner.context = context
+        host.stop = lambda: True
+        with (
+            patch.object(
+                gate,
+                "_gate_profile_state",
+                return_value=SimpleNamespace(state="absent", layout=None),
+            ),
+            patch.object(gate, "_run_companion_status") as status_mock,
+            patch.object(gate, "_run_companion_command") as command_mock,
+            patch.object(
+                gate,
+                "_cleanup_driver_state_root",
+                return_value=(True, True),
+            ),
+        ):
+            runner._teardown()
+        self.assertFalse(status_mock.called)
+        self.assertFalse(command_mock.called)
+        self.assertEqual(runner.teardown["identity_cleanup_result"], "not_needed")
+        self.assertEqual(runner.infrastructure_failures, [])
+        self.assertTrue(runner.teardown["sharing_stopped"])
+        self.assertTrue(runner.teardown["gate_state_root_removed"])
 
     def test_unconfirmed_teardown_uses_launchctl_parser_and_fails_closed(self) -> None:
         unrelated_lines = (
@@ -6603,6 +6922,251 @@ ACTIVE_PROFILE = "n3-luna"
             host.start()
         self.assertTrue(original_root.is_dir())
         self.assertTrue(host.process is None)
+
+    def test_step_timings_from_checkpoints_bounded_and_rounded(self) -> None:
+        checkpoints = [("startup_precheck", 1000.0), ("startup_connect", 1000.5)]
+        entries = gate._step_timings_from_checkpoints(checkpoints, 1001.25)
+        self.assertEqual(
+            entries,
+            [
+                {"step": "startup_precheck", "elapsed_seconds": 0.5},
+                {"step": "startup_connect", "elapsed_seconds": 0.75},
+            ],
+        )
+
+    def test_step_timings_cap_enforced(self) -> None:
+        checkpoints = [("startup_precheck", float(i)) for i in range(50)]
+        entries = gate._step_timings_from_checkpoints(checkpoints, 100.0)
+        self.assertLessEqual(len(entries), gate.MAX_STEP_TIMING_ENTRIES)
+
+    def test_mark_step_rejects_unknown_step_name(self) -> None:
+        context = SimpleNamespace(step_checkpoints=[], monotonic=lambda: 5.0)
+        gate._mark_step(context, "not-a-real-step")
+        self.assertEqual(context.step_checkpoints, [])
+
+    def test_mark_step_bounded(self) -> None:
+        context = SimpleNamespace(step_checkpoints=[], monotonic=lambda: 5.0)
+        for _ in range(gate.MAX_STEP_TIMING_ENTRIES + 5):
+            gate._mark_step(context, "startup_precheck")
+        self.assertEqual(len(context.step_checkpoints), gate.MAX_STEP_TIMING_ENTRIES)
+
+    def test_load_sampler_records_unavailable_on_oserror(self) -> None:
+        def failing_getloadavg() -> tuple[float, float, float]:
+            raise OSError("unavailable")
+
+        sampler = gate._LoadSampler(
+            getloadavg=failing_getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        self.assertEqual(
+            sampler.samples(),
+            [[0.0, "unavailable", "unavailable", "unavailable"]],
+        )
+        self.assertIsNone(sampler.abort_samples())
+
+    def test_load_sampler_caps_entries_at_bound(self) -> None:
+        sampler = gate._LoadSampler(
+            getloadavg=lambda: (1.0, 1.0, 1.0),
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+            max_samples=3,
+        )
+        for _ in range(10):
+            sampler.record_sample()
+        self.assertEqual(len(sampler.samples()), 3)
+
+    def test_load_sampler_does_not_abort_on_single_spike_then_calm_sample(self) -> None:
+        values = iter([60.0, 5.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        sampler.record_sample()
+        self.assertIsNone(sampler.abort_samples())
+
+    def test_load_sampler_aborts_after_two_consecutive_high_samples(self) -> None:
+        values = iter([60.0, 70.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        self.assertIsNone(sampler.abort_samples())
+        sampler.record_sample()
+        abort_samples = sampler.abort_samples()
+        self.assertIsNotNone(abort_samples)
+        self.assertEqual(len(abort_samples), 2)
+        self.assertEqual(abort_samples[0][1], 60.0)
+        self.assertEqual(abort_samples[1][1], 70.0)
+
+    def test_load_abort_constants_match_contract(self) -> None:
+        self.assertEqual(gate.LOAD_ABORT_ONE_MINUTE_THRESHOLD, 50.0)
+        self.assertEqual(gate.LOAD_ABORT_CONSECUTIVE_SAMPLES, 2)
+        self.assertEqual(gate.LOAD_SAMPLE_INTERVAL_SECONDS, 30.0)
+
+    def test_check_environment_load_raises_blocked_when_sampler_aborted(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        values = iter([60.0, 70.0])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return (next(values), 1.0, 1.0)
+
+        sampler = gate._LoadSampler(
+            getloadavg=getloadavg,
+            monotonic=lambda: 0.0,
+            row_start_monotonic=0.0,
+        )
+        sampler.record_sample()
+        sampler.record_sample()
+        runner._active_load_sampler = sampler
+        with self.assertRaises(gate.GateError) as caught:
+            runner._check_environment_load()
+        self.assertEqual(caught.exception.reason, "environment_load")
+        self.assertEqual(caught.exception.verdict, "BLOCKED")
+
+    def test_check_environment_load_is_noop_without_active_sampler(self) -> None:
+        runner = gate.LiveGateRunner(self.dependencies, self.arguments)
+        runner._active_load_sampler = None
+        runner._check_environment_load()
+
+    def test_row_record_carries_bounded_step_timings_and_load_samples(self) -> None:
+        class ObservingExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                gate._mark_step(context, "startup_precheck")
+                gate._mark_step(context, "startup_connect")
+                return gate._blocked("diagnostic_only_stop")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = ObservingExecutor()
+        result = gate.run_live_gate(
+            self.make_dependencies(executors=registry), self.arguments
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        first_row = row_records[0]
+        self.assertIn("step_timings", first_row["observed"])
+        self.assertIn("load_samples", first_row["observed"])
+        step_timings = first_row["observed"]["step_timings"]
+        self.assertLessEqual(len(step_timings), gate.MAX_STEP_TIMING_ENTRIES)
+        self.assertEqual(
+            [entry["step"] for entry in step_timings][:2],
+            ["startup_precheck", "startup_connect"],
+        )
+        self.assertTrue(
+            all(
+                isinstance(entry.get("elapsed_seconds"), float)
+                for entry in step_timings
+            )
+        )
+        load_samples = first_row["observed"]["load_samples"]
+        self.assertLessEqual(len(load_samples), gate.MAX_LOAD_SAMPLES_PER_ROW)
+        run_record = json.loads(
+            (evidence / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            set(run_record["environment_load_summary"]),
+            {"max_one_minute_load_observed", "sample_count"},
+        )
+
+    def test_environment_load_abort_blocks_row_and_fails_fast_later_rows(self) -> None:
+        class SleepyExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.sleep(0.01)
+                context.sleep(0.01)
+                context.sleep(0.01)
+                return gate.RowExecutionResult("PASS", "sleepy_pass")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SleepyExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=lambda: (60.0, 1.0, 1.0),
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "BLOCKED")
+        self.assertEqual(first_row["reason"], "environment_load")
+        self.assertTrue(
+            all(row["reason"] == "fail-fast" for row in result["rows"][1:])
+        )
+        evidence = self.root / result["evidence_path"]
+        row_records = [
+            json.loads(line)
+            for line in (evidence / "rows.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+        ]
+        load_samples = row_records[0]["observed"]["load_samples"]
+        self.assertLessEqual(len(load_samples), gate.MAX_LOAD_SAMPLES_PER_ROW)
+        self.assertGreaterEqual(len(load_samples), 2)
+        self.assertTrue(all(entry[1] == 60.0 for entry in load_samples))
+        self.assertTrue(self.fake_host.stopped)
+
+    def test_environment_load_single_spike_then_calm_does_not_abort(self) -> None:
+        class SleepyExecutor:
+            def execute(self, context: gate.RowContext) -> gate.RowExecutionResult:
+                context.sleep(0.01)
+                return gate.RowExecutionResult("PASS", "sleepy_pass")
+
+        readings = iter([(60.0, 1.0, 1.0), (5.0, 1.0, 1.0)])
+
+        def getloadavg() -> tuple[float, float, float]:
+            return next(readings, (5.0, 1.0, 1.0))
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SleepyExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=getloadavg,
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "PASS")
+        self.assertEqual(first_row["reason"], "sleepy_pass")
+
+    def test_environment_load_abort_honored_by_post_row_check_without_sleeps(
+        self,
+    ) -> None:
+        class SilentExecutor:
+            def execute(self, _context: gate.RowContext) -> gate.RowExecutionResult:
+                return gate.RowExecutionResult("PASS", "silent_pass")
+
+        registry = dict(gate.ROW_EXECUTORS)
+        registry["L01"] = SilentExecutor()
+        deps = dataclasses.replace(
+            self.make_dependencies(executors=registry),
+            getloadavg=lambda: (60.0, 1.0, 1.0),
+            sleep=lambda _seconds: None,
+        )
+        result = gate.run_live_gate(deps, self.arguments)
+        first_row = result["rows"][0]
+        self.assertEqual(first_row["verdict"], "BLOCKED")
+        self.assertEqual(first_row["reason"], "environment_load")
+        self.assertTrue(
+            all(row["reason"] == "fail-fast" for row in result["rows"][1:])
+        )
+        self.assertTrue(self.fake_host.stopped)
 
     def test_host_harness_refuses_ports_without_touching_8357(self) -> None:
         ports = FakePortInspector()

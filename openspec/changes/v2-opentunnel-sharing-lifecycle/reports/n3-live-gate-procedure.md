@@ -127,6 +127,42 @@ path; it never records the raw cache path. L10 deletes only that run's state
 root. It removes the shared `neq-n3g` namespace only if it is still the same
 private directory and is empty; unrelated cache entries are retained.
 
+## Harness diagnostics (observation only)
+
+Per ruling `neq-n3-attempt12-l03-counters-20261117`, the driver now captures
+bounded, observation-only diagnostics that never change row order, caps,
+deadlines, or pass/fail logic (except the dedicated environment-load abort
+below). The frozen manifest digest is unchanged by this instrumentation.
+
+- Caught `HostApiError` reason codes (including `host_api_action_invalid`,
+  `host_api_payload_invalid`, `host_api_payload_too_large`,
+  `host_api_timeout_invalid`, and `managed_host_ownership_failed`) now
+  propagate into `failure_diagnostic.reason_code` instead of falling back to
+  `unclassified_reason`.
+- Each row's `observed.step_timings` records a bounded, fixed-allowlist set
+  of sub-step elapsed seconds (`context.monotonic()`-based, max
+  `MAX_STEP_TIMING_ENTRIES` entries).
+- Each row's `observed.load_samples` records bounded 1/5/15-minute
+  `os.getloadavg()` samples (row start, every `LOAD_SAMPLE_INTERVAL_SECONDS`,
+  and row end; max `MAX_LOAD_SAMPLES_PER_ROW` entries, `unavailable` on
+  `OSError`). `run.json` carries a bounded `environment_load_summary` (max
+  1-minute load observed, sample count) for the whole run.
+- If the 1-minute load average exceeds `LOAD_ABORT_ONE_MINUTE_THRESHOLD` for
+  `LOAD_ABORT_CONSECUTIVE_SAMPLES` consecutive samples, the active row stops
+  and is recorded `BLOCKED` with reason `environment_load` (never
+  `FAIL`/`PASS`); normal teardown still runs and later rows fail-fast
+  `BLOCKED` as usual.
+- Teardown now also attempts identity cleanup when the host is stopped or
+  unresponsive outside the L10 golden path (the attempt-12 incident: an L03
+  `host_counters_unavailable` BLOCKED row left a live companion identity
+  behind because teardown only ran cleanup on an unconfirmed companion
+  start). If this run's own gate state root never had any profile artifacts
+  (for example an early L01 failure before identity init), cleanup records
+  `identity_cleanup_result = "not_needed"` and runs no companion command;
+  this is a clean no-op, not a refusal. Otherwise cleanup is attempted only
+  when the owner record and profile/path both match this run; any mismatch
+  refuses with no companion command run.
+
 ## One authorized live run
 
 Run once only, from the clean repository at the booked SHA, with the active
