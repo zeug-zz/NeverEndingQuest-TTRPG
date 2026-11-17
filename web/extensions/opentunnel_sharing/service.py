@@ -330,6 +330,18 @@ class PlayerSharingService:
         """Return the same safe projection as status; never include raw output."""
         return self.status()
 
+    def start_failure_diagnostics(self) -> dict[str, object] | None:
+        """Host-only evidence for the latest failed start; None otherwise."""
+        with self._lock:
+            controller = self._controller
+        if controller is None:
+            return None
+        try:
+            value = controller.start_failure_diagnostics()
+        except Exception:
+            return None
+        return value if isinstance(value, dict) else None
+
     def supervision_status(self) -> RelaySupervisionSnapshot | None:
         """Return bounded supervisor counters without probing resources."""
         with self._lock:
@@ -1314,6 +1326,7 @@ class _ProductionComposition:
             identity_initialized=lambda: self._identity_initialized(layout),
             start_companion=start_companion,
             route_status=route_status,
+            diagnostic_secrets=lambda: [_raw_verifier(layout) or ""],
             origin_binder=binder,
             companion_start_deadline_seconds=MAX_COMPANION_START_DEADLINE_SECONDS,
             route_wait_seconds=MAX_ROUTE_WAIT_SECONDS,
@@ -1412,7 +1425,16 @@ class _ProductionComposition:
         layout: ProfileLayout,
     ) -> RouteStatus:
         try:
-            if handle.state != "running" or handle.profile_layout != layout:
+            handle_state = handle.state
+            if handle_state != "running" or handle.profile_layout != layout:
+                # TABLETOP MODE: Evidence only; the early return is unchanged.
+                _note_evidence(
+                    handle,
+                    "note_status_skipped",
+                    "state_" + str(handle_state)
+                    if handle_state != "running"
+                    else "layout_mismatch"
+                )
                 return RouteStatus(False, None, generation)
             path = handle.executable_path
             result = self._command_runner()(
@@ -1421,6 +1443,13 @@ class _ProductionComposition:
                 MAX_STATUS_COMMAND_SECONDS,
             )
         except Exception:
+            _note_evidence(handle, "note_status_poll",
+                returncode=None,
+                timed_out=False,
+                truncated=False,
+                parsed_ok=False,
+                raised=True,
+            )
             return RouteStatus(False, None, generation)
         if (
             not isinstance(result, RunResult)
@@ -1428,8 +1457,24 @@ class _ProductionComposition:
             or result.timed_out
             or result.output_truncated
         ):
+            # TABLETOP MODE: Keep a bounded note for start-failure evidence only.
+            if isinstance(result, RunResult):
+                _note_evidence(handle, "note_status_poll",
+                    returncode=result.returncode,
+                    timed_out=result.timed_out,
+                    truncated=result.output_truncated,
+                    parsed_ok=False,
+                    output=result.bounded_output,
+                )
             return RouteStatus(False, None, generation)
         origin = _parse_companion_status(result.bounded_output, layout.profile)
+        _note_evidence(handle, "note_status_poll",
+            returncode=result.returncode,
+            timed_out=False,
+            truncated=False,
+            parsed_ok=origin is not None,
+            output=result.bounded_output,
+        )
         return RouteStatus(origin is not None, origin, generation)
 
     def _rotate_access(self, layout: ProfileLayout) -> IssuedCredential:
@@ -1665,6 +1710,16 @@ class _ProfileRouteTable:
             and stat.S_IMODE(metadata.st_mode) == 0o600
             and metadata.st_size <= MAX_PROFILE_ROUTE_BYTES
         )
+
+
+def _note_evidence(handle: object, method: str, *args: object, **kwargs: object) -> None:
+    """Best-effort start-failure evidence hook; never affects probe results."""
+    try:
+        callback = getattr(handle, method, None)
+        if callable(callback):
+            callback(*args, **kwargs)
+    except Exception:
+        return
 
 
 def _parse_companion_status(output: str, profile: str) -> str | None:

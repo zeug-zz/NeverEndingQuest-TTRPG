@@ -311,6 +311,14 @@ def register_player_sharing_routes(
         projection = _status_projection(status)
         if projection is None:
             return fail("service_unavailable", 503)
+        # TABLETOP MODE: Host-only start-failure evidence; present only after a
+        # failed start. The full detail is returned only on explicit request.
+        diagnostics = _start_failure_projection(
+            service,
+            full=request.args.get("include") == "start_failure_diagnostics",
+        )
+        if diagnostics is not None:
+            projection["start_failure_diagnostics"] = diagnostics
         return respond({"ok": True, "status": projection})
 
     @app.route("/api/player-sharing/initialize-identity", methods=["POST"])
@@ -463,6 +471,32 @@ def _bounded_int(value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         return 0
     return min(max(value, 0), _MAX_COUNTER)
+
+
+_MAX_DIAGNOSTICS_BYTES = 400 * 1024
+
+
+def _start_failure_projection(service: Any, *, full: bool) -> dict[str, Any] | None:
+    reader = getattr(service, "start_failure_diagnostics", None)
+    if not callable(reader):
+        return None
+    try:
+        value = reader()
+        if not isinstance(value, dict):
+            return None
+        summary = value.get("summary")
+        detail = value.get("detail")
+        if not isinstance(summary, dict):
+            return None
+        result: dict[str, Any] = {"summary": summary}
+        if full and isinstance(detail, dict):
+            if len(json.dumps(detail, ensure_ascii=True)) <= _MAX_DIAGNOSTICS_BYTES:
+                result["detail"] = detail
+            else:
+                result["detail_unavailable"] = "too_large"
+        return result
+    except Exception:
+        return None
 
 
 def _status_projection(status: object) -> dict[str, Any] | None:
