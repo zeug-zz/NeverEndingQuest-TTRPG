@@ -3324,6 +3324,108 @@ class TestPreflightRowIntegration(unittest.TestCase):
             )
         self.assertEqual(cleanup.call_args.args[0]["fixture_id"], later_fixture)
 
+    def test_supervised_interfaces_forward_comparison_identity_to_row_supervisor(
+        self,
+    ) -> None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            APPLICATION_B_SHA,
+            APPLICATION_B_TREE,
+            build_comparison_identity,
+        )
+
+        rows, _reserves = _load_frozen_row_ids(None)
+        profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
+        plan = _resolve_row_plan(
+            "E01", prereg_root=None, expected_row=rows[0], profiles=profiles
+        )
+        identity = build_comparison_identity(
+            tool_sha="a" * 40,
+            tool_tree="b" * 40,
+            application_sha=APPLICATION_B_SHA,
+            application_tree=APPLICATION_B_TREE,
+        )
+        row_run_id = "pf-%s-%s" % (RUN_ID, plan.row_id)
+        intended = controller.planned_worker_identity(
+            plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            source_sha=APPLICATION_B_SHA,
+            row_run_id=row_run_id,
+            preflight_run_id=RUN_ID,
+            comparison_identity=identity,
+        )
+        invocation = controller.PreflightLifecycleInvocation(
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            row_run_id=row_run_id,
+            intended_identity=intended,
+        )
+        counters = lambda: {
+            "upstream_provider_requests": 0,
+            "provider_budget_used": 0,
+            "live_attempts_used": 0,
+            "reserve_activations": 0,
+        }
+        interfaces = controller.supervised_preflight_interfaces(
+            run_id=RUN_ID,
+            safety_counters=counters,
+            comparison_identity=identity,
+        )
+        seeded = {"status": "prepared", "fixture_id": plan.fixture_id}
+        supervised = {"evidence": {"outcome": "completed"}}
+        with mock.patch.object(
+            profile_runner, "supervise_preflight_row", return_value=supervised
+        ) as supervise:
+            self.assertIs(
+                interfaces.supervise_row(
+                    plan, seeded, invocation, APPLICATION_B_SHA, RUN_ID
+                ),
+                supervised,
+            )
+
+        self.assertEqual(supervise.call_args.kwargs["source_sha"], APPLICATION_B_SHA)
+        self.assertEqual(supervise.call_args.kwargs["comparison_identity"], identity)
+
+    def test_supervised_interfaces_pass_none_comparison_identity_in_same_sha_mode(
+        self,
+    ) -> None:
+        rows, _reserves = _load_frozen_row_ids(None)
+        profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
+        plan = _resolve_row_plan(
+            "E01", prereg_root=None, expected_row=rows[0], profiles=profiles
+        )
+        row_run_id = "pf-%s-%s" % (RUN_ID, plan.row_id)
+        identity = self._caller_declared_identity(
+            plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            row_run_id=row_run_id,
+        )
+        invocation = controller.PreflightLifecycleInvocation(
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            row_run_id=row_run_id,
+            intended_identity=identity,
+        )
+        counters = lambda: {
+            "upstream_provider_requests": 0,
+            "provider_budget_used": 0,
+            "live_attempts_used": 0,
+            "reserve_activations": 0,
+        }
+        interfaces = controller.supervised_preflight_interfaces(
+            run_id=RUN_ID,
+            safety_counters=counters,
+        )
+        seeded = {"status": "prepared", "fixture_id": plan.fixture_id}
+        supervised = {"evidence": {"outcome": "completed"}}
+        with mock.patch.object(
+            profile_runner, "supervise_preflight_row", return_value=supervised
+        ) as supervise:
+            interfaces.supervise_row(plan, seeded, invocation, SOURCE_SHA, RUN_ID)
+
+        self.assertIsNone(supervise.call_args.kwargs["comparison_identity"])
+
     def test_resume_checkpoint_install_copies_only_row_bound_moved_state(self) -> None:
         from scripts.live_gate_preflight_sandbox import _install_row_resume_checkpoint
 

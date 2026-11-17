@@ -250,6 +250,7 @@ def supervised_preflight_interfaces(
             ),
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=invocation.create_resume_checkpoint,
+            comparison_identity=normalized_comparison_identity,
         )
 
     def cleanup(plan: PreflightRowPlan, seeded: Mapping[str, Any]) -> bool:
