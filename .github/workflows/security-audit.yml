@@ -108,6 +108,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-      - name: Audit frontend lockfile
+      - name: Audit frontend production dependencies (blocking)
         working-directory: web/frontend
+        run: npm audit --package-lock-only --omit=dev --audit-level=low
+      # TABLETOP MODE: dev-only exception GHSA-fc5q-39xc-vjpf (picomatch via vite/vitest), no patched version; remove when a fix ships (SECURITY.md).
+      - name: Audit all frontend dependencies (advisory; see SECURITY.md)
+        working-directory: web/frontend
+        continue-on-error: true
         run: npm audit --package-lock-only --audit-level=low
