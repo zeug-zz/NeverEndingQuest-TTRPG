@@ -5448,6 +5448,7 @@ def _worker(args: argparse.Namespace) -> int:
             resume_checkpoint_sha256=args.resume_checkpoint_sha256,
             preflight_run_id=preflight_run_id,
             create_resume_checkpoint=args.create_resume_checkpoint,
+            comparison_identity=getattr(args, "comparison_identity_json", None),
         )
         expected_pythonpath = os.pathsep.join(
             (

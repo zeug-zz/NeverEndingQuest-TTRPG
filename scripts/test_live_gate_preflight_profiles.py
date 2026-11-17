@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import errno
 import hashlib
@@ -97,6 +98,11 @@ from scripts.live_gate_preflight_profile_runner import (
 )
 from scripts import live_gate_preflight_profile_runner as profile_runner
 from scripts import live_gate_preflight_sandbox as sandbox_preparation
+from scripts.live_gate_preflight_comparison_identity import (
+    APPLICATION_A_SHA,
+    APPLICATION_A_TREE,
+    build_comparison_identity,
+)
 
 
 _LEGACY_LIFECYCLE_FIELDS = {
@@ -9354,6 +9360,66 @@ class TestCheckedInProfileDeclarations(unittest.TestCase):
         self.assertEqual(
             coverage["unverified_row_ids"], ["C0" + str(index) for index in range(1, 9)]
         )
+
+
+class TestWorkerHostCommandComparisonIdentity(unittest.TestCase):
+    """Worker and launch sides must declare the same comparison-mode command."""
+
+    RUNNER_PATH = PROJECT_ROOT / "scripts" / "live_gate_preflight_profile_runner.py"
+
+    def _identity(self) -> dict[str, Any]:
+        return build_comparison_identity(
+            tool_sha="a" * 40,
+            tool_tree="b" * 40,
+            application_sha=APPLICATION_A_SHA,
+            application_tree=APPLICATION_A_TREE,
+        )
+
+    def _command(self, comparison_identity: dict[str, Any] | None) -> list[str]:
+        return profile_runner._host_command(
+            fixture_id="combat_stage_tavern_zones",
+            party_size=1,
+            lifecycle="startup",
+            source_sha=APPLICATION_A_SHA,
+            run_id="comparison-worker-identity",
+            planned_row_id="C01",
+            arm="A",
+            lifecycle_id="comparison-worker-identity_s",
+            resume_checkpoint_sha256=None,
+            comparison_identity=comparison_identity,
+        )
+
+    def test_comparison_identity_pair_is_declared_in_host_command(self) -> None:
+        identity = self._identity()
+        plain = self._command(None)
+        command = self._command(identity)
+        self.assertNotIn("--comparison-identity-json", plain)
+        self.assertEqual(len(command), len(plain) + 2)
+        self.assertEqual(command[: len(plain)], plain)
+        flag_index = command.index("--comparison-identity-json")
+        self.assertEqual(flag_index, len(plain))
+        self.assertEqual(json.loads(command[flag_index + 1]), identity)
+
+    def test_both_host_command_call_sites_forward_comparison_identity(self) -> None:
+        # The worker entry is one large function and cannot run hermetically,
+        # so pin the keyword at both declared-command sites from the AST.
+        tree = ast.parse(self.RUNNER_PATH.read_text(encoding="utf-8"))
+        sites = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_host_command"
+        ]
+        self.assertEqual(len(sites), 2)
+        for site in sites:
+            keywords = {keyword.arg: keyword.value for keyword in site.keywords}
+            with self.subTest(line=site.lineno):
+                self.assertIn("comparison_identity", keywords)
+                self.assertEqual(
+                    ast.unparse(keywords["comparison_identity"]),
+                    "getattr(args, 'comparison_identity_json', None)",
+                )
 
 
 if __name__ == "__main__":
