@@ -1632,5 +1632,135 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertFalse(document["live_gate_pass"])
 
 
+class TestFailureCodeDetail(unittest.TestCase):
+    def test_controller_error_keeps_reason_only_path(self) -> None:
+        exc = preflight_controller.PreflightControllerError(
+            "preflight safety counters are malformed"
+        )
+        self.assertEqual(
+            preflight_controller._failure_code(exc),
+            "preflight_safety_counters_are_malformed",
+        )
+
+    def test_qualifying_message_is_appended(self) -> None:
+        exc = RuntimeError("comparison_git_identity_unavailable")
+        self.assertEqual(
+            preflight_controller._failure_code(exc),
+            "preflight_boundary_failed_RuntimeError:comparison_git_identity_unavailable",
+        )
+
+    def test_chain_details_are_appended_in_order(self) -> None:
+        try:
+            try:
+                raise profile_runner.CharacterizationError(
+                    "comparison_git_identity_unavailable"
+                )
+            except profile_runner.CharacterizationError as inner:
+                raise sandbox_preparation.SandboxPreparationError(
+                    "comparison_source_identity_invalid"
+                ) from inner
+        except sandbox_preparation.SandboxPreparationError as exc:
+            code = preflight_controller._failure_code(exc)
+        self.assertEqual(
+            code,
+            "preflight_boundary_failed_SandboxPreparationError"
+            ":comparison_source_identity_invalid"
+            ":comparison_git_identity_unavailable",
+        )
+
+    def test_context_chain_is_followed_when_cause_is_absent(self) -> None:
+        try:
+            try:
+                raise RuntimeError("context_reason")
+            except RuntimeError:
+                raise ValueError("outer_reason")
+        except ValueError as exc:
+            code = preflight_controller._failure_code(exc)
+        self.assertEqual(
+            code,
+            "preflight_boundary_failed_ValueError:outer_reason:context_reason",
+        )
+
+    def test_non_identifier_messages_are_not_appended(self) -> None:
+        messages = [
+            "scripts/live_gate_preflight.py",
+            "Unexpected Failure",
+            'value={"a": 1}',
+            "trailing.",
+            "x" * 81,
+            "",
+        ]
+        for message in messages:
+            with self.subTest(message=message):
+                self.assertEqual(
+                    preflight_controller._failure_code(RuntimeError(message)),
+                    "preflight_boundary_failed_RuntimeError",
+                )
+
+    def test_unsafe_outer_message_does_not_block_inner_detail(self) -> None:
+        inner = RuntimeError("inner_reason")
+        outer = RuntimeError("Bad/Path: /workspace/tmp/x")
+        outer.__cause__ = inner
+        self.assertEqual(
+            preflight_controller._failure_code(outer),
+            "preflight_boundary_failed_RuntimeError:inner_reason",
+        )
+
+    def test_chain_depth_is_capped_at_four_exceptions(self) -> None:
+        exc = RuntimeError("reason_4")
+        for index in range(3, -1, -1):
+            wrapper = RuntimeError(f"reason_{index}")
+            wrapper.__cause__ = exc
+            exc = wrapper
+        self.assertEqual(
+            preflight_controller._failure_code(exc),
+            "preflight_boundary_failed_RuntimeError"
+            ":reason_0:reason_1:reason_2:reason_3",
+        )
+
+    def test_cause_cycle_terminates(self) -> None:
+        first = RuntimeError("first_reason")
+        second = RuntimeError("second_reason")
+        first.__cause__ = second
+        second.__cause__ = first
+        self.assertEqual(
+            preflight_controller._failure_code(first),
+            "preflight_boundary_failed_RuntimeError:first_reason:second_reason",
+        )
+
+    def test_code_is_truncated_to_120_characters(self) -> None:
+        inner = RuntimeError("a" * 80)
+        middle = RuntimeError("b" * 80)
+        middle.__cause__ = inner
+        outer = RuntimeError("c" * 80)
+        outer.__cause__ = middle
+        full = "preflight_boundary_failed_RuntimeError:" + ":".join(
+            ("c" * 80, "b" * 80, "a" * 80)
+        )
+        code = preflight_controller._failure_code(outer)
+        self.assertEqual(len(code), 120)
+        self.assertEqual(code, full[:120])
+
+    def test_codes_always_satisfy_evidence_safe_code(self) -> None:
+        long_type = type("E" * 100, (RuntimeError,), {})
+        inner = RuntimeError("a" * 80)
+        middle = RuntimeError("b" * 80)
+        middle.__cause__ = inner
+        deep = RuntimeError("c" * 80)
+        deep.__cause__ = middle
+        samples = [
+            RuntimeError("comparison_git_identity_unavailable"),
+            RuntimeError("Bad/Path"),
+            long_type("ok_reason"),
+            deep,
+            preflight_controller.PreflightControllerError("x" * 200),
+        ]
+        for exc in samples:
+            with self.subTest(exc=type(exc).__name__):
+                code = preflight_controller._failure_code(exc)
+                self.assertLessEqual(len(code), 120)
+                self.assertEqual(preflight_evidence._safe_code(code), code)
+
+
 if __name__ == "__main__":
     unittest.main()

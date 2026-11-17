@@ -47,6 +47,9 @@ from scripts.mapping_pilot.manifest import (
 _SOURCE_SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _CHECKPOINT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
+_FAILURE_DETAIL_ID = re.compile(r"[a-z0-9_]{1,80}")
+_FAILURE_CHAIN_DEPTH = 4
+_FAILURE_CODE_LIMIT = 120
 _COUNTER_FIELDS = (
     "upstream_provider_requests",
     "provider_budget_used",
@@ -1649,4 +1652,28 @@ def _counter_delta(before: Mapping[str, int], after: Mapping[str, int]) -> dict[
 def _failure_code(exc: Exception) -> str:
     if isinstance(exc, PreflightControllerError):
         return str(exc).replace(" ", "_")[:100]
-    return "preflight_boundary_failed_" + type(exc).__name__
+    code = "preflight_boundary_failed_" + type(exc).__name__
+    details = _failure_details(exc)
+    if details:
+        code = ":".join((code, *details))
+    return code[:_FAILURE_CODE_LIMIT]
+
+
+def _failure_details(exc: BaseException) -> list[str]:
+    # Walk the cause/context chain so reason ids from wrapped errors stay visible.
+    details: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if len(seen) == _FAILURE_CHAIN_DEPTH:
+            break
+        seen.add(id(current))
+        message = str(current).replace(" ", "_")
+        if _FAILURE_DETAIL_ID.fullmatch(message) is not None:
+            details.append(message)
+        current = (
+            current.__cause__
+            if current.__cause__ is not None
+            else current.__context__
+        )
+    return details
