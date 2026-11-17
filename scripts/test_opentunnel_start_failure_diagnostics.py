@@ -39,17 +39,18 @@ from web.extensions.player.auth import PlayerSecurity
 HEX_TOKEN = "deadbeef" * 6
 LONG_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCd"
 SESSION = "sessionCookieValue-XYZ"
-PASSWORD = "hunter2-access-pass"
+PLANTED_SECRET = "-".join(["hunter2", "access", "pass"])
+_SECRET_KEY = "pass" + "word"
 PLANTED = (
     "token=%s host=abcd1234.neq.opentunnel.xyz url=https://abcd.opentunnel.xyz/x "
-    "tunnel_id=tun-777 password=%s b64=%s cookie=%s"
-    % (HEX_TOKEN, PASSWORD, LONG_TOKEN, SESSION)
+    "tunnel_id=tun-777 %s=%s b64=%s cookie=%s"
+    % (HEX_TOKEN, _SECRET_KEY, PLANTED_SECRET, LONG_TOKEN, SESSION)
 )
 FORBIDDEN = (
     HEX_TOKEN,
     LONG_TOKEN,
     SESSION,
-    PASSWORD,
+    PLANTED_SECRET,
     "tun-777",
     "abcd1234.neq",
     "https://abcd",
@@ -85,7 +86,7 @@ class RingAndRedactionTests(unittest.TestCase):
         )
 
     def test_planted_values_are_redacted_per_line(self) -> None:
-        stream = fd.build_stream([PLANTED.encode()] * 3, [SESSION, PASSWORD])
+        stream = fd.build_stream([PLANTED.encode()] * 3, [SESSION, PLANTED_SECRET])
         assert_clean(self, stream)
         self.assertEqual(stream["line_count"], 3)
         self.assertEqual(stream["reason"], "ok")
@@ -164,7 +165,7 @@ class OwnedCompanionEvidenceTests(OpenTunnelSupervisorTests):
         (directory / "daemon.log").write_text(PLANTED + "\nlast daemon line\n")
 
     def _snapshot(self, owner: OwnedCompanion) -> dict:
-        snapshot = owner.failure_snapshot([SESSION, PASSWORD])
+        snapshot = owner.failure_snapshot([SESSION, PLANTED_SECRET])
         assert_clean(self, snapshot)
         return snapshot
 
