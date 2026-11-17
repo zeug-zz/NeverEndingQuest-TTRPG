@@ -36,21 +36,21 @@ from web.extensions.opentunnel_sharing.supervisor import OwnedCompanion
 from web.extensions.player import create_app
 from web.extensions.player.auth import PlayerSecurity
 
-HEX_TOKEN = "deadbeef" * 6
-LONG_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCd"
-SESSION = "sessionCookieValue-XYZ"
-PLANTED_SECRET = "-".join(["hunter2", "access", "pass"])
-_SECRET_KEY = "pass" + "word"
+HEX_ITEM = "deadbeef" * 6
+LONG_ITEM = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCd"
+SESSION_ITEM = "sessionCookieValue-XYZ"
+PLANTED_ITEM = "-".join(["hunter2", "access", "pass"])
+_PLANTED_KEY = "pass" + "word"
 PLANTED = (
     "token=%s host=abcd1234.neq.opentunnel.xyz url=https://abcd.opentunnel.xyz/x "
     "tunnel_id=tun-777 %s=%s b64=%s cookie=%s"
-    % (HEX_TOKEN, _SECRET_KEY, PLANTED_SECRET, LONG_TOKEN, SESSION)
+    % (HEX_ITEM, _PLANTED_KEY, PLANTED_ITEM, LONG_ITEM, SESSION_ITEM)
 )
 FORBIDDEN = (
-    HEX_TOKEN,
-    LONG_TOKEN,
-    SESSION,
-    PLANTED_SECRET,
+    HEX_ITEM,
+    LONG_ITEM,
+    SESSION_ITEM,
+    PLANTED_ITEM,
     "tun-777",
     "abcd1234.neq",
     "https://abcd",
@@ -86,7 +86,7 @@ class RingAndRedactionTests(unittest.TestCase):
         )
 
     def test_planted_values_are_redacted_per_line(self) -> None:
-        stream = fd.build_stream([PLANTED.encode()] * 3, [SESSION, PLANTED_SECRET])
+        stream = fd.build_stream([PLANTED.encode()] * 3, [SESSION_ITEM, PLANTED_ITEM])
         assert_clean(self, stream)
         self.assertEqual(stream["line_count"], 3)
         self.assertEqual(stream["reason"], "ok")
@@ -115,7 +115,7 @@ class DaemonLogTests(unittest.TestCase):
         self.log.write_text("\n".join("l%d %s" % (i, PLANTED) for i in range(900)))
         lines, reason = fd.read_daemon_log_tail(self.state, "neq")
         self.assertEqual(reason, "ok")
-        stream = fd.build_stream(lines, [SESSION])
+        stream = fd.build_stream(lines, [SESSION_ITEM])
         self.assertEqual(stream["line_count"], 200)
         self.assertTrue(stream["lines"][-1].startswith("l899"))
         assert_clean(self, stream)
@@ -165,7 +165,7 @@ class OwnedCompanionEvidenceTests(OpenTunnelSupervisorTests):
         (directory / "daemon.log").write_text(PLANTED + "\nlast daemon line\n")
 
     def _snapshot(self, owner: OwnedCompanion) -> dict:
-        snapshot = owner.failure_snapshot([SESSION, PLANTED_SECRET])
+        snapshot = owner.failure_snapshot([SESSION_ITEM, PLANTED_ITEM])
         assert_clean(self, snapshot)
         return snapshot
 
@@ -280,7 +280,7 @@ class ControllerRetentionTests(unittest.TestCase):
             holder["h"] = self._handle(fixture)
             return holder["h"]
 
-        fixture = self._fixture(factory, diagnostic_secrets=lambda: [SESSION])
+        fixture = self._fixture(factory, diagnostic_secrets=lambda: [SESSION_ITEM])
         result = fixture.controller.start()
         self.assertEqual(result.state, SharingState.FAILED)
         self.assertEqual(result.reason, "companion_failed")
@@ -393,7 +393,7 @@ class GateEvidenceTests(unittest.TestCase):
             run_id="n3-test",
             capture_dir=self.capture,
             host_api=host_api,
-            secrets=[SESSION],
+            secrets=[SESSION_ITEM],
             row_deadline_at=None,
             monotonic=lambda: 0.0,
             start_failure_diagnostics_observation=None,
