@@ -1205,16 +1205,19 @@ def _validate_sandbox_result(
                 "fixture_payload_missing",
                 "mapping_pilot/expected/%s.json" % expected_fixture_id,
             )
+    expected_id_map_file = "modules/%s/location_id_map.json" % (
+        launcher.MAPPING_PILOT_MODULE
+    )
     if (
         not isinstance(mapping, Mapping)
         or not isinstance(mapping.get("runtime_location_id"), str)
         or not isinstance(runtime_to_source, Mapping)
         or runtime_to_source.get(mapping["runtime_location_id"])
         != mapping.get("source_location_id")
-        or mapping.get("id_map_file") != "modules/mapping_pilot/location_id_map.json"
+        or mapping.get("id_map_file") != expected_id_map_file
     ):
         raise FixtureResolutionError(
-            "location_mapping_unresolved", "modules/mapping_pilot/location_id_map.json"
+            "location_mapping_unresolved", expected_id_map_file
         )
 
 

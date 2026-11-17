@@ -1452,7 +1452,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "source_location_id": seed_plan["source_location_id"],
                 "runtime_location_id": seed_plan["runtime_location_id"],
                 "area_id": area_id,
-                "id_map_file": "modules/mapping_pilot/location_id_map.json",
+                "id_map_file": "modules/%s/location_id_map.json"
+                % launcher.MAPPING_PILOT_MODULE,
             }
             fixture_payloads = {
                 selected: payload["source_truth"]
@@ -2477,6 +2478,86 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertEqual(
             report["row_results"][0]["unresolved_reference"],
             "mapping_pilot/expected/interior_tavern.json",
+        )
+        self.assertEqual(prepared_rows, ["E01"])
+        self.assertEqual(validated_rows, ["E01"])
+        self.assertEqual(worker_rows, [])
+        self.assertEqual(worker_launches, [])
+        self.assertEqual(driver_sessions, [])
+        self.assertFalse(report["booking_eligible"])
+        self.assertEqual(report["replacement_only_rows_activated"], [])
+
+    def test_stale_id_map_file_literal_blocks_location_mapping_unresolved(self) -> None:
+        identities = self._intended_identities()
+        rows, _reserves = _load_frozen_row_ids(None)
+        profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
+        resolved_plans = [
+            _resolve_row_plan(
+                str(row["row_id"]),
+                prereg_root=None,
+                expected_row=row,
+                profiles=profiles,
+            )
+            for row in rows
+        ]
+        prepared_rows: list[str] = []
+        validated_rows: list[str] = []
+        worker_rows: list[str] = []
+        driver_sessions: list[row_runner.SocketScriptDriver] = []
+        capture_sessions: list[_FakeCaptureSession] = []
+        worker_launches: list[dict[str, Any]] = []
+        canonical_id_map_file = "modules/%s/location_id_map.json" % (
+            launcher.MAPPING_PILOT_MODULE
+        )
+        stale_id_map_file = "modules/mapping_pilot/location_id_map.json"
+
+        with tempfile.TemporaryDirectory(
+            prefix="live-gate-preflight-stale-id-map-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            interfaces, validate_sandbox = self._fake_interfaces(
+                Path(temp_root),
+                prepared_rows=prepared_rows,
+                validated_rows=validated_rows,
+                worker_rows=worker_rows,
+                driver_sessions=driver_sessions,
+                capture_sessions=capture_sessions,
+                worker_launches=worker_launches,
+                identities=identities,
+                resolved_plans=resolved_plans,
+            )
+
+            def stale_id_map(*args: Any, **kwargs: Any) -> launcher.ValidatedSandbox:
+                validated = validate_sandbox(*args, **kwargs)
+                metadata = dict(validated.metadata)
+                metadata["mapping"] = {
+                    **validated.metadata["mapping"],
+                    "id_map_file": stale_id_map_file,
+                }
+                return launcher.ValidatedSandbox(
+                    root=validated.root,
+                    metadata=metadata,
+                    fixture_payloads=validated.fixture_payloads,
+                    runtime_to_source=validated.runtime_to_source,
+                )
+
+            with mock.patch.object(
+                launcher, "validate_sandbox", side_effect=stale_id_map
+            ):
+                report = run_preflight_rows(
+                    source_sha=SOURCE_SHA,
+                    run_id=RUN_ID,
+                    intended_worker_identities=identities,
+                    interfaces=interfaces,
+                )
+
+        self.assertNotEqual(canonical_id_map_file, stale_id_map_file)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["attempted_row_ids"], ["E01"])
+        self.assertEqual(
+            report["row_results"][0]["failure_code"], "location_mapping_unresolved"
+        )
+        self.assertEqual(
+            report["row_results"][0]["unresolved_reference"], canonical_id_map_file
         )
         self.assertEqual(prepared_rows, ["E01"])
         self.assertEqual(validated_rows, ["E01"])
