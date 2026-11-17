@@ -33,11 +33,13 @@ from typing import Any
 
 from scripts import live_gate_preflight_comparison_identity as identity_module
 from scripts import live_gate_preflight_controller as controller
+from scripts import live_gate_preflight_safety as safety
 from scripts.live_gate_preflight_evidence import EVIDENCE_GATE
 from scripts.live_gate_preflight_safety import current_invocation_identity
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RELAUNCH_ENV = "NEQ_PREFLIGHT_RUN_RELAUNCHED"
 DEPENDENCY_LOCK = Path("requirements-lock.txt")
 ONE_MINUTE_LOAD_LIMIT = 10.0
 FIVE_MINUTE_LOAD_LIMIT = 20.0
@@ -461,10 +463,82 @@ def execute(
     return summary, EXIT_BLOCKED if failed else EXIT_OK
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    summary, code = execute(args)
+def _guarded_startup_active(root: Path = PROJECT_ROOT) -> bool:
+    """True only when this process was started under the dedicated startup guard."""
+    try:
+        if os.environ.get("PYTHONPATH") != safety.expected_guarded_pythonpath(root):
+            return False
+        safety.require_startup_guard_active()
+    except (safety.NetworkGuardError, safety.SafetyConfigurationError, OSError):
+        return False
+    return True
+
+
+def _emit(summary: Mapping[str, Any]) -> None:
     print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+
+
+def relaunch_guarded(
+    args: argparse.Namespace,
+    argv: Sequence[str],
+    *,
+    root: Path = PROJECT_ROOT,
+    runner: Callable[..., Any] | None = None,
+) -> int:
+    """Re-run this module under the dedicated startup guard in a fresh tmp/ cwd."""
+    import subprocess
+
+    if os.environ.get(RELAUNCH_ENV) == "1":
+        _emit(_blocked("guarded_relaunch_loop_refused", mode=args.mode, run_id=args.run_id))
+        return EXIT_USAGE
+    tmp_root = root / "tmp"
+    cwd = tmp_root / ("live-gate-preflight-cwd-%s" % args.run_id)
+    try:
+        if tmp_root.is_symlink():
+            raise PreflightRunError("guarded_relaunch_tmp_invalid")
+        cwd.mkdir(parents=True)
+    except FileExistsError:
+        _emit(_blocked("guarded_relaunch_cwd_exists", mode=args.mode, run_id=args.run_id))
+        return EXIT_USAGE
+    except (PreflightRunError, OSError) as exc:
+        _emit(_blocked(str(exc) if isinstance(exc, PreflightRunError)
+                       else "guarded_relaunch_cwd_unavailable",
+                       mode=args.mode, run_id=args.run_id))
+        return EXIT_BLOCKED
+    try:
+        env = safety.build_guarded_environment(project_root=root, process_role="parent")
+    except (safety.SafetyConfigurationError, OSError):
+        _emit(_blocked("guarded_environment_unavailable", mode=args.mode, run_id=args.run_id))
+        return EXIT_BLOCKED
+    env[RELAUNCH_ENV] = "1"
+    command = [
+        str(root / ".venv" / "bin" / "python"),
+        "-m",
+        "scripts.live_gate_preflight_run",
+        *argv,
+    ]
+    try:
+        completed = (runner or subprocess.run)(
+            command, cwd=str(cwd), env=env, check=False
+        )
+    except OSError:
+        _emit(_blocked("guarded_relaunch_failed", mode=args.mode, run_id=args.run_id))
+        return EXIT_BLOCKED
+    return int(completed.returncode)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser().parse_args(argv_list)
+    if not _guarded_startup_active():
+        try:
+            validate_args(args)
+        except PreflightRunError as exc:
+            _emit(_blocked(str(exc), mode=args.mode, run_id=args.run_id))
+            return EXIT_USAGE
+        return relaunch_guarded(args, argv_list)
+    summary, code = execute(args)
+    _emit(summary)
     return code
 
 

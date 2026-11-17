@@ -301,6 +301,17 @@ def _verify_worktree_admin_path(worktree: Path) -> None:
         ) from exc
 
 
+def _preflight_guard_active() -> bool:
+    """True when this process runs under the preflight subprocess deny guard."""
+    from scripts import live_gate_preflight_safety as safety
+
+    try:
+        safety.require_guard_active()
+    except safety.NetworkGuardError:
+        return False
+    return True
+
+
 def _git_output(cwd: Path, arguments: tuple[str, ...]) -> str:
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -310,16 +321,25 @@ def _git_output(cwd: Path, arguments: tuple[str, ...]) -> str:
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
+    command = ["git", "-C", str(cwd), *arguments]
+    run_options: dict[str, Any] = {
+        "check": False,
+        "capture_output": True,
+        "text": True,
+        "timeout": 10.0,
+    }
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(cwd), *arguments],
-            cwd=PROJECT_ROOT,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-        )
+        if _preflight_guard_active():
+            # The deny guard rejects plain subprocess launches; use the sanctioned path.
+            from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+            completed = run_guarded_subprocess(
+                command, cwd=PROJECT_ROOT, env=env, **run_options
+            )
+        else:
+            completed = subprocess.run(
+                command, cwd=PROJECT_ROOT, env=env, **run_options
+            )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ComparisonIdentityError("comparison_git_identity_unavailable") from exc
     if completed.returncode != 0:

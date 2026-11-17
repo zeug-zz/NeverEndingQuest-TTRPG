@@ -513,13 +513,192 @@ class ExecuteTests(unittest.TestCase):
     def test_main_prints_one_compact_json_line(self) -> None:
         a, b, run = self._patches(_fake_report())
         out = io.StringIO()
-        with a, b, run, redirect_stdout(out):
+        with (
+            a, b, run, redirect_stdout(out),
+            mock.patch.object(run_module, "_guarded_startup_active", return_value=True),
+        ):
             code = run_module.main(["--run-id", RUN_ID])
         self.assertEqual(code, 0)
         lines = out.getvalue().strip().splitlines()
         self.assertEqual(len(lines), 1)
         self.assertNotIn("/Users/", lines[0])
         self.assertFalse(json.loads(lines[0])["live_gate_pass"])
+
+
+class _Completed:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+
+class GuardedRelaunchTests(unittest.TestCase):
+    def _root(self) -> Path:
+        directory = tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "tmp")
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        guard = root / "scripts" / "live_gate_preflight_guard"
+        guard.mkdir(parents=True)
+        (root / "tmp").mkdir()
+        return root
+
+    def _main(self, argv: list[str], *, guarded: bool, env: dict[str, str] | None = None):
+        out = io.StringIO()
+        with (
+            mock.patch.object(
+                run_module, "_guarded_startup_active", return_value=guarded
+            ),
+            mock.patch.dict(os.environ, env or {}),
+            redirect_stdout(out),
+        ):
+            code = run_module.main(argv)
+        return code, out.getvalue()
+
+    def test_unguarded_main_relaunches_with_guarded_env_cwd_and_args(self) -> None:
+        root = self._root()
+        calls: list[Any] = []
+
+        def runner(command: list[str], **kwargs: Any) -> _Completed:
+            calls.append((command, kwargs))
+            return _Completed(7)
+
+        args = _args("--run-id", RUN_ID)
+        argv = ["--run-id", RUN_ID]
+        os.environ.pop(run_module.RELAUNCH_ENV, None)
+        code = run_module.relaunch_guarded(args, argv, root=root, runner=runner)
+        self.assertEqual(code, 7)
+        command, kwargs = calls[0]
+        resolved = root.resolve()
+        self.assertEqual(
+            command,
+            [str(root / ".venv/bin/python"), "-m",
+             "scripts.live_gate_preflight_run", "--run-id", RUN_ID],
+        )
+        cwd = Path(kwargs["cwd"])
+        self.assertEqual(cwd, root / "tmp" / ("live-gate-preflight-cwd-%s" % RUN_ID))
+        self.assertTrue(cwd.is_dir())
+        env = kwargs["env"]
+        self.assertEqual(
+            env["PYTHONPATH"], run_module.safety.expected_guarded_pythonpath(root)
+        )
+        self.assertEqual(env[run_module.safety.PROCESS_ROLE_ENV], "parent")
+        self.assertEqual(env[run_module.RELAUNCH_ENV], "1")
+        self.assertEqual(env[run_module.safety.PROJECT_ROOT_ENV], str(resolved))
+        self.assertFalse(kwargs["check"])
+
+    def test_existing_cwd_is_refused(self) -> None:
+        root = self._root()
+        (root / "tmp" / ("live-gate-preflight-cwd-%s" % RUN_ID)).mkdir()
+        runner = mock.Mock()
+        os.environ.pop(run_module.RELAUNCH_ENV, None)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = run_module.relaunch_guarded(
+                _args("--run-id", RUN_ID), ["--run-id", RUN_ID], root=root, runner=runner
+            )
+        self.assertEqual(code, run_module.EXIT_USAGE)
+        runner.assert_not_called()
+        self.assertEqual(json.loads(out.getvalue())["block_reason"], "guarded_relaunch_cwd_exists")
+
+    def test_relaunched_child_that_is_not_guarded_does_not_loop(self) -> None:
+        root = self._root()
+        runner = mock.Mock()
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {run_module.RELAUNCH_ENV: "1"}), redirect_stdout(out):
+            code = run_module.relaunch_guarded(
+                _args("--run-id", RUN_ID), ["--run-id", RUN_ID], root=root, runner=runner
+            )
+        self.assertEqual(code, run_module.EXIT_USAGE)
+        runner.assert_not_called()
+        self.assertFalse(list((root / "tmp").iterdir()))
+
+    def test_main_unguarded_invokes_relaunch_with_original_argv(self) -> None:
+        with mock.patch.object(
+            run_module, "relaunch_guarded", return_value=5
+        ) as relaunch:
+            code, _ = self._main(["--run-id", RUN_ID], guarded=False)
+        self.assertEqual(code, 5)
+        self.assertEqual(relaunch.call_args.args[1], ["--run-id", RUN_ID])
+
+    def test_main_guarded_does_not_relaunch(self) -> None:
+        with (
+            mock.patch.object(run_module, "relaunch_guarded") as relaunch,
+            mock.patch.object(
+                run_module, "execute", return_value=({"status": "completed"}, 0)
+            ),
+        ):
+            code, _ = self._main(["--run-id", RUN_ID], guarded=True)
+        self.assertEqual(code, 0)
+        relaunch.assert_not_called()
+
+    def test_validation_precedes_relaunch_without_creating_directories(self) -> None:
+        before = set((PROJECT_ROOT / "tmp").iterdir())
+        for argv in (
+            ["--run-id", "bad id!"],
+            ["--run-id", RUN_ID, "--mode", "comparison"],
+            ["--run-id", RUN_ID, "--mode", "comparison", "--application",
+             "frozen-origin-main", "--tool-sha", SHA, "--tool-tree", TREE,
+             "--resume-checkpoints", "x.json"],
+        ):
+            with mock.patch.object(run_module, "relaunch_guarded") as relaunch:
+                code, text = self._main(argv, guarded=False)
+            self.assertEqual(code, run_module.EXIT_USAGE)
+            relaunch.assert_not_called()
+            self.assertEqual(json.loads(text)["status"], "blocked")
+        self.assertEqual(set((PROJECT_ROOT / "tmp").iterdir()), before)
+
+    def test_guarded_startup_detection_fails_closed_when_plain(self) -> None:
+        self.assertFalse(run_module._guarded_startup_active())
+
+
+class GitOutputGuardTests(unittest.TestCase):
+    def test_guarded_path_used_when_guard_active(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="abc\n")
+        with (
+            mock.patch.object(identity_module, "_preflight_guard_active", return_value=True),
+            mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                return_value=completed,
+            ) as guarded,
+            mock.patch.object(identity_module.subprocess, "run") as plain,
+        ):
+            out = identity_module._git_output(PROJECT_ROOT, ("rev-parse", "HEAD"))
+        self.assertEqual(out, "abc")
+        plain.assert_not_called()
+        command = guarded.call_args.args[0]
+        self.assertEqual(command[:3], ["git", "-C", str(PROJECT_ROOT)])
+        kwargs = guarded.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 10.0)
+        self.assertEqual(kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
+        self.assertFalse(kwargs["check"])
+
+    def test_plain_path_used_when_guard_inactive(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="abc\n")
+        with (
+            mock.patch.object(identity_module, "_preflight_guard_active", return_value=False),
+            mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess"
+            ) as guarded,
+            mock.patch.object(
+                identity_module.subprocess, "run", return_value=completed
+            ) as plain,
+        ):
+            out = identity_module._git_output(PROJECT_ROOT, ("rev-parse", "HEAD"))
+        self.assertEqual(out, "abc")
+        guarded.assert_not_called()
+        plain.assert_called_once()
+
+    def test_guarded_failure_stays_strict(self) -> None:
+        with (
+            mock.patch.object(identity_module, "_preflight_guard_active", return_value=True),
+            mock.patch(
+                "scripts.live_gate_preflight_safety.run_guarded_subprocess",
+                side_effect=PermissionError("denied"),
+            ),
+        ):
+            with self.assertRaises(identity_module.ComparisonIdentityError):
+                identity_module._git_output(PROJECT_ROOT, ("status",))
+
+    def test_guard_inactive_in_plain_process(self) -> None:
+        self.assertFalse(identity_module._preflight_guard_active())
 
 
 if __name__ == "__main__":
