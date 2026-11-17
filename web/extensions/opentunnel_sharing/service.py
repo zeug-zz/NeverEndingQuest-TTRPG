@@ -1274,6 +1274,16 @@ class _ProductionComposition:
             elif self._security is not None:
                 self._security.stop_listener()
 
+        controller_holder: dict[str, SharingController] = {}
+
+        def start_is_current(generation: int) -> bool:
+            # TABLETOP MODE: Fail closed until the controller is attached.
+            controller = controller_holder.get("controller")
+            return bool(
+                controller is not None
+                and controller.start_generation_is_current(generation)
+            )
+
         def start_companion(generation: int) -> OwnedCompanion | None:
             resolution = self._resolve_companion()
             if (
@@ -1293,9 +1303,13 @@ class _ProductionComposition:
                 handle = handle_holder.get("handle")
                 if handle is None:
                     return "pending"
+                # TABLETOP MODE: The start-time probe must run `status` while
+                # the handle is still "starting"; see _start_route_status.
                 return (
                     "ready"
-                    if self._route_status(handle, generation, layout).healthy
+                    if self._start_route_status(
+                        handle, generation, layout, start_is_current
+                    ).healthy
                     else "pending"
                 )
 
@@ -1333,7 +1347,9 @@ class _ProductionComposition:
             route_poll_interval_seconds=min(0.25, MAX_ROUTE_POLL_INTERVAL_SECONDS),
             cleanup=cleanup,
         )
-        return SharingController(dependencies)
+        controller = SharingController(dependencies)
+        controller_holder["controller"] = controller
+        return controller
 
     def _relay_monitor_factory(
         self, controller: SharingController, generation: int
@@ -1436,6 +1452,59 @@ class _ProductionComposition:
                     else "layout_mismatch"
                 )
                 return RouteStatus(False, None, generation)
+        except Exception:
+            return self._status_raised(handle, generation)
+        return self._run_route_status(handle, generation, layout)
+
+    # TABLETOP MODE: Start-time variant. OwnedCompanion.start() holds state
+    # "starting" until this probe reports ready, so the strict running-only
+    # gate above can never pass during start. This path additionally accepts
+    # "starting" but only for a live process, the exact profile layout and a
+    # start that is still current; every other caller keeps the strict gate.
+    def _start_route_status(
+        self,
+        handle: OwnedCompanion,
+        generation: int,
+        layout: ProfileLayout,
+        start_is_current: Callable[[int], bool],
+    ) -> RouteStatus:
+        try:
+            handle_state = handle.state
+            if handle_state not in {"starting", "running"}:
+                skipped = "state_" + str(handle_state)
+            elif handle.profile_layout != layout:
+                skipped = "layout_mismatch"
+            elif not start_is_current(generation):
+                skipped = "start_not_current"
+            elif not handle.process_alive:
+                skipped = "process_exited"
+            else:
+                skipped = None
+            if skipped is not None:
+                _note_evidence(handle, "note_status_skipped", skipped)
+                return RouteStatus(False, None, generation)
+        except Exception:
+            return self._status_raised(handle, generation)
+        return self._run_route_status(handle, generation, layout)
+
+    @staticmethod
+    def _status_raised(handle: OwnedCompanion, generation: int) -> RouteStatus:
+        _note_evidence(handle, "note_status_poll",
+            returncode=None,
+            timed_out=False,
+            truncated=False,
+            parsed_ok=False,
+            raised=True,
+        )
+        return RouteStatus(False, None, generation)
+
+    def _run_route_status(
+        self,
+        handle: OwnedCompanion,
+        generation: int,
+        layout: ProfileLayout,
+    ) -> RouteStatus:
+        try:
             path = handle.executable_path
             result = self._command_runner()(
                 (str(path), "status", "--profile", layout.profile),
@@ -1443,14 +1512,7 @@ class _ProductionComposition:
                 MAX_STATUS_COMMAND_SECONDS,
             )
         except Exception:
-            _note_evidence(handle, "note_status_poll",
-                returncode=None,
-                timed_out=False,
-                truncated=False,
-                parsed_ok=False,
-                raised=True,
-            )
-            return RouteStatus(False, None, generation)
+            return self._status_raised(handle, generation)
         if (
             not isinstance(result, RunResult)
             or result.returncode != 0

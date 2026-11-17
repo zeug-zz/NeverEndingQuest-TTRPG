@@ -489,6 +489,339 @@ class OpenTunnelSupervisorTests(unittest.TestCase):
         self.assertIn("stdin=subprocess.DEVNULL", source)
         self.assertIn("stderr=subprocess.STDOUT", source)
 
+    # ---- Production start-time readiness probe (real OwnedCompanion) ----
+
+    _CONNECTED_STATUS = (
+        "Hostname: account.opentunnel.xyz\n"
+        "Service: Connected\n"
+        "neq-share.account.opentunnel.xyz -> 127.0.0.1:8370\n"
+    )
+
+    def _production_start(
+        self,
+        results,
+        *,
+        controller_state=None,
+        event_set: bool = False,
+        process: FakeProcess | None = None,
+        deadline: float = 1.0,
+        layout_override: ProfileLayout | None = None,
+        recover: bool = False,
+    ):
+        """Start a real OwnedCompanion through the production probe wiring.
+
+        ``results`` is a list of RunResult values (the last one repeats) or
+        an Exception to raise from the fake command runner.
+        """
+        from web.extensions.opentunnel_sharing import service
+        from web.extensions.opentunnel_sharing.controller import SharingState
+
+        composition = service._ProductionComposition(
+            object(),  # type: ignore[arg-type]
+            lambda: True,
+            companion_manifest=None,
+            install_root=self.install_root,
+            state_root=self.scratch / "state",
+            state_root_provider=None,
+            install_marker=None,
+            profile=DEFAULT_PROFILE,
+            player_build_root=None,
+        )
+        calls: list[tuple[str, ...]] = []
+
+        class FakeRunner:
+            def __call__(self, argv, env, timeout):
+                calls.append(tuple(argv))
+                if isinstance(results, BaseException):
+                    raise results
+                index = min(len(calls) - 1, len(results) - 1)
+                return results[index]
+
+        composition._runner = FakeRunner()  # type: ignore[assignment]
+        fake_process = process or FakeProcess()
+        factory = FakeFactory(fake_process)
+        resolution = CompanionResolution(
+            state="resolved",
+            reason="resolved",
+            path=self.binary,
+            expected_sha256="0" * 64,
+        )
+        probe_layout = layout_override or self.layout
+
+        def owned(res, layout, probe):
+            return OwnedCompanion(
+                res,
+                layout,
+                probe,
+                process_factory=factory,
+                identity_probe=lambda pid: self._identity(factory, pid),
+            )
+
+        with (
+            mock.patch.object(
+                composition, "_resolve_companion", return_value=resolution
+            ),
+            mock.patch.object(service, "verify_companion_digest", return_value=True),
+            mock.patch.object(
+                service._ProfileRouteTable, "ensure", return_value=True
+            ),
+            mock.patch.object(service, "OwnedCompanion", owned),
+        ):
+            controller = composition._controller_factory(probe_layout)
+            if recover:
+                from dataclasses import replace
+
+                from web.extensions.opentunnel_sharing.controller import (
+                    SharingState as _State,
+                )
+
+                # Drive the real recovery restart: DEGRADED, no prior handle.
+                # Cleanup is dropped so no owner record is written for the fake.
+                controller._deps = replace(controller._deps, cleanup=None)
+                controller._generation = 1
+                controller._state = _State.DEGRADED
+                controller._companion = None
+                self.recovery_result = controller._restart_companion_for_recovery(
+                    1, controller._lifecycle_revision
+                )
+                handle = controller._companion
+            else:
+                handle = controller._deps.start_companion(1)
+        if recover:
+            return composition, controller, handle, calls, fake_process
+        self.assertIsNotNone(handle)
+        # Drive the controller into the state a real start would hold.
+        controller._generation = 1
+        controller._state = (
+            SharingState.STARTING if controller_state is None else controller_state
+        )
+        if event_set:
+            import threading
+
+            event = threading.Event()
+            event.set()
+            controller._active_start_event = event
+        return composition, controller, handle, calls, fake_process
+
+    def test_production_probe_runs_status_while_starting_and_reaches_running(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, _controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        self.assertEqual(handle.start(1.0), "running")
+        self.assertEqual(handle.state, "running")
+        self.assertGreaterEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0], (str(self.binary), "status", "--profile", DEFAULT_PROFILE)
+        )
+        handle.stop(1.0)
+
+    def test_production_probe_negative_statuses_stay_pending_then_time_out(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        cases = {
+            "not_connected": [
+                RunResult(0, "Service: Disconnected\n")
+            ],
+            "unparseable": [RunResult(0, "garbage output\n")],
+            "timed_out": [RunResult(None, "", timed_out=True)],
+            "truncated": [
+                RunResult(0, self._CONNECTED_STATUS, output_truncated=True)
+            ],
+            "nonzero_exit": [RunResult(2, self._CONNECTED_STATUS)],
+            "runner_raises": RuntimeError("runner broke"),
+        }
+        for name, results in cases.items():
+            with self.subTest(case=name):
+                _c, _controller, handle, calls, _p = self._production_start(
+                    results
+                )
+                self.assertEqual(handle.start(0.3), "failed")
+                self.assertEqual(handle.reason_code, "startup_timeout")
+                self.assertGreaterEqual(len(calls), 1)
+
+    def test_production_probe_never_runs_status_on_layout_mismatch(self) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, _controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        # The probe was wired for self.layout; present a different layout.
+        other = mock.Mock(spec=[])
+        with mock.patch.object(
+            type(handle), "profile_layout", new=property(lambda _s: other)
+        ):
+            self.assertEqual(handle.start(0.3), "failed")
+        self.assertEqual(handle.reason_code, "startup_timeout")
+        self.assertEqual(calls, [])
+
+    def test_production_probe_never_runs_status_when_start_not_current(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.controller import SharingState
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        scenarios = {
+            "stopping": {"controller_state": SharingState.STOPPING},
+            "cancel_event_set": {"event_set": True},
+            "off": {"controller_state": SharingState.OFF},
+        }
+        for name, options in scenarios.items():
+            with self.subTest(scenario=name):
+                _c, _controller, handle, calls, _p = self._production_start(
+                    [RunResult(0, self._CONNECTED_STATUS)], **options
+                )
+                self.assertEqual(handle.start(0.3), "failed")
+                self.assertEqual(calls, [])
+
+    def test_production_probe_shutdown_never_runs_status(self) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        controller._shutdown_requested = True
+        self.assertEqual(handle.start(0.3), "failed")
+        self.assertEqual(calls, [])
+
+    def test_production_probe_wrong_generation_never_runs_status(self) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        controller._generation = 2
+        self.assertEqual(handle.start(0.3), "failed")
+        self.assertEqual(calls, [])
+
+    def test_production_probe_exited_process_is_early_exit_without_ready(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, _controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)],
+            process=FakeProcess(exit_code=3),
+        )
+        self.assertEqual(handle.start(1.0), "failed")
+        self.assertEqual(handle.reason_code, "early_exit")
+        self.assertEqual(calls, [])
+
+    def test_start_route_status_refuses_a_process_that_exited_mid_probe(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        composition, _controller, handle, calls, process = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        handle._state = "starting"
+        handle._process = process
+        process.exit_code = 9
+        status = composition._start_route_status(
+            handle, 1, self.layout, lambda _generation: True
+        )
+        self.assertFalse(status.healthy)
+        self.assertEqual(calls, [])
+        for state in ("failed", "stopped", "exited"):
+            with self.subTest(state=state):
+                process.exit_code = None
+                handle._state = state
+                self.assertFalse(
+                    composition._start_route_status(
+                        handle, 1, self.layout, lambda _generation: True
+                    ).healthy
+                )
+        self.assertEqual(calls, [])
+
+    def test_recovery_restart_runs_status_while_degraded_and_reaches_running(
+        self,
+    ) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        _c, controller, handle, calls, _p = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)], recover=True
+        )
+        self.assertTrue(self.recovery_result)
+        self.assertEqual(handle.state, "running")
+        self.assertGreaterEqual(len(calls), 1)
+        self.assertEqual(controller._counters.companion_launches, 1)
+        handle.stop(1.0)
+
+    def test_recovery_probe_negatives_in_degraded_never_run_status(self) -> None:
+        from web.extensions.opentunnel_sharing.controller import SharingState
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        status = [RunResult(0, self._CONNECTED_STATUS)]
+        scenarios = {
+            "stop_requested": {"controller_state": SharingState.STOPPING},
+            "failed": {"controller_state": SharingState.FAILED},
+            "ready": {"controller_state": SharingState.READY},
+            "event_set": {
+                "controller_state": SharingState.DEGRADED,
+                "event_set": True,
+            },
+        }
+        for name, options in scenarios.items():
+            with self.subTest(scenario=name):
+                _c, _controller, handle, calls, _p = self._production_start(
+                    status, **options
+                )
+                self.assertEqual(handle.start(0.3), "failed")
+                self.assertEqual(calls, [])
+        with self.subTest(scenario="shutdown"):
+            _c, controller, handle, calls, _p = self._production_start(
+                status, controller_state=SharingState.DEGRADED
+            )
+            controller._shutdown_requested = True
+            self.assertEqual(handle.start(0.3), "failed")
+            self.assertEqual(calls, [])
+        with self.subTest(scenario="wrong_generation"):
+            _c, controller, handle, calls, _p = self._production_start(
+                status, controller_state=SharingState.DEGRADED
+            )
+            controller._generation = 2
+            self.assertEqual(handle.start(0.3), "failed")
+            self.assertEqual(calls, [])
+        with self.subTest(scenario="exited_process"):
+            _c, _controller, handle, calls, _p = self._production_start(
+                status,
+                controller_state=SharingState.DEGRADED,
+                process=FakeProcess(exit_code=3),
+            )
+            self.assertEqual(handle.start(1.0), "failed")
+            self.assertEqual(handle.reason_code, "early_exit")
+            self.assertEqual(calls, [])
+        with self.subTest(scenario="layout_mismatch"):
+            _c, _controller, handle, calls, _p = self._production_start(
+                status, controller_state=SharingState.DEGRADED
+            )
+            other = mock.Mock(spec=[])
+            with mock.patch.object(
+                type(handle), "profile_layout", new=property(lambda _s: other)
+            ):
+                self.assertEqual(handle.start(0.3), "failed")
+            self.assertEqual(calls, [])
+
+    def test_strict_route_status_still_rejects_a_starting_handle(self) -> None:
+        from web.extensions.opentunnel_sharing.identity_bootstrap import RunResult
+
+        composition, _controller, handle, calls, process = self._production_start(
+            [RunResult(0, self._CONNECTED_STATUS)]
+        )
+        handle._state = "starting"
+        handle._process = process
+        self.assertFalse(composition._route_status(handle, 1, self.layout).healthy)
+        self.assertEqual(calls, [])
+        handle._state = "running"
+        self.assertTrue(composition._route_status(handle, 1, self.layout).healthy)
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
