@@ -916,11 +916,21 @@ class TestPreflightControllerContinuation(unittest.TestCase):
         profiles, coverage = preflight_controller._load_profiles(expected_row_ids)
         profiles = copy.deepcopy(profiles)
         secondary = dict(profiles[("transition_tower_approach", 1)])
+        from scripts import live_gate_preflight_profiles as content_profiles
+
+        tool_hashes = content_profiles.tool_file_hashes()
         secondary["startup"] = {
             "status": "measured-under-stub",
-            "source_sha": source_sha,
             "call_count": 0,
             "call_sites": [],
+            "stub_sha256": {
+                "path": content_profiles.STUB_FILE,
+                "sha256": tool_hashes[content_profiles.STUB_FILE],
+            },
+            "driver_sha256": [
+                {"path": path, "sha256": tool_hashes[path]}
+                for path in content_profiles.DRIVER_FILES
+            ],
         }
         profiles[("transition_tower_approach", 1)] = secondary
 

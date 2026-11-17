@@ -618,12 +618,6 @@ def run_preflight_rows(
                 )
                 if startup_status not in ("MISSING", "measured-under-stub"):
                     raise PreflightControllerError("startup_profile_status_unsupported")
-                if (
-                    startup_status == "measured-under-stub"
-                    and isinstance(startup_declaration, Mapping)
-                    and startup_declaration.get("source_sha") != source_sha
-                ):
-                    raise PreflightControllerError("startup_profile_source_mismatch")
                 run_startup = (
                     fixture_id == plan.fixture_id
                     or startup_status == "measured-under-stub"
@@ -665,7 +659,6 @@ def run_preflight_rows(
                         lifecycle="startup",
                         observed_call_count=startup_evidence["call_count"],
                         observed_call_sites=startup_evidence["call_sites"],
-                        source_sha=source_sha,
                     )
                     profile_checks.setdefault(fixture_id, {})["startup"] = startup_check
                     row_result["lifecycle_results"].append(
@@ -713,12 +706,6 @@ def run_preflight_rows(
                     else None
                 )
                 checkpoint = checkpoint_map.get(row_id, {}).get(fixture_id)
-                if (
-                    resume_status == "measured-under-stub"
-                    and isinstance(resume_declaration, Mapping)
-                    and resume_declaration.get("source_sha") != source_sha
-                ):
-                    raise PreflightControllerError("resume_profile_source_mismatch")
                 if resume_status == "measured-under-stub" and checkpoint is None:
                     profile_checks.setdefault(fixture_id, {})["resume"] = {
                         "status": "unverified",
@@ -781,7 +768,6 @@ def run_preflight_rows(
                         lifecycle="resume",
                         observed_call_count=resume_evidence["call_count"],
                         observed_call_sites=resume_evidence["call_sites"],
-                        source_sha=source_sha,
                     )
                     resume_check["checkpoint_status"] = "matched_moved_checkpoint"
                     resume_check["checkpoint_sha256"] = checkpoint["state_sha256"]
@@ -1004,7 +990,7 @@ def _load_profiles(
     )
 
     try:
-        coverage = load_profile_coverage(expected_source_sha=None)
+        coverage = load_profile_coverage()
         document = copy_profile_document()
     except Exception as exc:
         raise PreflightControllerError("lifecycle profile declaration is invalid") from exc
@@ -1550,8 +1536,15 @@ def _compare_lifecycle_profile(
     lifecycle: str,
     observed_call_count: int,
     observed_call_sites: list[Mapping[str, Any]],
-    source_sha: str,
+    observed_tool_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Match a content-bound declaration against one observed run, fail closed.
+
+    A mismatch (profile_mismatch) means the declaration must be re-measured; it
+    is never a pass. Stub/driver hashes come from the tool tree under test.
+    """
+    from scripts import live_gate_preflight_profiles as profiles
+
     declaration = profile.get(lifecycle)
     if not isinstance(declaration, Mapping):
         return {
@@ -1570,38 +1563,46 @@ def _compare_lifecycle_profile(
     if declaration.get("status") != "measured-under-stub":
         return {
             "status": "mismatched",
+            "outcome": "profile_mismatch",
             "failure_code": lifecycle + "_profile_status_unsupported",
         }
-    if declaration.get("source_sha") != source_sha:
-        return {
-            "status": "mismatched",
-            "failure_code": lifecycle + "_profile_source_mismatch",
-            "expected_source_sha": declaration.get("source_sha"),
-            "observed_source_sha": source_sha,
-        }
-    expected_count = declaration.get("call_count")
-    expected_sites = declaration.get("call_sites")
     canonical_observed = [dict(site) for site in observed_call_sites]
-    if type(expected_count) is not int or observed_call_count != expected_count:
+    try:
+        tool_hashes = (
+            observed_tool_hashes
+            if observed_tool_hashes is not None
+            else profiles.tool_file_hashes()
+        )
+        result = profiles.match_lifecycle_declaration(
+            declaration,
+            observed_call_count=observed_call_count,
+            observed_call_sites=canonical_observed,
+            observed_tool_hashes=tool_hashes,
+        )
+    except (profiles.ProfileValidationError, KeyError, TypeError) as exc:
         return {
             "status": "mismatched",
-            "failure_code": lifecycle + "_profile_call_count_mismatch",
-            "expected_call_count": expected_count,
-            "observed_call_count": observed_call_count,
+            "outcome": "profile_mismatch",
+            "failure_code": lifecycle + "_profile_unmatchable",
+            "reason": type(exc).__name__,
         }
-    if expected_sites != canonical_observed:
+    if result["kinds"]:
         return {
             "status": "mismatched",
-            "failure_code": lifecycle + "_profile_call_sites_mismatch",
-            "expected_call_sites": expected_sites,
+            "outcome": "profile_mismatch",
+            "failure_code": "%s_profile_%s" % (lifecycle, result["kinds"][0]),
+            "mismatch_kinds": list(result["kinds"]),
+            "differences": result["differences"],
+            "observed_call_count": observed_call_count,
             "observed_call_sites": canonical_observed,
         }
     return {
         "status": "matched",
         "profile_status": "measured-under-stub",
-        "expected_call_count": expected_count,
+        "expected_call_count": declaration.get("call_count"),
         "observed_call_count": observed_call_count,
         "call_sites_matched": True,
+        "content_hashes_matched": True,
     }
 
 

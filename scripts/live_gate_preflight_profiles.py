@@ -115,7 +115,6 @@ def load_profile_coverage(
     profile_path: str | Path = PROFILE_PATH,
     *,
     project_root: str | Path = PROJECT_ROOT,
-    expected_source_sha: str | None = None,
 ) -> dict[str, Any]:
     """Read, validate, and summarize the frozen profile declaration."""
     root = Path(project_root).resolve(strict=True)
@@ -130,20 +129,20 @@ def load_profile_coverage(
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ProfileValidationError("profile declaration cannot be read") from exc
-    return validate_profile_document(
-        document,
-        project_root=root,
-        expected_source_sha=expected_source_sha,
-    )
+    return validate_profile_document(document, project_root=root)
 
 
 def validate_profile_document(
     document: Any,
     *,
     project_root: str | Path = PROJECT_ROOT,
-    expected_source_sha: str | None = None,
 ) -> dict[str, Any]:
-    """Validate all eight fixture-party pairs against the frozen 26-row source."""
+    """Validate all eight fixture-party pairs against the frozen 26-row source.
+
+    Measured declarations are call-site-content bound (not commit-SHA bound);
+    validation checks shape and safe repository-relative paths only. Matching
+    against an observed run is ``match_lifecycle_declaration``.
+    """
     root = Path(project_root).resolve(strict=True)
     if not isinstance(document, Mapping):
         raise ProfileValidationError("profile declaration must be an object")
@@ -223,25 +222,13 @@ def validate_profile_document(
 
         startup_status = _validate_lifecycle_profile(
             profile.get("startup"),
-            expected_source_sha=expected_source_sha,
-            project_root=root,
-            profile_id=expected_profile_id,
             fixture_id=fixture_id,
             party_size=party_size,
-            lifecycle="startup",
-            planned_row_ids=row_ids,
-            row_metadata=expected_rows["row_metadata"],
         )
         resume_status = _validate_lifecycle_profile(
             profile.get("resume"),
-            expected_source_sha=expected_source_sha,
-            project_root=root,
-            profile_id=expected_profile_id,
             fixture_id=fixture_id,
             party_size=party_size,
-            lifecycle="resume",
-            planned_row_ids=row_ids,
-            row_metadata=expected_rows["row_metadata"],
         )
         pair_statuses[expected_profile_id] = {
             "startup": startup_status,
@@ -428,18 +415,72 @@ def _load_expected_row_pairs(root: Path) -> dict[str, Any]:
     }
 
 
+STUB_FILE = "scripts/live_gate_preflight_stub.py"
+# Files that drive the measured exchange: the profile runner (selects the
+# character and sends the first turn) and the socket script driver it uses.
+DRIVER_FILES = (
+    "scripts/live_gate_preflight_profile_runner.py",
+    "scripts/mapping_pilot/row_runner.py",
+)
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+_TMP_PATH = re.compile(r"(?:^|[\\/])tmp[\\/]")
+
+
+def _reject_forbidden_declaration_paths(value: Any) -> None:
+    """Reject absolute or tmp/ path strings anywhere inside a declaration."""
+    if isinstance(value, str):
+        if value.startswith(("/", "~", "\\")) or _WINDOWS_DRIVE.match(value):
+            raise ProfileValidationError(
+                "measured lifecycle declaration contains an absolute path"
+            )
+        if _TMP_PATH.search(value):
+            raise ProfileValidationError(
+                "measured lifecycle declaration contains a tmp/ path"
+            )
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_forbidden_declaration_paths(key)
+            _reject_forbidden_declaration_paths(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_forbidden_declaration_paths(item)
+
+
+def _declared_repo_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProfileValidationError("%s path is invalid" % label)
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or "\\" in value
+        or ".." in path.parts
+        or "." in path.parts
+        or not path.parts
+        or path.parts[0] == "tmp"
+        or path.as_posix() != value
+    ):
+        raise ProfileValidationError("%s path is not a safe repository-relative path" % label)
+    return value
+
+
+def _validate_file_hash_record(value: Any, label: str, *, expected_path: str | None) -> None:
+    _require_keys(value, {"path", "sha256"}, label)
+    path = _declared_repo_path(value.get("path"), label)
+    digest = value.get("sha256")
+    if expected_path is not None and path != expected_path:
+        raise ProfileValidationError("%s path differs from the bound tool file" % label)
+    if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
+        raise ProfileValidationError("%s hash is invalid" % label)
+
+
 def _validate_lifecycle_profile(
     value: Any,
     *,
-    expected_source_sha: str | None,
-    project_root: Path,
-    profile_id: str,
     fixture_id: str,
     party_size: int,
-    lifecycle: str,
-    planned_row_ids: list[str],
-    row_metadata: Mapping[str, Mapping[str, Any]],
 ) -> str:
+    """Validate declaration shape only; hashes bind to call-site content at match time."""
     if not isinstance(value, Mapping):
         raise ProfileValidationError("startup/resume profile must be an object")
     status = value.get("status")
@@ -451,100 +492,260 @@ def _validate_lifecycle_profile(
         return "MISSING"
     if status != "measured-under-stub":
         raise ProfileValidationError("unsupported lifecycle profile status")
+    _reject_forbidden_declaration_paths(value)
     _require_keys(
         value,
         {
             "status",
+            "fixture_id",
+            "party_size",
             "call_count",
             "call_sites",
-            "source_sha",
-            "command",
-            "pythonpath",
-            "evidence_path",
-            "evidence_sha256",
+            "stub_sha256",
+            "driver_sha256",
+            "provenance",
         },
         "measured lifecycle profile",
     )
+    if (
+        value.get("fixture_id") != fixture_id
+        or type(value.get("party_size")) is not int
+        or value.get("party_size") != party_size
+    ):
+        raise ProfileValidationError("measured lifecycle fixture-party binding differs")
     call_count = value.get("call_count")
     call_sites = value.get("call_sites")
-    source_sha = value.get("source_sha")
-    command = value.get("command")
-    pythonpath = value.get("pythonpath")
-    evidence_path = value.get("evidence_path")
-    evidence_sha256 = value.get("evidence_sha256")
     if type(call_count) is not int or call_count < 1:
         raise ProfileValidationError("measured lifecycle call count is invalid")
-    if not isinstance(source_sha, str) or _SHA.fullmatch(source_sha) is None:
-        raise ProfileValidationError("measured lifecycle source SHA is invalid")
-    if expected_source_sha is not None and source_sha != expected_source_sha:
-        raise ProfileValidationError("measured lifecycle source SHA does not match expected source")
-    if not _valid_command(command):
-        raise ProfileValidationError("measured lifecycle command is invalid or secret-bearing")
-    if pythonpath != expected_guarded_pythonpath(project_root):
-        raise ProfileValidationError(
-            "measured lifecycle PYTHONPATH must put the dedicated guard before the repository root"
-        )
-    if (
-        not isinstance(evidence_path, str)
-        or not evidence_path.startswith("tmp/")
-        or not isinstance(evidence_sha256, str)
-        or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
-    ):
-        raise ProfileValidationError("measured lifecycle evidence binding is invalid")
-    if not isinstance(call_sites, list):
+    if not isinstance(call_sites, list) or not call_sites:
         raise ProfileValidationError("measured lifecycle call-site list is invalid")
-    observed_count = 0
+    _validate_file_hash_record(
+        value.get("stub_sha256"), "measured lifecycle stub", expected_path=STUB_FILE
+    )
+    drivers = value.get("driver_sha256")
+    if not isinstance(drivers, list) or len(drivers) != len(DRIVER_FILES):
+        raise ProfileValidationError("measured lifecycle driver hash list is invalid")
+    for driver, expected_path in zip(drivers, DRIVER_FILES):
+        _validate_file_hash_record(
+            driver, "measured lifecycle driver", expected_path=expected_path
+        )
+    provenance = value.get("provenance")
+    _require_keys(provenance, {"run_id", "evidence_sha256"}, "measured lifecycle provenance")
+    run_id = provenance.get("run_id")
+    evidence_sha256 = provenance.get("evidence_sha256")
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(evidence_sha256, str)
+        or _HEX64.fullmatch(evidence_sha256) is None
+    ):
+        raise ProfileValidationError("measured lifecycle provenance is invalid")
+    seen_sites: set[tuple[str, int]] = set()
+    file_hashes: dict[str, str] = {}
+    total = 0
     for call_site in call_sites:
         _require_keys(
             call_site,
             {"source_file", "source_line", "source_file_sha256", "count"},
             "router call site",
         )
-        source_file = call_site.get("source_file")
+        source_file = _declared_repo_path(call_site.get("source_file"), "router call-site source")
         source_line = call_site.get("source_line")
         source_file_sha256 = call_site.get("source_file_sha256")
         site_count = call_site.get("count")
         if (
-            not isinstance(source_file, str)
-            or not isinstance(source_line, int)
-            or isinstance(source_line, bool)
+            type(source_line) is not int
             or source_line < 1
             or not isinstance(source_file_sha256, str)
-            or re.fullmatch(r"[0-9a-f]{64}", source_file_sha256) is None
+            or _HEX64.fullmatch(source_file_sha256) is None
             or type(site_count) is not int
             or site_count < 1
         ):
             raise ProfileValidationError("measured router call-site provenance is invalid")
-        source_path = _safe_source_path(project_root, source_file, "router call-site source")
-        try:
-            source_bytes = source_path.read_bytes()
-            line_count = len(source_bytes.decode("utf-8").splitlines())
-        except (OSError, UnicodeError) as exc:
-            raise ProfileValidationError("router call-site source cannot be read") from exc
-        if source_line > line_count:
-            raise ProfileValidationError("router call-site line is outside source file")
-        if hashlib.sha256(source_bytes).hexdigest() != source_file_sha256:
-            raise ProfileValidationError("router call-site source hash differs")
-        observed_count += site_count
-    if observed_count != call_count:
+        if (source_file, source_line) in seen_sites:
+            raise ProfileValidationError("measured router call site is duplicated")
+        seen_sites.add((source_file, source_line))
+        if file_hashes.setdefault(source_file, source_file_sha256) != source_file_sha256:
+            raise ProfileValidationError("router call-site source hash is inconsistent")
+        total += site_count
+    if total != call_count:
         raise ProfileValidationError("measured lifecycle call-site counts do not sum to total")
-    _validate_profile_evidence(
-        project_root,
-        evidence_path=evidence_path,
-        evidence_sha256=evidence_sha256,
-        profile_id=profile_id,
-        fixture_id=fixture_id,
-        party_size=party_size,
-        lifecycle=lifecycle,
-        planned_row_ids=planned_row_ids,
-        row_metadata=row_metadata,
-        source_sha=source_sha,
-        command=command,
-        pythonpath=pythonpath,
-        call_count=call_count,
-        call_sites=call_sites,
-    )
     return "measured-under-stub"
+
+
+def tool_file_hashes(project_root: str | Path = PROJECT_ROOT) -> dict[str, str]:
+    """Return sha256 of the stub and driver files in the tool tree."""
+    root = Path(project_root).resolve(strict=True)
+    result: dict[str, str] = {}
+    for relative in (STUB_FILE, *DRIVER_FILES):
+        path = _safe_source_path(root, relative, "stub/driver file")
+        result[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def match_lifecycle_declaration(
+    declaration: Mapping[str, Any],
+    *,
+    observed_call_count: int,
+    observed_call_sites: list[Mapping[str, Any]],
+    observed_tool_hashes: Mapping[str, str],
+) -> dict[str, Any]:
+    """Fail-closed content match of a declaration against one observed run.
+
+    Returns ``{"kinds": [...], "differences": {...}}``; an empty ``kinds`` list
+    is the only match. Kinds, in priority order: ``stub_hash_mismatch``,
+    ``driver_hash_mismatch``, ``file_hash_mismatch``, ``call_sites_mismatch``,
+    ``total_mismatch``.
+    """
+    differences: dict[str, Any] = {}
+    kinds: list[str] = []
+
+    stub = declaration["stub_sha256"]
+    observed_stub = observed_tool_hashes.get(stub["path"])
+    if observed_stub != stub["sha256"]:
+        kinds.append("stub_hash_mismatch")
+        differences["stub_hash"] = {
+            "path": stub["path"],
+            "expected": stub["sha256"],
+            "observed": observed_stub,
+        }
+    driver_diffs = [
+        {
+            "path": driver["path"],
+            "expected": driver["sha256"],
+            "observed": observed_tool_hashes.get(driver["path"]),
+        }
+        for driver in declaration["driver_sha256"]
+        if observed_tool_hashes.get(driver["path"]) != driver["sha256"]
+    ]
+    if driver_diffs:
+        kinds.append("driver_hash_mismatch")
+        differences["driver_hashes"] = driver_diffs
+
+    expected_files: dict[str, str] = {}
+    expected_sites: dict[tuple[str, int], int] = {}
+    for site in declaration["call_sites"]:
+        expected_files[site["source_file"]] = site["source_file_sha256"]
+        expected_sites[(site["source_file"], site["source_line"])] = site["count"]
+    observed_files: dict[str, set[str]] = {}
+    observed_sites: dict[tuple[str, int], int] = {}
+    for site in observed_call_sites:
+        path = site.get("source_file")
+        line = site.get("source_line")
+        observed_files.setdefault(path, set()).add(site.get("source_file_sha256"))
+        key = (path, line)
+        observed_sites[key] = observed_sites.get(key, 0) + (
+            site["count"] if type(site.get("count")) is int else 0
+        )
+    file_diffs = []
+    for path in sorted(set(expected_files) | set(observed_files)):
+        expected_hash = expected_files.get(path)
+        observed_hashes = observed_files.get(path)
+        if expected_hash is None or observed_hashes is None:
+            continue
+        if observed_hashes != {expected_hash}:
+            file_diffs.append(
+                {
+                    "path": path,
+                    "expected": expected_hash,
+                    "observed": sorted(h for h in observed_hashes if isinstance(h, str)),
+                }
+            )
+    if file_diffs:
+        kinds.append("file_hash_mismatch")
+        differences["file_hashes"] = file_diffs
+
+    extra = sorted(set(observed_sites) - set(expected_sites), key=str)
+    missing = sorted(set(expected_sites) - set(observed_sites), key=str)
+    count_changes = [
+        {
+            "source_file": key[0],
+            "source_line": key[1],
+            "expected": expected_sites[key],
+            "observed": observed_sites[key],
+        }
+        for key in sorted(set(expected_sites) & set(observed_sites), key=str)
+        if expected_sites[key] != observed_sites[key]
+    ]
+    if extra or missing or count_changes:
+        kinds.append("call_sites_mismatch")
+        differences["call_sites"] = {
+            "extra": [{"source_file": k[0], "source_line": k[1]} for k in extra],
+            "missing": [{"source_file": k[0], "source_line": k[1]} for k in missing],
+            "count_changes": count_changes,
+        }
+    if observed_call_count != declaration["call_count"]:
+        kinds.append("total_mismatch")
+        differences["total"] = {
+            "expected": declaration["call_count"],
+            "observed": observed_call_count,
+        }
+    return {"kinds": kinds, "differences": differences}
+
+
+def declaration_from_evidence(
+    evidence_path: str | Path,
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+) -> dict[str, Any]:
+    """Build a measured lifecycle declaration entry from retained run evidence.
+
+    Reads fixture, party, call sites (repo-relative paths, file hashes, counts)
+    and run id from the retained ``profile-evidence.json``; the evidence file
+    itself is referenced only by run id and sha256. Stub and driver hashes are
+    computed from the tool tree. This helper does not re-validate the run
+    (``_validate_profile_evidence`` does that against the run's own tree).
+    """
+    root = Path(project_root).resolve(strict=True)
+    path = Path(evidence_path)
+    if not path.is_absolute():
+        path = root / path
+    raw = _read_bounded_evidence(path)
+    try:
+        evidence = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence is not valid JSON") from exc
+    if not isinstance(evidence, Mapping):
+        raise ProfileValidationError("profile evidence is not an object")
+    if evidence.get("outcome") != "completed" or evidence.get("failure_code") is not None:
+        raise ProfileValidationError("profile evidence run did not complete")
+    sites = evidence.get("call_sites")
+    if not isinstance(sites, list):
+        raise ProfileValidationError("profile evidence call sites are missing")
+    entry = {
+        "status": "measured-under-stub",
+        "fixture_id": evidence.get("fixture_id"),
+        "party_size": evidence.get("party_size"),
+        "call_count": evidence.get("call_count"),
+        "call_sites": [
+            {
+                key: site.get(key)
+                for key in ("source_file", "source_line", "source_file_sha256", "count")
+            }
+            if isinstance(site, Mapping)
+            else site
+            for site in sites
+        ],
+    }
+    hashes = tool_file_hashes(root)
+    entry["stub_sha256"] = {"path": STUB_FILE, "sha256": hashes[STUB_FILE]}
+    entry["driver_sha256"] = [
+        {"path": driver, "sha256": hashes[driver]} for driver in DRIVER_FILES
+    ]
+    entry["provenance"] = {
+        "run_id": evidence.get("run_id"),
+        "evidence_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    _validate_lifecycle_profile(
+        entry,
+        fixture_id=entry["fixture_id"],
+        party_size=entry["party_size"],
+    )
+    return entry
 
 
 def _validate_profile_evidence(

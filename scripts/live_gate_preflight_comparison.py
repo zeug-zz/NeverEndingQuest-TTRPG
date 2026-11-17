@@ -197,10 +197,15 @@ def load_frozen_row_source() -> FrozenRowSource:
 
 
 def load_lifecycle_profile_coverage(main_sha: str) -> Mapping[str, Any]:
-    """Load current-main-bound preflight profiles using the existing validator."""
+    """Load content-bound preflight profiles using the existing validator.
+
+    Declarations bind to call-site content, not to ``main_sha``; the argument
+    only keeps the loader signature stable for the comparison caller.
+    """
     from scripts.live_gate_preflight_profiles import load_profile_coverage
 
-    return load_profile_coverage(expected_source_sha=main_sha)
+    del main_sha
+    return load_profile_coverage()
 
 
 def compare_local_snapshots(

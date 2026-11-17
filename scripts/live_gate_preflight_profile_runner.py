@@ -1749,7 +1749,7 @@ def _validate_prepared_sandbox(
     from scripts.live_gate_preflight_safety import validate_sandbox_config_location
     from scripts.mapping_pilot import launcher
 
-    coverage = load_profile_coverage(expected_source_sha=None)
+    coverage = load_profile_coverage()
     if coverage["fixture_party_pair_count"] != 8 or coverage["replacement_only_rows_activated"]:
         raise CharacterizationError("profile_declaration_coverage_invalid")
     profiles = copy_profile_document().get("profiles")

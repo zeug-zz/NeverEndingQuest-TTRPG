@@ -67,39 +67,55 @@
           "additionalProperties": false,
           "required": [
             "status",
+            "fixture_id",
+            "party_size",
             "call_count",
             "call_sites",
-            "source_sha",
-            "command",
-            "pythonpath",
-            "evidence_path",
-            "evidence_sha256"
+            "stub_sha256",
+            "driver_sha256",
+            "provenance"
           ],
           "properties": {
             "status": {"const": "measured-under-stub"},
+            "fixture_id": {"type": "string", "minLength": 1},
+            "party_size": {"enum": [1, 4]},
             "call_count": {"type": "integer", "minimum": 1},
             "call_sites": {
               "type": "array",
+              "minItems": 1,
               "items": {"$ref": "#/$defs/callSite"}
             },
-            "source_sha": {
-              "type": "string",
-              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-            },
-            "command": {
+            "stub_sha256": {"$ref": "#/$defs/fileHash"},
+            "driver_sha256": {
               "type": "array",
               "minItems": 1,
-              "items": {"type": "string"}
+              "items": {"$ref": "#/$defs/fileHash"}
             },
-            "pythonpath": {"type": "string", "minLength": 1},
-            "evidence_path": {
-              "type": "string",
-              "pattern": "^tmp/(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
-            },
-            "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            "provenance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["run_id", "evidence_sha256"],
+              "properties": {
+                "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"},
+                "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
           }
         }
       ]
+    },
+    "fileHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!tmp/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+        },
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
     },
     "callSite": {
       "type": "object",
@@ -109,7 +125,7 @@
         "source_file": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+          "pattern": "^(?!/)(?!tmp/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
         },
         "source_line": {"type": "integer", "minimum": 1},
         "source_file_sha256": {

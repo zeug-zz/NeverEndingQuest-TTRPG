@@ -34,6 +34,18 @@ Preflight MUST exercise all 26 frozen SP3 planned scenario rows through the full
 - **WHEN** a fixture-party pair has no declared startup/resume profile, or observed call counts differ from it
 - **THEN** preflight reports the missing or mismatched profile and the row is not booking-eligible
 
+#### Scenario: Declaration binds to call-site content and stub/driver hashes
+- **WHEN** a measured startup or resume profile is declared
+- **THEN** it records the fixture and party, each call site as repo-relative path, line, file sha256, and count, the total, the sha256 of the stub and driver files that produced the counts, and a provenance manifest of run id and evidence sha256 only; it carries no source SHA, command, or PYTHONPATH, and a declaration containing an absolute path or a `tmp/` path is rejected
+
+#### Scenario: Observed run content differs from the declaration
+- **WHEN** the call sites observed in a preflight run have an extra or missing site, a changed count or total, or any call-site file, stub, or driver hash that differs from the declaration
+- **THEN** preflight reports `profile_mismatch` naming what differed, the row is not booking-eligible, and the declaration must be re-measured rather than treated as a pass
+
+#### Scenario: Declaration is portable across commits with identical content
+- **WHEN** a run at a different commit observes exactly the declared call sites, counts, total, and file, stub, and driver hashes
+- **THEN** the profile matches without comparing commit SHAs, while the preflight report remains bound to the exact SHA to be run
+
 #### Scenario: Driver transport completes the first exchange
 - **WHEN** the driver connects to a row's host and sends its first scripted exchange
 - **THEN** the host returns the stubbed response through the driver transport and the exchange is recorded for that row
@@ -76,7 +88,11 @@ The comparison MUST exercise the same 26 planned rows at pre-#105 SHA `5999af374
 
 #### Scenario: Pre-#105 source is used as the regression control
 - **WHEN** the comparison runs the frozen rows against commit `5999af374ded4f56b21b25d68fc10f9520444b51`
-- **THEN** the report identifies the host `NameError` on rows E06 and E13-E18 and marks the result as a non-bookable regression control
+- **THEN** the report identifies the host `NameError` on rows E06 and E13-E18, or `profile_mismatch` where the declared call-site content differs, and marks the result as a non-bookable regression control
+
+#### Scenario: Frozen main matches only on identical content
+- **WHEN** the comparison runs against the frozen main SHA
+- **THEN** a declared profile matches only if every call site, count, total, and file, stub, and driver hash is identical; otherwise the report names the differing files and the profile is re-measured
 
 #### Scenario: Current origin main is refreshed and frozen before comparison
 - **WHEN** separate pre-comparison preparation refreshes `refs/remotes/origin/main` and resolves its full SHA

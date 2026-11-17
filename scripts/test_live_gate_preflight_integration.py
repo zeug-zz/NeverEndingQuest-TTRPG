@@ -61,6 +61,31 @@ def _synthetic_call_site(
     }
 
 
+def _measured_declaration(
+    call_sites: list[dict[str, Any]], *, call_count: int | None = None
+) -> dict[str, Any]:
+    """Content-bound measured declaration; stub/driver hashes from this tree."""
+    from scripts import live_gate_preflight_profiles as profiles
+
+    hashes = profiles.tool_file_hashes()
+    return {
+        "status": "measured-under-stub",
+        "call_count": (
+            call_count
+            if call_count is not None
+            else sum(site["count"] for site in call_sites)
+        ),
+        "call_sites": [dict(site) for site in call_sites],
+        "stub_sha256": {
+            "path": profiles.STUB_FILE,
+            "sha256": hashes[profiles.STUB_FILE],
+        },
+        "driver_sha256": [
+            {"path": path, "sha256": hashes[path]} for path in profiles.DRIVER_FILES
+        ],
+    }
+
+
 class _FakeDecodeScope:
     def __init__(self) -> None:
         self.released = False
@@ -1220,17 +1245,10 @@ class TestPreflightRowIntegration(unittest.TestCase):
         return identities
 
     @staticmethod
-    def _measured_lifecycle(
-        call_site: dict[str, Any], *, source_sha: str = SOURCE_SHA
-    ) -> dict[str, Any]:
+    def _measured_lifecycle(call_site: dict[str, Any]) -> dict[str, Any]:
         if call_site.get("source_file") == "scripts/example_router_call.py":
             call_site = _synthetic_call_site(count=call_site["count"])
-        return {
-            "status": "measured-under-stub",
-            "source_sha": source_sha,
-            "call_count": call_site["count"],
-            "call_sites": [dict(call_site)],
-        }
+        return _measured_declaration([call_site])
 
     @staticmethod
     def _checkpoint(
@@ -2448,12 +2466,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         )
         call_site = _synthetic_call_site()
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
-        profile["startup"] = {
-            "status": "measured-under-stub",
-            "source_sha": SOURCE_SHA,
-            "call_count": 1,
-            "call_sites": [call_site],
-        }
+        profile["startup"] = _measured_declaration([call_site])
         profile_map[(first.fixture_id, first.party_size)] = profile
 
         report, observed = self._run_with_profiles(
@@ -2488,12 +2501,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         )
         expected_site = _synthetic_call_site(count=2)
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
-        profile["startup"] = {
-            "status": "measured-under-stub",
-            "source_sha": SOURCE_SHA,
-            "call_count": 2,
-            "call_sites": [expected_site],
-        }
+        profile["startup"] = _measured_declaration([expected_site])
         profile_map[(first.fixture_id, first.party_size)] = profile
 
         report, observed = self._run_with_profiles(profile_map, coverage)
@@ -2502,8 +2510,12 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertEqual(report["attempted_row_ids"], ["E01"])
         self.assertEqual(
             report["row_results"][0]["failure_code"],
-            "startup_profile_call_count_mismatch",
+            "startup_profile_call_sites_mismatch",
         )
+        check = report["row_results"][0]["startup_profile_check"]
+        self.assertEqual(check["outcome"], "profile_mismatch")
+        self.assertEqual(check["mismatch_kinds"], ["call_sites_mismatch", "total_mismatch"])
+        self.assertEqual(check["differences"]["total"], {"expected": 2, "observed": 1})
         self.assertEqual(observed["cleaned"], ["E01"])
         self.assertEqual(report["replacement_only_rows_activated"], [])
 
@@ -2520,12 +2532,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             source_file="scripts/test_live_gate_preflight_profiles.py"
         )
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
-        profile["startup"] = {
-            "status": "measured-under-stub",
-            "source_sha": SOURCE_SHA,
-            "call_count": 1,
-            "call_sites": [expected_site],
-        }
+        profile["startup"] = _measured_declaration([expected_site])
         profile_map[(first.fixture_id, first.party_size)] = profile
 
         report, observed = self._run_with_profiles(profile_map, coverage)
@@ -2641,7 +2648,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertIn("E01", observed["workers"])
         self.assertEqual(report["replacement_only_rows_activated"], [])
 
-    def test_stale_resume_profile_source_blocks_resume(self) -> None:
+    def test_stale_call_site_file_hash_blocks_as_profile_mismatch(self) -> None:
         rows, _reserves = _load_frozen_row_ids(None)
         profile_map, coverage = _load_profiles([row["row_id"] for row in rows])
         first = _resolve_row_plan(
@@ -2650,42 +2657,49 @@ class TestPreflightRowIntegration(unittest.TestCase):
             expected_row=rows[0],
             profiles=profile_map,
         )
-        call_site = {
-            "source_file": "scripts/example_router_call.py",
-            "source_line": 1,
-            "source_file_sha256": "c" * 64,
-            "count": 1,
-        }
+        stale_site = _synthetic_call_site()
+        stale_site["source_file_sha256"] = "f" * 64
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
-        profile["resume"] = self._measured_lifecycle(
-            call_site, source_sha="f" * 40
-        )
+        profile["startup"] = _measured_declaration([stale_site])
         profile_map[(first.fixture_id, first.party_size)] = profile
-        checkpoint = self._checkpoint(
-            row_id="E01",
-            fixture_id="interior_tavern",
-            party_size=1,
-            arm="A",
-            seed=5101,
-            sha="d",
-        )
 
-        report, observed = self._run_with_profiles(
-            profile_map,
-            coverage,
-            resume_checkpoints={"E01": {"interior_tavern": checkpoint}},
-        )
+        report, observed = self._run_with_profiles(profile_map, coverage)
 
         first_result = report["row_results"][0]
         self.assertEqual(report["status"], "blocked")
-        self.assertEqual(first_result["failure_code"], "resume_profile_source_mismatch")
-        self.assertFalse(
-            any(
-                item["lifecycle"] == "resume"
-                for item in first_result["lifecycle_results"]
-            )
+        self.assertEqual(
+            first_result["failure_code"], "startup_profile_file_hash_mismatch"
         )
+        check = first_result["lifecycle_profile_checks"]["interior_tavern"]["startup"]
+        self.assertEqual(check["outcome"], "profile_mismatch")
+        self.assertEqual(
+            check["differences"]["file_hashes"][0]["expected"], "f" * 64
+        )
+        self.assertFalse(first_result["booking_eligible"])
         self.assertEqual(observed["cleaned"], ["E01"])
+
+    def test_stale_stub_hash_blocks_as_profile_mismatch(self) -> None:
+        rows, _reserves = _load_frozen_row_ids(None)
+        profile_map, coverage = _load_profiles([row["row_id"] for row in rows])
+        first = _resolve_row_plan(
+            "E01",
+            prereg_root=None,
+            expected_row=rows[0],
+            profiles=profile_map,
+        )
+        declaration = _measured_declaration([_synthetic_call_site()])
+        declaration["stub_sha256"]["sha256"] = "0" * 64
+        profile = dict(profile_map[(first.fixture_id, first.party_size)])
+        profile["startup"] = declaration
+        profile_map[(first.fixture_id, first.party_size)] = profile
+
+        report, _observed = self._run_with_profiles(profile_map, coverage)
+
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(
+            report["row_results"][0]["failure_code"],
+            "startup_profile_stub_hash_mismatch",
+        )
 
     def test_multi_fixture_row_runs_each_measured_fixture_lifecycle_independently(self) -> None:
         rows, _reserves = _load_frozen_row_ids(None)

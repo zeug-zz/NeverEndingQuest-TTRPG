@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import errno
 import hashlib
 import io
@@ -50,7 +51,6 @@ from scripts.live_gate_preflight_profiles import (
     ProfileValidationError,
     copy_profile_document,
     load_profile_coverage,
-    validate_profile_document,
     _is_exact_historic_profile_evidence,
     _valid_command,
     _valid_controller_command,
@@ -96,6 +96,93 @@ from scripts.live_gate_preflight_profile_runner import (
 )
 from scripts import live_gate_preflight_profile_runner as profile_runner
 from scripts import live_gate_preflight_sandbox as sandbox_preparation
+
+
+_LEGACY_LIFECYCLE_FIELDS = {
+    "status",
+    "call_count",
+    "call_sites",
+    "source_sha",
+    "command",
+    "pythonpath",
+    "evidence_path",
+    "evidence_sha256",
+}
+
+
+def _content_bound_from_legacy(profile: dict, entry: dict) -> dict:
+    """Convert a test-built evidence-bound lifecycle into the declaration shape."""
+    hashes = preflight_profiles.tool_file_hashes()
+    return {
+        "status": "measured-under-stub",
+        "fixture_id": profile["fixture_id"],
+        "party_size": profile["party_size"],
+        "call_count": entry["call_count"],
+        "call_sites": copy.deepcopy(entry["call_sites"]),
+        "stub_sha256": {
+            "path": preflight_profiles.STUB_FILE,
+            "sha256": hashes[preflight_profiles.STUB_FILE],
+        },
+        "driver_sha256": [
+            {"path": path, "sha256": hashes[path]}
+            for path in preflight_profiles.DRIVER_FILES
+        ],
+        "provenance": {
+            "run_id": "legacy-fixture-run",
+            "evidence_sha256": entry["evidence_sha256"],
+        },
+    }
+
+
+def _to_content_bound(document: dict) -> tuple[dict, list]:
+    converted = copy.deepcopy(document)
+    pending = []
+    for profile in converted["profiles"]:
+        for lifecycle in ("startup", "resume"):
+            entry = profile.get(lifecycle)
+            if isinstance(entry, dict) and set(entry) == _LEGACY_LIFECYCLE_FIELDS:
+                pending.append((profile, lifecycle, dict(entry)))
+                profile[lifecycle] = _content_bound_from_legacy(profile, entry)
+    return converted, pending
+
+
+def validate_profile_document(
+    document: Any, *, expected_source_sha: str | None = None
+) -> dict:
+    """Validate a declaration; evidence-bound fixtures also get run-evidence checks.
+
+    Test fixtures built from retained or synthetic run evidence carry the legacy
+    evidence fields. The production declaration no longer does, so the fixture
+    is converted to the content-bound shape for declaration validation and the
+    run evidence is validated directly with ``_validate_profile_evidence``.
+    """
+    converted, pending = _to_content_bound(document)
+    coverage = preflight_profiles.validate_profile_document(converted)
+    row_metadata = preflight_profiles._load_expected_row_pairs(PROJECT_ROOT)[
+        "row_metadata"
+    ]
+    for profile, lifecycle, entry in pending:
+        if expected_source_sha is not None and entry["source_sha"] != expected_source_sha:
+            raise ProfileValidationError(
+                "measured lifecycle source SHA does not match expected source"
+            )
+        preflight_profiles._validate_profile_evidence(
+            PROJECT_ROOT,
+            evidence_path=entry["evidence_path"],
+            evidence_sha256=entry["evidence_sha256"],
+            profile_id=profile["profile_id"],
+            fixture_id=profile["fixture_id"],
+            party_size=profile["party_size"],
+            lifecycle=lifecycle,
+            planned_row_ids=profile["planned_row_ids"],
+            row_metadata=row_metadata,
+            source_sha=entry["source_sha"],
+            command=entry["command"],
+            pythonpath=entry["pythonpath"],
+            call_count=entry["call_count"],
+            call_sites=entry["call_sites"],
+        )
+    return coverage
 
 
 def _sandbox_host_identity(project_root: Path) -> dict[str, Any]:
@@ -489,7 +576,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             self.assertEqual(new_evidence["invocation_identity"]["status"], "matched")
             schema_path = PROFILE_PATH.with_name("live_gate_preflight_profiles.schema.json")
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
-            Draft202012Validator(schema).validate(document)
+            Draft202012Validator(schema).validate(_to_content_bound(document)[0])
             validate_profile_document(document, expected_source_sha="a" * 40)
             with self.assertRaisesRegex(ProfileValidationError, "does not match"):
                 validate_profile_document(document, expected_source_sha="b" * 40)
@@ -8807,6 +8894,260 @@ def _run_profile_worker_probe(
         )
     )
     raise SystemExit(exit_code)
+
+
+class TestContentBoundDeclarations(unittest.TestCase):
+    """Declarations bind to call-site content and stub/driver hashes, not a SHA."""
+
+    SITE_A = "scripts/live_gate_preflight_controller.py"
+    SITE_B = "scripts/live_gate_preflight_stub.py"
+
+    def setUp(self) -> None:
+        self.tool_hashes = preflight_profiles.tool_file_hashes()
+        self.site_hashes = {
+            path: hashlib.sha256((PROJECT_ROOT / path).read_bytes()).hexdigest()
+            for path in (self.SITE_A, self.SITE_B)
+        }
+
+    def _sites(self) -> list[dict]:
+        return [
+            {
+                "source_file": self.SITE_A,
+                "source_line": 10,
+                "source_file_sha256": self.site_hashes[self.SITE_A],
+                "count": 2,
+            },
+            {
+                "source_file": self.SITE_B,
+                "source_line": 20,
+                "source_file_sha256": self.site_hashes[self.SITE_B],
+                "count": 1,
+            },
+        ]
+
+    def _declaration(self) -> dict:
+        return {
+            "status": "measured-under-stub",
+            "fixture_id": "interior_tavern",
+            "party_size": 1,
+            "call_count": 3,
+            "call_sites": self._sites(),
+            "stub_sha256": {
+                "path": preflight_profiles.STUB_FILE,
+                "sha256": self.tool_hashes[preflight_profiles.STUB_FILE],
+            },
+            "driver_sha256": [
+                {"path": path, "sha256": self.tool_hashes[path]}
+                for path in preflight_profiles.DRIVER_FILES
+            ],
+            "provenance": {"run_id": "fr11-run-01", "evidence_sha256": "e" * 64},
+        }
+
+    def _document(self, declaration: dict) -> dict:
+        document = copy_profile_document()
+        document["profiles"][0]["startup"] = declaration
+        return document
+
+    def _match(self, declaration, *, count=3, sites=None, tool_hashes=None) -> dict:
+        return preflight_profiles.match_lifecycle_declaration(
+            declaration,
+            observed_call_count=count,
+            observed_call_sites=self._sites() if sites is None else sites,
+            observed_tool_hashes=self.tool_hashes if tool_hashes is None else tool_hashes,
+        )
+
+    def test_declaration_shape_validates_against_schema_and_loader(self) -> None:
+        document = self._document(self._declaration())
+        schema_path = PROFILE_PATH.with_name("live_gate_preflight_profiles.schema.json")
+        Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8"))).validate(
+            document
+        )
+        coverage = preflight_profiles.validate_profile_document(document)
+        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertFalse(coverage["booking_eligible"])
+
+    def test_declaration_is_not_bound_to_the_current_tree_or_a_sha(self) -> None:
+        declaration = self._declaration()
+        declaration["call_sites"][0]["source_file_sha256"] = "1" * 64
+        declaration["stub_sha256"]["sha256"] = "2" * 64
+        # Shape-valid even though no hash equals the working tree.
+        preflight_profiles.validate_profile_document(self._document(declaration))
+        for removed in ("source_sha", "command", "pythonpath", "evidence_path"):
+            declaration[removed] = "x"
+            with self.assertRaisesRegex(ProfileValidationError, "fields are malformed"):
+                preflight_profiles.validate_profile_document(self._document(declaration))
+            del declaration[removed]
+
+    def test_exact_match_passes(self) -> None:
+        result = self._match(self._declaration())
+        self.assertEqual(result["kinds"], [])
+        self.assertEqual(result["differences"], {})
+
+    def test_call_site_file_hash_change_is_file_hash_mismatch(self) -> None:
+        sites = self._sites()
+        sites[0]["source_file_sha256"] = "9" * 64
+        result = self._match(self._declaration(), sites=sites)
+        self.assertEqual(result["kinds"], ["file_hash_mismatch"])
+        self.assertEqual(
+            result["differences"]["file_hashes"],
+            [
+                {
+                    "path": self.SITE_A,
+                    "expected": self.site_hashes[self.SITE_A],
+                    "observed": ["9" * 64],
+                }
+            ],
+        )
+
+    def test_stub_hash_change_is_stub_hash_mismatch(self) -> None:
+        changed = dict(self.tool_hashes)
+        changed[preflight_profiles.STUB_FILE] = "8" * 64
+        result = self._match(self._declaration(), tool_hashes=changed)
+        self.assertEqual(result["kinds"], ["stub_hash_mismatch"])
+        self.assertEqual(result["differences"]["stub_hash"]["observed"], "8" * 64)
+
+    def test_driver_hash_change_is_driver_hash_mismatch(self) -> None:
+        changed = dict(self.tool_hashes)
+        driver = preflight_profiles.DRIVER_FILES[1]
+        changed[driver] = "7" * 64
+        result = self._match(self._declaration(), tool_hashes=changed)
+        self.assertEqual(result["kinds"], ["driver_hash_mismatch"])
+        self.assertEqual(result["differences"]["driver_hashes"][0]["path"], driver)
+
+    def test_missing_tool_hash_never_matches(self) -> None:
+        result = self._match(self._declaration(), tool_hashes={})
+        self.assertEqual(result["kinds"], ["stub_hash_mismatch", "driver_hash_mismatch"])
+
+    def test_extra_observed_site_is_call_sites_mismatch(self) -> None:
+        sites = self._sites() + [
+            {
+                "source_file": self.SITE_B,
+                "source_line": 99,
+                "source_file_sha256": self.site_hashes[self.SITE_B],
+                "count": 1,
+            }
+        ]
+        result = self._match(self._declaration(), count=4, sites=sites)
+        self.assertIn("call_sites_mismatch", result["kinds"])
+        self.assertEqual(
+            result["differences"]["call_sites"]["extra"],
+            [{"source_file": self.SITE_B, "source_line": 99}],
+        )
+
+    def test_missing_observed_site_is_call_sites_mismatch(self) -> None:
+        result = self._match(self._declaration(), count=2, sites=self._sites()[:1])
+        self.assertEqual(result["kinds"], ["call_sites_mismatch", "total_mismatch"])
+        self.assertEqual(
+            result["differences"]["call_sites"]["missing"],
+            [{"source_file": self.SITE_B, "source_line": 20}],
+        )
+
+    def test_count_change_is_call_sites_mismatch(self) -> None:
+        sites = self._sites()
+        sites[0]["count"] = 3
+        result = self._match(self._declaration(), count=3, sites=sites)
+        self.assertEqual(result["kinds"], ["call_sites_mismatch"])
+        self.assertEqual(
+            result["differences"]["call_sites"]["count_changes"],
+            [
+                {
+                    "source_file": self.SITE_A,
+                    "source_line": 10,
+                    "expected": 2,
+                    "observed": 3,
+                }
+            ],
+        )
+
+    def test_total_mismatch_alone_is_reported(self) -> None:
+        result = self._match(self._declaration(), count=4)
+        self.assertEqual(result["kinds"], ["total_mismatch"])
+        self.assertEqual(result["differences"]["total"], {"expected": 3, "observed": 4})
+
+    def test_absolute_path_is_rejected_everywhere(self) -> None:
+        mutations = (
+            lambda d: d["call_sites"][0].__setitem__("source_file", "/Users/x/a.py"),
+            lambda d: d["stub_sha256"].__setitem__("path", "/abs/stub.py"),
+            lambda d: d["provenance"].__setitem__("run_id", "/abs"),
+            lambda d: d.__setitem__("note", "C:\\work\\a.py"),
+        )
+        for mutate in mutations:
+            declaration = self._declaration()
+            mutate(declaration)
+            with self.assertRaisesRegex(ProfileValidationError, "absolute path"):
+                preflight_profiles.validate_profile_document(self._document(declaration))
+
+    def test_tmp_path_is_rejected(self) -> None:
+        for mutate in (
+            lambda d: d["call_sites"][0].__setitem__("source_file", "tmp/x/a.py"),
+            lambda d: d["driver_sha256"][0].__setitem__("path", "scripts/tmp/a.py"),
+            lambda d: d["provenance"].__setitem__("evidence_path", "tmp/router/e.json"),
+        ):
+            declaration = self._declaration()
+            mutate(declaration)
+            with self.assertRaisesRegex(ProfileValidationError, "tmp/ path"):
+                preflight_profiles.validate_profile_document(self._document(declaration))
+
+    def test_parent_traversal_path_is_rejected(self) -> None:
+        declaration = self._declaration()
+        declaration["call_sites"][0]["source_file"] = "scripts/../config.py"
+        with self.assertRaisesRegex(ProfileValidationError, "not a safe repository-relative"):
+            preflight_profiles.validate_profile_document(self._document(declaration))
+
+    def test_counts_must_sum_and_pair_must_match(self) -> None:
+        declaration = self._declaration()
+        declaration["call_count"] = 4
+        with self.assertRaisesRegex(ProfileValidationError, "do not sum"):
+            preflight_profiles.validate_profile_document(self._document(declaration))
+        declaration = self._declaration()
+        declaration["party_size"] = 4
+        with self.assertRaisesRegex(ProfileValidationError, "fixture-party binding"):
+            preflight_profiles.validate_profile_document(self._document(declaration))
+
+    def test_missing_lifecycles_remain_valid(self) -> None:
+        coverage = preflight_profiles.validate_profile_document(copy_profile_document())
+        self.assertFalse(coverage["measured_lifecycle_complete"])
+
+    def test_declaration_from_evidence_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="declaration-from-evidence-", dir=PROJECT_ROOT / "tmp"
+        ) as directory:
+            evidence = {
+                "fixture_id": "interior_tavern",
+                "party_size": 1,
+                "run_id": "fr11-roundtrip-01",
+                "outcome": "completed",
+                "failure_code": None,
+                "call_count": 3,
+                "call_sites": self._sites(),
+            }
+            path = Path(directory) / "profile-evidence.json"
+            raw = json.dumps(evidence).encode("utf-8")
+            path.write_bytes(raw)
+            declaration = preflight_profiles.declaration_from_evidence(path)
+            self.assertEqual(declaration, self._declaration() | {
+                "provenance": {
+                    "run_id": "fr11-roundtrip-01",
+                    "evidence_sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            })
+            self.assertNotIn("tmp/", json.dumps(declaration))
+            preflight_profiles.validate_profile_document(self._document(declaration))
+            self.assertEqual(self._match(declaration)["kinds"], [])
+
+            evidence["call_sites"][0]["source_file"] = "tmp/leak/a.py"
+            path.write_bytes(json.dumps(evidence).encode("utf-8"))
+            with self.assertRaisesRegex(ProfileValidationError, "tmp/ path"):
+                preflight_profiles.declaration_from_evidence(path)
+            evidence["call_sites"][0]["source_file"] = "/abs/a.py"
+            path.write_bytes(json.dumps(evidence).encode("utf-8"))
+            with self.assertRaisesRegex(ProfileValidationError, "absolute path"):
+                preflight_profiles.declaration_from_evidence(path)
+            evidence["call_sites"][0]["source_file"] = self.SITE_A
+            evidence["outcome"] = "failed"
+            path.write_bytes(json.dumps(evidence).encode("utf-8"))
+            with self.assertRaisesRegex(ProfileValidationError, "did not complete"):
+                preflight_profiles.declaration_from_evidence(path)
 
 
 def _run_probe_from_sitecustomize() -> None:
