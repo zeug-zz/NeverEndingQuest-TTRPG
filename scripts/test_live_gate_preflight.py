@@ -485,6 +485,35 @@ class TestIdentityComparison(unittest.TestCase):
         self.assertNotIn("workspace", serialized)
 
 
+BASELINE_PROFILE_PATH = (
+    PROJECT_ROOT / "scripts" / "fixtures" / "live_gate_preflight_profiles_all_missing.json"
+)
+
+
+def _load_baseline_profiles(expected_row_ids: list[str]) -> tuple[Any, Any]:
+    """Run the controller's _load_profiles against the committed all-MISSING baseline.
+
+    The checked-in declaration now carries measured profiles; this test builds its
+    own synthetic measured declaration on top of a MISSING baseline.
+    """
+    from scripts import live_gate_preflight_profiles as content_profiles
+
+    original_coverage = content_profiles.load_profile_coverage
+    with (
+        mock.patch.object(
+            content_profiles,
+            "load_profile_coverage",
+            lambda *args, **kwargs: original_coverage(BASELINE_PROFILE_PATH),
+        ),
+        mock.patch.object(
+            content_profiles,
+            "copy_profile_document",
+            lambda: json.loads(BASELINE_PROFILE_PATH.read_text(encoding="utf-8")),
+        ),
+    ):
+        return preflight_controller._load_profiles(expected_row_ids)
+
+
 class _InjectedClock:
     def __init__(self, monotonic_values: list[float]) -> None:
         self._monotonic_values = list(monotonic_values)
@@ -913,7 +942,7 @@ class TestPreflightControllerContinuation(unittest.TestCase):
         run_id = "continuation-test"
         frozen_rows, _reserves = preflight_controller._load_frozen_row_ids(None)
         expected_row_ids = [str(row["row_id"]) for row in frozen_rows]
-        profiles, coverage = preflight_controller._load_profiles(expected_row_ids)
+        profiles, coverage = _load_baseline_profiles(expected_row_ids)
         profiles = copy.deepcopy(profiles)
         secondary = dict(profiles[("transition_tower_approach", 1)])
         from scripts import live_gate_preflight_profiles as content_profiles

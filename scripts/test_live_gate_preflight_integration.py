@@ -38,12 +38,17 @@ from scripts.live_gate_preflight_controller import (
     planned_worker_identity,
     run_preflight_rows,
 )
+from scripts import live_gate_preflight_profiles as preflight_profiles
 from scripts import live_gate_preflight_sandbox as sandbox
 from scripts import live_gate_preflight_profile_runner as profile_runner
 from scripts import live_gate_preflight_retained as retained
 from scripts import live_gate_preflight_safety as safety
 from scripts.mapping_pilot import launcher, row_runner, server
 
+
+BASELINE_PROFILE_PATH = (
+    PROJECT_ROOT / "scripts" / "fixtures" / "live_gate_preflight_profiles_all_missing.json"
+)
 
 SOURCE_SHA = "a" * 40
 RUN_ID = "row-integration-test"
@@ -151,6 +156,28 @@ class _FakeServerLauncher:
         return SimpleNamespace(row_id=self.row_id)
 
 
+def _baseline_profile_patches() -> list[Any]:
+    """Patches that make the controller read the committed all-MISSING baseline.
+
+    The checked-in declaration now carries measured profiles; tests that build
+    synthetic measured declarations on top of a MISSING baseline load this
+    fixture through the same loader seam (_load_profiles imports both names from
+    scripts.live_gate_preflight_profiles at call time).
+    """
+    original_coverage = preflight_profiles.load_profile_coverage
+
+    def baseline_coverage(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return original_coverage(BASELINE_PROFILE_PATH)
+
+    def baseline_document() -> dict[str, Any]:
+        return json.loads(BASELINE_PROFILE_PATH.read_text(encoding="utf-8"))
+
+    return [
+        mock.patch.object(preflight_profiles, "load_profile_coverage", baseline_coverage),
+        mock.patch.object(preflight_profiles, "copy_profile_document", baseline_document),
+    ]
+
+
 class TestPreflightRowIntegration(unittest.TestCase):
     def setUp(self) -> None:
         global RUN_ID
@@ -166,6 +193,10 @@ class TestPreflightRowIntegration(unittest.TestCase):
             shutil.rmtree, self.retained_run_directory, ignore_errors=True
         )
         self.fake_common_directory: Path | None = None
+        self._baseline_patches = _baseline_profile_patches()
+        for baseline_patch in self._baseline_patches:
+            baseline_patch.start()
+            self.addCleanup(baseline_patch.stop)
         self._git_common_patch = mock.patch.object(
             profile_runner,
             "_git_common_directory",
@@ -3382,6 +3413,40 @@ class TestPreflightRowIntegration(unittest.TestCase):
                     "guard-event path identity is invalid",
                 ):
                     safety._validate_guard_event_path(journal, "different-row")
+
+
+class TestPreflightCheckedInDeclarations(unittest.TestCase):
+    """The controller loader against the real checked-in measured declarations."""
+
+    def test_controller_loads_measured_startup_resume_and_missing_combat_resume(
+        self,
+    ) -> None:
+        rows, _reserves = _load_frozen_row_ids(None)
+        row_ids = [row["row_id"] for row in rows]
+        profiles, coverage = _load_profiles(row_ids)
+        self.assertEqual(len(profiles), 8)
+        self.assertEqual(
+            sorted(
+                key for key, value in profiles.items()
+                if value["startup"]["status"] == "measured-under-stub"
+            ),
+            sorted(profiles),
+        )
+        resume_measured = [
+            key for key, value in profiles.items()
+            if value["resume"]["status"] == "measured-under-stub"
+        ]
+        self.assertEqual(len(resume_measured), 6)
+        for (fixture_id, party_size), value in profiles.items():
+            if fixture_id == "combat_stage_tavern_zones":
+                self.assertIn(party_size, (1, 4))
+                self.assertEqual(value["resume"]["status"], "MISSING")
+                self.assertIn("NOT APPLICABLE", value["resume"]["reason"])
+        self.assertEqual(
+            coverage["unverified_row_ids"], ["C0" + str(index) for index in range(1, 9)]
+        )
+        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertFalse(coverage["booking_eligible"])
 
 
 class TestSupervisedEvidenceIntegration(unittest.TestCase):

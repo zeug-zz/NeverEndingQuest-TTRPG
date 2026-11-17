@@ -15,6 +15,7 @@ import io
 import importlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -384,6 +385,20 @@ def _netstat_row(
     return (" ".join(fields) + " " + suffix + "\n").encode("ascii")
 
 
+
+BASELINE_PROFILE_PATH = (
+    PROJECT_ROOT / "scripts" / "fixtures" / "live_gate_preflight_profiles_all_missing.json"
+)
+
+
+def copy_baseline_profile_document() -> dict[str, Any]:
+    """Detached copy of the committed all-MISSING baseline declaration.
+
+    Baseline/synthetic tests use this so they do not depend on the measured
+    declarations that scripts/live_gate_preflight_profiles.json now carries.
+    """
+    return json.loads(BASELINE_PROFILE_PATH.read_text(encoding="utf-8"))
+
 class TestLiveGatePreflightProfiles(unittest.TestCase):
     def test_controller_command_allows_only_multiline_code_argument(self) -> None:
         command = ["/venv/bin/python", "-P", "-c", "print('one')\nprint('two')"]
@@ -521,7 +536,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         self.assertEqual(coverage["planned_row_ids"][-1], "C08")
 
     def test_missing_paths_are_explicit_unverified_and_never_booking_eligible(self) -> None:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         coverage = validate_profile_document(document)
         self.assertFalse(coverage["measured_lifecycle_complete"])
         self.assertFalse(coverage["booking_eligible"])
@@ -533,12 +548,12 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 self.assertTrue(profile[lifecycle]["reason"])
 
     def test_missing_pair_entry_is_rejected(self) -> None:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"].pop()
         with self.assertRaisesRegex(ProfileValidationError, "exactly eight"):
             validate_profile_document(document)
 
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0].pop("startup")
         with self.assertRaisesRegex(
             ProfileValidationError, "fixture-party profile fields are malformed"
@@ -546,23 +561,23 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             validate_profile_document(document)
 
     def test_unsupported_status_and_pair_are_rejected(self) -> None:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0]["resume"]["status"] = "inferred"
         with self.assertRaisesRegex(ProfileValidationError, "unsupported lifecycle"):
             validate_profile_document(document)
 
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0]["fixture_id"] = "unsupported_fixture"
         with self.assertRaisesRegex(ProfileValidationError, "unsupported fixture-party"):
             validate_profile_document(document)
 
     def test_source_hash_or_row_binding_drift_is_rejected(self) -> None:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["source_binding"]["counterbalance_sha256"] = "0" * 64
         with self.assertRaisesRegex(ProfileValidationError, "source binding"):
             validate_profile_document(document)
 
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0]["planned_row_ids"].append("R01")
         with self.assertRaisesRegex(ProfileValidationError, "planned-row binding"):
             validate_profile_document(document)
@@ -736,7 +751,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(raw).hexdigest(), expected_hash)
                 evidence = json.loads(raw.decode("utf-8"))
                 self.assertEqual(evidence["source_sha"], expected_source)
-                document = copy_profile_document()
+                document = copy_baseline_profile_document()
                 profile = next(
                     item for item in document["profiles"] if item["profile_id"] == profile_id
                 )
@@ -778,7 +793,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         )
         self.assertEqual(evidence["call_count"], 9)
 
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         profile = next(
             item
             for item in document["profiles"]
@@ -1052,7 +1067,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 validate_profile_document(document)
 
     def test_call_profile_schema_is_strict_about_missing_fields(self) -> None:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0]["startup"]["call_count"] = 0
         with self.assertRaisesRegex(ProfileValidationError, "fields are malformed"):
             validate_profile_document(document)
@@ -1569,7 +1584,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
         sample["evidence_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _measured_document(self, evidence_directory: Path) -> tuple[dict, Path]:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         profile = document["profiles"][0]
         run_id = "profile-test-" + uuid.uuid4().hex[:12]
         run_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
@@ -8944,7 +8959,7 @@ class TestContentBoundDeclarations(unittest.TestCase):
         }
 
     def _document(self, declaration: dict) -> dict:
-        document = copy_profile_document()
+        document = copy_baseline_profile_document()
         document["profiles"][0]["startup"] = declaration
         return document
 
@@ -9105,7 +9120,7 @@ class TestContentBoundDeclarations(unittest.TestCase):
             preflight_profiles.validate_profile_document(self._document(declaration))
 
     def test_missing_lifecycles_remain_valid(self) -> None:
-        coverage = preflight_profiles.validate_profile_document(copy_profile_document())
+        coverage = preflight_profiles.validate_profile_document(copy_baseline_profile_document())
         self.assertFalse(coverage["measured_lifecycle_complete"])
 
     def test_declaration_from_evidence_round_trip(self) -> None:
@@ -9243,6 +9258,102 @@ def _run_probe_from_sitecustomize() -> None:
 
 
 _run_probe_from_sitecustomize()
+
+
+class TestCheckedInProfileDeclarations(unittest.TestCase):
+    """Pins the real measured declarations in the checked-in profile file."""
+
+    COMBAT_FIXTURE = "combat_stage_tavern_zones"
+
+    @staticmethod
+    def _sha256(relative_path: str) -> str:
+        return hashlib.sha256((PROJECT_ROOT / relative_path).read_bytes()).hexdigest()
+
+    def _profiles(self) -> list[dict]:
+        return copy_profile_document()["profiles"]
+
+    def test_checked_in_declaration_loads_with_startup_measured_for_all_eight_pairs(
+        self,
+    ) -> None:
+        coverage = load_profile_coverage()
+        self.assertTrue(coverage["structural_row_coverage_complete"])
+        profiles = self._profiles()
+        self.assertEqual(len(profiles), 8)
+        for profile in profiles:
+            startup = profile["startup"]
+            expected = 2 if profile["fixture_id"] == self.COMBAT_FIXTURE else 9
+            with self.subTest(profile=profile["profile_id"]):
+                self.assertEqual(startup["status"], "measured-under-stub")
+                self.assertEqual(startup["call_count"], expected)
+
+    def test_checked_in_resume_is_measured_for_six_non_combat_pairs_only(self) -> None:
+        profiles = self._profiles()
+        measured = [p for p in profiles if p["resume"]["status"] == "measured-under-stub"]
+        missing = [p for p in profiles if p["resume"]["status"] == "MISSING"]
+        self.assertEqual(len(measured), 6)
+        self.assertEqual(len(missing), 2)
+        for profile in measured:
+            with self.subTest(profile=profile["profile_id"]):
+                self.assertNotEqual(profile["fixture_id"], self.COMBAT_FIXTURE)
+                self.assertEqual(profile["resume"]["call_count"], 9)
+        for profile in missing:
+            with self.subTest(profile=profile["profile_id"]):
+                self.assertEqual(profile["fixture_id"], self.COMBAT_FIXTURE)
+                self.assertIn("NOT APPLICABLE", profile["resume"]["reason"])
+
+    def test_checked_in_declaration_has_no_absolute_or_tmp_paths_or_forbidden_keys(
+        self,
+    ) -> None:
+        text = PROFILE_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("tmp/", text)
+        self.assertIsNone(re.search(r'"(/|[A-Za-z]:[\\/])', text))
+        forbidden = {"source_sha", "command", "pythonpath", "evidence_path"}
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                self.assertFalse(forbidden & set(value), sorted(forbidden & set(value)))
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(json.loads(text))
+
+    def test_measured_hashes_match_working_tree_so_edits_force_remeasure(self) -> None:
+        checked = 0
+        for profile in self._profiles():
+            for lifecycle in ("startup", "resume"):
+                declaration = profile[lifecycle]
+                if declaration["status"] != "measured-under-stub":
+                    continue
+                label = profile["profile_id"] + ":" + lifecycle
+                entries = [declaration["stub_sha256"], *declaration["driver_sha256"]]
+                for entry in entries:
+                    checked += 1
+                    self.assertEqual(
+                        entry["sha256"],
+                        self._sha256(entry["path"]),
+                        label + ": " + entry["path"] + " changed since measurement; "
+                        "re-measure the lifecycle profile and update the declaration",
+                    )
+                for site in declaration["call_sites"]:
+                    checked += 1
+                    self.assertEqual(
+                        site["source_file_sha256"],
+                        self._sha256(site["source_file"]),
+                        label + ": " + site["source_file"] + " changed since "
+                        "measurement; re-measure the lifecycle profile",
+                    )
+        self.assertGreater(checked, 0)
+
+    def test_checked_in_coverage_is_not_complete_or_booking_eligible(self) -> None:
+        coverage = load_profile_coverage()
+        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertFalse(coverage["booking_eligible"])
+        self.assertEqual(
+            coverage["unverified_row_ids"], ["C0" + str(index) for index in range(1, 9)]
+        )
 
 
 if __name__ == "__main__":
