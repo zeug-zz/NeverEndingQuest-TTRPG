@@ -157,6 +157,7 @@ class PreflightSafetyCounters:
         }
 
     def _denied_network_attempts(self) -> int:
+        """Count denied upstream attempts; each process's startup canary probe is excluded."""
         if not self._rows_root.is_dir():
             return 0
         total = 0
@@ -169,6 +170,7 @@ class PreflightSafetyCounters:
                     isinstance(event, Mapping)
                     and event.get("event_type") == "network_attempt"
                     and event.get("decision") == "denied"
+                    and not safety.is_startup_canary_connect(event)
                 ):
                     total += 1
         return total

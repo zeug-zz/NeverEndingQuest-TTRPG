@@ -59,6 +59,8 @@ CANARY_SIGNAL = b"NEQ_PREFLIGHT_SITE_STARTUP_CANARY_V1\n"
 GUARD_DIRECTORY = Path("scripts/live_gate_preflight_guard")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROCESS_ROLES = frozenset(("parent", "host"))
+STARTUP_CANARY_TARGET_HOST = "192.0.2.1"
+STARTUP_CANARY_TARGET_PORT = 8360
 _SECRET_ENV_NAME = re.compile(
     r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH)", re.IGNORECASE
 )
@@ -426,6 +428,17 @@ def read_guard_event_journal(
             os.close(descriptor)
 
 
+def is_startup_canary_connect(event: Mapping[str, Any]) -> bool:
+    """Return True only for the denied startup connect canary probe."""
+    return (
+        event.get("event_type") == "network_attempt"
+        and event.get("operation") == "connect"
+        and event.get("decision") == "denied"
+        and event.get("target_host") == STARTUP_CANARY_TARGET_HOST
+        and event.get("target_port") == STARTUP_CANARY_TARGET_PORT
+    )
+
+
 def validate_guard_event_records(
     events: Any,
     *,
@@ -591,12 +604,7 @@ def validate_guard_event_records(
             return False
         if require_startup_canaries:
             denied_connect = any(
-                event.get("event_type") == "network_attempt"
-                and event.get("operation") == "connect"
-                and event.get("decision") == "denied"
-                and event.get("target_host") == "192.0.2.1"
-                and event.get("target_port") == 8360
-                for event in process_events
+                is_startup_canary_connect(event) for event in process_events
             )
             denied_subprocess = any(
                 event.get("event_type") == "subprocess_attempt"
@@ -990,7 +998,9 @@ def run_startup_canaries(
         raise NetworkGuardError("startup canary process role is invalid")
 
     try:
-        socket.socket.connect(_CanarySocket(), ("192.0.2.1", 8360))
+        socket.socket.connect(
+            _CanarySocket(), (STARTUP_CANARY_TARGET_HOST, STARTUP_CANARY_TARGET_PORT)
+        )
     except NetworkGuardError:
         connect_denied = True
     else:

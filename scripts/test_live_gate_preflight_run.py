@@ -391,6 +391,81 @@ class CounterTests(unittest.TestCase):
             )()
         self.assertEqual(set(counters.values()), {0})
 
+    def _upstream_count(self, events: list[dict[str, Any]]) -> int:
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "tmp") as raw:
+            root = Path(raw)
+            rows = root / "tmp/router-rollout/live-gate-preflight" / RUN_ID / "preflight/rows/r1"
+            rows.mkdir(parents=True)
+            (rows / "guard-events.jsonl").write_text(
+                "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
+            )
+            counters = run_module.PreflightSafetyCounters(RUN_ID, project_root=root)()
+        return counters["upstream_provider_requests"]
+
+    @staticmethod
+    def _canary(**overrides: Any) -> dict[str, Any]:
+        event = {
+            "event_type": "network_attempt",
+            "operation": "connect",
+            "decision": "denied",
+            "target_host": "192.0.2.1",
+            "target_port": 8360,
+        }
+        event.update(overrides)
+        return event
+
+    def test_startup_canary_probes_are_not_upstream_requests(self) -> None:
+        allowed = {
+            "event_type": "network_attempt",
+            "operation": "connect",
+            "decision": "allowed",
+            "target_host": "127.0.0.1",
+            "target_port": 8357,
+        }
+        events = [
+            {"event_type": "guard_startup", "decision": None, "sequence": 1},
+            self._canary(sequence=2),
+            allowed,
+            self._canary(sequence=3),
+            self._canary(sequence=4),
+            allowed,
+        ]
+        self.assertEqual(self._upstream_count(events), 0)
+
+    def test_non_canary_denied_connect_is_counted(self) -> None:
+        events = [
+            self._canary(sequence=2),
+            {
+                "event_type": "network_attempt",
+                "operation": "connect",
+                "decision": "denied",
+                "target_host": "203.0.113.5",
+                "target_port": 443,
+                "sequence": 3,
+            },
+        ]
+        self.assertEqual(self._upstream_count(events), 1)
+
+    def test_canary_exclusion_is_exact(self) -> None:
+        cases = {
+            "other port": self._canary(target_port=8361),
+            "other operation": self._canary(operation="sendto"),
+            "other host": self._canary(target_host="192.0.2.2"),
+        }
+        for label, event in cases.items():
+            with self.subTest(label=label):
+                self.assertEqual(self._upstream_count([event]), 1)
+
+    def test_unparsable_journal_still_raises(self) -> None:
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "tmp") as raw:
+            root = Path(raw)
+            rows = root / "tmp/router-rollout/live-gate-preflight" / RUN_ID / "preflight/rows/r1"
+            rows.mkdir(parents=True)
+            (rows / "guard-events.jsonl").write_text("{not json\n", encoding="utf-8")
+            counters = run_module.PreflightSafetyCounters(RUN_ID, project_root=root)
+            with self.assertRaises(json.JSONDecodeError):
+                counters()
+
 
 class ExecuteTests(unittest.TestCase):
     def _patches(self, report: dict[str, Any], *, comparison: bool = False):
