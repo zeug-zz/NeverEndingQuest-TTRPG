@@ -586,6 +586,51 @@ class ExecuteTests(unittest.TestCase):
         supervised.assert_not_called()
         self.assertEqual(summary["status"], "blocked")
 
+    def test_controller_runs_under_private_umask_and_restores_it(self) -> None:
+        sentinel = 0o027
+        saved = os.umask(sentinel)
+        self.addCleanup(os.umask, saved)
+        seen: dict[str, int] = {}
+
+        def fake_controller(**_kwargs: Any) -> dict[str, Any]:
+            current = os.umask(0o022)
+            os.umask(current)
+            seen["umask"] = current
+            with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "tmp") as raw:
+                probe = Path(raw) / "evidence.json"
+                probe.write_text("{}", encoding="utf-8")
+                seen["mode"] = probe.stat().st_mode & 0o777
+            return _fake_report()
+
+        a, b, _run = self._patches(_fake_report())
+        with (
+            a, b,
+            mock.patch.object(
+                controller, "run_preflight_rows_supervised", side_effect=fake_controller
+            ),
+        ):
+            _summary, code = run_module.execute(_args("--run-id", RUN_ID))
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["umask"], 0o077)
+        self.assertEqual(seen["mode"], 0o600)
+        self.assertEqual(os.umask(sentinel), sentinel)
+
+    def test_controller_exception_still_restores_umask(self) -> None:
+        sentinel = 0o027
+        saved = os.umask(sentinel)
+        self.addCleanup(os.umask, saved)
+        a, b, _run = self._patches(_fake_report())
+        with (
+            a, b,
+            mock.patch.object(
+                controller, "run_preflight_rows_supervised",
+                side_effect=RuntimeError("controller_failed"),
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            run_module.execute(_args("--run-id", RUN_ID))
+        self.assertEqual(os.umask(sentinel), sentinel)
+
     def test_main_prints_one_compact_json_line(self) -> None:
         a, b, run = self._patches(_fake_report())
         out = io.StringIO()

@@ -132,6 +132,16 @@ def _gated_factory(
 
 
 @contextlib.contextmanager
+def private_umask() -> Iterator[None]:
+    """Create run evidence and sandbox files owner-only; restore the caller's umask."""
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+@contextlib.contextmanager
 def load_gated_controller(
     gate: LoadGate,
     *,
@@ -455,7 +465,7 @@ def execute(
             ),
             EXIT_USAGE,
         )
-    with load_gated_controller(gate):
+    with load_gated_controller(gate), private_umask():
         report = controller.run_preflight_rows_supervised(
             source_sha=source_sha,
             run_id=args.run_id,
