@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import live_gate_preflight_comparison_identity as identity_module
 from scripts import live_gate_preflight_controller as controller
 from scripts import live_gate_preflight_run as run_module
+from scripts import live_gate_preflight_safety as safety
 
 
 SHA = "c" * 40
@@ -774,6 +775,256 @@ class GitOutputGuardTests(unittest.TestCase):
 
     def test_guard_inactive_in_plain_process(self) -> None:
         self.assertFalse(identity_module._preflight_guard_active())
+
+
+class ReleaseSeamTests(unittest.TestCase):
+    def test_release_runs_before_every_prepare_in_order(self) -> None:
+        order: list[str] = []
+
+        def original(**_kwargs: Any) -> controller.PreflightInterfaces:
+            return controller.PreflightInterfaces(
+                prepare_sandbox=lambda plan, inv, sha, run: order.append("prepare:" + plan) or {},
+                supervise_row=lambda *a: {},
+                cleanup_sandbox=lambda *a: True,
+                safety_counters=lambda: {},
+            )
+
+        gate = _gate([(1.0, 1.0, 1.0)])
+        with mock.patch.object(controller, "supervised_preflight_interfaces", original):
+            with run_module.load_gated_controller(
+                gate, release_journal=lambda: order.append("release")
+            ):
+                interfaces = controller.supervised_preflight_interfaces(run_id=RUN_ID)
+                for index in range(3):
+                    interfaces.prepare_sandbox("r%d" % index, None, SHA, RUN_ID)
+        self.assertEqual(
+            order,
+            ["release", "prepare:r0", "release", "prepare:r1", "release", "prepare:r2"],
+        )
+
+    def test_release_refusal_blocks_prepare(self) -> None:
+        prepared: list[str] = []
+
+        def original(**_kwargs: Any) -> controller.PreflightInterfaces:
+            return controller.PreflightInterfaces(
+                prepare_sandbox=lambda *a: prepared.append("x") or {},
+                supervise_row=lambda *a: {},
+                cleanup_sandbox=lambda *a: True,
+                safety_counters=lambda: {},
+            )
+
+        def refuse() -> None:
+            raise safety.SafetyConfigurationError("refused")
+
+        with mock.patch.object(controller, "supervised_preflight_interfaces", original):
+            with run_module.load_gated_controller(
+                _gate([(1.0, 1.0, 1.0)]), release_journal=refuse
+            ):
+                interfaces = controller.supervised_preflight_interfaces(run_id=RUN_ID)
+                with self.assertRaises(safety.SafetyConfigurationError):
+                    interfaces.prepare_sandbox("r", None, SHA, RUN_ID)
+        self.assertEqual(prepared, [])
+
+
+class _LiveChild:
+    def poll(self) -> None:
+        return None
+
+
+class _DoneChild:
+    def poll(self) -> int:
+        return 0
+
+
+class GuardJournalRebindTests(unittest.TestCase):
+    """Real safety-module state against temporary row journals (no processes)."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="preflight-rebind-", dir=PROJECT_ROOT / "tmp"
+        )
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.addCleanup(self._clean_env)
+        for patcher in (
+            mock.patch.object(safety, "PROJECT_ROOT", self.root),
+            mock.patch.object(safety, "_GUARD_EVENTS", []),
+            mock.patch.object(safety, "_GUARD_EVENT_SEQUENCE", 0),
+            mock.patch.object(safety, "_GUARD_EVENT_OVERFLOW", False),
+            mock.patch.object(safety, "_GUARD_EVENT_SINK", None),
+            mock.patch.object(safety, "_GUARD_EVENT_SINK_RUN_ID", None),
+            mock.patch.object(safety, "_GUARD_EVENT_SINK_OWNER_PID", None),
+            mock.patch.object(safety, "_LAUNCHED_CHILDREN", []),
+            mock.patch.dict(os.environ, {safety.PROCESS_ROLE_ENV: "parent"}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop(safety.RUN_ID_ENV, None)
+        os.environ.pop(safety.GUARD_EVENTS_PATH_ENV, None)
+        safety.record_startup_guard_event()
+        safety._record_guard_event(
+            "network_attempt",
+            operation="connect",
+            decision="denied",
+            address=(safety.STARTUP_CANARY_TARGET_HOST, safety.STARTUP_CANARY_TARGET_PORT),
+        )
+        safety._record_guard_event(
+            "subprocess_attempt", operation="Popen", decision="denied",
+            command_sha256="a" * 64,
+        )
+
+    def _clean_env(self) -> None:
+        os.environ.pop(safety.RUN_ID_ENV, None)
+        os.environ.pop(safety.GUARD_EVENTS_PATH_ENV, None)
+
+    def _path(self, row: str) -> tuple[Path, str]:
+        run_id = "pf-test-%s" % row
+        directory = (
+            self.root / safety.ROW_PREFLIGHT_GUARD_ROOT / "pf" / "preflight" / "rows" / run_id
+        )
+        directory.mkdir(parents=True)
+        return directory / "guard-events.jsonl", run_id
+
+    def _journal(self, path: Path) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in path.read_text(encoding="ascii").splitlines()]
+
+    def _row_activity(self) -> None:
+        for _ in range(2):
+            safety._record_guard_event(
+                "subprocess_attempt", operation="Popen", decision="allowed",
+                command_sha256="b" * 64,
+            )
+
+    def test_second_bind_without_release_is_refused(self) -> None:
+        first, first_id = self._path("E01")
+        second, second_id = self._path("E02")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        with self.assertRaises(safety.SafetyConfigurationError):
+            safety.configure_guard_event_sink(second, run_id=second_id)
+        self.assertEqual(second.exists(), False)
+        self.assertEqual(os.environ[safety.RUN_ID_ENV], first_id)
+
+    def test_release_then_rebind_replays_only_startup_for_new_row(self) -> None:
+        first, first_id = self._path("E01")
+        second, second_id = self._path("E02")
+        safety._record_guard_event(
+            "subprocess_attempt", operation="Popen", decision="allowed",
+            command_sha256="c" * 64,
+        )  # pre-bind (sandbox preparation) event belongs to row one
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        self._row_activity()
+        before = first.read_bytes()
+        self.assertTrue(safety.release_guard_event_sink())
+        self.assertEqual(first.read_bytes(), before)
+        self.assertNotIn(safety.RUN_ID_ENV, os.environ)
+        self.assertNotIn(safety.GUARD_EVENTS_PATH_ENV, os.environ)
+        safety.configure_guard_event_sink(second, run_id=second_id)
+        events = self._journal(second)
+        self.assertEqual([e["sequence"] for e in events], [1, 2, 3])
+        self.assertEqual({e["run_id"] for e in events}, {second_id})
+        self.assertEqual(
+            [e["event_type"] for e in events],
+            ["guard_startup", "network_attempt", "subprocess_attempt"],
+        )
+        self.assertTrue(
+            safety.validate_guard_event_records(
+                events, expected_run_id=second_id, expected_pid=os.getpid(),
+                require_startup_canaries=True,
+            )
+        )
+        safety._record_guard_event(
+            "subprocess_attempt", operation="Popen", decision="allowed",
+            command_sha256="d" * 64,
+        )
+        events, _raw = safety.read_guard_event_journal(second, run_id=second_id)
+        self.assertEqual([e["sequence"] for e in events], [1, 2, 3, 4])
+        previous = self._journal(first)
+        self.assertEqual({e["run_id"] for e in previous}, {first_id})
+        self.assertEqual(len(previous), 6)
+
+    def test_events_between_release_and_rebind_belong_to_new_row(self) -> None:
+        first, first_id = self._path("E01")
+        second, second_id = self._path("E02")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        safety.release_guard_event_sink()
+        safety._record_guard_event(
+            "subprocess_attempt", operation="Popen", decision="allowed",
+            command_sha256="e" * 64,
+        )
+        self.assertEqual(len(self._journal(first)), 3)
+        safety.configure_guard_event_sink(second, run_id=second_id)
+        self.assertEqual([e["sequence"] for e in self._journal(second)], [1, 2, 3, 4])
+
+    def test_release_without_bound_sink_is_a_no_op(self) -> None:
+        self.assertFalse(safety.release_guard_event_sink())
+
+    def test_worker_role_cannot_release(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        with mock.patch.dict(os.environ, {safety.PROCESS_ROLE_ENV: "host"}):
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+        self.assertIsNotNone(safety._GUARD_EVENT_SINK)
+
+    def test_environment_attached_sink_cannot_release(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        with mock.patch.object(safety, "_GUARD_EVENT_SINK_OWNER_PID", None):
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+        with mock.patch.object(safety, "_GUARD_EVENT_SINK_OWNER_PID", os.getpid() + 1):
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+
+    def test_release_refused_while_child_running(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        safety._LAUNCHED_CHILDREN[:] = [_DoneChild(), _LiveChild()]
+        with self.assertRaises(safety.SafetyConfigurationError):
+            safety.release_guard_event_sink()
+        safety._LAUNCHED_CHILDREN[:] = [_DoneChild()]
+        self.assertTrue(safety.release_guard_event_sink())
+
+    def test_release_refused_on_overflow(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        with mock.patch.object(safety, "_GUARD_EVENT_OVERFLOW", True):
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+        self.assertIsNotNone(safety._GUARD_EVENT_SINK)
+
+    def test_release_refused_on_incomplete_or_tampered_journal(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        self._row_activity()
+        original = first.read_bytes()
+        lines = original.splitlines(keepends=True)
+        for broken in (
+            b"".join(lines[:-1]),  # an in-memory event missing from the journal
+            original[:-1],  # torn final line
+            original + b"not json\n",
+        ):
+            first.write_bytes(broken)
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+            self.assertIsNotNone(safety._GUARD_EVENT_SINK)
+        first.write_bytes(original)
+        self.assertTrue(safety.release_guard_event_sink())
+
+    def test_startup_events_must_be_intact_to_release(self) -> None:
+        first, first_id = self._path("E01")
+        safety.configure_guard_event_sink(first, run_id=first_id)
+        with mock.patch.object(safety, "_GUARD_EVENTS", safety._GUARD_EVENTS[:2]):
+            with self.assertRaises(safety.SafetyConfigurationError):
+                safety.release_guard_event_sink()
+
+    def test_failed_bind_leaves_environment_untouched(self) -> None:
+        first, first_id = self._path("E01")
+        first.write_bytes(b"")
+        with self.assertRaises(safety.SafetyConfigurationError):
+            safety.configure_guard_event_sink(first, run_id=first_id)
+        self.assertNotIn(safety.RUN_ID_ENV, os.environ)
+        self.assertIsNone(safety._GUARD_EVENT_SINK)
 
 
 if __name__ == "__main__":

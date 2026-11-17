@@ -109,7 +109,9 @@ class LoadGate:
 
 
 def _gated_factory(
-    original: Callable[..., controller.PreflightInterfaces], gate: LoadGate
+    original: Callable[..., controller.PreflightInterfaces],
+    gate: LoadGate,
+    release_journal: Callable[[], Any],
 ) -> Callable[..., controller.PreflightInterfaces]:
     def factory(**kwargs: Any) -> controller.PreflightInterfaces:
         interfaces = original(**kwargs)
@@ -117,6 +119,11 @@ def _gated_factory(
 
         def gated_prepare(*args: Any, **inner: Any) -> Any:
             gate.wait()
+            # One controller process serves every row, but a guard-event journal
+            # belongs to exactly one row run: detach from the previous row's
+            # finished journal before this lifecycle binds its own (a no-op when
+            # nothing is bound, i.e. for the first lifecycle).
+            release_journal()
             return prepare(*args, **inner)
 
         return dataclasses.replace(interfaces, prepare_sandbox=gated_prepare)
@@ -125,10 +132,20 @@ def _gated_factory(
 
 
 @contextlib.contextmanager
-def load_gated_controller(gate: LoadGate) -> Iterator[None]:
-    """Gate every controller sandbox preparation (precedes each host launch)."""
+def load_gated_controller(
+    gate: LoadGate,
+    *,
+    release_journal: Callable[[], Any] = safety.release_guard_event_sink,
+) -> Iterator[None]:
+    """Gate every controller sandbox preparation (precedes each host launch).
+
+    The same seam releases the previous lifecycle's guard-event journal, so each
+    lifecycle binds a fresh per-row journal in the shared controller process.
+    """
     original = controller.supervised_preflight_interfaces
-    controller.supervised_preflight_interfaces = _gated_factory(original, gate)
+    controller.supervised_preflight_interfaces = _gated_factory(
+        original, gate, release_journal
+    )
     try:
         yield
     finally:

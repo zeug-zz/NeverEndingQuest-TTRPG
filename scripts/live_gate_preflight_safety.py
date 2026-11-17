@@ -120,6 +120,12 @@ _GUARD_EVENTS: list[dict[str, Any]] = []
 _GUARD_EVENT_SEQUENCE = 0
 _GUARD_EVENT_OVERFLOW = False
 _GUARD_EVENT_SINK: Path | None = None
+# Set only by configure_guard_event_sink in the binding process (never by the
+# environment-attach path used by workers), so only that process can release.
+_GUARD_EVENT_SINK_RUN_ID: str | None = None
+_GUARD_EVENT_SINK_OWNER_PID: int | None = None
+# Guarded children this process started; release is refused while any still runs.
+_LAUNCHED_CHILDREN: list[Any] = []
 _SUBPROCESS_AUTHORIZATION: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar("neq_preflight_subprocess_authorization", default=None)
 )
@@ -308,15 +314,18 @@ def guard_event_snapshot(*, run_id: str | None = None) -> dict[str, Any]:
 
 
 def configure_guard_event_sink(path: str | Path, *, run_id: str) -> Path:
-    """Bind this process and future workers to one private per-run event journal."""
-    global _GUARD_EVENT_SINK
+    """Bind this process and future workers to one private per-run event journal.
+
+    One process serves one journal at a time. A multi-row controller moves to the
+    next row's journal only through ``release_guard_event_sink``; binding a
+    different path without that explicit release is always refused.
+    """
+    global _GUARD_EVENT_SINK, _GUARD_EVENT_SINK_RUN_ID, _GUARD_EVENT_SINK_OWNER_PID
     selected = _validate_guard_event_path(path, run_id)
     if _GUARD_EVENT_SINK is not None:
         if _GUARD_EVENT_SINK != selected:
             raise SafetyConfigurationError("preflight guard-event sink was already bound")
         return selected
-    os.environ[RUN_ID_ENV] = run_id
-    os.environ[GUARD_EVENTS_PATH_ENV] = str(selected)
     try:
         descriptor = os.open(
             selected,
@@ -329,7 +338,11 @@ def configure_guard_event_sink(path: str | Path, *, run_id: str) -> Path:
         ) from exc
     else:
         os.close(descriptor)
+    os.environ[RUN_ID_ENV] = run_id
+    os.environ[GUARD_EVENTS_PATH_ENV] = str(selected)
     _GUARD_EVENT_SINK = selected
+    _GUARD_EVENT_SINK_RUN_ID = run_id
+    _GUARD_EVENT_SINK_OWNER_PID = os.getpid()
     for original in _GUARD_EVENTS:
         event = dict(original)
         event["run_id"] = run_id
@@ -340,6 +353,91 @@ def configure_guard_event_sink(path: str | Path, *, run_id: str) -> Path:
                 "preflight guard-event journal is incomplete"
             ) from exc
     return selected
+
+
+def _startup_event_prefix_length() -> int:
+    """Length of this process's leading startup events, or 0 when incomplete.
+
+    The prefix is the guard_startup event plus the denied connect canary and the
+    denied subprocess canary, consumed from the front of the buffer in any order;
+    the first event that is none of these (or a repeat) ends it.
+    """
+    seen: set[str] = set()
+    length = 0
+    for event in _GUARD_EVENTS:
+        if event.get("event_type") == "guard_startup":
+            kind = "startup"
+        elif is_startup_canary_connect(event):
+            kind = "connect"
+        elif (
+            event.get("event_type") == "subprocess_attempt"
+            and event.get("decision") == "denied"
+        ):
+            kind = "subprocess"
+        else:
+            break
+        if kind in seen:
+            break
+        seen.add(kind)
+        length += 1
+    return length if seen == {"startup", "connect", "subprocess"} else 0
+
+
+def release_guard_event_sink() -> bool:
+    """Detach the controller from a completed row journal so the next row can bind.
+
+    Only the parent-role process that itself bound the sink may release, and only
+    when (1) no guarded child it launched is still running, (2) nothing overflowed
+    or failed to persist, (3) the bound journal reads back and validates under its
+    own run id, and (4) this process's events in the journal equal its in-memory
+    events. The in-memory buffer is then cut back to the startup prefix (startup
+    event and canary probes), so the next ``configure_guard_event_sink`` replays
+    only those into the new journal; the finished journal is never modified.
+    Returns False (a no-op) when nothing is bound.
+    """
+    global _GUARD_EVENT_SINK, _GUARD_EVENT_SINK_RUN_ID, _GUARD_EVENT_SINK_OWNER_PID
+    global _GUARD_EVENTS, _GUARD_EVENT_SEQUENCE
+    if _GUARD_EVENT_SINK is None:
+        return False
+    run_id = _GUARD_EVENT_SINK_RUN_ID
+    if (
+        os.environ.get(PROCESS_ROLE_ENV) != "parent"
+        or _GUARD_EVENT_SINK_OWNER_PID != os.getpid()
+        or run_id is None
+        or os.environ.get(RUN_ID_ENV) != run_id
+        or os.environ.get(GUARD_EVENTS_PATH_ENV) != str(_GUARD_EVENT_SINK)
+    ):
+        raise SafetyConfigurationError("preflight guard-event sink release is not permitted")
+    if _GUARD_EVENT_OVERFLOW:
+        raise SafetyConfigurationError("preflight guard-event journal is incomplete")
+    _LAUNCHED_CHILDREN[:] = [
+        child for child in _LAUNCHED_CHILDREN if child.poll() is None
+    ]
+    if _LAUNCHED_CHILDREN:
+        raise SafetyConfigurationError(
+            "preflight guard-event sink release refused: a launched child is still running"
+        )
+    prefix = _startup_event_prefix_length()
+    if prefix == 0:
+        raise SafetyConfigurationError("preflight startup guard events are incomplete")
+    journal_events, _raw = read_guard_event_journal(_GUARD_EVENT_SINK, run_id=run_id)
+    own_events = [event for event in journal_events if event.get("pid") == os.getpid()]
+    expected = [dict(event, run_id=run_id) for event in _GUARD_EVENTS]
+    if own_events != expected or not validate_guard_event_records(
+        own_events,
+        expected_run_id=run_id,
+        expected_pid=os.getpid(),
+        require_startup_canaries=True,
+    ):
+        raise SafetyConfigurationError("preflight guard-event journal is incomplete")
+    del _GUARD_EVENTS[prefix:]
+    _GUARD_EVENT_SEQUENCE = int(_GUARD_EVENTS[-1]["sequence"])
+    _GUARD_EVENT_SINK = None
+    _GUARD_EVENT_SINK_RUN_ID = None
+    _GUARD_EVENT_SINK_OWNER_PID = None
+    os.environ.pop(RUN_ID_ENV, None)
+    os.environ.pop(GUARD_EVENTS_PATH_ENV, None)
+    return True
 
 
 def _bind_guard_event_sink_from_environment() -> None:
@@ -653,6 +751,10 @@ class _GuardedPopen(subprocess.Popen):
         assert authorization is not None
         authorization["used"] = True
         super().__init__(args, *positional, **kwargs)
+        _LAUNCHED_CHILDREN[:] = [
+            child for child in _LAUNCHED_CHILDREN if child.poll() is None
+        ]
+        _LAUNCHED_CHILDREN.append(self)
         expected_python = os.environ.get(EXPECTED_PYTHON_ENV)
         child_is_python = bool(
             command_tuple and expected_python and command_tuple[0] == expected_python
