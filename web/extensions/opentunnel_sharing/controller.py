@@ -1829,6 +1829,25 @@ class SharingController:
     def _is_current_locked(self, generation: int, state: SharingState) -> bool:
         return self._generation == generation and self._state is state
 
+    # TABLETOP MODE: Read-only view for the start-time readiness probe so it can
+    # stop polling `status` once the start is cancelled, stopped or superseded.
+    def start_generation_is_current(self, generation: int) -> bool:
+        """Return True only while ``generation`` is a live start or recovery restart.
+
+        A recovery restart runs while the controller is DEGRADED. stop,
+        shutdown and failure move the state out of DEGRADED, so the state
+        check suffices there and lifecycle_revision is not consulted: the
+        probe only reads `status` and cannot mutate controller state.
+        """
+        with self._lock:
+            event = self._active_start_event
+            return (
+                (event is None or not event.is_set())
+                and not self._shutdown_requested
+                and self._generation == generation
+                and self._state in {SharingState.STARTING, SharingState.DEGRADED}
+            )
+
     def _start_is_current(self, generation: int, event: threading.Event) -> bool:
         with self._lock:
             return self._start_is_current_locked(generation, event)

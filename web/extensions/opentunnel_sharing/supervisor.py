@@ -266,6 +266,13 @@ class OwnedCompanion:
         """Return the validated dedicated profile used by this child."""
         return self._layout
 
+    # TABLETOP MODE: Liveness for the start-time probe, which runs while the
+    # state is still "starting" and so cannot rely on the running-state refresh.
+    @property
+    def process_alive(self) -> bool:
+        """Return True only while the owned child process has not exited."""
+        return self._process is not None and self._poll() is None
+
     @property
     def reason_code(self) -> ReasonCode | None:
         self._refresh_exit_state()
