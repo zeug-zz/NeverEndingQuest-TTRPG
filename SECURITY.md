@@ -125,6 +125,7 @@ Rotation procedure:
 | 2026-05-25 | 0.0.0.0 binding            | MEDIUM   | Historical LAN configuration; current default is loopback. Future network exposure is tracked in `plans/v2-server-client-network.md`. |
 | 2026-05-25 | python-engineio CORS       | LOW      | Flask-SocketIO default; review with v2 CORS hardening.                               |
 | 2026-11-03 | tornado 6.5.10 (CVE-2026-115927/116577/116578/126347) | MEDIUM | RESOLVED 2026-11-15: moved mitmproxy to optional `requirements-forwarder.txt`; core install no longer includes tornado. Forwarder installs still carry capped tornado for local-only use. Earlier msgpack and tornado 6.5.5 findings were resolved by upgrading mitmproxy to 12.3.x (lock regenerated 2026-11-03). |
+| 2026-11-18 | picomatch <= 4.0.7 (GHSA-fc5q-39xc-vjpf) | HIGH | ACCEPTED (dev-only) 2026-11-18: ReDoS via repeated extglobs; reached only through dev dependencies vite/vitest (picomatch -> fdir -> tinyglobby), not in the shipped client (runtime deps: react, react-dom, socket.io-client). No patched version exists. `frontend-dependency-audit` now blocks on production dependencies (`--omit=dev`) and runs the full audit as advisory. Remove the exception and restore the blocking full audit when a patched picomatch is available; review at each dependency update. |
 
 ---
 
