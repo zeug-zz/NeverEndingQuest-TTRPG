@@ -12,7 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, Sequence
 
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
 from web.extensions.opentunnel_sharing.cleanup import (
@@ -235,6 +235,7 @@ class SharingDependencies:
     route_wait_seconds: float = 30.0
     route_poll_interval_seconds: float = 0.25
     cleanup: CleanupDependencies | None = None
+    diagnostic_secrets: Callable[[], Sequence[str]] | None = None
 
     def __repr__(self) -> str:
         return "SharingDependencies(<injected>)"
@@ -257,6 +258,10 @@ class SharingDependencies:
             if not callable(getattr(self, name)):
                 raise TypeError("sharing_dependency_invalid")
         if self.origin_binder is None:
+            raise TypeError("sharing_dependency_invalid")
+        if self.diagnostic_secrets is not None and not callable(
+            self.diagnostic_secrets
+        ):
             raise TypeError("sharing_dependency_invalid")
         if self.cleanup is not None and not isinstance(
             self.cleanup, CleanupDependencies
@@ -318,6 +323,8 @@ class SharingController:
         self._companion_started = False
         self._companion_generation: int | None = None
         self._cleanup_ambiguous = False
+        # TABLETOP MODE: Latest failed start's bounded redacted evidence.
+        self._start_failure: dict[str, object] | None = None
 
     @property
     def generation(self) -> int:
@@ -440,6 +447,7 @@ class SharingController:
         generation = self._generation
         self._counters = _increment(self._counters, "start_attempts")
         self._checks = ReadinessChecks()
+        self._start_failure = None
         self._set_state(SharingState.STARTING, "startup_in_progress")
         self._active_start_ticket = ticket
         self._active_start_event = token
@@ -866,6 +874,7 @@ class SharingController:
                 if not cleanup_ok:
                     self._counters = _increment(self._counters, "cleanup_failures")
                 self._checks = ReadinessChecks()
+                self._start_failure = None
                 if not self._shutdown_requested:
                     self._set_state(
                         SharingState.OFF,
@@ -906,6 +915,7 @@ class SharingController:
                 if not cleanup_ok:
                     self._counters = _increment(self._counters, "cleanup_failures")
                 self._checks = ReadinessChecks()
+                self._start_failure = None
                 self._set_state(
                     SharingState.OFF,
                     "shutting_down" if cleanup_ok else "cleanup_failed",
@@ -1611,6 +1621,8 @@ class SharingController:
     ) -> SharingSnapshot:
         if not self._start_is_current(generation, cancel_event):
             return self._cancelled_start(generation)
+        # TABLETOP MODE: Retain failure evidence before cleanup removes it.
+        self._retain_start_failure(generation, reason)
         cleanup_ok = self._cleanup_resources("failed", generation)
         with self._lock:
             if not self._start_is_current_locked(generation, cancel_event):
@@ -1627,6 +1639,70 @@ class SharingController:
             return self._cancelled_start(generation)
         return self.status()
 
+    def start_failure_diagnostics(self) -> dict[str, object] | None:
+        """Return the latest failed start's summary/detail, or None."""
+        with self._lock:
+            current = self._start_failure
+            return None if current is None else dict(current)
+
+    def _retain_start_failure(self, generation: int, reason: str) -> None:
+        """Capture bounded redacted evidence; never raises into the start flow."""
+        try:
+            with self._lock:
+                companion = (
+                    self._companion
+                    if self._companion_generation == generation
+                    else None
+                )
+                counters = self._counters
+            secrets: list[str] = []
+            scrub = "ok"
+            if self._deps.diagnostic_secrets is not None:
+                try:
+                    secrets = [
+                        item
+                        for item in self._deps.diagnostic_secrets()
+                        if isinstance(item, str)
+                    ]
+                except Exception:
+                    scrub = "known_secrets_unavailable"
+            detail: dict[str, object] = {
+                "schema": 1,
+                "generation": generation,
+                "reason": reason,
+                "known_secret_scrub": scrub,
+                "start_attempts": counters.start_attempts,
+                "companion_launches": counters.companion_launches,
+            }
+            snapshot_fn = getattr(companion, "failure_snapshot", None)
+            if companion is None:
+                detail["companion"] = {"reason": "no_companion"}
+            elif not callable(snapshot_fn):
+                detail["companion"] = {"reason": "snapshot_unsupported"}
+            else:
+                try:
+                    captured = snapshot_fn(secrets)
+                except Exception:
+                    captured = None
+                if isinstance(captured, dict):
+                    detail.update(captured)
+                else:
+                    detail["companion"] = {"reason": "snapshot_failed"}
+            summary = _summarize_start_failure(detail)
+            with self._lock:
+                if generation == self._generation:
+                    self._start_failure = {"summary": summary, "detail": detail}
+        except Exception:
+            with self._lock:
+                if generation == self._generation:
+                    failure = {
+                        "schema": 1,
+                        "generation": generation,
+                        "reason": reason,
+                        "retention_failure": "capture_exception",
+                    }
+                    self._start_failure = {"summary": failure, "detail": failure}
+
     def _precondition_failure(
         self,
         generation: int,
@@ -1639,6 +1715,7 @@ class SharingController:
             self._replace_checks(**check_changes)
         if not self._start_is_current(generation, cancel_event):
             return self._cancelled_start(generation)
+        self._retain_start_failure(generation, reason)
         self._clear_binding("failed", generation)
         with self._lock:
             if not self._start_is_current_locked(generation, cancel_event):
@@ -1752,6 +1829,25 @@ class SharingController:
     def _is_current_locked(self, generation: int, state: SharingState) -> bool:
         return self._generation == generation and self._state is state
 
+    # TABLETOP MODE: Read-only view for the start-time readiness probe so it can
+    # stop polling `status` once the start is cancelled, stopped or superseded.
+    def start_generation_is_current(self, generation: int) -> bool:
+        """Return True only while ``generation`` is a live start or recovery restart.
+
+        A recovery restart runs while the controller is DEGRADED. stop,
+        shutdown and failure move the state out of DEGRADED, so the state
+        check suffices there and lifecycle_revision is not consulted: the
+        probe only reads `status` and cannot mutate controller state.
+        """
+        with self._lock:
+            event = self._active_start_event
+            return (
+                (event is None or not event.is_set())
+                and not self._shutdown_requested
+                and self._generation == generation
+                and self._state in {SharingState.STARTING, SharingState.DEGRADED}
+            )
+
     def _start_is_current(self, generation: int, event: threading.Event) -> bool:
         with self._lock:
             return self._start_is_current_locked(generation, event)
@@ -1784,6 +1880,43 @@ class SharingController:
         except Exception:
             return None
         return value if isinstance(value, str) else None
+
+
+def _summarize_start_failure(detail: dict[str, object]) -> dict[str, object]:
+    """Small fixed-shape summary suitable for the host status payload."""
+    companion = detail.get("companion")
+    companion = companion if isinstance(companion, dict) else {}
+    timeline = detail.get("poll_timeline")
+    timeline = timeline if isinstance(timeline, dict) else {}
+    route = detail.get("route_status")
+    route = route if isinstance(route, dict) else {}
+
+    def stream(name: str) -> dict[str, object]:
+        value = detail.get(name)
+        return value if isinstance(value, dict) else {}
+
+    serve = stream("serve_output_tail")
+    daemon = stream("daemon_log_tail")
+    return {
+        "schema": 1,
+        "generation": detail.get("generation"),
+        "reason": detail.get("reason"),
+        "companion_state": companion.get("state"),
+        "companion_reason": companion.get("reason_code") or companion.get("reason"),
+        "exit_code_bucket": companion.get("exit_code_bucket"),
+        "exit_code": companion.get("exit_code"),
+        "signal": companion.get("signal"),
+        "elapsed_seconds": companion.get("elapsed_seconds"),
+        "deadline_seconds": companion.get("deadline_seconds"),
+        "poll_total": timeline.get("total"),
+        "status_observed": route.get("observed"),
+        "status_parsed_ok": route.get("parsed_ok"),
+        "serve_output_lines": serve.get("line_count"),
+        "serve_output_reason": serve.get("reason"),
+        "daemon_log_lines": daemon.get("line_count"),
+        "daemon_log_reason": daemon.get("reason"),
+        "detail_available": True,
+    }
 
 
 def _operation_failure_reason(value: object) -> ReasonCode:

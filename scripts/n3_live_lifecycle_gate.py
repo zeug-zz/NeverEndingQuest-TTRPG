@@ -48,6 +48,7 @@ from web.extensions.opentunnel_sharing.companion import (
     resolve_companion,
     verify_companion_digest,
 )
+from web.extensions.opentunnel_sharing import failure_diagnostics
 from web.extensions.opentunnel_sharing.identity_bootstrap import (
     DefaultCommandRunner,
     DefaultIdentityObserver,
@@ -86,6 +87,10 @@ BOOKING_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 MAX_PREFLIGHT_BYTES = 1024 * 1024
 MAX_LOCK_BYTES = 16 * 1024
 MAX_API_RESPONSE_BYTES = 64 * 1024
+MAX_DIAGNOSTIC_RESPONSE_BYTES = 512 * 1024
+MAX_DIAGNOSTIC_JSON_NODES = 4096
+MAX_DIAGNOSTIC_JSON_LIST = 256
+START_FAILURE_EVIDENCE_NAME = "start_failure_diagnostics.json"
 MAX_API_REQUEST_BYTES = 4096
 MAX_API_JSON_NODES = 1024
 MAX_API_JSON_DEPTH = 16
@@ -638,9 +643,20 @@ class HostApiClient:
         self._ownership_validator = validator
 
     def get_status(
-        self, *, timeout_seconds: float | None = None
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        include_start_failure_diagnostics: bool = False,
     ) -> HostApiResponse:
         selected_timeout = self._validated_timeout(timeout_seconds)
+        if include_start_failure_diagnostics:
+            return self._request(
+                "GET",
+                "/api/player-sharing/status?include=start_failure_diagnostics",
+                None,
+                timeout_seconds=selected_timeout,
+                detailed=True,
+            )
         return self._request(
             "GET", "/api/player-sharing/status", None, timeout_seconds=selected_timeout
         )
@@ -681,7 +697,11 @@ class HostApiClient:
         payload: Mapping[str, object] | None,
         *,
         timeout_seconds: float | None = None,
+        detailed: bool = False,
     ) -> HostApiResponse:
+        max_response = (
+            MAX_DIAGNOSTIC_RESPONSE_BYTES if detailed else MAX_API_RESPONSE_BYTES
+        )
         if self._ownership_validator is not None:
             try:
                 if self._ownership_validator() is not True:
@@ -716,7 +736,7 @@ class HostApiClient:
             )
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
-            raw = response.read(MAX_API_RESPONSE_BYTES + 1)
+            raw = response.read(max_response + 1)
             status = int(response.status)
         except TimeoutError:
             raise HostApiError("host_api_timeout") from None
@@ -728,7 +748,7 @@ class HostApiClient:
                     connection.close()
                 except (OSError, http.client.HTTPException):
                     pass
-        if len(raw) > MAX_API_RESPONSE_BYTES:
+        if len(raw) > max_response:
             raise HostApiError("host_api_response_too_large")
         try:
             decoded = json.loads(
@@ -738,7 +758,9 @@ class HostApiClient:
             )
         except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             raise HostApiError("host_api_response_invalid") from None
-        if not isinstance(decoded, dict) or not _bounded_json(decoded):
+        if not isinstance(decoded, dict) or not _bounded_json(
+            decoded, detailed=detailed
+        ):
             raise HostApiError("host_api_response_invalid")
         return HostApiResponse(status, decoded)
 
@@ -1709,6 +1731,9 @@ class RowContext:
     companion_start_post_unconfirmed: bool = False
     companion_start_post_action: str | None = None
     companion_post_recovery_observation: dict[str, object] | None = field(
+        default=None, repr=False
+    )
+    start_failure_diagnostics_observation: dict[str, object] | None = field(
         default=None, repr=False
     )
     step_checkpoints: list[tuple[str, float]] = field(
@@ -5096,20 +5121,127 @@ def _post_companion_starting_action(
                 action.replace("-", "_") + "_request_outcome_unconfirmed",
                 observed=observed,
             )
+        if action == "start":
+            _capture_start_failure_diagnostics(context)
         return None, observed, failure
 
     if _companion_start_contract_state(action, response) is True:
         context.companion_start_post_unconfirmed = False
+    elif action == "start":
+        _capture_start_failure_diagnostics(context)
     return response, None, None
+
+
+def _scrub_diagnostic_value(value: object, secrets: Sequence[str]) -> object:
+    if isinstance(value, str):
+        return failure_diagnostics.sanitize_line(value, secrets)
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:80]: _scrub_diagnostic_value(child, secrets)
+            for key, child in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_diagnostic_value(item, secrets) for item in value]
+    if value is None or type(value) in {bool, int}:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    return None
+
+
+def _write_private_json(path: Path, payload: object) -> int:
+    encoded = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(encoded):
+            offset += os.write(descriptor, encoded[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return len(encoded)
+
+
+def _capture_start_failure_diagnostics(context: RowContext) -> None:
+    """Fetch and persist host-retained start-failure evidence before teardown.
+
+    Observation only: never raises, never alters the row verdict or reason.
+    """
+    observation: dict[str, object] = {
+        "status": "diagnostics_unavailable",
+        "reason": "capture_error",
+    }
+    try:
+        remaining = _row_remaining_seconds(context)
+        timeout_seconds = HOST_API_TIMEOUT_SECONDS
+        if remaining is not None:
+            if remaining <= 0:
+                raise HostApiError("row_deadline_exhausted")
+            timeout_seconds = min(timeout_seconds, remaining)
+        response = context.host_api.get_status(
+            timeout_seconds=timeout_seconds,
+            include_start_failure_diagnostics=True,
+        )
+        status = _host_status(response)
+        field_value = (
+            status.get("start_failure_diagnostics") if status is not None else None
+        )
+        if not isinstance(field_value, Mapping):
+            observation["reason"] = (
+                "host_status_unavailable" if status is None else "not_retained"
+            )
+        elif not isinstance(field_value.get("detail"), Mapping):
+            observation["reason"] = "detail_missing"
+        else:
+            payload = _scrub_diagnostic_value(
+                {
+                    "schema": 1,
+                    "run_id": context.run_id,
+                    "summary": field_value.get("summary"),
+                    "detail": field_value.get("detail"),
+                },
+                context.secrets,
+            )
+            size = _write_private_json(
+                context.capture_dir / START_FAILURE_EVIDENCE_NAME, payload
+            )
+            summary = payload.get("summary") if isinstance(payload, dict) else None
+            summary = summary if isinstance(summary, dict) else {}
+            observation = {
+                "status": "written",
+                "artifact": START_FAILURE_EVIDENCE_NAME,
+                "bytes": size,
+                "failure_reason": summary.get("reason"),
+                "serve_output_lines": summary.get("serve_output_lines"),
+                "daemon_log_lines": summary.get("daemon_log_lines"),
+                "daemon_log_reason": summary.get("daemon_log_reason"),
+            }
+    except HostApiError as exc:
+        observation["reason"] = _bounded_host_api_code(exc.reason) or "host_api_error"
+    except FileExistsError:
+        observation["reason"] = "evidence_file_exists"
+    except (OSError, ValueError, TypeError, AttributeError):
+        observation["reason"] = "capture_error"
+    context.start_failure_diagnostics_observation = observation
 
 
 def _include_companion_post_observation(
     context: RowContext, result: RowExecutionResult
 ) -> RowExecutionResult:
     recovery = context.companion_post_recovery_observation
-    if recovery is None:
+    diagnostics = context.start_failure_diagnostics_observation
+    if recovery is None and diagnostics is None:
         return result
-    observed = dict(recovery)
+    observed = dict(recovery) if recovery is not None else {}
+    if diagnostics is not None:
+        observed["start_failure_diagnostics"] = dict(diagnostics)
     observed.update(dict(result.observed))
     return RowExecutionResult(
         result.verdict,
@@ -7881,6 +8013,7 @@ class LiveGateRunner:
                 return
             self.context.row_deadline_at = row_started + timeout_seconds
             self.context.companion_post_recovery_observation = None
+            self.context.start_failure_diagnostics_observation = None
             self.context.caught_failure_diagnostic = None
             self.context.step_checkpoints = []
             caught_exception: BaseException | None = None
@@ -9059,12 +9192,14 @@ def _row_evidence_fields(row: LiveRow) -> dict[str, str]:
     }
 
 
-def _bounded_json(value: object) -> bool:
+def _bounded_json(value: object, *, detailed: bool = False) -> bool:
     count = [0]
+    max_nodes = MAX_DIAGNOSTIC_JSON_NODES if detailed else MAX_API_JSON_NODES
+    max_list = MAX_DIAGNOSTIC_JSON_LIST if detailed else 128
 
     def visit(item: object, depth: int) -> bool:
         count[0] += 1
-        if count[0] > MAX_API_JSON_NODES or depth > MAX_API_JSON_DEPTH:
+        if count[0] > max_nodes or depth > MAX_API_JSON_DEPTH:
             return False
         if isinstance(item, dict):
             if len(item) > 128:
@@ -9074,7 +9209,9 @@ def _bounded_json(value: object) -> bool:
                 for key, child in item.items()
             )
         if isinstance(item, list):
-            return len(item) <= 128 and all(visit(child, depth + 1) for child in item)
+            return len(item) <= max_list and all(
+                visit(child, depth + 1) for child in item
+            )
         if isinstance(item, str):
             return len(item) <= 16_384
         if type(item) is float:

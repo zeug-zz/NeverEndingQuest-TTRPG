@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import collections
 import math
 import os
 import platform
@@ -20,6 +21,7 @@ from typing import BinaryIO, Callable, Literal, Mapping, Protocol, Sequence
 
 from web.extensions.opentunnel_sharing.companion import CompanionResolution
 from web.extensions.opentunnel_sharing import native_process_info as process_info
+from web.extensions.opentunnel_sharing import failure_diagnostics as failure_evidence
 from web.extensions.opentunnel_sharing.profile_state import (
     ProfileLayout,
     companion_environment,
@@ -230,6 +232,22 @@ class OwnedCompanion:
         self._bytes_drained = 0
         self._lines_drained = 0
         self._ever_started = False
+        # TABLETOP MODE: In-memory evidence only; read solely after a failed start.
+        self._tail = failure_evidence.OutputTailRing()
+        self._diag_lock = threading.Lock()
+        self._started_at: float | None = None
+        self._deadline_seconds: float | None = None
+        self._failed_elapsed: float | None = None
+        self._exit_code_raw: int | None = None
+        self._in_start = False
+        self._supervisor_signalled = False
+        self._timeline: collections.deque[dict[str, object]] = collections.deque(
+            maxlen=failure_evidence.MAX_TIMELINE_ENTRIES
+        )
+        self._timeline_total = 0
+        self._last_status: dict[str, object] | None = None
+        self._last_status_note = "none"
+        self._status_skipped: str | None = None
 
     @property
     def state(self) -> SupervisorState:
@@ -247,6 +265,13 @@ class OwnedCompanion:
     def profile_layout(self) -> ProfileLayout:
         """Return the validated dedicated profile used by this child."""
         return self._layout
+
+    # TABLETOP MODE: Liveness for the start-time probe, which runs while the
+    # state is still "starting" and so cannot rely on the running-state refresh.
+    @property
+    def process_alive(self) -> bool:
+        """Return True only while the owned child process has not exited."""
+        return self._process is not None and self._poll() is None
 
     @property
     def reason_code(self) -> ReasonCode | None:
@@ -266,6 +291,15 @@ class OwnedCompanion:
         _validate_deadline(deadline, MAX_STARTUP_DEADLINE_SECONDS)
         if self._ever_started:
             return self.state
+        self._started_at = time.monotonic()
+        self._deadline_seconds = float(deadline)
+        self._in_start = True
+        try:
+            return self._start_once(deadline)
+        finally:
+            self._in_start = False
+
+    def _start_once(self, deadline: float) -> SupervisorState:
         self._ever_started = True
         expires_at = time.monotonic() + deadline
         self._state = "starting"
@@ -292,7 +326,8 @@ class OwnedCompanion:
 
         initial_exit = self._poll()
         if initial_exit is not None:
-            self._exit_code_bucket = _bucket_exit_code(initial_exit)
+            self._note_exit(initial_exit)
+            self._record_poll("n/a", False, "early_exit")
             self._fail_start("early_exit")
             return self._state
 
@@ -309,20 +344,29 @@ class OwnedCompanion:
         while True:
             exit_code = self._poll()
             if exit_code is not None:
-                self._exit_code_bucket = _bucket_exit_code(exit_code)
+                self._note_exit(exit_code)
+                self._record_poll("n/a", False, "early_exit")
                 self._fail_start("early_exit")
                 return self._state
+            self._last_status_note = "none"
+            probe_raised = False
             try:
                 readiness = self._readiness_probe()
             except Exception:
                 readiness = "not_ready"
+                probe_raised = True
+            self._record_poll(
+                "error" if probe_raised else _readiness_label(readiness),
+                True,
+                "probe_exception" if probe_raised else self._last_status_note,
+            )
             if time.monotonic() > expires_at:
                 self._fail_start("startup_timeout")
                 return self._state
             if readiness is True or readiness == "ready":
                 exit_code = self._poll()
                 if exit_code is not None:
-                    self._exit_code_bucket = _bucket_exit_code(exit_code)
+                    self._note_exit(exit_code)
                     self._fail_start("early_exit")
                     return self._state
                 self._state = "running"
@@ -365,6 +409,185 @@ class OwnedCompanion:
             "bytes_drained": bytes_drained,
             "lines_drained": lines_drained,
         }
+
+    # TABLETOP MODE: Start-failure evidence. These helpers never raise and are
+    # read only after a failed start; the success path performs no file reads.
+    def note_status_poll(
+        self,
+        *,
+        returncode: int | None,
+        timed_out: bool,
+        truncated: bool,
+        parsed_ok: bool,
+        output: str | None = None,
+        raised: bool = False,
+    ) -> None:
+        """Remember the latest bounded `opentunnel status` observation."""
+        try:
+            if raised:
+                note = "exception"
+            elif timed_out:
+                note = "timed_out"
+            elif returncode != 0:
+                note = (
+                    "rc_%d" % returncode
+                    if type(returncode) is int and abs(returncode) < 1 << 16
+                    else "rc_unknown"
+                )
+            elif truncated:
+                note = "truncated"
+            elif not parsed_ok:
+                note = "parse_failed"
+            else:
+                note = "parsed_ok"
+            lines: list[str] = []
+            if isinstance(output, str):
+                raw_lines = [line for line in output.splitlines() if line.strip()]
+                if raw_lines:
+                    lines.append(raw_lines[0][:1024])
+                for line in raw_lines[1:]:
+                    if line.lstrip().lower().startswith("service:"):
+                        lines.append(line[:1024])
+                        break
+            record = {
+                "elapsed": self._elapsed(),
+                "returncode": returncode if type(returncode) is int else None,
+                "timed_out": bool(timed_out),
+                "truncated": bool(truncated),
+                "parsed_ok": bool(parsed_ok),
+                "note": note,
+                "lines": lines,
+            }
+            with self._diag_lock:
+                self._last_status = record
+            self._last_status_note = note
+            if not self._in_start:
+                self._record_poll("ready" if parsed_ok else "pending", True, note)
+        except Exception:
+            return
+
+    def note_status_skipped(self, reason: str) -> None:
+        """Record that the route probe returned without running `status`."""
+        try:
+            note = "skipped_" + "".join(
+                character
+                for character in str(reason)[:32]
+                if character.isalnum() or character == "_"
+            )
+            self._status_skipped = note
+            self._last_status_note = note
+            if not self._in_start:
+                self._record_poll("pending", True, note)
+        except Exception:
+            return
+
+    def failure_snapshot(self, secrets: Sequence[str] = ()) -> dict[str, object]:
+        """Return a bounded redacted snapshot; never raises, never signals."""
+        snapshot: dict[str, object] = {}
+        try:
+            snapshot["companion"] = self._companion_facts()
+        except Exception:
+            snapshot["companion"] = {"reason": "unavailable"}
+        try:
+            with self._diag_lock:
+                entries = list(self._timeline)
+                total = self._timeline_total
+            snapshot["poll_timeline"] = {
+                "entries": entries,
+                "total": total,
+                "truncated": total > len(entries),
+            }
+        except Exception:
+            snapshot["poll_timeline"] = {"entries": [], "total": 0, "truncated": False}
+        try:
+            snapshot["route_status"] = self._status_facts(secrets)
+        except Exception:
+            snapshot["route_status"] = {"observed": False, "reason": "redaction_failed"}
+        try:
+            raw_lines, dropped = self._tail.snapshot()
+            snapshot["serve_output_tail"] = failure_evidence.build_stream(
+                raw_lines, secrets, dropped=dropped
+            )
+        except Exception:
+            snapshot["serve_output_tail"] = {
+                "reason": "redaction_failed", "lines": [], "line_count": 0,
+                "truncated": False,
+            }
+        try:
+            log_lines, log_reason = failure_evidence.read_daemon_log_tail(
+                self._layout.state_home, self._layout.profile
+            )
+            snapshot["daemon_log_tail"] = failure_evidence.build_stream(
+                log_lines, secrets, source_reason=log_reason
+            )
+        except Exception:
+            snapshot["daemon_log_tail"] = {
+                "reason": "unreadable", "lines": [], "line_count": 0,
+                "truncated": False,
+            }
+        return snapshot
+
+    def _companion_facts(self) -> dict[str, object]:
+        code = self._exit_code_raw
+        elapsed = self._failed_elapsed
+        if elapsed is None and self._started_at is not None:
+            elapsed = self._elapsed()
+        return {
+            "state": self._state,
+            "reason_code": self._reason_code,
+            "exit_code_bucket": self._exit_code_bucket,
+            "exit_code": code if type(code) is int and code >= 0 else None,
+            "signal": -code if type(code) is int and code < 0 else None,
+            "supervisor_signalled": self._supervisor_signalled,
+            "elapsed_seconds": round(elapsed, 3) if elapsed is not None else None,
+            "deadline_seconds": self._deadline_seconds,
+        }
+
+    def _status_facts(self, secrets: Sequence[str]) -> dict[str, object]:
+        with self._diag_lock:
+            record = self._last_status
+        if record is None:
+            return {"observed": False, "skipped": self._status_skipped}
+        return {
+            "observed": True,
+            "at_seconds": round(float(record["elapsed"]), 3),
+            "returncode": record["returncode"],
+            "timed_out": record["timed_out"],
+            "truncated": record["truncated"],
+            "parsed_ok": record["parsed_ok"],
+            "note": record["note"],
+            "lines": [
+                failure_evidence.sanitize_line(line, secrets)
+                for line in record["lines"]
+            ],
+        }
+
+    def _elapsed(self) -> float:
+        started = self._started_at
+        return 0.0 if started is None else max(0.0, time.monotonic() - started)
+
+    def _mark_failure_elapsed(self) -> None:
+        if self._failed_elapsed is None and self._started_at is not None:
+            self._failed_elapsed = self._elapsed()
+
+    def _note_exit(self, exit_code: int | None) -> None:
+        self._exit_code_bucket = _bucket_exit_code(exit_code)
+        if type(exit_code) is int:
+            self._exit_code_raw = exit_code
+
+    def _record_poll(self, readiness: str, alive: bool, note: str) -> None:
+        try:
+            entry = {
+                "t": round(self._elapsed(), 3),
+                "readiness": readiness,
+                "alive": bool(alive),
+                "note": note,
+            }
+            with self._diag_lock:
+                self._timeline.append(entry)
+                self._timeline_total += 1
+        except Exception:
+            return
 
     def _probe_identity(self) -> Identity | None:
         if self._pid is None:
@@ -448,6 +671,7 @@ class OwnedCompanion:
                 chunk = output_reader.read(OUTPUT_READ_BYTES)
                 if not chunk or not isinstance(chunk, bytes):
                     return
+                self._tail.feed(chunk)
                 with self._output_lock:
                     self._bytes_drained = min(
                         MAX_DIAGNOSTIC_COUNTER,
@@ -478,11 +702,13 @@ class OwnedCompanion:
                 pass
 
     def _fail_without_signalling(self, reason: ReasonCode) -> None:
+        self._mark_failure_elapsed()
         self._state = "failed"
         self._reason_code = reason
         self._reaped = self._process is None
 
     def _fail_start(self, reason: ReasonCode) -> None:
+        self._mark_failure_elapsed()
         self._state = "failed"
         self._reason_code = reason
         if self._process is None:
@@ -505,6 +731,7 @@ class OwnedCompanion:
         if exit_code is None:
             if not self._verify_ownership_before_signal():
                 return False
+            self._supervisor_signalled = True
             try:
                 process.terminate()
             except ProcessLookupError:
@@ -538,7 +765,7 @@ class OwnedCompanion:
                         max(0.0, expires_at - time.monotonic())
                     )
         else:
-            self._exit_code_bucket = _bucket_exit_code(exit_code)
+            self._note_exit(exit_code)
             completed = self._wait_and_reap(
                 max(0.0, expires_at - time.monotonic())
             )
@@ -574,7 +801,7 @@ class OwnedCompanion:
             return False
         except OSError:
             return False
-        self._exit_code_bucket = _bucket_exit_code(exit_code)
+        self._note_exit(exit_code)
         self._reaped = True
         return True
 
@@ -607,7 +834,7 @@ class OwnedCompanion:
         if exit_code is None:
             return
         self._state = "exited"
-        self._exit_code_bucket = _bucket_exit_code(exit_code)
+        self._note_exit(exit_code)
         self._wait_and_reap(0.0)
         self._join_drain(0.0)
 
@@ -621,6 +848,14 @@ def _validate_deadline(deadline: float, maximum: float) -> None:
         or deadline > maximum
     ):
         raise ValueError("deadline_out_of_range")
+
+
+def _readiness_label(readiness: object) -> str:
+    if readiness is True or readiness == "ready":
+        return "ready"
+    if readiness is False or readiness == "pending":
+        return "pending"
+    return "not_ready"
 
 
 def _bucket_exit_code(

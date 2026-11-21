@@ -330,6 +330,18 @@ class PlayerSharingService:
         """Return the same safe projection as status; never include raw output."""
         return self.status()
 
+    def start_failure_diagnostics(self) -> dict[str, object] | None:
+        """Host-only evidence for the latest failed start; None otherwise."""
+        with self._lock:
+            controller = self._controller
+        if controller is None:
+            return None
+        try:
+            value = controller.start_failure_diagnostics()
+        except Exception:
+            return None
+        return value if isinstance(value, dict) else None
+
     def supervision_status(self) -> RelaySupervisionSnapshot | None:
         """Return bounded supervisor counters without probing resources."""
         with self._lock:
@@ -1262,6 +1274,16 @@ class _ProductionComposition:
             elif self._security is not None:
                 self._security.stop_listener()
 
+        controller_holder: dict[str, SharingController] = {}
+
+        def start_is_current(generation: int) -> bool:
+            # TABLETOP MODE: Fail closed until the controller is attached.
+            controller = controller_holder.get("controller")
+            return bool(
+                controller is not None
+                and controller.start_generation_is_current(generation)
+            )
+
         def start_companion(generation: int) -> OwnedCompanion | None:
             resolution = self._resolve_companion()
             if (
@@ -1281,9 +1303,13 @@ class _ProductionComposition:
                 handle = handle_holder.get("handle")
                 if handle is None:
                     return "pending"
+                # TABLETOP MODE: The start-time probe must run `status` while
+                # the handle is still "starting"; see _start_route_status.
                 return (
                     "ready"
-                    if self._route_status(handle, generation, layout).healthy
+                    if self._start_route_status(
+                        handle, generation, layout, start_is_current
+                    ).healthy
                     else "pending"
                 )
 
@@ -1314,13 +1340,16 @@ class _ProductionComposition:
             identity_initialized=lambda: self._identity_initialized(layout),
             start_companion=start_companion,
             route_status=route_status,
+            diagnostic_secrets=lambda: [_raw_verifier(layout) or ""],
             origin_binder=binder,
             companion_start_deadline_seconds=MAX_COMPANION_START_DEADLINE_SECONDS,
             route_wait_seconds=MAX_ROUTE_WAIT_SECONDS,
             route_poll_interval_seconds=min(0.25, MAX_ROUTE_POLL_INTERVAL_SECONDS),
             cleanup=cleanup,
         )
-        return SharingController(dependencies)
+        controller = SharingController(dependencies)
+        controller_holder["controller"] = controller
+        return controller
 
     def _relay_monitor_factory(
         self, controller: SharingController, generation: int
@@ -1412,8 +1441,70 @@ class _ProductionComposition:
         layout: ProfileLayout,
     ) -> RouteStatus:
         try:
-            if handle.state != "running" or handle.profile_layout != layout:
+            handle_state = handle.state
+            if handle_state != "running" or handle.profile_layout != layout:
+                # TABLETOP MODE: Evidence only; the early return is unchanged.
+                _note_evidence(
+                    handle,
+                    "note_status_skipped",
+                    "state_" + str(handle_state)
+                    if handle_state != "running"
+                    else "layout_mismatch"
+                )
                 return RouteStatus(False, None, generation)
+        except Exception:
+            return self._status_raised(handle, generation)
+        return self._run_route_status(handle, generation, layout)
+
+    # TABLETOP MODE: Start-time variant. OwnedCompanion.start() holds state
+    # "starting" until this probe reports ready, so the strict running-only
+    # gate above can never pass during start. This path additionally accepts
+    # "starting" but only for a live process, the exact profile layout and a
+    # start that is still current; every other caller keeps the strict gate.
+    def _start_route_status(
+        self,
+        handle: OwnedCompanion,
+        generation: int,
+        layout: ProfileLayout,
+        start_is_current: Callable[[int], bool],
+    ) -> RouteStatus:
+        try:
+            handle_state = handle.state
+            if handle_state not in {"starting", "running"}:
+                skipped = "state_" + str(handle_state)
+            elif handle.profile_layout != layout:
+                skipped = "layout_mismatch"
+            elif not start_is_current(generation):
+                skipped = "start_not_current"
+            elif not handle.process_alive:
+                skipped = "process_exited"
+            else:
+                skipped = None
+            if skipped is not None:
+                _note_evidence(handle, "note_status_skipped", skipped)
+                return RouteStatus(False, None, generation)
+        except Exception:
+            return self._status_raised(handle, generation)
+        return self._run_route_status(handle, generation, layout)
+
+    @staticmethod
+    def _status_raised(handle: OwnedCompanion, generation: int) -> RouteStatus:
+        _note_evidence(handle, "note_status_poll",
+            returncode=None,
+            timed_out=False,
+            truncated=False,
+            parsed_ok=False,
+            raised=True,
+        )
+        return RouteStatus(False, None, generation)
+
+    def _run_route_status(
+        self,
+        handle: OwnedCompanion,
+        generation: int,
+        layout: ProfileLayout,
+    ) -> RouteStatus:
+        try:
             path = handle.executable_path
             result = self._command_runner()(
                 (str(path), "status", "--profile", layout.profile),
@@ -1421,15 +1512,31 @@ class _ProductionComposition:
                 MAX_STATUS_COMMAND_SECONDS,
             )
         except Exception:
-            return RouteStatus(False, None, generation)
+            return self._status_raised(handle, generation)
         if (
             not isinstance(result, RunResult)
             or result.returncode != 0
             or result.timed_out
             or result.output_truncated
         ):
+            # TABLETOP MODE: Keep a bounded note for start-failure evidence only.
+            if isinstance(result, RunResult):
+                _note_evidence(handle, "note_status_poll",
+                    returncode=result.returncode,
+                    timed_out=result.timed_out,
+                    truncated=result.output_truncated,
+                    parsed_ok=False,
+                    output=result.bounded_output,
+                )
             return RouteStatus(False, None, generation)
         origin = _parse_companion_status(result.bounded_output, layout.profile)
+        _note_evidence(handle, "note_status_poll",
+            returncode=result.returncode,
+            timed_out=False,
+            truncated=False,
+            parsed_ok=origin is not None,
+            output=result.bounded_output,
+        )
         return RouteStatus(origin is not None, origin, generation)
 
     def _rotate_access(self, layout: ProfileLayout) -> IssuedCredential:
@@ -1665,6 +1772,16 @@ class _ProfileRouteTable:
             and stat.S_IMODE(metadata.st_mode) == 0o600
             and metadata.st_size <= MAX_PROFILE_ROUTE_BYTES
         )
+
+
+def _note_evidence(handle: object, method: str, *args: object, **kwargs: object) -> None:
+    """Best-effort start-failure evidence hook; never affects probe results."""
+    try:
+        callback = getattr(handle, method, None)
+        if callable(callback):
+            callback(*args, **kwargs)
+    except Exception:
+        return
 
 
 def _parse_companion_status(output: str, profile: str) -> str | None:
