@@ -751,13 +751,18 @@ class PlayerSecurity:
             if origin is None:
                 return not require_origin
             return origin == self.expected_origin
+        # TABLETOP MODE: Origin-less public reads still require a current binding.
+        if (
+            self._active_origin_generation is None
+            or self._public_origin_generation != self._active_origin_generation
+            or self._public_origin is None
+            or host != self._public_authority
+        ):
+            return False
+        if origin is None:
+            return not require_origin
         return bool(
-            origin is not None
-            and self._active_origin_generation is not None
-            and self._public_origin_generation == self._active_origin_generation
-            and self._public_origin is not None
-            and host == self._public_authority
-            and origin == self._public_origin
+            origin == self._public_origin
         )
 
     def _socket_identity_is_valid_locked(self, record: _SocketRecord) -> bool:

@@ -2878,7 +2878,27 @@ class L03PublicAccessExecutor:
             _mark_step(context, "boundary_checks")
             shell = client.request("GET", "/")
             if shell.status != 200:
-                return _failed("public_player_shell_unavailable")
+                shell_error = None
+                try:
+                    shell_payload = json.loads(shell.body.decode("utf-8"))
+                except (UnicodeError, json.JSONDecodeError):
+                    shell_payload = None
+                if isinstance(shell_payload, dict):
+                    error_value = shell_payload.get("error")
+                    if (
+                        isinstance(error_value, str)
+                        and re.fullmatch(r"[a-z_]{1,64}", error_value) is not None
+                    ):
+                        shell_error = error_value
+                return _failed(
+                    "public_player_shell_unavailable",
+                    observed={
+                        "public_shell_status": (
+                            shell.status if type(shell.status) is int else None
+                        ),
+                        "public_shell_error": shell_error,
+                    },
+                )
 
             protected = client.unauthenticated_snapshot()
             if not _data_free_protected_refusal(protected):
