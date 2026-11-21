@@ -12,11 +12,11 @@
 
 ## 3. Persist identity and preflight-only evidence
 
-- [ ] 3.1 Record source SHA, dependency-lock identity, secret-free routing identity, invocation identity, per-row outcomes, provider-free result, and PF status in the required preflight evidence directory; verify exact-identity booking eligibility and mismatch rejection with `.venv/bin/python scripts/test_live_gate_preflight.py`.
+- [x] 3.1 Record source SHA, dependency-lock identity, secret-free routing identity, invocation identity, per-row outcomes, provider-free result, and PF status in the required preflight evidence directory; verify exact-identity booking eligibility and mismatch rejection with `.venv/bin/python scripts/test_live_gate_preflight.py`.
 - [x] 3.2 Acquire and release the shared live-window lock around host startup and teardown, preserve failure evidence, and check ports 8360 and 8370; verify lock contention blocks launch and successful teardown leaves no listener using `.venv/bin/python scripts/test_live_gate_preflight_integration.py`.
 
 ## 4. Verify the source comparison and publish the operating rule
 
 - [ ] 4.1 Immediately before comparison, refresh origin/main separately using an explicit `origin` fetch, resolve the full `refs/remotes/origin/main` SHA, and freeze it as `FROZEN_MAIN_SHA`; planning base `8d1a9e1ce5d9acda8fb7ff36d8866d28aaaf5624` is context only. Run identical coverage for the 26 planned rows against pre-#105 SHA `5999af374ded4f56b21b25d68fc10f9520444b51` and the frozen SHA using local `tmp/` snapshots, with reserves unactivated; verify the report uses the frozen SHA, comparison/preflight performs no network access, `NameError` appears on E06 and E13-E18 only in the non-bookable old-source control, and no pilot evidence is written with `.venv/bin/python scripts/test_live_gate_preflight_comparison.py --main-sha "$FROZEN_MAIN_SHA"`.
 - [x] 4.2 Update `.opencode/skills/neq-capture-arena/SKILL.md` and add the one-line `AGENTS.md` rule requiring a clean provider-free preflight at the exact SHA before booking; verify the documented evidence path, lock requirement, and no-PASS/no-booking distinction against the spec.
-- [ ] 4.3 Run the complete focused preflight suites and `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate change v2-live-gate-provider-free-preflight --strict`; verify all tests pass, no provider calls occur, no live gate is run, and validation reports no warnings or errors.
+- [x] 4.3 Run the complete focused preflight suites and `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate change v2-live-gate-provider-free-preflight --strict`; verify all tests pass, no provider calls occur, no live gate is run, and validation reports no warnings or errors.
