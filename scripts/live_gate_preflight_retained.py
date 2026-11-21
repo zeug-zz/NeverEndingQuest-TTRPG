@@ -752,6 +752,17 @@ def _read_and_validate_worker_shutdown(
         "calls",
         "adv_summary_child",
     }
+    checkpoint_evidence_fields = {
+        "checkpoint_travel",
+        "resume_checkpoint",
+        "checkpoint_attestation",
+    }
+    checkpoint_fields_present = checkpoint_evidence_fields.intersection(evidence)
+    checkpoint_run = bool(checkpoint_fields_present)
+    if checkpoint_run and checkpoint_fields_present != checkpoint_evidence_fields:
+        raise RetainedEvidenceError("retained checkpoint evidence is incomplete")
+    if checkpoint_run:
+        worker_fields.add("checkpoint_travel")
     if comparison_identity is not None:
         worker_fields.add("comparison_identity")
     if (
@@ -794,6 +805,12 @@ def _read_and_validate_worker_shutdown(
         or not _strict_json_equal(worker.get("calls"), calls)
         or not _strict_json_equal(
             worker.get("adv_summary_child"), evidence.get("adv_summary_child")
+        )
+        or (
+            checkpoint_run
+            and not _strict_json_equal(
+                worker.get("checkpoint_travel"), evidence.get("checkpoint_travel")
+            )
         )
     ):
         raise RetainedEvidenceError("retained worker result is incomplete or contradictory")

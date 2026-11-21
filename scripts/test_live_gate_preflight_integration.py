@@ -1196,6 +1196,11 @@ class TestPreflightRowIntegration(unittest.TestCase):
             }
         )
         self._rewrite_profile_evidence(result, evidence)
+        worker_path = PROJECT_ROOT / result["evidence_path"]
+        worker_result_path = worker_path.with_name("worker-result.json")
+        worker_result = json.loads(worker_result_path.read_text(encoding="utf-8"))
+        worker_result["checkpoint_travel"] = travel
+        self._rewrite_worker_result(result, worker_result)
         return checkpoint
 
     @staticmethod
@@ -1207,6 +1212,25 @@ class TestPreflightRowIntegration(unittest.TestCase):
         evidence_path.write_bytes(raw)
         result["evidence"] = evidence
         result["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    def _rewrite_worker_result(
+        self, result: dict[str, Any], worker_result: dict[str, Any]
+    ) -> None:
+        evidence_path = PROJECT_ROOT / result["evidence_path"]
+        worker_path = evidence_path.with_name("worker-result.json")
+        worker_raw = json.dumps(
+            worker_result, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        worker_path.write_bytes(worker_raw)
+
+        teardown_path = (
+            PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+        )
+        teardown = json.loads(teardown_path.read_text(encoding="utf-8"))
+        teardown["worker_stop"]["worker_result_sha256"] = hashlib.sha256(
+            worker_raw
+        ).hexdigest()
+        self._rewrite_teardown_sidecar(result, teardown)
 
     def _rewrite_teardown_sidecar(
         self, result: dict[str, Any], sidecar: dict[str, Any]
@@ -1943,6 +1967,44 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertEqual(
             result["evidence"]["process_census"]["python_child_pids"], [104]
         )
+
+    def test_retained_worker_checkpoint_travel_is_required_and_exact(self) -> None:
+        cases = (
+            ("ordinary-worker-extra", False, "extra"),
+            ("checkpoint-worker-missing", True, "missing"),
+            ("checkpoint-worker-differs", True, "differs"),
+        )
+        for name, checkpoint_run, mutation in cases:
+            with self.subTest(name=name):
+                plan, row_run_id, identity, result = self._retained_case()
+                if checkpoint_run:
+                    travel = self._add_synthetic_checkpoint(
+                        plan, row_run_id, result
+                    )
+                else:
+                    travel = {"complete": True}
+
+                worker_path = (
+                    PROJECT_ROOT / result["evidence_path"]
+                ).with_name("worker-result.json")
+                worker_result = json.loads(
+                    worker_path.read_text(encoding="utf-8")
+                )
+                if mutation == "extra":
+                    worker_result["checkpoint_travel"] = travel
+                elif mutation == "missing":
+                    worker_result.pop("checkpoint_travel")
+                else:
+                    worker_result["checkpoint_travel"]["complete"] = False
+                self._rewrite_worker_result(result, worker_result)
+
+                with self.assertRaisesRegex(
+                    retained.RetainedEvidenceError,
+                    "retained worker result is incomplete or contradictory",
+                ):
+                    self._validate_retained_case(
+                        plan, row_run_id, identity, result
+                    )
 
     def test_comparison_identity_is_reconciled_from_retained_worker_and_teardown(self) -> None:
         from scripts.live_gate_preflight_comparison_identity import (
