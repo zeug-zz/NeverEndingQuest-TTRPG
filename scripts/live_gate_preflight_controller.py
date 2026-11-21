@@ -1260,8 +1260,13 @@ def _validate_supervised_result(
         validated["retained_evidence_sha256"] = result["evidence_sha256"]
         return validated
     except RetainedEvidenceError as exc:
+        reason = re.sub(r"[^a-z0-9]+", "_", str(exc).lower()).strip("_")
+        reason = reason[: 100 - len("retained_supervised_evidence_reconciliation_failed:")]
+        code = "retained_supervised_evidence_reconciliation_failed"
+        if reason:
+            code = f"{code}:{reason}"
         raise PreflightControllerError(
-            "retained_supervised_evidence_reconciliation_failed"
+            code
         ) from exc
 
 

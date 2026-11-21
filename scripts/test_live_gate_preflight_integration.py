@@ -3633,6 +3633,35 @@ class TestPreflightCheckedInDeclarations(unittest.TestCase):
 
 
 class TestSupervisedEvidenceIntegration(unittest.TestCase):
+    def test_retained_reconciliation_failure_code_sanitizes_reason(self) -> None:
+        plan = SimpleNamespace(fixture_id="fixture")
+        cases = (
+            ("summary child module identity differs",
+             "retained_supervised_evidence_reconciliation_failed:summary_child_module_identity_differs"),
+            ("/Users/x/tmp/file.json is bad",
+             "retained_supervised_evidence_reconciliation_failed:users_x_tmp_file_json_is_bad"),
+            ("", "retained_supervised_evidence_reconciliation_failed"),
+        )
+        for message, expected in cases:
+            with self.subTest(message=message):
+                with mock.patch.object(
+                    retained,
+                    "validate_retained_supervised_evidence",
+                    side_effect=retained.RetainedEvidenceError(message),
+                ):
+                    with self.assertRaises(controller.PreflightControllerError) as caught:
+                        controller._validate_supervised_result(
+                            {"evidence": {}, "evidence_path": "x", "evidence_sha256": "y"},
+                            plan=plan,
+                            fixture_id="fixture",
+                            lifecycle="startup",
+                            intended_identity={},
+                            source_sha=SOURCE_SHA,
+                            row_run_id="row",
+                            preflight_run_id=RUN_ID,
+                        )
+                self.assertEqual(str(caught.exception), expected)
+
     def setUp(self) -> None:
         self.run_id = "evidence-integration-" + uuid.uuid4().hex[:12]
         self.evidence_root = (
