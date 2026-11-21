@@ -45,6 +45,7 @@ import socket
 import sys
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,11 @@ EXIT_CODES = {"PASS": 0, "FAIL": 1, "BLOCKED_DIRTY": 2, "REFUSED": 3}
 _HOSTNAME_PATTERN = re.compile(r"(?i)\b[a-z0-9][a-z0-9.-]*\.opentunnel\.xyz\b")
 _TUNNEL_ID_PATTERN = re.compile(r"(?i)(tunnel[_ -]?id\s*[:=]\s*)[^\s,;]+")
 _URL_PATTERN = re.compile(r"(?i)\bhttps?://[^\s\"'<>]+")
+_PUBLIC_ASSET_PATTERN = re.compile(
+    rb"/static/player/([A-Za-z0-9._-]{1,128})(?=[?#\"'\s])"
+)
+_PUBLIC_ERROR_CODE_PATTERN = re.compile(r"[a-z_]{1,64}\Z")
+PUBLIC_GET_TIMEOUT_SECONDS = min(gate.PUBLIC_CLIENT_TIMEOUT_SECONDS, 15.0)
 
 
 class ProbeRefused(RuntimeError):
@@ -116,6 +122,10 @@ class ProbeDependencies:
     companion_runner: Callable[[Sequence[str], Mapping[str, str], float], RunResult]
     identity_observer_factory: Callable[[object, Path], object]
     state_base_provider: Callable[[], Path]
+    public_requester: Callable[
+        [str, int, str, str, Mapping[str, str], bytes | None, float],
+        gate.PublicHttpResponse,
+    ] | None = None
     getloadavg: Callable[[], tuple[float, float, float]] = os.getloadavg
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     monotonic: Callable[[], float] = time.monotonic
@@ -192,6 +202,7 @@ class _InProcessEgressGuard:
         self._original_connect = None
         self._original_connect_ex = None
         self._modules_before: frozenset[str] = frozenset()
+        self._allowed_destinations: set[tuple[str, int]] = set()
 
     def __enter__(self) -> "_InProcessEgressGuard":
         self._modules_before = frozenset(sys.modules)
@@ -202,13 +213,17 @@ class _InProcessEgressGuard:
         original_connect_ex = self._original_connect_ex
 
         def guarded_connect(sock: socket.socket, address: object) -> None:
-            if not _is_loopback_address(address):
+            if not _is_loopback_address(address) and not guard._is_allowed_destination(
+                address
+            ):
                 guard._refuse()
                 raise OSError(errno.ENETUNREACH, "egress refused")
             return original_connect(sock, address)
 
         def guarded_connect_ex(sock: socket.socket, address: object) -> int:
-            if not _is_loopback_address(address):
+            if not _is_loopback_address(address) and not guard._is_allowed_destination(
+                address
+            ):
                 guard._refuse()
                 return errno.ENETUNREACH
             return original_connect_ex(sock, address)
@@ -222,10 +237,57 @@ class _InProcessEgressGuard:
             socket.socket.connect = self._original_connect  # type: ignore[method-assign]
         if self._original_connect_ex is not None:
             socket.socket.connect_ex = self._original_connect_ex  # type: ignore[method-assign]
+        with self._lock:
+            self._allowed_destinations.clear()
 
     def _refuse(self) -> None:
         with self._lock:
             self.refusals = min(self.refusals + 1, 1_000_000)
+
+    def _is_allowed_destination(self, address: object) -> bool:
+        if not isinstance(address, tuple) or len(address) < 2:
+            return False
+        host, port = address[0], address[1]
+        if not isinstance(host, str) or type(port) is not int:
+            return False
+        try:
+            parsed = ipaddress.ip_address(host.split("%", 1)[0])
+        except ValueError:
+            return False
+        with self._lock:
+            return (str(parsed), port) in self._allowed_destinations
+
+    @contextmanager
+    def allow_public_https(self, hostname: str, port: int):
+        """Permit only resolved public IPs for the issued HTTPS origin."""
+        try:
+            rows = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except OSError:
+            raise gate.PublicClientError("public_transport_unavailable") from None
+        destinations: set[tuple[str, int]] = set()
+        for row in rows:
+            address = row[4]
+            if not isinstance(address, tuple) or len(address) < 2:
+                continue
+            host, selected_port = address[0], address[1]
+            if not isinstance(host, str) or type(selected_port) is not int:
+                continue
+            try:
+                parsed = ipaddress.ip_address(host.split("%", 1)[0])
+            except ValueError:
+                continue
+            if parsed.is_global and selected_port == port:
+                destinations.add((str(parsed), selected_port))
+        if not destinations:
+            self._refuse()
+            raise gate.PublicClientError("public_transport_unavailable")
+        with self._lock:
+            self._allowed_destinations.update(destinations)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._allowed_destinations.difference_update(destinations)
 
     def provider_modules_loaded(self) -> int:
         new = frozenset(sys.modules) - self._modules_before
@@ -444,6 +506,123 @@ def build_production_service(config: ProbeConfig) -> object:
         state_root=config.state_root,
         player_build_root=config.player_build_root,
         web_port=gate.HOST_PORT,
+    )
+
+
+def _validate_public_response(response: object) -> gate.PublicHttpResponse:
+    if (
+        not isinstance(response, gate.PublicHttpResponse)
+        or type(response.status) is not int
+        or not 100 <= response.status <= 599
+        or not isinstance(response.headers, tuple)
+        or not isinstance(response.body, bytes)
+        or len(response.body) > gate.MAX_PUBLIC_RESPONSE_BYTES
+        or len(response.headers) > 128
+        or any(
+            not isinstance(name, str)
+            or not isinstance(value, str)
+            or len(name) > 256
+            or len(value) > 8192
+            for name, value in response.headers
+        )
+    ):
+        raise gate.PublicClientError("public_response_invalid")
+    return response
+
+
+def _public_get(
+    client: gate.PublicUrlClient,
+    origin: gate.PublicOrigin,
+    path: str,
+    guard: _InProcessEgressGuard | _NullGuard,
+    *,
+    injected_requester: bool,
+) -> gate.PublicHttpResponse:
+    """GET only the shell or one strictly formed player-asset path."""
+    if path != "/" and re.fullmatch(
+        r"/static/player/[A-Za-z0-9._-]{1,128}", path
+    ) is None:
+        raise gate.PublicClientError("public_request_invalid")
+    network_scope = (
+        guard.allow_public_https(origin.hostname, origin.port)
+        if not injected_requester and isinstance(guard, _InProcessEgressGuard)
+        else nullcontext()
+    )
+    with network_scope:
+        if path == "/":
+            return client.request("GET", "/")
+        try:
+            response = client._requester(
+                origin.hostname,
+                origin.port,
+                "GET",
+                path,
+                {"Host": origin.authority},
+                None,
+                client._timeout,
+            )
+        except gate.PublicClientError:
+            raise
+        except Exception:
+            raise gate.PublicClientError("public_transport_unavailable") from None
+    return _validate_public_response(response)
+
+
+def _content_type_class(response: gate.PublicHttpResponse) -> str:
+    values = response.values("content-type")
+    if len(values) != 1:
+        return "missing" if not values else "invalid"
+    media_type = values[0].split(";", 1)[0].strip().casefold()
+    if media_type in {"text/html", "application/xhtml+xml"}:
+        return "html"
+    if media_type in {
+        "application/javascript",
+        "text/javascript",
+        "application/ecmascript",
+        "text/ecmascript",
+    }:
+        return "javascript"
+    if media_type == "text/css":
+        return "css"
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("font/"):
+        return "font"
+    if media_type.startswith("text/"):
+        return "text"
+    if "/" in media_type:
+        return "other"
+    return "invalid"
+
+
+def _public_error_code(response: gate.PublicHttpResponse) -> str | None:
+    try:
+        payload = json.loads(
+            response.body.decode("utf-8"),
+            object_pairs_hook=gate._unique_object,
+            parse_constant=gate._reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"error"}
+        or not isinstance(payload["error"], str)
+        or _PUBLIC_ERROR_CODE_PATTERN.fullmatch(payload["error"]) is None
+    ):
+        return None
+    return payload["error"]
+
+
+def _is_login_shell(body: bytes) -> bool:
+    from web.extensions.player.assets import PRELOGIN_CSRF_PLACEHOLDER
+
+    normalized = body.lstrip().lower()
+    return (
+        bool(normalized)
+        and b"<html" in normalized
+        and b'name="csrf_token"' in body
+        and PRELOGIN_CSRF_PLACEHOLDER not in body
     )
 
 
@@ -683,6 +862,12 @@ def run_probe(
 
     secrets: list[str] = []
     steps: list[dict[str, object]] = []
+    public_get_without_origin: dict[str, object] = {
+        "shell_status": None,
+        "asset_status": None,
+        "shell_references_asset": False,
+        "origin_header_sent": False,
+    }
     verdict: dict[str, object] = {
         "schema": 1,
         "diagnosis_only": True,
@@ -713,14 +898,16 @@ def run_probe(
     final_status: object | None = None
     diagnostics_observation: dict[str, object] | None = None
 
-    def step(name: str, begun: float, outcome: str) -> None:
-        steps.append(
-            {
-                "name": name,
-                "elapsed_seconds": round(max(0.0, deps.monotonic() - begun), 2),
-                "outcome": outcome,
-            }
-        )
+    def step(
+        name: str, begun: float, outcome: str, **details: object
+    ) -> None:
+        record: dict[str, object] = {
+            "name": name,
+            "elapsed_seconds": round(max(0.0, deps.monotonic() - begun), 2),
+            "outcome": outcome,
+        }
+        record.update(details)
+        steps.append(record)
 
     try:
         prepared.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -810,6 +997,164 @@ def run_probe(
                 step("poll_status", begun, "ready" if ready_reached else state)
                 if not ready_reached:
                     raise _ProbeStepFailed("sharing_start_not_ready")
+
+                begun = deps.monotonic()
+                try:
+                    invitation_result = service.copy_invitation()
+                    invitation_url = getattr(invitation_result, "invitation", None)
+                    invitation_ok = (
+                        bool(getattr(invitation_result, "ok", False))
+                        and isinstance(invitation_url, str)
+                    )
+                except Exception:
+                    invitation_url = None
+                    invitation_ok = False
+                if isinstance(invitation_url, str):
+                    secrets.append(invitation_url)
+                if not invitation_ok:
+                    step("copy_invitation", begun, "failed")
+                    begun = deps.monotonic()
+                    step(
+                        "public_shell_get",
+                        begun,
+                        "failed",
+                        status=None,
+                        content_type_class="unknown",
+                        body_bytes=0,
+                        asset_id_length=None,
+                        shell_references_asset=False,
+                    )
+                    raise _ProbeStepFailed("public_shell_get_failed")
+
+                client = gate.PublicUrlClient(
+                    requester=deps.public_requester,
+                    timeout_seconds=PUBLIC_GET_TIMEOUT_SECONDS,
+                )
+                try:
+                    origin = client.bind_invitation(invitation_url)
+                except gate.PublicClientError:
+                    step("copy_invitation", begun, "invalid")
+                    begun = deps.monotonic()
+                    step(
+                        "public_shell_get",
+                        begun,
+                        "failed",
+                        status=None,
+                        content_type_class="unknown",
+                        body_bytes=0,
+                        asset_id_length=None,
+                        shell_references_asset=False,
+                    )
+                    raise _ProbeStepFailed("public_shell_get_failed") from None
+                secrets.extend(
+                    value
+                    for value in (
+                        origin.origin,
+                        origin.authority,
+                        origin.hostname,
+                    )
+                    if value
+                )
+                step("copy_invitation", begun, "ok")
+
+                begun = deps.monotonic()
+                try:
+                    shell = _public_get(
+                        client,
+                        origin,
+                        "/",
+                        guard,
+                        injected_requester=deps.public_requester is not None,
+                    )
+                except Exception:
+                    step(
+                        "public_shell_get",
+                        begun,
+                        "failed",
+                        status=None,
+                        content_type_class="unknown",
+                        body_bytes=0,
+                        asset_id_length=None,
+                        shell_references_asset=False,
+                    )
+                    raise _ProbeStepFailed("public_shell_get_failed") from None
+                shell_type = _content_type_class(shell)
+                asset_match = _PUBLIC_ASSET_PATTERN.search(shell.body)
+                shell_references_asset = asset_match is not None
+                asset_id_length = (
+                    len(asset_match.group(1)) if asset_match is not None else None
+                )
+                public_get_without_origin["shell_status"] = shell.status
+                public_get_without_origin[
+                    "shell_references_asset"
+                ] = shell_references_asset
+                shell_observation: dict[str, object] = {
+                    "status": shell.status,
+                    "content_type_class": shell_type,
+                    "body_bytes": len(shell.body),
+                    "asset_id_length": asset_id_length,
+                    "shell_references_asset": shell_references_asset,
+                }
+                if shell.status != 200:
+                    error_code = _public_error_code(shell)
+                    if error_code is not None:
+                        shell_observation["error_code"] = error_code
+                    step("public_shell_get", begun, "failed", **shell_observation)
+                    raise _ProbeStepFailed("public_shell_get_failed")
+                if (
+                    shell_type != "html"
+                    or not shell.body.strip()
+                    or not _is_login_shell(shell.body)
+                ):
+                    step("public_shell_get", begun, "failed", **shell_observation)
+                    raise _ProbeStepFailed("public_shell_get_failed")
+                if asset_match is None:
+                    step("public_shell_get", begun, "failed", **shell_observation)
+                    raise _ProbeStepFailed("public_shell_asset_missing")
+                step("public_shell_get", begun, "ok", **shell_observation)
+
+                asset_id = asset_match.group(1).decode("ascii")
+                asset_path = "/static/player/" + asset_id
+                begun = deps.monotonic()
+                try:
+                    asset = _public_get(
+                        client,
+                        origin,
+                        asset_path,
+                        guard,
+                        injected_requester=deps.public_requester is not None,
+                    )
+                except Exception:
+                    step(
+                        "public_asset_get",
+                        begun,
+                        "failed",
+                        status=None,
+                        content_type_class="unknown",
+                        body_bytes=0,
+                        asset_id_length=len(asset_id),
+                        shell_references_asset=True,
+                    )
+                    raise _ProbeStepFailed("public_asset_get_failed") from None
+                asset_type = _content_type_class(asset)
+                public_get_without_origin["asset_status"] = asset.status
+                asset_observation: dict[str, object] = {
+                    "status": asset.status,
+                    "content_type_class": asset_type,
+                    "body_bytes": len(asset.body),
+                    "asset_id_length": len(asset_id),
+                    "shell_references_asset": True,
+                }
+                if asset.status != 200:
+                    error_code = _public_error_code(asset)
+                    if error_code is not None:
+                        asset_observation["error_code"] = error_code
+                    step("public_asset_get", begun, "failed", **asset_observation)
+                    raise _ProbeStepFailed("public_asset_get_failed")
+                if not asset.body:
+                    step("public_asset_get", begun, "failed", **asset_observation)
+                    raise _ProbeStepFailed("public_asset_get_failed")
+                step("public_asset_get", begun, "ok", **asset_observation)
             except _ProbeStepFailed as exc:
                 failure = exc.reason
             except Exception as exc:
@@ -874,6 +1219,17 @@ def run_probe(
         failure = "provider_dispatch_attempts_nonzero"
     if counters["identity_up_invocations"] > 1 and failure is None:
         failure = "relay_tunnel_creation_bound_exceeded"
+    if failure is None and ready_reached is not True:
+        failure = "sharing_start_not_ready"
+    if failure is None and public_get_without_origin["shell_status"] != 200:
+        failure = "public_shell_get_failed"
+    if failure is None and public_get_without_origin["asset_status"] != 200:
+        failure = "public_asset_get_failed"
+    if (
+        failure is None
+        and public_get_without_origin["shell_references_asset"] is not True
+    ):
+        failure = "public_shell_asset_missing"
 
     if census["clean"] is not True:
         outcome = "BLOCKED_DIRTY"
@@ -890,6 +1246,7 @@ def run_probe(
             "verdict": outcome,
             "reason": reason_code,
             "reached_sharing_ready": ready_reached,
+            "public_get_without_origin": public_get_without_origin,
             "final_sharing_state": final_state,
             "final_sharing_reason": final_reason,
             "companion_counters": counters,
@@ -942,7 +1299,7 @@ def default_dependencies(root: Path = REPO_ROOT) -> ProbeDependencies:
     )
 
 
-class FakeCredential:
+class FakeIssuedValue:
     def __init__(self, value: str) -> None:
         self._value = value
 
@@ -958,14 +1315,16 @@ class FakeSharingService:
         config: ProbeConfig,
         *,
         fail_start: bool = False,
-        credential: str = "probe-fake-credential-value",
+        issued_value: str = "probe-fake-issued-value",
+        invitation: str = "https://probe-relay.example.invalid",
         diagnostics: dict[str, object] | None = None,
         provider_hook: Callable[[], None] | None = None,
         identity_up: int = 1,
     ) -> None:
         self._config = config
         self._fail_start = fail_start
-        self._credential = credential
+        self._issued_value = issued_value
+        self._invitation = invitation
         self._diagnostics = diagnostics
         self._provider_hook = provider_hook
         self._identity_up = identity_up
@@ -1003,9 +1362,17 @@ class FakeSharingService:
         self.calls.append("issue_access")
         return SimpleNamespace(
             ok=True,
-            reason="credential_issued",
+            reason="issued",
             status=self._status(),
-            credential=FakeCredential(self._credential),
+            credential=FakeIssuedValue(self._issued_value),
+        )
+
+    def copy_invitation(self) -> SimpleNamespace:
+        self.calls.append("copy_invitation")
+        return SimpleNamespace(
+            ok=self._state == ("ready", "ready"),
+            reason="invitation_ready",
+            invitation=self._invitation,
         )
 
     def start(self) -> SimpleNamespace:
@@ -1086,6 +1453,50 @@ class _FakeCompanionRunner:
         )
 
 
+class _FakePublicRequester:
+    """Ordered public HTTP responses; no socket or network access."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, str, str, dict[str, str], bytes | None, float]] = []
+        self.responses: list[gate.PublicHttpResponse | Exception] = [
+            gate.PublicHttpResponse(
+                200,
+                (("Content-Type", "text/html; charset=utf-8"),),
+                (
+                    b'<!doctype html><html><body><form><input name="csrf_token" '
+                    b'value="planted-value-0042-planted-value-0042"></form>'
+                    b'<script src="/static/player/planted-asset-01.js"></script>'
+                    b"</body></html>"
+                ),
+            ),
+            gate.PublicHttpResponse(
+                200,
+                (("Content-Type", "application/javascript"),),
+                b"window.probe = true;",
+            ),
+        ]
+
+    def __call__(
+        self,
+        hostname: str,
+        port: int,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout: float,
+    ) -> gate.PublicHttpResponse:
+        self.calls.append(
+            (hostname, port, method, path, dict(headers), body, timeout)
+        )
+        if not self.responses:
+            raise RuntimeError("fake_public_responses_exhausted")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 @dataclass(slots=True)
 class FakeContext:
     deps: ProbeDependencies
@@ -1097,6 +1508,7 @@ class FakeContext:
     state_base: Path
     patches: list
     services: list
+    public_requester: _FakePublicRequester
 
     def close(self) -> None:
         import shutil
@@ -1166,6 +1578,7 @@ def build_fake_dependencies(
     ports = _FakePorts()
     processes = _FakeProcesses()
     selected_runner = runner or _FakeCompanionRunner()
+    public_requester = _FakePublicRequester()
     services: list = []
 
     def make_service(config: ProbeConfig) -> FakeSharingService:
@@ -1196,6 +1609,7 @@ def build_fake_dependencies(
         companion_runner=selected_runner,
         identity_observer_factory=lambda _layout, _path: _FakeObserver(observer_state),
         state_base_provider=lambda: state_base,
+        public_requester=public_requester,
         getloadavg=lambda: (1.0, 2.0, 3.0),
         utc_now=lambda: datetime.now(timezone.utc),
         sleep=lambda _seconds: None,
@@ -1213,6 +1627,7 @@ def build_fake_dependencies(
         state_base=state_base,
         patches=patches,
         services=services,
+        public_requester=public_requester,
     )
 
 
@@ -1236,6 +1651,7 @@ def selftest() -> int:
             },
             ("FAIL", 1),
         ),
+        ("public_shell_failure", {}, ("FAIL", 1)),
     ):
         scratch = scratch_parent / ("selftest-%s-%d" % (name, os.getpid()))
         if scratch.exists():
@@ -1247,11 +1663,47 @@ def selftest() -> int:
             service_kwargs=kwargs,
         )
         try:
+            if name == "public_shell_failure":
+                context.public_requester.responses = [
+                    gate.PublicHttpResponse(
+                        403,
+                        (("Content-Type", "application/json"),),
+                        b'{"error":"request_rejected"}',
+                    )
+                ]
             verdict, code = run_probe(context.arguments, context.deps)
             ok = (verdict.get("verdict"), code) == expected and verdict.get(
                 "diagnosis_only"
             ) is True
-            results.append((name, ok))
+            step_names = [item["name"] for item in verdict.get("steps", [])]
+            if name == "happy":
+                ok = ok and (
+                    verdict.get("public_get_without_origin", {}).get(
+                        "shell_status"
+                    )
+                    == 200
+                    and verdict.get("public_get_without_origin", {}).get(
+                        "asset_status"
+                    )
+                    == 200
+                    and "public_shell_get" in step_names
+                    and "public_asset_get" in step_names
+                )
+                detail = " public_shell_get=200 public_asset_get=200"
+            elif name == "public_shell_failure":
+                ok = ok and (
+                    verdict.get("reason") == "public_shell_get_failed"
+                    and verdict.get("public_get_without_origin", {}).get(
+                        "shell_status"
+                    )
+                    == 403
+                    and "public_shell_get" in step_names
+                    and "stop_sharing" in step_names
+                )
+                detail = " public_shell_get=403"
+            else:
+                detail = ""
+            results.append((name + detail, ok))
         finally:
             context.close()
     for name, ok in results:

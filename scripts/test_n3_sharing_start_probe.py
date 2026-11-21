@@ -26,15 +26,16 @@ import scripts.n3_sharing_start_probe as probe
 
 SCRATCH_ROOT = probe.REPO_ROOT / "tmp" / "n3-sharing-start-probe-tests"
 FROZEN_DIGEST = "b754bb6fe3fdd206fb96d68ea972c741fc524f0477db71a523792459772b8ee4"
-PLANTED_CREDENTIAL = "planted-credential-value-0042"
+PLANTED_VALUE = "planted-value-0042-planted-value-0042"
 PLANTED_HOSTNAME = "planted-evidence-host.opentunnel.xyz"
-PLANTED_TUNNEL = "planted-tunnel-9876"
-PLANTED_URL = "https://planted-evidence-host.opentunnel.xyz/login?x=1"
+PLANTED_TUNNEL_ID = "planted-tunnel-9876"
+PLANTED_URL = "https://planted-evidence-host.opentunnel.xyz"
+PLANTED_ASSET_ID = "planted-asset-01.js"
 
 
 def _process(pid: int, parent: int, command: str) -> gate.ProcessRecord:
     return gate.ProcessRecord(
-        pid, parent, os.getuid(), datetime.now(), "token-%d" % pid, command
+        pid, parent, os.getuid(), datetime.now(), "process-value-%d" % pid, command
     )
 
 
@@ -141,7 +142,7 @@ class ProbeTests(unittest.TestCase):
     # -- happy and failure paths ------------------------------------------
 
     def test_happy_path_reaches_ready_with_clean_census(self) -> None:
-        context = self.build(service_kwargs={"credential": PLANTED_CREDENTIAL})
+        context = self.build(service_kwargs={"issued_value": PLANTED_VALUE})
         verdict, code = probe.run_probe(context.arguments, context.deps)
         self.assertEqual(0, code)
         self.assertEqual("PASS", verdict["verdict"])
@@ -161,6 +162,9 @@ class ProbeTests(unittest.TestCase):
                 "issue_access",
                 "start_sharing",
                 "poll_status",
+                "copy_invitation",
+                "public_shell_get",
+                "public_asset_get",
                 "stop_sharing",
                 "identity_teardown",
             ],
@@ -175,13 +179,159 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(
             {"verdict.json", "SHA256SUMS"}, {path.name for path in directory.iterdir()}
         )
-        self.assertEqual(["initialize_identity", "issue_access", "start", "stop", "shutdown"],
-                         context.services[0].calls)
-        self.assertFalse(
-            (context.state_base / "neq-n3g" / gate._state_root_id8(
-                context.arguments.state_run_id
-            )).exists()
+        self.assertEqual(
+            [
+                "initialize_identity",
+                "issue_access",
+                "start",
+                "copy_invitation",
+                "stop",
+                "shutdown",
+            ],
+            context.services[0].calls,
         )
+        self.assertEqual(
+            {
+                "shell_status": 200,
+                "asset_status": 200,
+                "shell_references_asset": True,
+                "origin_header_sent": False,
+            },
+            verdict["public_get_without_origin"],
+        )
+        shell_step = next(
+            step for step in verdict["steps"] if step["name"] == "public_shell_get"
+        )
+        asset_step = next(
+            step for step in verdict["steps"] if step["name"] == "public_asset_get"
+        )
+        self.assertEqual("html", shell_step["content_type_class"])
+        self.assertGreater(shell_step["body_bytes"], 0)
+        self.assertEqual(len(PLANTED_ASSET_ID), shell_step["asset_id_length"])
+        self.assertIs(True, shell_step["shell_references_asset"])
+        self.assertEqual("javascript", asset_step["content_type_class"])
+        self.assertGreater(asset_step["body_bytes"], 0)
+        self.assertEqual(len(PLANTED_ASSET_ID), asset_step["asset_id_length"])
+        self.assertEqual(2, len(context.public_requester.calls))
+        for index, request in enumerate(context.public_requester.calls):
+            hostname, port, method, path, headers, body, timeout = request
+            self.assertEqual("probe-relay.example.invalid", hostname)
+            self.assertEqual(443, port)
+            self.assertEqual("GET", method)
+            self.assertEqual(
+                "/" if index == 0 else "/static/player/" + PLANTED_ASSET_ID,
+                path,
+            )
+            self.assertEqual({"Host": "probe-relay.example.invalid"}, headers)
+            self.assertNotIn("Origin", headers)
+            self.assertNotIn("Cookie", headers)
+            self.assertIsNone(body)
+            self.assertLessEqual(timeout, 15)
+        self.assertFalse(
+            (
+                context.state_base
+                / "neq-n3g"
+                / gate._state_root_id8(context.arguments.state_run_id)
+            ).exists()
+        )
+
+    def test_public_shell_403_records_safe_error_and_stops(self) -> None:
+        context = self.build()
+        context.public_requester.responses = [
+            gate.PublicHttpResponse(
+                403,
+                (("Content-Type", "application/json; charset=utf-8"),),
+                b'{"error":"request_rejected"}',
+            )
+        ]
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_shell_get_failed", verdict["reason"])
+        self.assertEqual(403, verdict["public_get_without_origin"]["shell_status"])
+        self.assertEqual(
+            "request_rejected",
+            next(
+                step["error_code"]
+                for step in verdict["steps"]
+                if step["name"] == "public_shell_get"
+            ),
+        )
+        self.assertIn("stop", context.services[0].calls)
+        self.assertIs(True, verdict["census"]["clean"])
+        self.assertEqual(1, len(context.public_requester.calls))
+
+    def test_public_asset_404_records_status_and_stops(self) -> None:
+        context = self.build()
+        context.public_requester.responses[1] = gate.PublicHttpResponse(
+            404,
+            (("Content-Type", "application/json"),),
+            b'{"error":"not_found"}',
+        )
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_asset_get_failed", verdict["reason"])
+        self.assertEqual(404, verdict["public_get_without_origin"]["asset_status"])
+        asset_step = next(
+            step for step in verdict["steps"] if step["name"] == "public_asset_get"
+        )
+        self.assertEqual("not_found", asset_step["error_code"])
+        self.assertIn("stop", context.services[0].calls)
+        self.assertIs(True, verdict["census"]["clean"])
+
+    def test_public_shell_without_asset_reference_fails(self) -> None:
+        context = self.build()
+        context.public_requester.responses = [
+            gate.PublicHttpResponse(
+                200,
+                (("Content-Type", "text/html; charset=utf-8"),),
+                (
+                    b'<!doctype html><html><body><input name="csrf_token" '
+                    b'value="planted-value-0042-planted-value-0042"></body></html>'
+                ),
+            )
+        ]
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_shell_asset_missing", verdict["reason"])
+        self.assertEqual(200, verdict["public_get_without_origin"]["shell_status"])
+        self.assertIs(False, verdict["public_get_without_origin"]["shell_references_asset"])
+        self.assertEqual(1, len(context.public_requester.calls))
+
+    def test_public_shell_transport_error_fails_and_stops(self) -> None:
+        context = self.build()
+        context.public_requester.responses = [RuntimeError("offline fake")]
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_shell_get_failed", verdict["reason"])
+        self.assertIsNone(verdict["public_get_without_origin"]["shell_status"])
+        shell_step = next(
+            step for step in verdict["steps"] if step["name"] == "public_shell_get"
+        )
+        self.assertIsNone(shell_step["status"])
+        self.assertIn("stop", context.services[0].calls)
+
+    def test_non_https_invitation_and_redirect_are_refused(self) -> None:
+        context = self.build(
+            service_kwargs={"invitation": "http://probe-relay.example.invalid"}
+        )
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_shell_get_failed", verdict["reason"])
+        self.assertEqual([], context.public_requester.calls)
+
+        redirected = self.build()
+        redirected.public_requester.responses = [
+            gate.PublicHttpResponse(
+                302,
+                (("Location", "https://other.invalid/"),),
+                b"",
+            )
+        ]
+        verdict, code = probe.run_probe(redirected.arguments, redirected.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_shell_get_failed", verdict["reason"])
+        self.assertEqual(302, verdict["public_get_without_origin"]["shell_status"])
+        self.assertEqual(1, len(redirected.public_requester.calls))
 
     def test_failure_path_writes_private_diagnostics_before_teardown(self) -> None:
         diagnostics = {
@@ -190,15 +340,15 @@ class ProbeTests(unittest.TestCase):
                 "serve_output": [
                     "listening at %s" % PLANTED_URL,
                     "Hostname: %s" % PLANTED_HOSTNAME,
-                    "Tunnel ID: %s" % PLANTED_TUNNEL,
-                    "credential %s" % PLANTED_CREDENTIAL,
+                    "Tunnel ID: %s" % PLANTED_TUNNEL_ID,
+                    "issued value %s" % PLANTED_VALUE,
                 ]
             },
         }
         context = self.build(
             service_kwargs={
                 "fail_start": True,
-                "credential": PLANTED_CREDENTIAL,
+                "issued_value": PLANTED_VALUE,
                 "diagnostics": diagnostics,
             }
         )
@@ -245,8 +395,8 @@ class ProbeTests(unittest.TestCase):
                 "lines": [
                     PLANTED_URL,
                     "Hostname: %s" % PLANTED_HOSTNAME,
-                    "Tunnel ID: %s" % PLANTED_TUNNEL,
-                    PLANTED_CREDENTIAL,
+                    "Tunnel ID: %s" % PLANTED_TUNNEL_ID,
+                    PLANTED_VALUE,
                 ]
             },
         }
@@ -256,19 +406,21 @@ class ProbeTests(unittest.TestCase):
                     probe_id="n3p-scan-%s" % ("fail" if fail else "ok"),
                     service_kwargs={
                         "fail_start": fail,
-                        "credential": PLANTED_CREDENTIAL,
+                        "issued_value": PLANTED_VALUE,
+                        "invitation": PLANTED_URL,
                         "diagnostics": diagnostics,
                     },
                 )
                 probe.run_probe(context.arguments, context.deps)
                 text = self.evidence_text(context).decode("ascii")
                 for planted in (
-                    PLANTED_CREDENTIAL,
+                    PLANTED_VALUE,
                     PLANTED_HOSTNAME,
-                    PLANTED_TUNNEL,
+                    PLANTED_TUNNEL_ID,
                     PLANTED_URL,
                     "planted-host.opentunnel.xyz",
                     "planted-tunnel-0001",
+                    PLANTED_ASSET_ID,
                 ):
                     self.assertNotIn(planted, text)
 
