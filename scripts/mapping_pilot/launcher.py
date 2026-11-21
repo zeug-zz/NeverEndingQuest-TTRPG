@@ -532,7 +532,11 @@ def _validate_resume_checkpoint(
         and exit_row.get("destination_knowledge") == "known"
         and exit_row.get("known_destination_location_id") == current_source_id
     ]
-    if seed_source_id == current_source_id or len(known_open_exits) != 1:
+    # TABLETOP MODE: a frozen seed location may have more than one open+known
+    # exit to the same destination (e.g. landscape_village village-green has
+    # two open exits plus one blocked exit to the tower approach); only the
+    # presence of at least one such exit is required, not exactly one.
+    if seed_source_id == current_source_id or len(known_open_exits) < 1:
         raise ValueError("mapping-pilot resume location is not a frozen open exit")
 
     frozen_module = _build_module_payloads(frozen_fixtures)
