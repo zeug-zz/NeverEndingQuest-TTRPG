@@ -35,6 +35,8 @@ from web.extensions.player import (
 )
 from web.extensions.player.assets import (
     PlayerClientAssetsError,
+    PRELOGIN_CSRF_PLACEHOLDER,
+    VerifiedPlayerAsset,
     VerifiedPlayerClientAssets,
 )
 from web.extensions.player.auth import (
@@ -579,6 +581,202 @@ class PlayerAccessTests(unittest.TestCase):
         with mock.patch.object(app.sync, "submit_command") as submit_command:
             asyncio.run(app._handle_player_input("connected-client", {}))
             submit_command.assert_not_called()
+
+    def test_public_host_allows_originless_reads_only_with_current_binding(self) -> None:
+        public_origin = "https://sharing-player.example"
+        public_host = "sharing-player.example"
+
+        def make_public_app() -> tuple[Any, PlayerSecurity]:
+            selected_security = _make_security()
+            self.assertTrue(selected_security.set_active_origin_generation(1))
+            self.assertTrue(
+                selected_security.bind_public_origin(1, public_origin)
+            )
+            selected_app = create_app(security=selected_security)
+            selected_app._client_assets = VerifiedPlayerClientAssets(
+                shell_document=(
+                    b'<html><input name="csrf_token" value="'
+                    + PRELOGIN_CSRF_PLACEHOLDER
+                    + b'"></html>'
+                ),
+                shell_content_type=b"text/html; charset=utf-8",
+                client_build_id="0123456789abcdef0123456789abcdef",
+                protocol_version=1,
+                assets={
+                    "client.js": VerifiedPlayerAsset(
+                        content_type=b"application/javascript",
+                        body=b"window.playerReady = true;",
+                    )
+                },
+            )
+            return selected_app, selected_security
+
+        app, security = make_public_app()
+        shell_status, shell_headers, shell_body = _dispatch_http(
+            app,
+            "GET",
+            "/",
+            host=public_host,
+        )
+        self.assertEqual(shell_status, 200)
+        self.assertIn(b'name="csrf_token" value="', shell_body)
+        self.assertNotIn(PRELOGIN_CSRF_PLACEHOLDER, shell_body)
+        prelogin_cookies = _header_values(shell_headers, b"set-cookie")
+        self.assertEqual(len(prelogin_cookies), 1)
+        self.assertTrue(
+            prelogin_cookies[0].startswith(
+                PRELOGIN_CSRF_COOKIE.encode("ascii") + b"="
+            )
+        )
+
+        asset_status, _asset_headers, asset_body = _dispatch_http(
+            app,
+            "GET",
+            "/static/player/client.js",
+            host=public_host,
+        )
+        self.assertEqual(asset_status, 200)
+        self.assertEqual(asset_body, b"window.playerReady = true;")
+
+        wrong_origin_status, _headers, _body = _dispatch_http(
+            app,
+            "GET",
+            "/",
+            host=public_host,
+            origin="https://wrong-sharing-player.example",
+        )
+        self.assertEqual(wrong_origin_status, 403)
+        missing_origin_post_status, _headers, _body = _dispatch_http(
+            app,
+            "POST",
+            "/api/player/login",
+            host=public_host,
+            body=b"{}",
+            headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(missing_origin_post_status, 403)
+        wrong_host_status, _headers, _body = _dispatch_http(
+            app,
+            "GET",
+            "/",
+            host="wrong-sharing-player.example",
+        )
+        self.assertEqual(wrong_host_status, 403)
+
+        stale_app, stale_security = make_public_app()
+        self.assertTrue(stale_security.set_active_origin_generation(2))
+        stale_status, _headers, _body = _dispatch_http(
+            stale_app,
+            "GET",
+            "/",
+            host=public_host,
+        )
+        self.assertEqual(stale_status, 403)
+
+        cleared_app, cleared_security = make_public_app()
+        cleared_security.clear_public_origin()
+        cleared_status, _headers, _body = _dispatch_http(
+            cleared_app,
+            "GET",
+            "/",
+            host=public_host,
+        )
+        self.assertEqual(cleared_status, 403)
+
+        inactive_security = _make_security()
+        inactive_app = create_app(security=inactive_security)
+        inactive_app._client_assets = app._client_assets
+        inactive_status, _headers, _body = _dispatch_http(
+            inactive_app,
+            "GET",
+            "/",
+            host=public_host,
+        )
+        self.assertEqual(inactive_status, 403)
+
+        loopback_status, _headers, _body = _dispatch_http(app, "GET", "/")
+        self.assertEqual(loopback_status, 200)
+        loopback_post_status, _headers, _body = _dispatch_http(
+            app,
+            "POST",
+            "/api/player/login",
+            body=b"{}",
+            headers=[(b"content-type", b"application/json")],
+        )
+        self.assertEqual(loopback_post_status, 403)
+        self.assertEqual(security.public_origin_status, (True, 1))
+
+    def test_public_socket_handshake_without_origin_is_rejected_with_session_cookie(
+        self,
+    ) -> None:
+        security = _make_security()
+        app = create_app(security=security)
+        grant = security.create_session()
+        self.assertIsNotNone(grant)
+        assert grant is not None
+        public_origin = "https://sharing-player.example"
+        public_host = b"sharing-player.example"
+        self.assertTrue(security.set_active_origin_generation(1))
+        self.assertTrue(security.bind_public_origin(1, public_origin))
+        assets = VerifiedPlayerClientAssets(
+            shell_document=b"",
+            shell_content_type=b"text/html; charset=utf-8",
+            client_build_id="0123456789abcdef0123456789abcdef",
+            protocol_version=1,
+            assets={},
+        )
+        app._client_assets = assets
+        cookie_header = (
+            f"{PLAYER_SESSION_COOKIE}={grant.cookie_value}".encode("ascii")
+        )
+        connect = app.socket_server.handlers[PLAYER_NAMESPACE]["connect"]
+        connected = asyncio.run(
+            connect(
+                "public-no-origin",
+                {
+                    "asgi.scope": {
+                        "type": "websocket",
+                        "headers": [
+                            (b"host", public_host),
+                            (b"cookie", cookie_header),
+                        ],
+                    }
+                },
+                {
+                    "client_build_id": assets.client_build_id,
+                    "protocol_version": assets.protocol_version,
+                },
+            )
+        )
+        self.assertFalse(connected)
+        self.assertEqual(security.active_socket_count, 0)
+
+        messages: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        asyncio.run(
+            app(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/socket.io/",
+                    "query_string": b"EIO=4&transport=polling",
+                    "headers": [
+                        (b"host", public_host),
+                        (b"cookie", cookie_header),
+                    ],
+                },
+                receive,
+                send,
+            )
+        )
+        self.assertEqual(messages[0]["status"], 403)
+        self.assertEqual(security.active_socket_count, 0)
 
     def test_listener_restart_rejects_stale_cookie_challenge_and_password(self) -> None:
         old_password = "old sharing credential"
