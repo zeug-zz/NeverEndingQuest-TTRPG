@@ -330,6 +330,53 @@ class InputAssemblyTests(unittest.TestCase):
             1,
         )
 
+    def test_resolver_binds_checkpoint_creation_and_resume_to_row_identity(self) -> None:
+        rows, _ = controller._load_frozen_row_ids(None)
+        profiles, _ = controller._load_profiles([r["row_id"] for r in rows])
+        row = next(
+            row
+            for row in rows
+            if row["row_id"] in profiles[("interior_tavern", 1)]["planned_row_ids"]
+        )
+        plan = controller._resolve_row_plan(
+            row["row_id"], prereg_root=None, expected_row=row, profiles=profiles
+        )
+        resolver = run_module.build_intended_identity_resolver(
+            source_sha=SHA,
+            run_id=RUN_ID,
+            comparison_identity=None,
+        )
+
+        create_identity = resolver(
+            plan, "interior_tavern", "startup", None, True
+        )
+        resume_identity = resolver(
+            plan, "interior_tavern", "resume", "e" * 64, False
+        )
+
+        self.assertIn("--create-resume-checkpoint", create_identity["command"])
+        self.assertIn("e" * 64, resume_identity["command"])
+        self.assertEqual(
+            create_identity["command"][
+                create_identity["command"].index("--run-id") + 1
+            ],
+            controller._checkpoint_lifecycle_run_id(
+                RUN_ID, plan.row_id, plan.fixture_ids.index("interior_tavern")
+            ),
+        )
+        self.assertEqual(
+            resume_identity["command"][
+                resume_identity["command"].index("--run-id") + 1
+            ],
+            controller._lifecycle_run_id(
+                RUN_ID,
+                plan.row_id,
+                plan.fixture_ids.index("interior_tavern"),
+                "resume",
+                primary=False,
+            ),
+        )
+
     def test_mismatched_checkpoint_binding_is_refused(self) -> None:
         with self.assertRaises(controller.PreflightControllerError):
             run_module.build_worker_identities(
@@ -510,6 +557,8 @@ class ExecuteTests(unittest.TestCase):
             set(kwargs["routing_identity"]), {"provider", "active_profile"}
         )
         self.assertTrue(callable(kwargs["safety_counters"]))
+        self.assertTrue(callable(kwargs["intended_identity_resolver"]))
+        self.assertTrue(kwargs["auto_create_required_resume_checkpoints"])
         self.assertEqual(
             summary,
             {
@@ -536,6 +585,8 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(kwargs["source_sha"], identity_module.APPLICATION_A_SHA)
         self.assertEqual(kwargs["comparison_identity"]["mode"], "comparison-only")
         self.assertIsNone(kwargs["resume_checkpoints"])
+        self.assertIsNone(kwargs["intended_identity_resolver"])
+        self.assertFalse(kwargs["auto_create_required_resume_checkpoints"])
         self.assertEqual(code, 0)
         self.assertFalse(summary["booking_eligible"])
         self.assertFalse(summary["live_gate_pass"])

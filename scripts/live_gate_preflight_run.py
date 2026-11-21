@@ -316,6 +316,58 @@ def build_worker_identities(
     return workers, lifecycles
 
 
+def build_intended_identity_resolver(
+    *,
+    source_sha: str,
+    run_id: str,
+    comparison_identity: Mapping[str, Any] | None,
+) -> Callable[
+    [controller.PreflightRowPlan, str, str, str | None, bool],
+    Mapping[str, Any],
+]:
+    """Build independent identities for lifecycle launches with dynamic hashes."""
+
+    def resolve(
+        plan: controller.PreflightRowPlan,
+        fixture_id: str,
+        lifecycle: str,
+        checkpoint_sha256: str | None,
+        create_resume_checkpoint: bool,
+    ) -> Mapping[str, Any]:
+        try:
+            fixture_index = plan.fixture_ids.index(fixture_id)
+        except ValueError as exc:
+            raise controller.PreflightControllerError(
+                "planned lifecycle fixture is invalid"
+            ) from exc
+        row_run_id = (
+            controller._checkpoint_lifecycle_run_id(
+                run_id, plan.row_id, fixture_index
+            )
+            if create_resume_checkpoint
+            else controller._lifecycle_run_id(
+                run_id,
+                plan.row_id,
+                fixture_index,
+                lifecycle,
+                primary=False,
+            )
+        )
+        return controller.planned_worker_identity(
+            plan,
+            fixture_id=fixture_id,
+            lifecycle=lifecycle,
+            source_sha=source_sha,
+            row_run_id=row_run_id,
+            resume_checkpoint_sha256=checkpoint_sha256,
+            preflight_run_id=run_id,
+            create_resume_checkpoint=create_resume_checkpoint,
+            comparison_identity=comparison_identity,
+        )
+
+    return resolve
+
+
 def _git_head(root: Path) -> tuple[str, str]:
     try:
         sha = identity_module._git_output(root, ("rev-parse", "HEAD"))
@@ -453,6 +505,15 @@ def execute(
             resume_checkpoints=checkpoints,
             comparison_identity=comparison_identity,
         )
+        identity_resolver = (
+            build_intended_identity_resolver(
+                source_sha=source_sha,
+                run_id=args.run_id,
+                comparison_identity=comparison_identity,
+            )
+            if args.mode == "same-sha"
+            else None
+        )
         routing = _routing_identity(checkout)
         intended_invocation = current_invocation_identity()
     except (PreflightRunError, controller.PreflightControllerError) as exc:
@@ -471,12 +532,14 @@ def execute(
             run_id=args.run_id,
             intended_worker_identities=workers,
             intended_lifecycle_identities=lifecycles,
+            intended_identity_resolver=identity_resolver,
             safety_counters=PreflightSafetyCounters(args.run_id),
             dependency_lock_path=DEPENDENCY_LOCK,
             routing_identity=routing,
             intended_invocation=intended_invocation,
             resume_checkpoints=checkpoints,
             comparison_identity=comparison_identity,
+            auto_create_required_resume_checkpoints=args.mode == "same-sha",
         )
     summary = summarize(
         report, mode=args.mode, run_id=args.run_id, source_sha=source_sha

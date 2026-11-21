@@ -56,9 +56,10 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "reason"],
+          "required": ["status", "required", "reason"],
           "properties": {
             "status": {"const": "MISSING"},
+            "required": {"type": "boolean"},
             "reason": {"type": "string", "minLength": 1}
           }
         },
@@ -67,6 +68,7 @@
           "additionalProperties": false,
           "required": [
             "status",
+            "required",
             "fixture_id",
             "party_size",
             "call_count",
@@ -77,6 +79,7 @@
           ],
           "properties": {
             "status": {"const": "measured-under-stub"},
+            "required": {"type": "boolean"},
             "fixture_id": {"type": "string", "minLength": 1},
             "party_size": {"enum": [1, 4]},
             "call_count": {"type": "integer", "minimum": 1},
@@ -138,6 +141,37 @@
     "profile": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "properties": {
+            "startup": {
+              "properties": {
+                "required": {"const": true}
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resume": {
+                "properties": {
+                  "status": {"const": "MISSING"}
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resume": {
+                "properties": {
+                  "required": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      ],
       "required": [
         "profile_id",
         "fixture_id",

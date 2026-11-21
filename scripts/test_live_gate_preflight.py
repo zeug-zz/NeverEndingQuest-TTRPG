@@ -1162,6 +1162,145 @@ class TestPreflightEvidence(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _lifecycle_result(
+        lifecycle: str,
+        *,
+        required: bool,
+        profile_status: str,
+        create_resume_checkpoint: bool = False,
+        checkpoint_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "fixture_id": "interior_tavern",
+            "lifecycle": lifecycle,
+            "required": required,
+            "create_resume_checkpoint": create_resume_checkpoint,
+            "run_id": "pf-run-E01-" + lifecycle,
+            "transport_status": "completed",
+            "profile_status": profile_status,
+            "first_exchange_status": "completed",
+            "sandbox_cleanup": True,
+            "worker_teardown": {
+                "server_stopped": True,
+                "port_8360_free": True,
+                "port_8370_free": True,
+                "shared_live_window_lock_released": True,
+                "guard_active": True,
+                "call_count": 1,
+            },
+            "retained_evidence_path": (
+                "tmp/router-rollout/live-gate-preflight/run/preflight/"
+                "rows/pf-run-E01-%s/profile-evidence.json" % lifecycle
+            ),
+            "retained_evidence_sha256": "f" * 64,
+            "retained_evidence_status": "verified",
+            "checkpoint_sha256": checkpoint_sha256,
+        }
+
+    @classmethod
+    def _lifecycle_row(
+        cls,
+        resume_check: dict[str, Any],
+        *,
+        include_resume: bool = False,
+        include_checkpoint: bool = False,
+        checkpoint_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        lifecycle_results = [
+            cls._lifecycle_result(
+                "startup", required=True, profile_status="matched"
+            )
+        ]
+        if include_checkpoint:
+            lifecycle_results.append(
+                cls._lifecycle_result(
+                    "checkpoint",
+                    required=False,
+                    profile_status="not_applicable",
+                    create_resume_checkpoint=True,
+                    checkpoint_sha256=checkpoint_sha256,
+                )
+            )
+        if include_resume:
+            lifecycle_results.append(
+                cls._lifecycle_result(
+                    "resume",
+                    required=resume_check["required"],
+                    profile_status="matched",
+                    checkpoint_sha256=checkpoint_sha256,
+                )
+            )
+        return {
+            "row_id": "E01",
+            "status": "completed",
+            "failure_code": None,
+            "fixture_ids": ["interior_tavern"],
+            "party_size": 1,
+            "fixture_resolution_status": "validated",
+            "transport_status": "completed",
+            "first_exchange_status": "completed",
+            "lifecycle_profile_status": "matched",
+            "invocation_identity_status": "matched",
+            "lifecycle_profile_checks": {
+                "interior_tavern": {
+                    "startup": {
+                        "status": "matched",
+                        "required": True,
+                        "profile_status": "measured-under-stub",
+                    },
+                    "resume": resume_check,
+                }
+            },
+            "lifecycle_results": lifecycle_results,
+        }
+
+    def test_required_and_optional_lifecycle_outcomes_are_reconciled(self) -> None:
+        optional_missing = self._lifecycle_row(
+            {
+                "status": "unverified",
+                "required": False,
+                "profile_status": "MISSING",
+            }
+        )
+        self.assertTrue(preflight_evidence._row_is_complete(optional_missing))
+
+        required_missing = self._lifecycle_row(
+            {
+                "status": "unverified",
+                "required": True,
+                "profile_status": "measured-under-stub",
+            }
+        )
+        self.assertFalse(preflight_evidence._row_is_complete(required_missing))
+
+        optional_mismatch = self._lifecycle_row(
+            {
+                "status": "mismatched",
+                "required": False,
+                "profile_status": "measured-under-stub",
+            }
+        )
+        self.assertFalse(preflight_evidence._row_is_complete(optional_mismatch))
+
+    def test_checkpoint_operation_must_match_resume_checkpoint_hash(self) -> None:
+        resume_check = {
+            "status": "matched",
+            "required": True,
+            "profile_status": "measured-under-stub",
+            "checkpoint_sha256": "c" * 64,
+        }
+        row = self._lifecycle_row(
+            resume_check,
+            include_resume=True,
+            include_checkpoint=True,
+            checkpoint_sha256="c" * 64,
+        )
+        self.assertTrue(preflight_evidence._row_is_complete(row))
+
+        row["lifecycle_results"][1]["checkpoint_sha256"] = "d" * 64
+        self.assertFalse(preflight_evidence._row_is_complete(row))
+
     def _write_report(
         self,
         *,

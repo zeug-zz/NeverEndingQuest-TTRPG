@@ -491,6 +491,11 @@ def _row_outcomes(
                     valid = False
         else:
             valid = False
+        lifecycle_profile_checks = _sanitize_profile_checks(
+            row.get("lifecycle_profile_checks")
+        )
+        if lifecycle_profile_checks is None:
+            valid = False
         outcomes.append(
             {
                 "row_id": row_id,
@@ -515,6 +520,7 @@ def _row_outcomes(
                 "invocation_identity_status": _safe_identity_status(
                     row.get("invocation_identity")
                 ),
+                "lifecycle_profile_checks": lifecycle_profile_checks or {},
                 "lifecycle_results": lifecycle_results,
             }
         )
@@ -528,7 +534,8 @@ def _sanitize_lifecycle_result(
     profile_status = (
         profile_check.get("status")
         if isinstance(profile_check, Mapping)
-        and profile_check.get("status") in ("matched", "mismatched", "unverified")
+        and profile_check.get("status")
+        in ("matched", "mismatched", "unverified", "not_applicable")
         else "missing"
     )
     teardown = result.get("worker_teardown")
@@ -570,7 +577,13 @@ def _sanitize_lifecycle_result(
         and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", result["fixture_id"])
         else None,
         "lifecycle": result.get("lifecycle")
-        if result.get("lifecycle") in ("startup", "resume")
+        if result.get("lifecycle") in ("startup", "resume", "checkpoint")
+        else None,
+        "required": result.get("required")
+        if type(result.get("required")) is bool
+        else None,
+        "create_resume_checkpoint": result.get("create_resume_checkpoint")
+        if type(result.get("create_resume_checkpoint")) is bool
         else None,
         "run_id": row_run_id
         if isinstance(row_run_id, str) and _RUN_ID.fullmatch(row_run_id) is not None
@@ -585,7 +598,69 @@ def _sanitize_lifecycle_result(
         "retained_evidence_path": evidence_path if evidence_valid else None,
         "retained_evidence_sha256": evidence_sha if evidence_valid else None,
         "retained_evidence_status": "verified" if evidence_valid else "missing_or_invalid",
+        "checkpoint_sha256": result.get("resume_checkpoint_sha256")
+        if isinstance(result.get("resume_checkpoint_sha256"), str)
+        and _SHA256.fullmatch(result["resume_checkpoint_sha256"]) is not None
+        else profile_check.get("checkpoint_sha256")
+        if isinstance(profile_check, Mapping)
+        and isinstance(profile_check.get("checkpoint_sha256"), str)
+        and _SHA256.fullmatch(profile_check["checkpoint_sha256"]) is not None
+        else None,
     }
+
+
+def _sanitize_profile_checks(value: Any) -> dict[str, dict[str, dict[str, Any]]] | None:
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for fixture_id, by_lifecycle in value.items():
+        if (
+            not isinstance(fixture_id, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", fixture_id) is None
+            or not isinstance(by_lifecycle, Mapping)
+            or set(by_lifecycle) != {"startup", "resume"}
+        ):
+            return None
+        safe_checks: dict[str, dict[str, Any]] = {}
+        for lifecycle, check in by_lifecycle.items():
+            if (
+                not isinstance(check, Mapping)
+                or check.get("status") not in ("matched", "mismatched", "unverified")
+                or type(check.get("required")) is not bool
+            ):
+                return None
+            profile_status = check.get("profile_status")
+            if profile_status not in (
+                "measured-under-stub",
+                "MISSING",
+                "unsupported",
+            ):
+                profile_status = None
+            safe_check: dict[str, Any] = {
+                "status": check["status"],
+                "required": check["required"],
+                "profile_status": profile_status,
+            }
+            checkpoint_sha256 = check.get("checkpoint_sha256")
+            if (
+                isinstance(checkpoint_sha256, str)
+                and _SHA256.fullmatch(checkpoint_sha256) is not None
+            ):
+                safe_check["checkpoint_sha256"] = checkpoint_sha256
+            reason = _safe_code(check.get("reason"))
+            if reason is not None:
+                safe_check["reason"] = reason
+            checkpoint_status = check.get("checkpoint_status")
+            if isinstance(checkpoint_status, str) and re.fullmatch(
+                r"[a-z0-9_]{1,80}", checkpoint_status
+            ):
+                safe_check["checkpoint_status"] = checkpoint_status
+            failure_code = _safe_code(check.get("failure_code"))
+            if failure_code is not None:
+                safe_check["failure_code"] = failure_code
+            safe_checks[lifecycle] = safe_check
+        result[fixture_id] = safe_checks
+    return result
 
 
 def _row_is_complete(row: Mapping[str, Any]) -> bool:
@@ -600,27 +675,99 @@ def _row_is_complete(row: Mapping[str, Any]) -> bool:
         "first_exchange_status",
         "lifecycle_profile_status",
         "invocation_identity_status",
+        "lifecycle_profile_checks",
         "lifecycle_results",
     }:
         return False
     lifecycle_results = row.get("lifecycle_results")
     if not isinstance(lifecycle_results, list) or not lifecycle_results:
         return False
-    expected_lifecycles = {
-        (fixture_id, lifecycle)
-        for fixture_id in row.get("fixture_ids", [])
-        if isinstance(fixture_id, str)
-        for lifecycle in ("startup", "resume")
-    }
+    profile_checks = row.get("lifecycle_profile_checks")
+    fixture_ids = row.get("fixture_ids")
+    if (
+        not isinstance(profile_checks, Mapping)
+        or not isinstance(fixture_ids, list)
+        or set(profile_checks) != set(fixture_ids)
+    ):
+        return False
+    expected_lifecycles: set[tuple[str, str]] = set()
+    for fixture_id in fixture_ids:
+        by_lifecycle = profile_checks.get(fixture_id)
+        if not isinstance(by_lifecycle, Mapping) or set(by_lifecycle) != {
+            "startup",
+            "resume",
+        }:
+            return False
+        if by_lifecycle["startup"].get("required") is not True:
+            return False
+        for lifecycle, check in by_lifecycle.items():
+            if (
+                not isinstance(check, Mapping)
+                or type(check.get("required")) is not bool
+                or check.get("status")
+                not in ("matched", "mismatched", "unverified")
+                or check.get("status") == "mismatched"
+                or (check.get("required") and check.get("status") != "matched")
+                or (
+                    lifecycle == "resume"
+                    and check.get("profile_status") == "MISSING"
+                    and check.get("required") is not False
+                )
+            ):
+                return False
+            if lifecycle == "resume" and check.get("status") == "matched":
+                checkpoint_sha256 = check.get("checkpoint_sha256")
+                if (
+                    not isinstance(checkpoint_sha256, str)
+                    or _SHA256.fullmatch(checkpoint_sha256) is None
+                ):
+                    return False
+            if check.get("status") == "matched":
+                expected_lifecycles.add((fixture_id, lifecycle))
     observed_lifecycles: list[tuple[str, str]] = []
+    checkpoints_by_fixture: dict[str, str] = {}
     for item in lifecycle_results:
         if not isinstance(item, Mapping):
             return False
         fixture_id = item.get("fixture_id")
         lifecycle = item.get("lifecycle")
-        if not isinstance(fixture_id, str) or lifecycle not in ("startup", "resume"):
+        if (
+            not isinstance(fixture_id, str)
+            or fixture_id not in fixture_ids
+            or lifecycle not in ("startup", "resume", "checkpoint")
+            or type(item.get("required")) is not bool
+            or type(item.get("create_resume_checkpoint")) is not bool
+        ):
             return False
-        observed_lifecycles.append((fixture_id, lifecycle))
+        if lifecycle == "checkpoint":
+            checkpoint_sha256 = item.get("checkpoint_sha256")
+            if item.get("required") is not False or item.get(
+                "create_resume_checkpoint"
+            ) is not True or (
+                not isinstance(checkpoint_sha256, str)
+                or _SHA256.fullmatch(checkpoint_sha256) is None
+            ) or fixture_id in checkpoints_by_fixture:
+                return False
+            resume_check = profile_checks[fixture_id]["resume"]
+            if (
+                resume_check.get("required") is not True
+                or resume_check.get("status") != "matched"
+                or resume_check.get("checkpoint_sha256") != checkpoint_sha256
+            ):
+                return False
+            checkpoints_by_fixture[fixture_id] = checkpoint_sha256
+        else:
+            check = profile_checks[fixture_id][lifecycle]
+            if (
+                item.get("required") is not check.get("required")
+                or item.get("create_resume_checkpoint") is not False
+            ):
+                return False
+            if lifecycle == "resume" and (
+                item.get("checkpoint_sha256") != check.get("checkpoint_sha256")
+            ):
+                return False
+            observed_lifecycles.append((fixture_id, lifecycle))
     if (
         not expected_lifecycles
         or len(observed_lifecycles) != len(expected_lifecycles)
@@ -653,6 +800,8 @@ def _row_is_complete(row: Mapping[str, Any]) -> bool:
             == {
                 "fixture_id",
                 "lifecycle",
+                "required",
+                "create_resume_checkpoint",
                 "run_id",
                 "transport_status",
                 "profile_status",
@@ -662,13 +811,24 @@ def _row_is_complete(row: Mapping[str, Any]) -> bool:
                 "retained_evidence_path",
                 "retained_evidence_sha256",
                 "retained_evidence_status",
+                "checkpoint_sha256",
             }
             and item.get("fixture_id") in row["fixture_ids"]
-            and item.get("lifecycle") in ("startup", "resume")
+            and item.get("lifecycle") in ("startup", "resume", "checkpoint")
             and isinstance(item.get("run_id"), str)
             and _RUN_ID.fullmatch(item["run_id"]) is not None
             and item.get("transport_status") == "completed"
-            and item.get("profile_status") == "matched"
+            and (
+                item.get("profile_status") == "not_applicable"
+                if item.get("lifecycle") == "checkpoint"
+                else item.get("profile_status") == "matched"
+            )
+            and (
+                item.get("required") is False
+                and item.get("create_resume_checkpoint") is True
+                if item.get("lifecycle") == "checkpoint"
+                else item.get("create_resume_checkpoint") is False
+            )
             and item.get("first_exchange_status") == "completed"
             and item.get("sandbox_cleanup") is True
             and item.get("retained_evidence_status") == "verified"

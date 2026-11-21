@@ -186,6 +186,7 @@ def validate_profile_document(
     seen_pairs: set[tuple[str, int]] = set()
     by_row: dict[str, list[str]] = {row_id: [] for row_id in expected_rows["planned_row_ids"]}
     pair_statuses: dict[str, dict[str, str]] = {}
+    profiles_by_id: dict[str, Mapping[str, Any]] = {}
     for profile in raw_profiles:
         _require_keys(
             profile,
@@ -224,16 +225,19 @@ def validate_profile_document(
             profile.get("startup"),
             fixture_id=fixture_id,
             party_size=party_size,
+            lifecycle="startup",
         )
         resume_status = _validate_lifecycle_profile(
             profile.get("resume"),
             fixture_id=fixture_id,
             party_size=party_size,
+            lifecycle="resume",
         )
         pair_statuses[expected_profile_id] = {
             "startup": startup_status,
             "resume": resume_status,
         }
+        profiles_by_id[expected_profile_id] = profile
 
     expected_pair_keys = {
         (fixture_id, party_size)
@@ -250,7 +254,8 @@ def validate_profile_document(
         if not profile_ids:
             raise ProfileValidationError("planned row has no fixture-party profile binding")
         if any(
-            pair_statuses[profile_id][lifecycle] != "measured-under-stub"
+            profiles_by_id[profile_id][lifecycle].get("required") is True
+            and pair_statuses[profile_id][lifecycle] != "measured-under-stub"
             for profile_id in profile_ids
             for lifecycle in ("startup", "resume")
         ):
@@ -262,7 +267,11 @@ def validate_profile_document(
     missing_pairs = [
         profile_id
         for profile_id, states in pair_statuses.items()
-        if any(status == "MISSING" for status in states.values())
+        if any(
+            profiles_by_id[profile_id][lifecycle].get("required") is True
+            and status == "MISSING"
+            for lifecycle, status in states.items()
+        )
     ]
     blockers = ["profile coverage is not a booking authorization"]
     blockers.extend("missing lifecycle measurement: " + item for item in missing_pairs)
@@ -403,6 +412,7 @@ def _load_expected_row_pairs(root: Path) -> dict[str, Any]:
         row_metadata[row_id] = {
             "party_size": party_size,
             "arm": row.get("arm"),
+            "fixed_seed": row.get("fixed_seed"),
             "script": script,
             "fixture_ids": list(fixture_ids),
         }
@@ -479,13 +489,24 @@ def _validate_lifecycle_profile(
     *,
     fixture_id: str,
     party_size: int,
+    lifecycle: str,
 ) -> str:
     """Validate declaration shape only; hashes bind to call-site content at match time."""
     if not isinstance(value, Mapping):
         raise ProfileValidationError("startup/resume profile must be an object")
     status = value.get("status")
     if status == "MISSING":
-        _require_keys(value, {"status", "reason"}, "missing lifecycle profile")
+        _require_keys(
+            value,
+            {"status", "required", "reason"},
+            "missing lifecycle profile",
+        )
+        if type(value.get("required")) is not bool:
+            raise ProfileValidationError("lifecycle required flag must be boolean")
+        if lifecycle == "startup" and value.get("required") is not True:
+            raise ProfileValidationError("startup lifecycle must be required")
+        if lifecycle == "resume" and value.get("required") is not False:
+            raise ProfileValidationError("MISSING resume lifecycle must not be required")
         reason = value.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             raise ProfileValidationError("MISSING lifecycle profile requires a reason")
@@ -497,6 +518,7 @@ def _validate_lifecycle_profile(
         value,
         {
             "status",
+            "required",
             "fixture_id",
             "party_size",
             "call_count",
@@ -507,6 +529,10 @@ def _validate_lifecycle_profile(
         },
         "measured lifecycle profile",
     )
+    if type(value.get("required")) is not bool:
+        raise ProfileValidationError("lifecycle required flag must be boolean")
+    if lifecycle == "startup" and value.get("required") is not True:
+        raise ProfileValidationError("startup lifecycle must be required")
     if (
         value.get("fixture_id") != fixture_id
         or type(value.get("party_size")) is not int
@@ -687,6 +713,8 @@ def declaration_from_evidence(
     evidence_path: str | Path,
     *,
     project_root: str | Path = PROJECT_ROOT,
+    required: bool = True,
+    lifecycle: str = "startup",
 ) -> dict[str, Any]:
     """Build a measured lifecycle declaration entry from retained run evidence.
 
@@ -697,6 +725,8 @@ def declaration_from_evidence(
     (``_validate_profile_evidence`` does that against the run's own tree).
     """
     root = Path(project_root).resolve(strict=True)
+    if type(required) is not bool or lifecycle not in ("startup", "resume"):
+        raise ProfileValidationError("measured lifecycle requirement is invalid")
     path = Path(evidence_path)
     if not path.is_absolute():
         path = root / path
@@ -718,6 +748,7 @@ def declaration_from_evidence(
         raise ProfileValidationError("profile evidence call sites are missing")
     entry = {
         "status": "measured-under-stub",
+        "required": required,
         "fixture_id": evidence.get("fixture_id"),
         "party_size": evidence.get("party_size"),
         "call_count": evidence.get("call_count"),
@@ -744,8 +775,245 @@ def declaration_from_evidence(
         entry,
         fixture_id=entry["fixture_id"],
         party_size=entry["party_size"],
+        lifecycle=lifecycle,
     )
     return entry
+
+
+def _validate_profile_checkpoint_evidence(
+    project_root: Path,
+    *,
+    evidence: Mapping[str, Any],
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    row_metadata: Mapping[str, Mapping[str, Any]],
+    source_sha: str,
+) -> None:
+    """Validate a checkpoint descriptor and its retained row-bound attestation."""
+    descriptor = evidence.get("resume_checkpoint")
+    attestation_record = evidence.get("checkpoint_attestation")
+    travel = evidence.get("checkpoint_travel")
+    row_id = evidence.get("planned_row_id")
+    metadata = row_metadata.get(row_id) if isinstance(row_id, str) else None
+    run_id = evidence.get("run_id")
+    if (
+        not isinstance(row_id, str)
+        or _SAFE_RUN_ID.fullmatch(row_id) is None
+        or not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+    ):
+        raise ProfileValidationError("profile evidence checkpoint identity is invalid")
+
+    descriptor_fields = {
+        "checkpoint_root",
+        "state_sha256",
+        "row_id",
+        "fixture_id",
+        "party_size",
+        "arm",
+        "fixed_seed",
+    }
+    travel_fields = {
+        "step_id",
+        "source_location_id",
+        "source_runtime_location_id",
+        "target_source_location_id",
+        "target_location_id",
+        "response_counts",
+        "response_call_sequences",
+        "complete",
+    }
+    if (
+        lifecycle != "startup"
+        or not isinstance(descriptor, Mapping)
+        or set(descriptor) != descriptor_fields
+        or not isinstance(metadata, Mapping)
+        or type(descriptor.get("party_size")) is not int
+        or descriptor.get("row_id") != row_id
+        or descriptor.get("fixture_id") != fixture_id
+        or descriptor.get("party_size") != party_size
+        or descriptor.get("party_size") != metadata.get("party_size")
+        or not isinstance(descriptor.get("arm"), str)
+        or descriptor.get("arm") != metadata.get("arm")
+        or type(descriptor.get("fixed_seed")) is not int
+        or descriptor.get("fixed_seed") != metadata.get("fixed_seed")
+        or fixture_id not in metadata.get("fixture_ids", [])
+        or not isinstance(descriptor.get("state_sha256"), str)
+        or _HEX64.fullmatch(descriptor["state_sha256"]) is None
+        or not isinstance(travel, Mapping)
+        or set(travel) != travel_fields
+        or any(
+            not isinstance(travel.get(field), str) or not travel.get(field)
+            for field in (
+                "step_id",
+                "source_location_id",
+                "source_runtime_location_id",
+                "target_source_location_id",
+                "target_location_id",
+            )
+        )
+        or travel.get("complete") is not True
+        or not isinstance(travel.get("response_counts"), Mapping)
+        or set(travel["response_counts"])
+        != {
+            "travel_action_responses",
+            "gameplay_validation_responses",
+            "transition_validation_responses",
+            "transition_narration_responses",
+        }
+        or any(
+            type(count) is not int or count != 1
+            for count in travel["response_counts"].values()
+        )
+        or not isinstance(travel.get("response_call_sequences"), Mapping)
+        or set(travel["response_call_sequences"])
+        != {
+            "travel_action",
+            "transition_validation",
+            "gameplay_validation",
+            "transition_narration",
+        }
+        or any(
+            type(sequence) is not int or sequence < 1
+            for sequence in travel["response_call_sequences"].values()
+        )
+        or [
+            travel["response_call_sequences"][key]
+            for key in (
+                "travel_action",
+                "transition_validation",
+                "gameplay_validation",
+                "transition_narration",
+            )
+        ]
+        != list(
+            range(
+                min(travel["response_call_sequences"].values()),
+                min(travel["response_call_sequences"].values()) + 4,
+            )
+        )
+        or not isinstance(attestation_record, Mapping)
+        or set(attestation_record) != {"path", "sha256"}
+        or not isinstance(attestation_record.get("path"), str)
+        or not isinstance(attestation_record.get("sha256"), str)
+        or _HEX64.fullmatch(attestation_record["sha256"]) is None
+    ):
+        raise ProfileValidationError("profile evidence checkpoint identity is invalid")
+
+    checkpoint_root = descriptor.get("checkpoint_root")
+    attestation_path = attestation_record.get("path")
+    expected_attestation_path = str(checkpoint_root) + "/attestation.json"
+    path = PurePosixPath(checkpoint_root) if isinstance(checkpoint_root, str) else None
+    expected_checkpoint_root = PurePosixPath(
+        "tmp",
+        "router-rollout",
+        "live-gate-preflight-checkpoints",
+        run_id,
+        row_id,
+        "%s-p%d" % (fixture_id, party_size),
+    )
+    if (
+        path is None
+        or path.is_absolute()
+        or ".." in path.parts
+        or "\\" in str(checkpoint_root)
+        or path != expected_checkpoint_root
+        or attestation_path != expected_attestation_path
+    ):
+        raise ProfileValidationError("profile evidence checkpoint path is invalid")
+
+    try:
+        attestation_file = _safe_source_path(
+            project_root, attestation_path, "checkpoint attestation"
+        )
+        attestation_bytes = _read_bounded_evidence(attestation_file)
+    except ProfileValidationError as exc:
+        raise ProfileValidationError(
+            "profile evidence checkpoint attestation is unavailable"
+        ) from exc
+    if hashlib.sha256(attestation_bytes).hexdigest() != attestation_record["sha256"]:
+        raise ProfileValidationError("profile evidence checkpoint attestation hash differs")
+    try:
+        attestation = json.loads(
+            attestation_bytes.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "profile evidence checkpoint attestation is invalid"
+        ) from exc
+    attestation_fields = {
+        "schema_version",
+        "source_sha",
+        "run_id",
+        "row_id",
+        "fixture_id",
+        "party_size",
+        "arm",
+        "fixed_seed",
+        "step_id",
+        "source_location_id",
+        "source_runtime_location_id",
+        "target_source_location_id",
+        "target_location_id",
+        "initial_location_id",
+        "final_location_id",
+        "initial_state_sha256",
+        "state_sha256",
+        "initial_time",
+        "final_time",
+        "travel_proof",
+        "persistence",
+        "checkpoint_root",
+    }
+    if (
+        not isinstance(attestation, Mapping)
+        or set(attestation) != attestation_fields
+        or type(attestation.get("schema_version")) is not int
+        or attestation.get("schema_version") != 1
+        or attestation.get("source_sha") != source_sha
+        or attestation.get("run_id") != run_id
+        or attestation.get("row_id") != row_id
+        or attestation.get("fixture_id") != fixture_id
+        or type(attestation.get("party_size")) is not int
+        or attestation.get("party_size") != party_size
+        or attestation.get("arm") != metadata.get("arm")
+        or type(attestation.get("fixed_seed")) is not int
+        or attestation.get("fixed_seed") != metadata.get("fixed_seed")
+        or attestation.get("step_id") != travel.get("step_id")
+        or attestation.get("source_location_id") != travel.get("source_location_id")
+        or attestation.get("source_runtime_location_id")
+        != travel.get("source_runtime_location_id")
+        or attestation.get("target_source_location_id")
+        != travel.get("target_source_location_id")
+        or attestation.get("target_location_id") != travel.get("target_location_id")
+        or attestation.get("initial_location_id")
+        != travel.get("source_runtime_location_id")
+        or attestation.get("final_location_id") != travel.get("target_location_id")
+        or attestation.get("travel_proof") != dict(travel)
+        or not isinstance(attestation.get("initial_state_sha256"), str)
+        or _HEX64.fullmatch(attestation["initial_state_sha256"]) is None
+        or not isinstance(attestation.get("initial_time"), str)
+        or not attestation.get("initial_time")
+        or not isinstance(attestation.get("final_time"), str)
+        or not attestation.get("final_time")
+        or attestation.get("final_time") == attestation.get("initial_time")
+        or attestation.get("state_sha256") != descriptor.get("state_sha256")
+        or attestation.get("checkpoint_root") != checkpoint_root
+        or not isinstance(attestation.get("persistence"), Mapping)
+        or set(attestation["persistence"])
+        != {
+            "host_stopped_before_checkpoint",
+            "canonical_state_hash_verified",
+            "resume_state_validation",
+        }
+        or attestation["persistence"].get("host_stopped_before_checkpoint") is not True
+        or attestation["persistence"].get("canonical_state_hash_verified") is not True
+        or attestation["persistence"].get("resume_state_validation") != "passed"
+    ):
+        raise ProfileValidationError("profile evidence checkpoint attestation differs")
 
 
 def _validate_profile_evidence(
@@ -859,23 +1127,48 @@ def _validate_profile_evidence(
     historic_legacy_retained_evidence_fields = (
         historic_retained_evidence_fields - {"invocation_identity"}
     )
-    if not isinstance(evidence, Mapping) or set(evidence) not in (
-        evidence_fields,
-        evidence_with_retained_artifacts_fields,
-        legacy_evidence_fields,
-        retained_evidence_fields,
-        retained_with_artifacts_fields,
-        retained_evidence_fields_with_retention,
-        retained_with_artifacts_fields_with_retention,
-        legacy_retained_evidence_fields,
-        legacy_retained_with_artifacts_fields,
-        legacy_retained_evidence_fields_with_retention,
-        legacy_retained_with_artifacts_fields_with_retention,
-        base_evidence_fields,
-        historic_retained_evidence_fields,
-        historic_legacy_retained_evidence_fields,
-    ):
+    accepted_evidence_fields = {
+        frozenset(fields)
+        for fields in (
+            evidence_fields,
+            evidence_with_retained_artifacts_fields,
+            legacy_evidence_fields,
+            retained_evidence_fields,
+            retained_with_artifacts_fields,
+            retained_evidence_fields_with_retention,
+            retained_with_artifacts_fields_with_retention,
+            legacy_retained_evidence_fields,
+            legacy_retained_with_artifacts_fields,
+            legacy_retained_evidence_fields_with_retention,
+            legacy_retained_with_artifacts_fields_with_retention,
+            base_evidence_fields,
+            historic_retained_evidence_fields,
+            historic_legacy_retained_evidence_fields,
+        )
+    }
+    checkpoint_evidence_fields = {
+        "checkpoint_travel",
+        "resume_checkpoint",
+        "checkpoint_attestation",
+    }
+    accepted_evidence_fields.update(
+        fields | checkpoint_evidence_fields for fields in tuple(accepted_evidence_fields)
+    )
+    if not isinstance(evidence, Mapping) or frozenset(evidence) not in accepted_evidence_fields:
         raise ProfileValidationError("profile evidence fields are malformed")
+    checkpoint_fields_present = set(evidence) & checkpoint_evidence_fields
+    if checkpoint_fields_present:
+        if checkpoint_fields_present != checkpoint_evidence_fields:
+            raise ProfileValidationError("profile evidence checkpoint fields are incomplete")
+        _validate_profile_checkpoint_evidence(
+            project_root,
+            evidence=evidence,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            lifecycle=lifecycle,
+            row_metadata=row_metadata,
+            source_sha=source_sha,
+        )
     historic_identity_unavailable = "invocation_identity" not in evidence
     if "adv_summary_child" not in evidence and not historic_identity_unavailable:
         raise ProfileValidationError("profile evidence summary child proof is missing")

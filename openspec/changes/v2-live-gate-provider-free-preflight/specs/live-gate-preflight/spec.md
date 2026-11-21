@@ -18,9 +18,9 @@ The preflight MUST exercise the frozen SP3 row set on an isolated `Capture_Arena
 - **WHEN** the host path requests a response while a row is being exercised
 - **THEN** the stub supplies the test response, no upstream request is sent, and provider-budget and live-attempt counters remain unchanged
 
-### Requirement: Every frozen row has complete fixture and lifecycle coverage
+### Requirement: Every frozen row has complete fixture and transport coverage
 
-Preflight MUST exercise all 26 frozen SP3 planned scenario rows through the full scripted host path for each row's declared party size, including rows without same-area connectivity. The four replacement-only reserve slots MUST remain unactivated. Each planned row MUST resolve its referenced module files, party, and monster templates, match a previously declared startup and resume call profile for its fixture-party pair, and complete its first scripted exchange through the driver.
+Preflight MUST exercise all 26 frozen SP3 planned rows through the full scripted host path for each row's declared party size. Each row MUST resolve its referenced module files, party, and monster templates and complete its first scripted exchange through the driver, including rows without same-area connectivity. The four replacement-only reserve slots MUST remain unactivated.
 
 #### Scenario: Frozen row set includes both party sizes and disconnected locations
 - **WHEN** the preflight runs against the frozen SP3 row set
@@ -30,9 +30,26 @@ Preflight MUST exercise all 26 frozen SP3 planned scenario rows through the full
 - **WHEN** a row references a module file, party record, or monster template that does not resolve in its seeded copy
 - **THEN** that row is reported as a fixture failure with the unresolved reference and does not proceed as covered
 
-#### Scenario: Lifecycle profile is absent or differs from observation
-- **WHEN** a fixture-party pair has no declared startup/resume profile, or observed call counts differ from it
-- **THEN** preflight reports the missing or mismatched profile and the row is not booking-eligible
+#### Scenario: Driver transport completes the first exchange
+- **WHEN** the driver connects to a row's host and sends its first scripted exchange
+- **THEN** the host returns the stubbed response through the driver transport and the exchange is recorded for that row
+
+### Requirement: Lifecycle coverage distinguishes required and extra resumes
+
+Each startup declaration MUST be required. Resume MUST be required only for `interior_tavern`; `landscape_village` and `transition_tower_approach` resumes are optional extra coverage, and combat resume is not applicable. An unrun extra lifecycle MUST be reported as `unverified` with `required: false`. A mismatch in any run lifecycle MUST make its row mismatched.
+
+#### Scenario: Required lifecycle profile is absent or differs from observation
+- **WHEN** a required fixture-party lifecycle profile is missing or observed call counts differ from its declaration
+- **THEN** preflight reports the missing or mismatched required profile and the row is not booking-eligible
+
+#### Scenario: Required lifecycle coverage differs from extra and non-applicable resumes
+- **WHEN** all startup profiles and required interior resumes match, while landscape and tower resumes are unrun and combat resume is declared MISSING and not required
+- **THEN** rows are complete based on the required lifecycles, the unrun extra resumes remain reported as `unverified` with `required: false`, and any mismatch in a run lifecycle still makes its row mismatched
+
+#### Scenario: Required resume checkpoint is created and consumed in same-SHA mode
+- **WHEN** a same-SHA row requires a measured resume profile and no explicit row-bound checkpoint was supplied
+- **THEN** preflight runs a separate startup-style checkpoint invocation for that row and fixture, retains and records its checkpoint evidence without comparing that invocation to the startup profile, then consumes the checkpoint in the resume invocation; each host start remains load-gated and guarded, all invocations require clean teardown, and checkpoint stub calls count toward provider-free totals
+- **AND** comparison mode creates no checkpoint and runs no resume, leaving required resumes unverified; an explicitly supplied checkpoint takes precedence over automatic creation
 
 #### Scenario: Declaration binds to call-site content and stub/driver hashes
 - **WHEN** a measured startup or resume profile is declared
@@ -45,10 +62,6 @@ Preflight MUST exercise all 26 frozen SP3 planned scenario rows through the full
 #### Scenario: Declaration is portable across commits with identical content
 - **WHEN** a run at a different commit observes exactly the declared call sites, counts, total, and file, stub, and driver hashes
 - **THEN** the profile matches without comparing commit SHAs, while the preflight report remains bound to the exact SHA to be run
-
-#### Scenario: Driver transport completes the first exchange
-- **WHEN** the driver connects to a row's host and sends its first scripted exchange
-- **THEN** the host returns the stubbed response through the driver transport and the exchange is recorded for that row
 
 ### Requirement: Stop controls and row continuation are proven by fault injection
 

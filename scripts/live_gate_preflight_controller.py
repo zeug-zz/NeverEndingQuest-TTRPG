@@ -289,9 +289,14 @@ def run_preflight_rows_supervised(
         str, Mapping[str, Mapping[str, Mapping[str, Any]]]
     ]
     | None = None,
+    intended_identity_resolver: Callable[
+        [PreflightRowPlan, str, str, str | None, bool], Mapping[str, Any]
+    ]
+    | None = None,
     prereg_root: str | Path | None = None,
     resume_checkpoints: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     comparison_identity: Mapping[str, Any] | None = None,
+    auto_create_required_resume_checkpoints: bool = False,
 ) -> dict[str, Any]:
     """Run supervised rows and always persist their report-only evidence.
 
@@ -353,6 +358,7 @@ def run_preflight_rows_supervised(
                 run_id=run_id,
                 intended_worker_identities=intended_worker_identities,
                 intended_lifecycle_identities=intended_lifecycle_identities,
+                intended_identity_resolver=intended_identity_resolver,
                 interfaces=supervised_preflight_interfaces(
                     run_id=run_id,
                     safety_counters=safety_counters,
@@ -361,6 +367,9 @@ def run_preflight_rows_supervised(
                 prereg_root=prereg_root,
                 resume_checkpoints=resume_checkpoints,
                 comparison_identity=normalized_comparison_identity,
+                auto_create_required_resume_checkpoints=(
+                    auto_create_required_resume_checkpoints
+                ),
             )
             if normalized_comparison_identity is not None:
                 raw_report["comparison_identity"] = dict(
@@ -490,9 +499,14 @@ def run_preflight_rows(
         str, Mapping[str, Mapping[str, Mapping[str, Any]]]
     ]
     | None = None,
+    intended_identity_resolver: Callable[
+        [PreflightRowPlan, str, str, str | None, bool], Mapping[str, Any]
+    ]
+    | None = None,
     prereg_root: str | Path | None = None,
     resume_checkpoints: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     comparison_identity: Mapping[str, Any] | None = None,
+    auto_create_required_resume_checkpoints: bool = False,
 ) -> dict[str, Any]:
     """Exercise frozen row transport and every supplied, declared lifecycle.
 
@@ -503,6 +517,8 @@ def run_preflight_rows(
     explicit row-bound checkpoint. Missing declarations/checkpoints remain
     unverified, not covered.
     """
+    if type(auto_create_required_resume_checkpoints) is not bool:
+        raise PreflightControllerError("auto_resume_checkpoint_option_invalid")
     if not isinstance(source_sha, str) or _SOURCE_SHA.fullmatch(source_sha) is None:
         raise PreflightControllerError("source SHA is invalid")
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
@@ -522,6 +538,13 @@ def run_preflight_rows(
             raise PreflightControllerError(
                 "comparison-only source identity is invalid"
             ) from exc
+    if normalized_comparison_identity is not None:
+        if auto_create_required_resume_checkpoints:
+            raise PreflightControllerError(
+                "auto_resume_checkpoint_refused_in_comparison"
+            )
+        if resume_checkpoints is not None:
+            raise PreflightControllerError("resume_checkpoints_refused_in_comparison")
 
     planned_rows, reserve_row_ids = _load_frozen_row_ids(prereg_root)
     expected_ids = [row["row_id"] for row in planned_rows]
@@ -637,11 +660,14 @@ def run_preflight_rows(
                     startup_identity = (
                         intended_identity
                         if fixture_id == plan.fixture_id
-                        else _require_intended_lifecycle_identity(
+                        else _resolve_intended_lifecycle_identity(
                             lifecycle_identity_map,
-                            row_id=row_id,
+                            intended_identity_resolver,
+                            plan=plan,
                             fixture_id=fixture_id,
                             lifecycle="startup",
+                            resume_checkpoint_sha256=None,
+                            create_resume_checkpoint=False,
                         )
                     )
                     startup_invocation = PreflightLifecycleInvocation(
@@ -669,6 +695,8 @@ def run_preflight_rows(
                         {
                             "fixture_id": fixture_id,
                             "lifecycle": "startup",
+                            "required": startup_check["required"],
+                            "create_resume_checkpoint": False,
                             "run_id": startup_run_id,
                             "transport_status": "completed",
                             "profile_check": startup_check,
@@ -695,6 +723,11 @@ def run_preflight_rows(
                 else:
                     profile_checks.setdefault(fixture_id, {})["startup"] = {
                         "status": "unverified",
+                        "required": (
+                            startup_declaration.get("required") is True
+                            if isinstance(startup_declaration, Mapping)
+                            else True
+                        ),
                         "profile_status": startup_status or "MISSING",
                         "reason": (
                             startup_declaration.get("reason")
@@ -709,17 +742,17 @@ def run_preflight_rows(
                     if isinstance(resume_declaration, Mapping)
                     else None
                 )
+                resume_required = (
+                    resume_declaration.get("required") is True
+                    if isinstance(resume_declaration, Mapping)
+                    else True
+                )
                 checkpoint = checkpoint_map.get(row_id, {}).get(fixture_id)
-                if resume_status == "measured-under-stub" and checkpoint is None:
+                checkpoint_created = False
+                if resume_status == "MISSING":
                     profile_checks.setdefault(fixture_id, {})["resume"] = {
                         "status": "unverified",
-                        "profile_status": "MISSING",
-                        "checkpoint_status": "MISSING",
-                        "reason": "row_bound_resume_checkpoint_missing",
-                    }
-                elif resume_status == "MISSING":
-                    profile_checks.setdefault(fixture_id, {})["resume"] = {
-                        "status": "unverified",
+                        "required": resume_required,
                         "profile_status": "MISSING",
                         "checkpoint_status": (
                             "supplied_but_not_used" if checkpoint is not None else "MISSING"
@@ -733,12 +766,98 @@ def run_preflight_rows(
                 elif resume_status != "measured-under-stub":
                     profile_checks.setdefault(fixture_id, {})["resume"] = {
                         "status": "mismatched",
+                        "required": resume_required,
                         "profile_status": resume_status,
                         "checkpoint_status": "not_checked",
                         "failure_code": "resume_profile_status_unsupported",
                     }
                     raise PreflightControllerError("resume_profile_status_unsupported")
                 else:
+                    if checkpoint is None and resume_required and (
+                        auto_create_required_resume_checkpoints
+                        and normalized_comparison_identity is None
+                    ):
+                        checkpoint_run_id = _checkpoint_lifecycle_run_id(
+                            run_id, row_id, fixture_index
+                        )
+                        checkpoint_identity = _resolve_intended_lifecycle_identity(
+                            lifecycle_identity_map,
+                            intended_identity_resolver,
+                            plan=plan,
+                            fixture_id=fixture_id,
+                            lifecycle="startup",
+                            resume_checkpoint_sha256=None,
+                            create_resume_checkpoint=True,
+                            require_resolver=True,
+                        )
+                        checkpoint_invocation = PreflightLifecycleInvocation(
+                            fixture_id=fixture_id,
+                            lifecycle="startup",
+                            row_run_id=checkpoint_run_id,
+                            intended_identity=checkpoint_identity,
+                            create_resume_checkpoint=True,
+                        )
+                        checkpoint_evidence = _run_lifecycle_invocation(
+                            plan,
+                            checkpoint_invocation,
+                            source_sha=source_sha,
+                            preflight_run_id=run_id,
+                            interfaces=interfaces,
+                            comparison_identity=normalized_comparison_identity,
+                        )
+                        generated_checkpoint = checkpoint_evidence.get(
+                            "resume_checkpoint"
+                        )
+                        if not isinstance(generated_checkpoint, Mapping):
+                            raise PreflightControllerError(
+                                "required_resume_checkpoint_creation_failed"
+                            )
+                        _validate_checkpoint_for_plan(
+                            plan, fixture_id, generated_checkpoint
+                        )
+                        checkpoint = dict(generated_checkpoint)
+                        checkpoint_created = True
+                        checkpoint_map.setdefault(row_id, {})[fixture_id] = checkpoint
+                        row_result["lifecycle_results"].append(
+                            {
+                                "fixture_id": fixture_id,
+                                "lifecycle": "checkpoint",
+                                "required": False,
+                                "create_resume_checkpoint": True,
+                                "run_id": checkpoint_run_id,
+                                "transport_status": "completed",
+                                "profile_check": {
+                                    "status": "not_applicable",
+                                    "required": False,
+                                    "reason": "checkpoint_run_not_profile_compared",
+                                },
+                                "first_exchange": checkpoint_evidence[
+                                    "first_exchange"
+                                ],
+                                "worker_teardown": checkpoint_evidence[
+                                    "worker_teardown"
+                                ],
+                                "sandbox_cleanup": True,
+                                "retained_evidence_path": checkpoint_evidence.get(
+                                    "retained_evidence_path"
+                                ),
+                                "retained_evidence_sha256": checkpoint_evidence.get(
+                                    "retained_evidence_sha256"
+                                ),
+                                "resume_checkpoint_sha256": checkpoint[
+                                    "state_sha256"
+                                ],
+                            }
+                        )
+                    if checkpoint is None:
+                        profile_checks.setdefault(fixture_id, {})["resume"] = {
+                            "status": "unverified",
+                            "required": resume_required,
+                            "profile_status": "measured-under-stub",
+                            "checkpoint_status": "MISSING",
+                            "reason": "row_bound_resume_checkpoint_missing",
+                        }
+                        continue
                     resume_run_id = _lifecycle_run_id(
                         run_id,
                         row_id,
@@ -746,11 +865,15 @@ def run_preflight_rows(
                         "resume",
                         primary=False,
                     )
-                    resume_identity = _require_intended_lifecycle_identity(
+                    resume_identity = _resolve_intended_lifecycle_identity(
                         lifecycle_identity_map,
-                        row_id=row_id,
+                        intended_identity_resolver,
+                        plan=plan,
                         fixture_id=fixture_id,
                         lifecycle="resume",
+                        resume_checkpoint_sha256=checkpoint["state_sha256"],
+                        create_resume_checkpoint=False,
+                        require_resolver=checkpoint_created,
                     )
                     resume_invocation = PreflightLifecycleInvocation(
                         fixture_id=fixture_id,
@@ -780,6 +903,8 @@ def run_preflight_rows(
                         {
                             "fixture_id": fixture_id,
                             "lifecycle": "resume",
+                            "required": resume_check["required"],
+                            "create_resume_checkpoint": False,
                             "run_id": resume_run_id,
                             "transport_status": "completed",
                             "profile_check": resume_check,
@@ -1087,6 +1212,8 @@ def _resolve_row_plan(
                 "profile_id": profile.get("profile_id"),
                 "fixture_id": selected_fixture,
                 "party_size": party_size,
+                "startup_required": profile["startup"].get("required"),
+                "resume_required": profile["resume"].get("required"),
                 "startup_status": lifecycles["startup"],
                 "resume_status": lifecycles["resume"],
                 "startup_call_count": (
@@ -1236,6 +1363,7 @@ def _validate_supervised_result(
     row_run_id: str,
     preflight_run_id: str,
     comparison_identity: Mapping[str, Any] | None = None,
+    create_resume_checkpoint: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(result, Mapping):
         raise PreflightControllerError("guarded row evidence is unavailable")
@@ -1258,6 +1386,23 @@ def _validate_supervised_result(
         )
         validated["retained_evidence_path"] = result["evidence_path"]
         validated["retained_evidence_sha256"] = result["evidence_sha256"]
+        evidence = result.get("evidence")
+        checkpoint = (
+            evidence.get("resume_checkpoint")
+            if isinstance(evidence, Mapping)
+            else None
+        )
+        if create_resume_checkpoint:
+            if not isinstance(checkpoint, Mapping):
+                raise PreflightControllerError(
+                    "required_resume_checkpoint_creation_failed"
+                )
+            _validate_checkpoint_for_plan(plan, fixture_id, checkpoint)
+            validated["resume_checkpoint"] = dict(checkpoint)
+        elif checkpoint is not None:
+            raise PreflightControllerError(
+                "unexpected_resume_checkpoint_in_lifecycle_evidence"
+            )
         return validated
     except RetainedEvidenceError as exc:
         reason = re.sub(r"[^a-z0-9]+", "_", str(exc).lower()).strip("_")
@@ -1373,6 +1518,7 @@ def _run_lifecycle_invocation(
             row_run_id=invocation.row_run_id,
             preflight_run_id=preflight_run_id,
             comparison_identity=comparison_identity,
+            create_resume_checkpoint=invocation.create_resume_checkpoint,
         )
     finally:
         if isinstance(seeded, Mapping):
@@ -1411,6 +1557,13 @@ def _lifecycle_run_id(
         return base
     suffix = "s" if lifecycle == "startup" else "r"
     return "%s-f%d-%s" % (base, fixture_index + 1, suffix)
+
+
+def _checkpoint_lifecycle_run_id(
+    run_id: str, row_id: str, fixture_index: int
+) -> str:
+    """Give a checkpoint-producing startup its own retained evidence identity."""
+    return "pf-%s-%s-f%d-c" % (run_id, row_id, fixture_index + 1)
 
 
 def _validate_intended_lifecycle_identity_map(
@@ -1463,6 +1616,49 @@ def _require_intended_lifecycle_identity(
     if not isinstance(identity, Mapping):
         raise PreflightControllerError("intended_lifecycle_identity_missing")
     return identity
+
+
+def _resolve_intended_lifecycle_identity(
+    identity_map: Mapping[str, Mapping[str, Mapping[str, Mapping[str, Any]]]],
+    resolver: Callable[
+        [PreflightRowPlan, str, str, str | None, bool], Mapping[str, Any]
+    ]
+    | None,
+    *,
+    plan: PreflightRowPlan,
+    fixture_id: str,
+    lifecycle: str,
+    resume_checkpoint_sha256: str | None,
+    create_resume_checkpoint: bool,
+    require_resolver: bool = False,
+) -> Mapping[str, Any]:
+    """Use a caller's static declaration or resolve a checkpoint-bound identity."""
+    fixture_map = identity_map.get(plan.row_id)
+    lifecycle_map = (
+        fixture_map.get(fixture_id) if isinstance(fixture_map, Mapping) else None
+    )
+    identity = (
+        lifecycle_map.get(lifecycle)
+        if isinstance(lifecycle_map, Mapping)
+        else None
+    )
+    if identity is not None and not require_resolver:
+        return identity
+    if resolver is None:
+        raise PreflightControllerError("intended_lifecycle_identity_missing")
+    resolved = resolver(
+        plan,
+        fixture_id,
+        lifecycle,
+        resume_checkpoint_sha256,
+        create_resume_checkpoint,
+    )
+    if (
+        not isinstance(resolved, Mapping)
+        or set(resolved) != {"command", "working_directory", "pythonpath"}
+    ):
+        raise PreflightControllerError("intended_lifecycle_identity_declaration_invalid")
+    return resolved
 
 
 def _validate_resume_checkpoint_map(
@@ -1519,6 +1715,7 @@ def _validate_checkpoint_shape(checkpoint: Mapping[str, Any]) -> None:
         or not path.parts
         or path.parts[0] != "tmp"
         or path.as_posix() == "tmp/combat_capture"
+        or path.as_posix() != path_value
         or not isinstance(checkpoint.get("state_sha256"), str)
         or _CHECKPOINT_SHA256.fullmatch(checkpoint["state_sha256"]) is None
     ):
@@ -1534,7 +1731,9 @@ def _validate_checkpoint_for_plan(
     if (
         checkpoint.get("row_id") != plan.row_id
         or checkpoint.get("fixture_id") != fixture_id
+        or type(checkpoint.get("party_size")) is not int
         or checkpoint.get("party_size") != plan.party_size
+        or not isinstance(checkpoint.get("arm"), str)
         or checkpoint.get("arm") != plan.arm
         or type(checkpoint.get("fixed_seed")) is not int
         or checkpoint.get("fixed_seed") != plan.fixed_seed
@@ -1561,12 +1760,15 @@ def _compare_lifecycle_profile(
     if not isinstance(declaration, Mapping):
         return {
             "status": "unverified",
+            "required": True,
             "profile_status": "MISSING",
             "reason": lifecycle + "_profile_missing",
         }
+    required = declaration.get("required") is True
     if declaration.get("status") == "MISSING":
         return {
             "status": "unverified",
+            "required": required,
             "profile_status": "MISSING",
             "reason": declaration.get("reason") or lifecycle + "_profile_missing",
             "observed_call_count": observed_call_count,
@@ -1575,6 +1777,7 @@ def _compare_lifecycle_profile(
     if declaration.get("status") != "measured-under-stub":
         return {
             "status": "mismatched",
+            "required": required,
             "outcome": "profile_mismatch",
             "failure_code": lifecycle + "_profile_status_unsupported",
         }
@@ -1594,6 +1797,7 @@ def _compare_lifecycle_profile(
     except (profiles.ProfileValidationError, KeyError, TypeError) as exc:
         return {
             "status": "mismatched",
+            "required": required,
             "outcome": "profile_mismatch",
             "failure_code": lifecycle + "_profile_unmatchable",
             "reason": type(exc).__name__,
@@ -1601,6 +1805,7 @@ def _compare_lifecycle_profile(
     if result["kinds"]:
         return {
             "status": "mismatched",
+            "required": required,
             "outcome": "profile_mismatch",
             "failure_code": "%s_profile_%s" % (lifecycle, result["kinds"][0]),
             "mismatch_kinds": list(result["kinds"]),
@@ -1610,6 +1815,7 @@ def _compare_lifecycle_profile(
         }
     return {
         "status": "matched",
+        "required": required,
         "profile_status": "measured-under-stub",
         "expected_call_count": declaration.get("call_count"),
         "observed_call_count": observed_call_count,
@@ -1621,14 +1827,19 @@ def _compare_lifecycle_profile(
 def _lifecycle_profile_status(
     checks: Mapping[str, Mapping[str, Mapping[str, Any]]]
 ) -> str:
-    statuses = [
-        lifecycle_check.get("status")
+    lifecycle_checks = [
+        lifecycle_check
         for by_lifecycle in checks.values()
         for lifecycle_check in by_lifecycle.values()
     ]
-    if any(status == "mismatched" for status in statuses):
+    if any(check.get("status") == "mismatched" for check in lifecycle_checks):
         return "mismatched"
-    if statuses and all(status == "matched" for status in statuses):
+    required_checks = [
+        check for check in lifecycle_checks if check.get("required") is True
+    ]
+    if required_checks and all(
+        check.get("status") == "matched" for check in required_checks
+    ):
         return "matched"
     return "unverified"
 

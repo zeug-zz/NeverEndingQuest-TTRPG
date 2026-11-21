@@ -67,7 +67,10 @@ def _synthetic_call_site(
 
 
 def _measured_declaration(
-    call_sites: list[dict[str, Any]], *, call_count: int | None = None
+    call_sites: list[dict[str, Any]],
+    *,
+    call_count: int | None = None,
+    required: bool = True,
 ) -> dict[str, Any]:
     """Content-bound measured declaration; stub/driver hashes from this tree."""
     from scripts import live_gate_preflight_profiles as profiles
@@ -75,6 +78,7 @@ def _measured_declaration(
     hashes = profiles.tool_file_hashes()
     return {
         "status": "measured-under-stub",
+        "required": required,
         "call_count": (
             call_count
             if call_count is not None
@@ -1276,10 +1280,12 @@ class TestPreflightRowIntegration(unittest.TestCase):
         return identities
 
     @staticmethod
-    def _measured_lifecycle(call_site: dict[str, Any]) -> dict[str, Any]:
+    def _measured_lifecycle(
+        call_site: dict[str, Any], *, required: bool = True
+    ) -> dict[str, Any]:
         if call_site.get("source_file") == "scripts/example_router_call.py":
             call_site = _synthetic_call_site(count=call_site["count"])
-        return _measured_declaration([call_site])
+        return _measured_declaration([call_site], required=required)
 
     @staticmethod
     def _checkpoint(
@@ -2579,6 +2585,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         call_site = _synthetic_call_site()
         profile = dict(profile_map[(first.fixture_id, first.party_size)])
         profile["startup"] = _measured_declaration([call_site])
+        profile["resume"] = _measured_declaration([call_site])
         profile_map[(first.fixture_id, first.party_size)] = profile
 
         report, observed = self._run_with_profiles(
@@ -2682,7 +2689,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self.assertEqual(report["status"], "unverified")
         self.assertEqual(first_result["transport_status"], "completed")
         self.assertEqual(first_result["status"], "transport_completed_unverified")
-        self.assertEqual(resume_check["profile_status"], "MISSING")
+        self.assertEqual(resume_check["profile_status"], "measured-under-stub")
         self.assertEqual(resume_check["checkpoint_status"], "MISSING")
         self.assertEqual(resume_check["reason"], "row_bound_resume_checkpoint_missing")
         self.assertFalse(
@@ -2826,7 +2833,9 @@ class TestPreflightRowIntegration(unittest.TestCase):
         for fixture_id in fixtures:
             profile = dict(profile_map[(fixture_id, 1)])
             profile["startup"] = self._measured_lifecycle(call_site)
-            profile["resume"] = self._measured_lifecycle(call_site)
+            profile["resume"] = self._measured_lifecycle(
+                call_site, required=False
+            )
             profile_map[(fixture_id, 1)] = profile
         checkpoints = {
             "E04": {
@@ -3625,10 +3634,8 @@ class TestPreflightCheckedInDeclarations(unittest.TestCase):
                 self.assertIn(party_size, (1, 4))
                 self.assertEqual(value["resume"]["status"], "MISSING")
                 self.assertIn("NOT APPLICABLE", value["resume"]["reason"])
-        self.assertEqual(
-            coverage["unverified_row_ids"], ["C0" + str(index) for index in range(1, 9)]
-        )
-        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertEqual(coverage["unverified_row_ids"], [])
+        self.assertTrue(coverage["measured_lifecycle_complete"])
         self.assertFalse(coverage["booking_eligible"])
 
 
@@ -3856,6 +3863,339 @@ class TestSupervisedEvidenceIntegration(unittest.TestCase):
         self.assertTrue(result.get("preflight_failure_code"))
         prepare.assert_not_called()
         supervise.assert_not_called()
+
+
+class TestRequiredLifecycleCheckpointPolicy(unittest.TestCase):
+    """Exercise required/extra lifecycle decisions without starting a host."""
+
+    def setUp(self) -> None:
+        self.run_id = "checkpoint-policy-" + uuid.uuid4().hex[:10]
+        self.rows, _reserves = _load_frozen_row_ids(None)
+        self.profiles, self.coverage = _load_profiles(
+            [str(row["row_id"]) for row in self.rows]
+        )
+
+    @staticmethod
+    def _checkpoint(plan: controller.PreflightRowPlan, fixture_id: str, sha: str) -> dict[str, Any]:
+        return {
+            "checkpoint_root": (
+                "tmp/router-rollout/live-gate-preflight-checkpoints/"
+                "provided/%s/%s-p%d" % (plan.row_id, fixture_id, plan.party_size)
+            ),
+            "state_sha256": sha,
+            "row_id": plan.row_id,
+            "fixture_id": fixture_id,
+            "party_size": plan.party_size,
+            "arm": plan.arm,
+            "fixed_seed": plan.fixed_seed,
+        }
+
+    def _run_row(
+        self,
+        *,
+        row_id: str = "E01",
+        source_sha: str = SOURCE_SHA,
+        comparison_identity: dict[str, Any] | None = None,
+        resume_checkpoints: dict[str, dict[str, dict[str, Any]]] | None = None,
+        auto_create: bool = True,
+        mismatch_optional_resume: bool = False,
+    ) -> tuple[dict[str, Any], list[Any], list[tuple[Any, ...]]]:
+        frozen_row = next(row for row in self.rows if row["row_id"] == row_id)
+        plan = _resolve_row_plan(
+            row_id,
+            prereg_root=None,
+            expected_row=frozen_row,
+            profiles=self.profiles,
+        )
+        row_run_id = "pf-%s-%s" % (self.run_id, row_id)
+        intended = planned_worker_identity(
+            plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            source_sha=source_sha,
+            row_run_id=row_run_id,
+            preflight_run_id=self.run_id,
+            comparison_identity=comparison_identity,
+        )
+        invocations: list[Any] = []
+        resolver_calls: list[tuple[Any, ...]] = []
+
+        def resolve_identity(
+            selected_plan: controller.PreflightRowPlan,
+            fixture_id: str,
+            lifecycle: str,
+            checkpoint_sha256: str | None,
+            create_resume_checkpoint: bool,
+        ) -> dict[str, Any]:
+            resolver_calls.append(
+                (
+                    selected_plan.row_id,
+                    fixture_id,
+                    lifecycle,
+                    checkpoint_sha256,
+                    create_resume_checkpoint,
+                )
+            )
+            fixture_index = selected_plan.fixture_ids.index(fixture_id)
+            lifecycle_run_id = (
+                controller._checkpoint_lifecycle_run_id(
+                    self.run_id, selected_plan.row_id, fixture_index
+                )
+                if create_resume_checkpoint
+                else controller._lifecycle_run_id(
+                    self.run_id,
+                    selected_plan.row_id,
+                    fixture_index,
+                    lifecycle,
+                    primary=False,
+                )
+            )
+            return planned_worker_identity(
+                selected_plan,
+                fixture_id=fixture_id,
+                lifecycle=lifecycle,
+                source_sha=source_sha,
+                row_run_id=lifecycle_run_id,
+                resume_checkpoint_sha256=checkpoint_sha256,
+                preflight_run_id=self.run_id,
+                create_resume_checkpoint=create_resume_checkpoint,
+                comparison_identity=comparison_identity,
+            )
+
+        def lifecycle_result(
+            selected_plan: controller.PreflightRowPlan,
+            invocation: controller.PreflightLifecycleInvocation,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
+            invocations.append(invocation)
+            profile = controller._fixture_lifecycle_profile(
+                selected_plan, invocation.fixture_id
+            )
+            if invocation.create_resume_checkpoint:
+                checkpoint = self._checkpoint(
+                    selected_plan, invocation.fixture_id, "e" * 64
+                )
+                call_count = 7
+                call_sites: list[dict[str, Any]] = []
+            else:
+                declaration = profile[invocation.lifecycle]
+                call_count = declaration["call_count"]
+                call_sites = [dict(site) for site in declaration["call_sites"]]
+                if mismatch_optional_resume and invocation.lifecycle == "resume":
+                    call_count += 1
+                checkpoint = None
+            return {
+                "call_count": call_count,
+                "call_sites": call_sites,
+                "first_exchange": {"status": "completed"},
+                "worker_teardown": {
+                    "server_stopped": True,
+                    "port_8360_free": True,
+                    "port_8370_free": True,
+                    "shared_live_window_lock_released": True,
+                    "guard_active": True,
+                    "call_count": call_count,
+                },
+                "retained_evidence_path": (
+                    "tmp/router-rollout/live-gate-preflight/%s/preflight/rows/%s/"
+                    "profile-evidence.json" % (self.run_id, invocation.row_run_id)
+                ),
+                "retained_evidence_sha256": "f" * 64,
+                **({"resume_checkpoint": checkpoint} if checkpoint is not None else {}),
+            }
+
+        interfaces = PreflightInterfaces(
+            prepare_sandbox=lambda *_args: {},
+            supervise_row=lambda *_args: {},
+            cleanup_sandbox=lambda *_args: True,
+            safety_counters=lambda: {
+                "upstream_provider_requests": 0,
+                "provider_budget_used": 0,
+                "live_attempts_used": 0,
+                "reserve_activations": 0,
+            },
+        )
+        with (
+            mock.patch.object(
+                controller, "_load_frozen_row_ids", return_value=([frozen_row], [])
+            ),
+            mock.patch.object(
+                controller,
+                "_load_profiles",
+                return_value=(self.profiles, self.coverage),
+            ),
+            mock.patch.object(
+                controller,
+                "_run_lifecycle_invocation",
+                side_effect=lifecycle_result,
+            ),
+        ):
+            report = run_preflight_rows(
+                source_sha=source_sha,
+                run_id=self.run_id,
+                intended_worker_identities={row_id: intended},
+                intended_identity_resolver=resolve_identity,
+                interfaces=interfaces,
+                resume_checkpoints=resume_checkpoints,
+                comparison_identity=comparison_identity,
+                auto_create_required_resume_checkpoints=auto_create,
+            )
+        return report, invocations, resolver_calls
+
+    def test_same_sha_creates_checkpoint_before_required_resume_and_counts_calls(self) -> None:
+        report, invocations, resolver_calls = self._run_row()
+        row = report["row_results"][0]
+        checkpoint_run = next(
+            item for item in invocations if item.create_resume_checkpoint
+        )
+        resume_run = next(item for item in invocations if item.lifecycle == "resume")
+        checkpoint_result = next(
+            item for item in row["lifecycle_results"]
+            if item["lifecycle"] == "checkpoint"
+        )
+        self.assertEqual(checkpoint_run.lifecycle, "startup")
+        self.assertEqual(
+            [item.lifecycle for item in invocations],
+            ["startup", "startup", "resume"],
+        )
+        self.assertEqual(
+            resolver_calls,
+            [
+                (
+                    row["row_id"],
+                    "interior_tavern",
+                    "startup",
+                    None,
+                    True,
+                ),
+                (
+                    row["row_id"],
+                    "interior_tavern",
+                    "resume",
+                    "e" * 64,
+                    False,
+                ),
+            ],
+        )
+        self.assertIn("e" * 64, resume_run.intended_identity["command"])
+        self.assertEqual(checkpoint_result["profile_check"]["status"], "not_applicable")
+        self.assertEqual(checkpoint_result["resume_checkpoint_sha256"], "e" * 64)
+        self.assertEqual(
+            report["provider_free"]["router_stub_calls"],
+            sum(
+                item["worker_teardown"]["call_count"]
+                for item in row["lifecycle_results"]
+            ),
+        )
+        self.assertEqual(row["status"], "completed")
+
+    def test_explicit_checkpoint_precedes_automatic_creation(self) -> None:
+        plan = _resolve_row_plan(
+            "E01",
+            prereg_root=None,
+            expected_row=next(row for row in self.rows if row["row_id"] == "E01"),
+            profiles=self.profiles,
+        )
+        checkpoint = self._checkpoint(plan, "interior_tavern", "d" * 64)
+        report, invocations, resolver_calls = self._run_row(
+            resume_checkpoints={"E01": {"interior_tavern": checkpoint}},
+        )
+        self.assertEqual([item.lifecycle for item in invocations], ["startup", "resume"])
+        self.assertFalse(any(item.create_resume_checkpoint for item in invocations))
+        self.assertIn(
+            ("E01", "interior_tavern", "resume", "d" * 64, False),
+            resolver_calls,
+        )
+        self.assertEqual(report["row_results"][0]["status"], "completed")
+
+    def test_unrun_optional_resume_is_unverified_but_does_not_block_row(self) -> None:
+        combat_row = next(
+            row
+            for row in self.rows
+            if controller._resolve_row_plan(
+                str(row["row_id"]),
+                prereg_root=None,
+                expected_row=row,
+                profiles=self.profiles,
+            ).fixture_id
+            == "combat_stage_tavern_zones"
+        )
+        report, invocations, _resolver_calls = self._run_row(
+            row_id=str(combat_row["row_id"])
+        )
+        row = report["row_results"][0]
+        resume_check = row["lifecycle_profile_checks"][
+            "combat_stage_tavern_zones"
+        ]["resume"]
+        self.assertEqual([item.lifecycle for item in invocations], ["startup"])
+        self.assertEqual(resume_check["status"], "unverified")
+        self.assertFalse(resume_check["required"])
+        self.assertEqual(row["lifecycle_profile_status"], "matched")
+        self.assertEqual(row["status"], "completed")
+
+    def test_optional_resume_mismatch_still_mismatches_row(self) -> None:
+        row = next(item for item in self.rows if item["row_id"] == "E04")
+        plan = _resolve_row_plan(
+            "E04", prereg_root=None, expected_row=row, profiles=self.profiles
+        )
+        optional_fixture = "landscape_village"
+        checkpoint = self._checkpoint(plan, optional_fixture, "c" * 64)
+        report, _invocations, _resolver_calls = self._run_row(
+            row_id="E04",
+            resume_checkpoints={"E04": {optional_fixture: checkpoint}},
+            mismatch_optional_resume=True,
+        )
+        result = report["row_results"][0]
+        check = result["lifecycle_profile_checks"][optional_fixture]["resume"]
+        self.assertFalse(check["required"])
+        self.assertEqual(check["status"], "mismatched")
+        self.assertEqual(result["lifecycle_profile_status"], "mismatched")
+        self.assertEqual(result["status"], "blocked")
+
+    def test_comparison_does_not_resume_and_refuses_checkpoint_inputs(self) -> None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            APPLICATION_A_SHA,
+            APPLICATION_A_TREE,
+            build_comparison_identity,
+        )
+
+        identity = build_comparison_identity(
+            tool_sha="a" * 40,
+            tool_tree="b" * 40,
+            application_sha=APPLICATION_A_SHA,
+            application_tree=APPLICATION_A_TREE,
+        )
+        report, invocations, _resolver_calls = self._run_row(
+            source_sha=APPLICATION_A_SHA,
+            comparison_identity=identity,
+            auto_create=False,
+        )
+        self.assertEqual([item.lifecycle for item in invocations], ["startup"])
+        resume_check = report["row_results"][0]["lifecycle_profile_checks"][
+            "interior_tavern"
+        ]["resume"]
+        self.assertTrue(resume_check["required"])
+        self.assertEqual(resume_check["status"], "unverified")
+
+        with self.assertRaisesRegex(
+            controller.PreflightControllerError,
+            "auto_resume_checkpoint_refused_in_comparison",
+        ):
+            self._run_row(
+                source_sha=APPLICATION_A_SHA,
+                comparison_identity=identity,
+                auto_create=True,
+            )
+        with self.assertRaisesRegex(
+            controller.PreflightControllerError,
+            "resume_checkpoints_refused_in_comparison",
+        ):
+            self._run_row(
+                source_sha=APPLICATION_A_SHA,
+                comparison_identity=identity,
+                resume_checkpoints={},
+                auto_create=False,
+            )
 
 
 if __name__ == "__main__":

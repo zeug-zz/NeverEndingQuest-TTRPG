@@ -616,6 +616,7 @@ def validate_retained_supervised_evidence(
             "arm": plan.arm,
             "fixture_ids": list(plan.fixture_ids),
             "party_size": plan.party_size,
+            "fixed_seed": plan.fixed_seed,
         }
     }
     try:

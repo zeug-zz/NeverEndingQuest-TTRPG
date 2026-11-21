@@ -21,10 +21,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -36,10 +38,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -51,10 +55,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -66,10 +72,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -81,10 +89,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -96,10 +106,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -111,10 +123,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     },
@@ -126,10 +140,12 @@
       "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
       "startup": {
         "status": "MISSING",
+        "required": true,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       },
       "resume": {
         "status": "MISSING",
+        "required": false,
         "reason": "No accepted measured-under-stub result is recorded for this pair; do not infer from archived receipts."
       }
     }

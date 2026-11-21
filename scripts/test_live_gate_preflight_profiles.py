@@ -117,11 +117,14 @@ _LEGACY_LIFECYCLE_FIELDS = {
 }
 
 
-def _content_bound_from_legacy(profile: dict, entry: dict) -> dict:
+def _content_bound_from_legacy(
+    profile: dict, entry: dict, *, required: bool
+) -> dict:
     """Convert a test-built evidence-bound lifecycle into the declaration shape."""
     hashes = preflight_profiles.tool_file_hashes()
     return {
         "status": "measured-under-stub",
+        "required": required,
         "fixture_id": profile["fixture_id"],
         "party_size": profile["party_size"],
         "call_count": entry["call_count"],
@@ -149,7 +152,15 @@ def _to_content_bound(document: dict) -> tuple[dict, list]:
             entry = profile.get(lifecycle)
             if isinstance(entry, dict) and set(entry) == _LEGACY_LIFECYCLE_FIELDS:
                 pending.append((profile, lifecycle, dict(entry)))
-                profile[lifecycle] = _content_bound_from_legacy(profile, entry)
+                profile[lifecycle] = _content_bound_from_legacy(
+                    profile,
+                    entry,
+                    required=profile[lifecycle].get(
+                        "required",
+                        lifecycle == "startup"
+                        or profile["fixture_id"] == "interior_tavern",
+                    ),
+                )
     return converted, pending
 
 
@@ -8949,6 +8960,7 @@ class TestContentBoundDeclarations(unittest.TestCase):
     def _declaration(self) -> dict:
         return {
             "status": "measured-under-stub",
+            "required": True,
             "fixture_id": "interior_tavern",
             "party_size": 1,
             "call_count": 3,
@@ -9129,6 +9141,50 @@ class TestContentBoundDeclarations(unittest.TestCase):
         coverage = preflight_profiles.validate_profile_document(copy_baseline_profile_document())
         self.assertFalse(coverage["measured_lifecycle_complete"])
 
+    def test_startup_is_required_and_missing_resume_is_optional(self) -> None:
+        document = copy_baseline_profile_document()
+        profile = document["profiles"][0]
+        profile["startup"]["required"] = False
+        with self.assertRaisesRegex(ProfileValidationError, "startup lifecycle"):
+            preflight_profiles.validate_profile_document(document)
+
+        document = copy_baseline_profile_document()
+        profile = document["profiles"][0]
+        profile["resume"]["required"] = True
+        with self.assertRaisesRegex(ProfileValidationError, "MISSING resume"):
+            preflight_profiles.validate_profile_document(document)
+
+    def test_optional_missing_resume_does_not_make_rows_unverified(self) -> None:
+        document = copy_baseline_profile_document()
+        for profile in document["profiles"]:
+            startup = self._declaration()
+            startup["fixture_id"] = profile["fixture_id"]
+            startup["party_size"] = profile["party_size"]
+            profile["startup"] = startup
+            if profile["fixture_id"] == "landscape_village":
+                profile["resume"] = {
+                    "status": "MISSING",
+                    "required": False,
+                    "reason": "extra resume coverage not measured",
+                }
+            elif profile["fixture_id"] == "combat_stage_tavern_zones":
+                profile["resume"] = {
+                    "status": "MISSING",
+                    "required": False,
+                    "reason": "resume is not applicable to combat",
+                }
+            else:
+                resume = self._declaration()
+                resume["fixture_id"] = profile["fixture_id"]
+                resume["party_size"] = profile["party_size"]
+                resume["required"] = profile["fixture_id"] == "interior_tavern"
+                profile["resume"] = resume
+
+        coverage = preflight_profiles.validate_profile_document(document)
+
+        self.assertEqual(coverage["unverified_row_ids"], [])
+        self.assertTrue(coverage["measured_lifecycle_complete"])
+
     def test_declaration_from_evidence_round_trip(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="declaration-from-evidence-", dir=PROJECT_ROOT / "tmp"
@@ -9169,6 +9225,180 @@ class TestContentBoundDeclarations(unittest.TestCase):
             path.write_bytes(json.dumps(evidence).encode("utf-8"))
             with self.assertRaisesRegex(ProfileValidationError, "did not complete"):
                 preflight_profiles.declaration_from_evidence(path)
+
+
+class TestCheckpointProfileEvidenceValidation(unittest.TestCase):
+    """Require exact row, seed, path, and travel bindings for retained checkpoints."""
+
+    def setUp(self) -> None:
+        self.temp_directory = tempfile.TemporaryDirectory(
+            prefix="checkpoint-profile-evidence-", dir=PROJECT_ROOT / "tmp"
+        )
+        self.root = Path(self.temp_directory.name)
+
+    def tearDown(self) -> None:
+        self.temp_directory.cleanup()
+
+    def _fixture(
+        self,
+        *,
+        travel_changes: dict[str, Any] | None = None,
+        attestation_changes: dict[str, Any] | None = None,
+        descriptor_changes: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        run_id = "pf-checkpoint-profile-E01-f1-c"
+        row_id = "E01"
+        fixture_id = "interior_tavern"
+        party_size = 1
+        checkpoint_root = (
+            "tmp/router-rollout/live-gate-preflight-checkpoints/"
+            "%s/%s/%s-p%d" % (run_id, row_id, fixture_id, party_size)
+        )
+        travel = {
+            "step_id": "step-01",
+            "source_location_id": "TAVERN_01",
+            "source_runtime_location_id": "TAVERN_01",
+            "target_source_location_id": "TAVERN_02",
+            "target_location_id": "TAVERN_02",
+            "response_counts": {
+                "travel_action_responses": 1,
+                "gameplay_validation_responses": 1,
+                "transition_validation_responses": 1,
+                "transition_narration_responses": 1,
+            },
+            "response_call_sequences": {
+                "travel_action": 2,
+                "transition_validation": 3,
+                "gameplay_validation": 4,
+                "transition_narration": 5,
+            },
+            "complete": True,
+        }
+        if travel_changes:
+            travel.update(travel_changes)
+        descriptor = {
+            "checkpoint_root": checkpoint_root,
+            "state_sha256": "c" * 64,
+            "row_id": row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": "A",
+            "fixed_seed": 5101,
+        }
+        if descriptor_changes:
+            descriptor.update(descriptor_changes)
+        attestation = {
+            "schema_version": 1,
+            "source_sha": "a" * 40,
+            "run_id": run_id,
+            "row_id": row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": "A",
+            "fixed_seed": 5101,
+            "step_id": travel["step_id"],
+            "source_location_id": travel["source_location_id"],
+            "source_runtime_location_id": travel["source_runtime_location_id"],
+            "target_source_location_id": travel["target_source_location_id"],
+            "target_location_id": travel["target_location_id"],
+            "initial_location_id": travel["source_runtime_location_id"],
+            "final_location_id": travel["target_location_id"],
+            "initial_state_sha256": "b" * 64,
+            "state_sha256": descriptor["state_sha256"],
+            "initial_time": "day-1 08:00",
+            "final_time": "day-1 08:05",
+            "travel_proof": dict(travel),
+            "persistence": {
+                "host_stopped_before_checkpoint": True,
+                "canonical_state_hash_verified": True,
+                "resume_state_validation": "passed",
+            },
+            "checkpoint_root": checkpoint_root,
+        }
+        if attestation_changes:
+            attestation.update(attestation_changes)
+        relative_attestation = checkpoint_root + "/attestation.json"
+        attestation_path = self.root.joinpath(*Path(relative_attestation).parts)
+        attestation_path.parent.mkdir(parents=True, exist_ok=True)
+        raw = json.dumps(
+            attestation, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        attestation_path.write_bytes(raw)
+        evidence = {
+            "run_id": run_id,
+            "planned_row_id": row_id,
+            "checkpoint_travel": travel,
+            "resume_checkpoint": descriptor,
+            "checkpoint_attestation": {
+                "path": relative_attestation,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        }
+        metadata = {
+            row_id: {
+                "arm": "A",
+                "fixture_ids": [fixture_id],
+                "party_size": party_size,
+                "fixed_seed": 5101,
+            }
+        }
+        return evidence, metadata
+
+    def _validate(
+        self,
+        evidence: dict[str, Any],
+        metadata: dict[str, dict[str, Any]],
+    ) -> None:
+        preflight_profiles._validate_profile_checkpoint_evidence(
+            self.root,
+            evidence=evidence,
+            fixture_id="interior_tavern",
+            party_size=1,
+            lifecycle="startup",
+            row_metadata=metadata,
+            source_sha="a" * 40,
+        )
+
+    def test_valid_row_bound_checkpoint_is_accepted(self) -> None:
+        evidence, metadata = self._fixture()
+        self._validate(evidence, metadata)
+
+    def test_checkpoint_path_must_bind_to_run_row_and_fixture(self) -> None:
+        evidence, metadata = self._fixture(
+            descriptor_changes={
+                "checkpoint_root": (
+                    "tmp/router-rollout/live-gate-preflight-checkpoints/"
+                    "another-run/E01/interior_tavern-p1"
+                )
+            }
+        )
+        with self.assertRaisesRegex(ProfileValidationError, "checkpoint path is invalid"):
+            self._validate(evidence, metadata)
+
+    def test_checkpoint_travel_sequence_must_be_complete_and_ordered(self) -> None:
+        evidence, metadata = self._fixture(
+            travel_changes={
+                "response_call_sequences": {
+                    "travel_action": 2,
+                    "transition_validation": 2,
+                    "gameplay_validation": 4,
+                    "transition_narration": 5,
+                }
+            }
+        )
+        with self.assertRaisesRegex(
+            ProfileValidationError, "checkpoint identity is invalid"
+        ):
+            self._validate(evidence, metadata)
+
+    def test_checkpoint_attestation_must_match_row_seed_and_travel(self) -> None:
+        evidence, metadata = self._fixture(
+            attestation_changes={"fixed_seed": 5102}
+        )
+        with self.assertRaisesRegex(
+            ProfileValidationError, "checkpoint attestation differs"
+        ):
+            self._validate(evidence, metadata)
 
 
 def _run_probe_from_sitecustomize() -> None:
@@ -9353,13 +9583,11 @@ class TestCheckedInProfileDeclarations(unittest.TestCase):
                     )
         self.assertGreater(checked, 0)
 
-    def test_checked_in_coverage_is_not_complete_or_booking_eligible(self) -> None:
+    def test_checked_in_required_coverage_is_complete_but_not_booking_eligible(self) -> None:
         coverage = load_profile_coverage()
-        self.assertFalse(coverage["measured_lifecycle_complete"])
+        self.assertTrue(coverage["measured_lifecycle_complete"])
         self.assertFalse(coverage["booking_eligible"])
-        self.assertEqual(
-            coverage["unverified_row_ids"], ["C0" + str(index) for index in range(1, 9)]
-        )
+        self.assertEqual(coverage["unverified_row_ids"], [])
 
 
 class TestWorkerHostCommandComparisonIdentity(unittest.TestCase):
