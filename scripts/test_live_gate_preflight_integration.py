@@ -316,6 +316,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         observed_call_count: int = 1,
         observed_call_sites: list[dict[str, Any]] | None = None,
         server_returned: bool = True,
+        late_guarded_child: bool = False,
     ) -> tuple[dict[str, Any], str, str]:
         comparison_identity = getattr(args, "comparison_identity_json", None)
         command = profile_runner._host_command(
@@ -498,6 +499,84 @@ class TestPreflightRowIntegration(unittest.TestCase):
                     "guard_events": events,
                 }
             )
+        late_child_pid = 104
+        if late_guarded_child:
+            child_command_sha256 = "d" * 64
+            child_common = {
+                "schema_version": 1,
+                "pid": late_child_pid,
+                "process_group_id": host_worker_pid,
+                "process_role": "host",
+                "run_id": args.run_id,
+                "target_host": None,
+                "target_port": None,
+                "target_host_sha256": None,
+                "command_sha256": None,
+                "child_pid": None,
+                "child_is_python": None,
+                "guard_active": None,
+                "interpreter": None,
+                "working_directory": None,
+            }
+            late_child_events = [
+                {
+                    **child_common,
+                    "sequence": 1,
+                    "event_type": "guard_startup",
+                    "observed_at_ns": 1_000_004,
+                    "operation": None,
+                    "decision": None,
+                    "command_sha256": child_command_sha256,
+                    "guard_active": True,
+                    "interpreter": interpreter,
+                    "working_directory": host_cwd,
+                },
+                {
+                    **child_common,
+                    "sequence": 2,
+                    "event_type": "network_attempt",
+                    "observed_at_ns": 1_000_005,
+                    "operation": "connect",
+                    "decision": "denied",
+                    "target_host": "192.0.2.1",
+                    "target_port": 8360,
+                },
+                {
+                    **child_common,
+                    "sequence": 3,
+                    "event_type": "subprocess_attempt",
+                    "observed_at_ns": 1_000_006,
+                    "operation": "Popen",
+                    "decision": "denied",
+                    "command_sha256": "e" * 64,
+                },
+            ]
+            journal.extend(
+                [
+                    {
+                        "schema_version": 1,
+                        "sequence": 4,
+                        "event_type": "subprocess_started",
+                        "pid": host_worker_pid,
+                        "process_group_id": host_worker_pid,
+                        "process_role": "host",
+                        "run_id": args.run_id,
+                        "observed_at_ns": 1_000_004,
+                        "operation": "Popen",
+                        "decision": "started",
+                        "target_host": None,
+                        "target_port": None,
+                        "target_host_sha256": None,
+                        "command_sha256": child_command_sha256,
+                        "child_pid": late_child_pid,
+                        "child_is_python": True,
+                        "guard_active": None,
+                        "interpreter": None,
+                        "working_directory": None,
+                    },
+                    *late_child_events,
+                ]
+            )
         journal_path = evidence_directory / "guard-events.jsonl"
         journal_bytes = b"".join(
             json.dumps(
@@ -563,13 +642,24 @@ class TestPreflightRowIntegration(unittest.TestCase):
             ],
         }
         census_samples: list[dict[str, Any]] = []
-        for phase in ("before_host", "host_ready", "after_teardown"):
-            phase_canaries = canaries[:2] if phase == "before_host" else canaries
-            phase_events = [
+        host_ready_events = list(journal)
+        if late_guarded_child:
+            host_ready_events = [
                 event
-                for report in phase_canaries
+                for report in canaries
                 for event in snapshots[report["canary_stage"]]
             ]
+        for phase in ("before_host", "host_ready", "after_teardown"):
+            if phase == "before_host":
+                phase_events = [
+                    event
+                    for report in canaries[:2]
+                    for event in snapshots[report["canary_stage"]]
+                ]
+            elif phase == "host_ready":
+                phase_events = host_ready_events
+            else:
+                phase_events = journal
             phase_scopes = all_scopes[:2] if phase == "before_host" else all_scopes
             rows = rows_by_phase[phase]
             pids = sorted({row["pid"] for row in rows})
@@ -613,7 +703,14 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "phase": phase,
                 "observer": "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing",
                 "process_scopes": phase_scopes,
-                "run_process_pids": sorted({event["pid"] for event in phase_events}),
+                "run_process_pids": sorted(
+                    {event["pid"] for event in phase_events}
+                    | {
+                        event["child_pid"]
+                        for event in phase_events
+                        if event.get("event_type") == "subprocess_started"
+                    }
+                ),
                 "guard_startup_pids": sorted(
                     event["pid"]
                     for event in phase_events
@@ -652,6 +749,21 @@ class TestPreflightRowIntegration(unittest.TestCase):
             )
         socket_owners = sorted({pid for sample in census_samples for pid in sample["pids"]})
         canary_pids = [item["pid"] for item in canaries]
+        python_child_pids = sorted(
+            {
+                event["child_pid"]
+                for event in journal
+                if event.get("event_type") == "subprocess_started"
+                and event.get("child_is_python") is True
+            }
+        )
+        guarded_pids = sorted(
+            {
+                event["pid"]
+                for event in journal
+                if event.get("event_type") == "guard_startup"
+            }
+        )
         census = {
             "controller_pid": controller_pid,
             "driver_pid": controller_pid,
@@ -659,9 +771,14 @@ class TestPreflightRowIntegration(unittest.TestCase):
             "host_worker_pid": host_worker_pid,
             "launched_pids": sorted((controller_pid, host_prelaunch_pid, host_worker_pid)),
             "socket_owner_pids": socket_owners,
-            "python_child_pids": [],
-            "python_pids": sorted((controller_pid, host_prelaunch_pid, host_worker_pid)),
-            "guarded_pids": canary_pids,
+            "python_child_pids": python_child_pids,
+            "python_pids": sorted(
+                set((controller_pid, host_prelaunch_pid, host_worker_pid))
+                | set(python_child_pids)
+                | set(socket_owners)
+                | set(guarded_pids)
+            ),
+            "guarded_pids": guarded_pids,
             "canary_pids": canary_pids,
             "uncovered_pids": [],
             "guard_events_valid": True,
@@ -940,6 +1057,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         server_returned: bool = True,
         source_sha: str = SOURCE_SHA,
         comparison_identity: dict[str, Any] | None = None,
+        late_guarded_child: bool = False,
     ) -> tuple[controller.PreflightRowPlan, str, dict[str, Any], dict[str, Any]]:
         rows, _reserves = _load_frozen_row_ids(None)
         profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
@@ -963,7 +1081,9 @@ class TestPreflightRowIntegration(unittest.TestCase):
             ),
         )
         evidence, evidence_path, evidence_sha256 = self._fake_characterization(
-            args, server_returned=server_returned
+            args,
+            server_returned=server_returned,
+            late_guarded_child=late_guarded_child,
         )
         intended_identity = planned_worker_identity(
             plan,
@@ -983,6 +1103,100 @@ class TestPreflightRowIntegration(unittest.TestCase):
         if comparison_identity is not None:
             result["comparison_identity"] = dict(comparison_identity)
         return plan, row_run_id, intended_identity, result
+
+    def _add_synthetic_checkpoint(
+        self,
+        plan: controller.PreflightRowPlan,
+        row_run_id: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        evidence = result["evidence"]
+        checkpoint_root = (
+            "tmp/router-rollout/live-gate-preflight-checkpoints/"
+            "%s/%s/%s-p%d"
+            % (row_run_id, plan.row_id, plan.fixture_id, plan.party_size)
+        )
+        checkpoint_directory = PROJECT_ROOT / checkpoint_root
+        checkpoint_run_directory = checkpoint_directory.parents[1]
+        checkpoint_run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, checkpoint_run_directory, ignore_errors=True)
+
+        travel = {
+            "step_id": "checkpoint-step-01",
+            "source_location_id": "INTERIOR_01",
+            "source_runtime_location_id": "INTERIOR_01",
+            "target_source_location_id": "INTERIOR_02",
+            "target_location_id": "INTERIOR_02",
+            "response_counts": {
+                "travel_action_responses": 1,
+                "gameplay_validation_responses": 1,
+                "transition_validation_responses": 1,
+                "transition_narration_responses": 1,
+            },
+            "response_call_sequences": {
+                "travel_action": 2,
+                "transition_validation": 3,
+                "gameplay_validation": 4,
+                "transition_narration": 5,
+            },
+            "complete": True,
+        }
+        state_sha256 = "c" * 64
+        checkpoint = {
+            "checkpoint_root": checkpoint_root,
+            "state_sha256": state_sha256,
+            "row_id": plan.row_id,
+            "fixture_id": plan.fixture_id,
+            "party_size": plan.party_size,
+            "arm": plan.arm,
+            "fixed_seed": plan.fixed_seed,
+        }
+        attestation = {
+            "schema_version": 1,
+            "source_sha": evidence["source_sha"],
+            "run_id": row_run_id,
+            "row_id": plan.row_id,
+            "fixture_id": plan.fixture_id,
+            "party_size": plan.party_size,
+            "arm": plan.arm,
+            "fixed_seed": plan.fixed_seed,
+            "step_id": travel["step_id"],
+            "source_location_id": travel["source_location_id"],
+            "source_runtime_location_id": travel["source_runtime_location_id"],
+            "target_source_location_id": travel["target_source_location_id"],
+            "target_location_id": travel["target_location_id"],
+            "initial_location_id": travel["source_runtime_location_id"],
+            "final_location_id": travel["target_location_id"],
+            "initial_state_sha256": "b" * 64,
+            "state_sha256": state_sha256,
+            "initial_time": "day-1 08:00",
+            "final_time": "day-1 08:05",
+            "travel_proof": travel,
+            "persistence": {
+                "host_stopped_before_checkpoint": True,
+                "canonical_state_hash_verified": True,
+                "resume_state_validation": "passed",
+            },
+            "checkpoint_root": checkpoint_root,
+        }
+        checkpoint_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        attestation_path = checkpoint_directory / "attestation.json"
+        attestation_bytes = json.dumps(
+            attestation, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        attestation_path.write_bytes(attestation_bytes)
+        evidence.update(
+            {
+                "checkpoint_travel": travel,
+                "resume_checkpoint": checkpoint,
+                "checkpoint_attestation": {
+                    "path": checkpoint_root + "/attestation.json",
+                    "sha256": hashlib.sha256(attestation_bytes).hexdigest(),
+                },
+            }
+        )
+        self._rewrite_profile_evidence(result, evidence)
+        return checkpoint
 
     @staticmethod
     def _rewrite_profile_evidence(result: dict[str, Any], evidence: dict[str, Any]) -> None:
@@ -1704,6 +1918,31 @@ class TestPreflightRowIntegration(unittest.TestCase):
                         for port in ("8360", "8370")
                     )
                 )
+
+    def test_checkpoint_result_reconciles_late_guarded_child_evidence(self) -> None:
+        plan, row_run_id, identity, result = self._retained_case(
+            late_guarded_child=True
+        )
+        checkpoint = self._add_synthetic_checkpoint(plan, row_run_id, result)
+
+        summary = controller._validate_supervised_result(
+            result,
+            plan=plan,
+            fixture_id=plan.fixture_id,
+            lifecycle="startup",
+            intended_identity=identity,
+            source_sha=SOURCE_SHA,
+            row_run_id=row_run_id,
+            preflight_run_id=RUN_ID,
+            create_resume_checkpoint=True,
+        )
+
+        self.assertEqual(summary["outcome"], "completed")
+        self.assertTrue(summary["process_census_complete"])
+        self.assertEqual(summary["resume_checkpoint"], checkpoint)
+        self.assertEqual(
+            result["evidence"]["process_census"]["python_child_pids"], [104]
+        )
 
     def test_comparison_identity_is_reconciled_from_retained_worker_and_teardown(self) -> None:
         from scripts.live_gate_preflight_comparison_identity import (

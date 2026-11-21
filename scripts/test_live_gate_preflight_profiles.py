@@ -1276,6 +1276,79 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 validate_profile_document(document)["structural_row_coverage_complete"]
             )
 
+    def test_checkpoint_profile_evidence_accepts_late_guarded_children(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-checkpoint-late-child-", dir=PROJECT_ROOT / "tmp"
+        ) as evidence_directory:
+            document, evidence_path = self._checkpoint_run_with_late_child(
+                Path(evidence_directory)
+            )
+
+            coverage = validate_profile_document(document)
+
+        self.assertTrue(coverage["structural_row_coverage_complete"])
+
+    def test_late_guard_startup_relaxation_is_checkpoint_only_and_fail_closed(
+        self,
+    ) -> None:
+        cases = (
+            ("ordinary-startup", False, "host_ready", lambda pids: pids),
+            (
+                "checkpoint-missing-before-host",
+                True,
+                "host_ready",
+                lambda pids: [pid for pid in pids if pid != 10002],
+            ),
+            (
+                "checkpoint-unknown-host-ready-pid",
+                True,
+                "host_ready",
+                lambda pids: sorted([*pids, 19999]),
+            ),
+            (
+                "checkpoint-missing-row-pid",
+                True,
+                "host_ready",
+                lambda pids: [pid for pid in pids if pid != 10003],
+            ),
+            (
+                "checkpoint-incomplete-after-teardown",
+                True,
+                "after_teardown",
+                lambda pids: [pid for pid in pids if pid != 10004],
+            ),
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="profile-evidence-checkpoint-negative-", dir=PROJECT_ROOT / "tmp"
+        ) as temp_root:
+            for name, checkpoint_run, phase, mutate_pids in cases:
+                with self.subTest(name=name):
+                    evidence_directory = Path(temp_root) / name
+                    evidence_directory.mkdir()
+                    document, evidence_path = self._checkpoint_run_with_late_child(
+                        evidence_directory,
+                        checkpoint_run=checkpoint_run,
+                    )
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    sample, sidecar_path, sidecar = self._read_profile_socket_sidecar(
+                        evidence, phase
+                    )
+                    sidecar["guard_startup_pids"] = mutate_pids(
+                        sidecar["guard_startup_pids"]
+                    )
+                    self._write_profile_socket_sidecar(
+                        sample, sidecar_path, sidecar
+                    )
+                    self._persist_profile_evidence(
+                        document, evidence_path, evidence
+                    )
+
+                    with self.assertRaisesRegex(
+                        ProfileValidationError,
+                        "socket sample guard ownership differs",
+                    ):
+                        validate_profile_document(document)
+
     def test_profile_evidence_rejects_controller_child_socket_without_startup(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="profile-evidence-controller-child-unguarded-",
@@ -1536,6 +1609,187 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             json.loads(line)
             for line in path.read_text(encoding="ascii").splitlines()
         ]
+
+    def _checkpoint_run_with_late_child(
+        self,
+        evidence_directory: Path,
+        *,
+        checkpoint_run: bool = True,
+    ) -> tuple[dict[str, Any], Path]:
+        document, evidence_path = self._measured_document(evidence_directory)
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if checkpoint_run:
+            self._add_synthetic_checkpoint(evidence)
+        self._add_late_guarded_child(evidence)
+        self._persist_profile_evidence(document, evidence_path, evidence)
+        return document, evidence_path
+
+    def _add_synthetic_checkpoint(self, evidence: dict[str, Any]) -> None:
+        row_id = evidence["planned_row_id"]
+        run_id = evidence["run_id"]
+        fixture_id = evidence["fixture_id"]
+        party_size = evidence["party_size"]
+        source_sha = evidence["source_sha"]
+        row_metadata = preflight_profiles._load_expected_row_pairs(
+            PROJECT_ROOT
+        )["row_metadata"][row_id]
+        checkpoint_root = (
+            "tmp/router-rollout/live-gate-preflight-checkpoints/"
+            "%s/%s/%s-p%d" % (run_id, row_id, fixture_id, party_size)
+        )
+        checkpoint_directory = PROJECT_ROOT / checkpoint_root
+        checkpoint_run_directory = checkpoint_directory.parents[1]
+        checkpoint_run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, checkpoint_run_directory, ignore_errors=True)
+
+        travel = {
+            "step_id": "checkpoint-step-01",
+            "source_location_id": "INTERIOR_01",
+            "source_runtime_location_id": "INTERIOR_01",
+            "target_source_location_id": "INTERIOR_02",
+            "target_location_id": "INTERIOR_02",
+            "response_counts": {
+                "travel_action_responses": 1,
+                "gameplay_validation_responses": 1,
+                "transition_validation_responses": 1,
+                "transition_narration_responses": 1,
+            },
+            "response_call_sequences": {
+                "travel_action": 2,
+                "transition_validation": 3,
+                "gameplay_validation": 4,
+                "transition_narration": 5,
+            },
+            "complete": True,
+        }
+        state_sha256 = "c" * 64
+        descriptor = {
+            "checkpoint_root": checkpoint_root,
+            "state_sha256": state_sha256,
+            "row_id": row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": row_metadata["arm"],
+            "fixed_seed": row_metadata["fixed_seed"],
+        }
+        attestation = {
+            "schema_version": 1,
+            "source_sha": source_sha,
+            "run_id": run_id,
+            "row_id": row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": row_metadata["arm"],
+            "fixed_seed": row_metadata["fixed_seed"],
+            "step_id": travel["step_id"],
+            "source_location_id": travel["source_location_id"],
+            "source_runtime_location_id": travel["source_runtime_location_id"],
+            "target_source_location_id": travel["target_source_location_id"],
+            "target_location_id": travel["target_location_id"],
+            "initial_location_id": travel["source_runtime_location_id"],
+            "final_location_id": travel["target_location_id"],
+            "initial_state_sha256": "b" * 64,
+            "state_sha256": state_sha256,
+            "initial_time": "day-1 08:00",
+            "final_time": "day-1 08:05",
+            "travel_proof": travel,
+            "persistence": {
+                "host_stopped_before_checkpoint": True,
+                "canonical_state_hash_verified": True,
+                "resume_state_validation": "passed",
+            },
+            "checkpoint_root": checkpoint_root,
+        }
+        checkpoint_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        attestation_path = checkpoint_directory / "attestation.json"
+        attestation_bytes = json.dumps(
+            attestation, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        attestation_path.write_bytes(attestation_bytes)
+        evidence.update(
+            {
+                "checkpoint_travel": travel,
+                "resume_checkpoint": descriptor,
+                "checkpoint_attestation": {
+                    "path": checkpoint_root + "/attestation.json",
+                    "sha256": hashlib.sha256(attestation_bytes).hexdigest(),
+                },
+            }
+        )
+
+    def _add_late_guarded_child(self, evidence: dict[str, Any]) -> None:
+        run_id = evidence["run_id"]
+        child_pid = 10004
+        worker_pid = evidence["process_census"]["host_worker_pid"]
+        events = self._read_profile_guard_events(evidence)
+        worker_startup = next(
+            event
+            for event in events
+            if event.get("event_type") == "guard_startup"
+            and event.get("pid") == worker_pid
+        )
+        child_command_sha256 = "d" * 64
+        child_startup = {
+            **worker_startup,
+            "sequence": 1,
+            "pid": child_pid,
+            "process_group_id": worker_pid,
+            "command_sha256": child_command_sha256,
+            "observed_at_ns": worker_startup["observed_at_ns"] + 1,
+        }
+        child_connect = _guard_network_event(
+            child_pid,
+            run_id,
+            "192.0.2.1",
+            8360,
+            role="host",
+            decision="denied",
+            sequence=2,
+        )
+        child_connect["process_group_id"] = worker_pid
+        child_subprocess = _guard_subprocess_attempt_event(
+            child_pid, run_id, role="host", sequence=3
+        )
+        child_subprocess["process_group_id"] = worker_pid
+        child_started = _guard_child_started_event(
+            worker_pid,
+            child_pid,
+            run_id,
+            process_role="host",
+            process_group_id=worker_pid,
+            sequence=4,
+        )
+        child_started["command_sha256"] = child_command_sha256
+        events.extend(
+            [child_started, child_startup, child_connect, child_subprocess]
+        )
+        self._write_profile_guard_events(evidence, events)
+
+        census = evidence["process_census"]
+        census["python_child_pids"] = [child_pid]
+        census["python_pids"] = sorted(
+            set(census["launched_pids"])
+            | set(census["socket_owner_pids"])
+            | set(census["guarded_pids"])
+            | {child_pid}
+        )
+        census["guarded_pids"] = sorted(
+            {*census["guarded_pids"], child_pid}
+        )
+        for phase in ("before_host", "host_ready", "after_teardown"):
+            sample, sidecar_path, sidecar = self._read_profile_socket_sidecar(
+                evidence, phase
+            )
+            if phase == "after_teardown":
+                sidecar["run_process_pids"] = sorted(
+                    {*sidecar["run_process_pids"], child_pid}
+                )
+                sidecar["guard_startup_pids"] = sorted(
+                    {*sidecar["guard_startup_pids"], child_pid}
+                )
+            self._write_profile_socket_sidecar(
+                sample, sidecar_path, sidecar
+            )
 
     def _write_profile_guard_events(
         self, evidence: dict[str, Any], events: list[dict[str, Any]]

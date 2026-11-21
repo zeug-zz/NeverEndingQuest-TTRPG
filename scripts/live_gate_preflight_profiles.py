@@ -1157,6 +1157,7 @@ def _validate_profile_evidence(
     if not isinstance(evidence, Mapping) or frozenset(evidence) not in accepted_evidence_fields:
         raise ProfileValidationError("profile evidence fields are malformed")
     checkpoint_fields_present = set(evidence) & checkpoint_evidence_fields
+    checkpoint_run = checkpoint_fields_present == checkpoint_evidence_fields
     if checkpoint_fields_present:
         if checkpoint_fields_present != checkpoint_evidence_fields:
             raise ProfileValidationError("profile evidence checkpoint fields are incomplete")
@@ -1396,8 +1397,9 @@ def _validate_profile_evidence(
     sample_rows: dict[str, list[dict[str, Any]]] = {}
     sample_scopes: dict[str, list[dict[str, Any]]] = {}
     common_scopes: dict[str, dict[str, Any]] = {}
+    before_host_startup_pids: set[int] | None = None
     for sample, phase in zip(samples, expected_samples):
-        rows, owners, scopes = _read_profile_socket_sample(
+        rows, owners, scopes, startup_pids = _read_profile_socket_sample(
             project_root,
             sample,
             phase=phase,
@@ -1405,7 +1407,11 @@ def _validate_profile_evidence(
             process_canaries=process_canaries,
             guard_events=guard_events,
             evidence_directory=evidence_directory,
+            checkpoint_run=checkpoint_run,
+            before_host_startup_pids=before_host_startup_pids,
         )
+        if phase == "before_host":
+            before_host_startup_pids = startup_pids
         for scope in scopes:
             source = scope["launch_source"]
             prior_scope = common_scopes.get(source)
@@ -2834,7 +2840,9 @@ def _read_profile_socket_sample(
     process_canaries: list[Any],
     guard_events: list[dict[str, Any]],
     evidence_directory: Path | None = None,
-) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]]]:
+    checkpoint_run: bool = False,
+    before_host_startup_pids: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]], set[int]]:
     sample_fields = {
         "phase",
         "port",
@@ -2938,6 +2946,9 @@ def _read_profile_socket_sample(
     authorized_processes = _authorized_profile_process_tree(scopes, guard_events)
     run_process_pids = sidecar.get("run_process_pids")
     startup_pids = sidecar.get("guard_startup_pids")
+    startup_pid_set = (
+        set(startup_pids) if isinstance(startup_pids, list) else set()
+    )
     all_run_pids = {
         event["pid"] for event in guard_events
     } | {
@@ -2961,11 +2972,27 @@ def _read_profile_socket_sample(
         or not row_pids.issubset(startup_pids)
         or authorized_processes is None
         or not row_pids.issubset(authorized_processes)
-        or (phase != "before_host" and set(startup_pids) != all_startup_pids)
+        or (
+            phase == "host_ready"
+            and not checkpoint_run
+            and startup_pid_set != all_startup_pids
+        )
+        or (
+            phase == "host_ready"
+            and checkpoint_run
+            and (
+                before_host_startup_pids is None
+                or not before_host_startup_pids.issubset(startup_pid_set)
+            )
+        )
+        or (
+            phase == "after_teardown"
+            and startup_pid_set != all_startup_pids
+        )
     ):
         raise ProfileValidationError("profile evidence socket sample guard ownership differs")
     _validate_profile_protocol_samples(sidecar)
-    return rows, row_pids, scopes
+    return rows, row_pids, scopes, startup_pid_set
 
 
 def _validate_profile_socket_scopes(
