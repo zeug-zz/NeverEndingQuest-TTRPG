@@ -55,6 +55,7 @@ TEST_SHA = "a" * 40
 TEST_RUN_ID = "n3-20261111-test-run"
 TEST_BOOKING = "n3-booking-test"
 TEST_NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
+REAL_SOCKETIO_CLIENT = gate.socketio.Client
 SCRATCH_ROOT = gate.REPO_ROOT / "tmp" / "n3-live-lifecycle-gate-tests"
 RECORDED_ATTEMPT11_STARTUP_TELEMETRY_FIXTURE = (
     Path(__file__).resolve().parent
@@ -1824,6 +1825,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         sandbox_error: str | None = None,
         state_base_provider=None,
         startup_validator=None,
+        websocket_available: bool = True,
     ) -> gate.LiveGateDependencies:
         selected_ports = ports or self.ports
         selected_api = api or self.fake_api
@@ -1884,6 +1886,7 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             monotonic=lambda: 1000.0,
             utc_now=lambda: TEST_NOW,
             startup_input_validator=selected_startup_validator,
+            websocket_transport_available=lambda: websocket_available,
         )
 
     def test_l01_passes_both_inactive_states_and_fails_on_exposure(self) -> None:
@@ -2543,8 +2546,44 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         refused_socket_service = FakePublicService()
         refused_socket_service.player_namespace_refused = True
         refused_socket = execute_l03_variant(refused_socket_service)
-        self.assertEqual(refused_socket.verdict, "FAIL")
-        self.assertEqual(refused_socket.reason, "public_response_contract_invalid")
+        self.assertEqual(refused_socket.verdict, "BLOCKED")
+        self.assertEqual(
+            refused_socket.reason, "l03_public_observation_unavailable"
+        )
+        refused_socket_diagnostic = refused_socket.observed["failure_diagnostic"]
+        self.assertEqual(
+            refused_socket_diagnostic["reason_code"], "public_socket_unavailable"
+        )
+        self.assertEqual(
+            refused_socket_diagnostic["exception_class"], "OtherException"
+        )
+
+        fixture_value = "fixture-value"
+        fixture_detail = (
+            "fixture detail at https://socket.fixture.invalid " + fixture_value
+        )
+        service_fixture = FakePublicService(
+            "https://socket.fixture.invalid", credential=fixture_value
+        )
+        with patch.object(
+            FakePublicSocket,
+            "connect",
+            side_effect=RuntimeError(fixture_detail),
+        ):
+            result_fixture = execute_l03_variant(service_fixture)
+        self.assertEqual(result_fixture.verdict, "BLOCKED")
+        self.assertEqual(
+            result_fixture.observed["failure_diagnostic"]["reason_code"],
+            "public_socket_unavailable",
+        )
+        self.assertEqual(
+            result_fixture.observed["failure_diagnostic"]["exception_class"],
+            "RuntimeError",
+        )
+        fixture_result_repr = repr(result_fixture)
+        self.assertNotIn(fixture_detail, fixture_result_repr)
+        self.assertNotIn(service_fixture.accepted_origin, fixture_result_repr)
+        self.assertNotIn(fixture_value, fixture_result_repr)
 
         insecure_cookie_service = FakePublicService()
         insecure_cookie_service.session_cookie_attributes = "HttpOnly; SameSite=Lax"
@@ -3964,6 +4003,81 @@ ACTIVE_PROFILE = "n3-luna"
                 gate.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("usage:", help_output.getvalue())
+
+    def test_websocket_transport_precheck_uses_engineio_sync_client_import(self) -> None:
+        client = REAL_SOCKETIO_CLIENT(
+            reconnection=False,
+            logger=False,
+            engineio_logger=False,
+            ssl_verify=True,
+            request_timeout=gate.PUBLIC_CLIENT_TIMEOUT_SECONDS,
+            handle_sigint=False,
+        )
+        connect_websocket = client.eio._connect_websocket
+        method = getattr(connect_websocket, "__func__", connect_websocket)
+        method_globals = method.__globals__
+
+        with patch.object(gate.socketio, "Client", REAL_SOCKETIO_CLIENT):
+            with patch.dict(method_globals, {"websocket": None}):
+                self.assertFalse(gate.websocket_client_transport_available())
+            with patch.dict(method_globals, {"websocket": object()}):
+                self.assertTrue(gate.websocket_client_transport_available())
+
+    def test_websocket_precheck_cli_reports_missing_dependency_fail_closed(self) -> None:
+        for available, expected_status in ((True, 0), (False, 2)):
+            with self.subTest(available=available):
+                stdout = io.StringIO()
+                with patch.object(
+                    gate,
+                    "websocket_client_transport_available",
+                    return_value=available,
+                ), patch("sys.stdout", stdout):
+                    status = gate.main(["precheck-websocket"])
+                self.assertEqual(status, expected_status)
+                self.assertEqual(
+                    json.loads(stdout.getvalue()),
+                    {
+                        "available": available,
+                        "check": "python-engineio-sync-client-websocket",
+                        "dependency": "websocket-client",
+                        "side_effects": False,
+                    },
+                )
+
+    def test_websocket_precheck_blocks_before_live_gate_side_effects(self) -> None:
+        dependencies = self.make_dependencies(websocket_available=False)
+        result = gate.run_live_gate(dependencies, self.arguments)
+
+        self.assertEqual(result["gate_verdict"], "BLOCKED")
+        self.assertEqual(
+            result["infrastructure_failures"], ["websocket_client_unavailable"]
+        )
+        self.assertEqual(self.host_factory_calls, 0)
+        self.assertIsNone(self.fake_host)
+        self.assertEqual(self.ports.seen, [])
+        self.assertFalse(
+            (self.root / gate.EVIDENCE_BASE / self.run_id / "capture").exists()
+        )
+        self.assertFalse(self.state_root_for(self.run_id).exists())
+
+        def reject_startup(_sandbox: Path):
+            raise gate.GateError("startup_profile_precheck_failed")
+
+        available_dependencies = self.make_dependencies(
+            websocket_available=True, startup_validator=reject_startup
+        )
+        available_result = gate.run_live_gate(
+            available_dependencies, self.arguments
+        )
+        self.assertEqual(available_result["gate_verdict"], "BLOCKED")
+        self.assertEqual(
+            available_result["infrastructure_failures"],
+            ["startup_profile_precheck_failed"],
+        )
+        self.assertNotIn(
+            "websocket_client_unavailable",
+            available_result["infrastructure_failures"],
+        )
 
     def test_diagnostic_stop_parser_only_accepts_l01(self) -> None:
         run_args = [

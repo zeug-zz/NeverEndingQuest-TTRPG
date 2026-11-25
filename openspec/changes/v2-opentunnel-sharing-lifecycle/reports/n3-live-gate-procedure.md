@@ -98,12 +98,72 @@ facilitator's real OpenTunnel profile.
    Follow [`n3-lifecycle-gate-procedure.md`](n3-lifecycle-gate-procedure.md)
    for the preflight invocation. Preflight is not the live gate and does not
    prove public lifecycle behavior.
-6. Obtain the separate owner authorization and booking. The primary acquires
+6. Complete the provider-free preintegrate proof and four-check seed guard
+   before booking. Choose a fresh run ID and confirm its report does not
+   already exist:
+
+   ```sh
+   PREINTEGRATE_RUN_ID="n3-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+   PREINTEGRATE_REPORT="tmp/router-rollout/v2-network/n3/start-game-proof/${PREINTEGRATE_RUN_ID}/preintegrate.json"
+   if [ -e "$PREINTEGRATE_REPORT" ] || [ -L "$PREINTEGRATE_REPORT" ]; then
+     echo "RUN-ID-ALREADY-USED" >&2
+     exit 2
+   fi
+   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python \
+     scripts/n3_start_game_offline_proof.py \
+     --mode preintegrate \
+     --sandbox-root tmp/combat_capture \
+     --run-id "$PREINTEGRATE_RUN_ID"
+   ```
+
+   Run this provider-free seed guard now, then repeat it after all other
+   booking checks and immediately before creating the lock or writing the
+   booking:
+
+   ```sh
+   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python - <<'PY'
+   import json
+   import sys
+   from pathlib import Path
+   from scripts.n3_start_game_offline_proof import check_capture_seed_provider_free
+
+   check_names = (
+       "registry_has_no_unregistered_modules",
+       "provider_free_startup_seed",
+       "no_active_combat",
+       "no_history_user_messages",
+   )
+   checks = check_capture_seed_provider_free(
+       Path("tmp/combat_capture").resolve(strict=True)
+   )
+   result = {
+       name: isinstance(checks, dict) and checks.get(name) is True
+       for name in check_names
+   }
+   print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+   if not all(result.values()):
+       print("SEED-CHECK-FAILED", file=sys.stderr)
+       raise SystemExit(1)
+   PY
+   ```
+
+   Both runs of all four checks must pass; do not bypass either.
+7. Run the provider-free websocket transport precheck:
+
+   ```sh
+   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. .venv/bin/python \
+     scripts/n3_live_lifecycle_gate.py precheck-websocket
+   ```
+
+   Require exit status 0 and `"available": true`. If unavailable, the output
+   names `websocket-client`; stop without booking. The check starts no host or
+   tunnel and makes no provider calls.
+8. Obtain the separate owner authorization and booking. The primary acquires
    the shared `git-common-dir/neq-coordination/live-window.lock` using the
    exact `holder.json`/`bookings.log` protocol and fields in the contract; the
    driver does not acquire, release, or repair the lock. Confirm the booking,
    active window, preflight path, run ID, SHA, ports, and frozen caps match.
-    Stop if any value is missing, expired, or mismatched.
+   Stop if any value is missing, expired, or mismatched.
 
 The driver rechecks the seed and active `n3-luna`/`openai/gpt-6-luna` profile
 from the isolated capture before starting the host. These checks are static and
