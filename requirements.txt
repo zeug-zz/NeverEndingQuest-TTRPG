@@ -8,6 +8,7 @@ openai>=1.0.0,<3
 Flask>=2.3.0
 Flask-SocketIO>=5.7.0
 python-socketio>=5.18.1
+websocket-client==1.9.2
 uvicorn>=0.54.0
 websockets>=17.4
 
